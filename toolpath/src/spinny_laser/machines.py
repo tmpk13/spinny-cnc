@@ -27,6 +27,10 @@ The sections and keys, with the firmware setting each one sets:
     [enable]  fitted (tool_out), pin (tool_pin), invert (tool_invert): an output that follows the tool
     [drivers] enable_invert, idle_ms, step_us, hold_pct, stealth, interpolate (tmc_intpol), and the drivers'
               register fields toff, tbl, hstrt, hend, hold_delay, tpowerdown, tpwmthrs (tmc_<key>)
+    [pca9685] sda (i2c_sda), scl (i2c_scl), address (pca_addr): the PCA9685 servo driver on the board's I2C bus
+    [servo.1] to [servo.4]  servo N: pin (servoN_out 1, servoN_pin) or channel (servoN_out 2, servoN_chan),
+              min_us, max_us, range, start (servoN_<key>; left out, no pulse at boot), and for the page name
+              and positions, a table of named angles; a servo the file leaves out has no output
     [host]    tolerance, clearance, travel, spinup, speed_control, and for dispensing gap, retract, output, extrude_rate,
               dwell_ms: the host's own settings, not the firmware's
     [camera]  device, size, fps, pcbv, side, finish, offset, roll, mm_per_px: a camera on the head, the backend's
@@ -66,8 +70,20 @@ NOZZLE = "nozzle"
 # them as written.
 GCODE_SECTIONS = ("port", "gcode", "motion", "vacuum", "up_camera", "top_camera", "bus", "slot", "feeder")
 
+# Servos the firmware drives, servo.1 to servo.4 in a file. Each is on a
+# GPIO of the board or on a channel of a PCA9685 on its I2C bus; a pulse of
+# min_us at 0 degrees to max_us at its range.
+SERVOS = 4
+SERVO_US = (200, 3000)
+SERVO_RANGE_MAX = 360.0
+PCA_CHANNELS = 16
+# A PCA9685's addresses, as its six address pins set them.
+PCA_ADDRESSES = (0x40, 0x7F)
+# The named angles a servo's bar on the page offers, at most this many.
+SERVO_POSITIONS_MAX = 8
+
 # The firmware's defaults, in the order it lists them. A file sets what it
-# names and leaves the rest here, so a machine is always all 83 settings.
+# names and leaves the rest here, so a machine is always all 114 settings.
 FIRMWARE_DEFAULTS: dict[str, float | int] = {
     "r_steps": 10240.0, "a_steps": 14222.222, "r_rate": 560.0, "a_rate": 400.0,
     "r_accel": 50.0, "a_accel": 50.0, "r_jerk": 3.0, "a_jerk": 2.0,
@@ -89,6 +105,12 @@ FIRMWARE_DEFAULTS: dict[str, float | int] = {
     "dispenser": 0,
     "tmc_intpol": 1, "tmc_toff": 3, "tmc_tbl": 2, "tmc_hstrt": 5, "tmc_hend": 0,
     "tmc_hold_delay": 10, "tmc_tpowerdown": 20, "tmc_tpwmthrs": 0,
+    "i2c_sda": 0, "i2c_scl": 1, "pca_addr": 64,
+    **{
+        f"servo{n}_{key}": value
+        for n in range(1, SERVOS + 1)
+        for key, value in (("out", 0), ("pin", 29), ("chan", n - 1), ("min_us", 1000), ("max_us", 2000), ("range", 180.0), ("start", -1.0))
+    },
 }
 
 # The drivers' register fields a file sets under [drivers], each under its
@@ -116,7 +138,16 @@ RESERVED_PINS = frozenset({2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 19, 28})
 HEADERS = {
     17: "FAN1", 18: "FAN2", 20: "FAN3", 21: "BED", 23: "HE", 29: "SERVO", 24: "RGB",
     4: "X-STOP", 3: "Y-STOP", 25: "Z-STOP", 16: "E-STOP", 22: "PROBE", 26: "THB", 27: "TH0",
+    0: "TX", 1: "RX",
 }
+# The STOP headers' GPIOs reach the chip through a 74LVC2G34 input buffer
+# (SKR Pico V1.0 schematic), which would drive against anything put out on
+# them: no servo's pulse or I2C line goes there, and the firmware refuses
+# them too.
+BUFFERED_INPUTS = frozenset({3, 4, 16, 25})
+# The RP2040's I2C pins less the reserved and buffered ones: data on an
+# even GPIO, clock on the odd one, I2C0 from 0 and I2C1 from 2 in fours.
+I2C_PAIRS = "data on GP0, 20 or 24 with clock on GP1, 17, 21 or 29 (I2C0), or GP18, 22 or 26 with GP23 or 27 (I2C1)"
 # An id of a machine or a CAM profile, which is its file's name less
 # .toml, and of a profile's tools and materials: lower case letters,
 # digits, - and _, starting with a letter or digit, at most 64.
@@ -216,6 +247,9 @@ class Machine:
     controller: str = SPINNY
     # A G-code machine's own tables (GCODE_SECTIONS) as the file has them.
     gcode: dict = field(default_factory=dict)
+    # The servos the page draws a bar for, servo 1 first: each one's number,
+    # name, range in degrees and named positions as [{name, angle}].
+    servos: list = field(default_factory=list)
 
     def summary(self) -> dict:
         return {
@@ -235,6 +269,7 @@ class Machine:
             "host": dict(self.host),
             "camera": {**CAMERA_DEFAULTS, **self.camera},
             "controls": self.controls,
+            "servos": [dict(servo) for servo in self.servos],
         }
 
 
@@ -388,13 +423,15 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
         for section, other in (("output", "laser_pin"), ("probe", "probe_pin")):
             if settings["tool_pin"] == settings[other]:
                 raise MachineError(f"{where}: [enable] pin {pin_name(settings['tool_pin'])} is the [{section}] pin too")
+    servos = _parse_servos(reader, top, settings)
+    driven = _check_servo_pins(where, settings)
     # A fitted endstop is an input like the probe, which it may share;
     # on an output's pin it would read the output.
     for section, (axis, _, _) in AXES.items():
         if not settings[f"{axis}_stop"]:
             continue
         pin = settings[f"{axis}_stop_pin"]
-        outputs = [("output", settings["laser_pin"])] + ([("enable", settings["tool_pin"])] if settings["tool_out"] else [])
+        outputs = [("output", settings["laser_pin"])] + ([("enable", settings["tool_pin"])] if settings["tool_out"] else []) + driven
         for other, other_pin in outputs:
             if pin == other_pin:
                 raise MachineError(f"{where}: [{section}] endstop_pin {pin_name(pin)} is the [{other}] pin too")
@@ -435,7 +472,10 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
     camera = _parse_camera(reader, reader.table(top, "camera"))
     controls = parse_controls(reader, top, kinematics, tool, bool(settings["h_axis"]))
     reader.done(
-        top, None, {"name", "description", "controller", "kinematics", "tool", *AXES, "dispenser", "probe", "output", "enable", "drivers", "host", "camera", "controls"}
+        top,
+        None,
+        {"name", "description", "controller", "kinematics", "tool", *AXES, "dispenser", "probe", "output", "enable", "drivers", "host", "camera",
+         "controls", "pca9685", "servo"},
     )
 
     return Machine(
@@ -449,7 +489,136 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
         host=host,
         controls=controls,
         camera=camera,
+        servos=servos,
     )
+
+
+def _parse_servos(reader: "_Reader", top: dict, settings: dict) -> list[dict]:
+    """`[pca9685]` and `[servo.1]` to `[servo.4]` into the settings: each
+    servo on a pin of the board (`pin`) or a channel of the PCA9685
+    (`channel`), its pulse span, range and start angle; a servo the file
+    leaves out has no output. Returns what the page draws for each one
+    given: its number, name, range and named positions."""
+    pca = reader.table(top, "pca9685")
+    for key, setting in (("sda", "i2c_sda"), ("scl", "i2c_scl")):
+        if key in pca:
+            settings[setting] = reader.output_pin(pca, key, "pca9685")
+    if "sda" in pca and settings["i2c_sda"] % 2:
+        raise reader.fail("pca9685", "sda", f"must be an even GPIO, an I2C block's data line: {I2C_PAIRS}")
+    if "scl" in pca and not settings["i2c_scl"] % 2:
+        raise reader.fail("pca9685", "scl", f"must be an odd GPIO, an I2C block's clock line: {I2C_PAIRS}")
+    if "address" in pca:
+        settings["pca_addr"] = reader.integer(pca, "address", "pca9685", *PCA_ADDRESSES)
+    reader.done(pca, "pca9685", {"sda", "scl", "address"})
+
+    tables = reader.table(top, "servo")
+    for number in tables:
+        if number not in {str(n) for n in range(1, SERVOS + 1)}:
+            raise reader.fail(None, f"servo.{number}", f"is not a servo: the board has servo.1 to servo.{SERVOS}")
+    servos = []
+    for n in range(1, SERVOS + 1):
+        if str(n) not in tables:
+            settings[f"servo{n}_out"] = 0
+            continue
+        section = f"servo.{n}"
+        table = tables[str(n)]
+        if not isinstance(table, dict):
+            raise reader.fail(None, section, "must be a table")
+        table = dict(table)
+        name = reader.text(table, "name", f"Servo {n}")
+        if not name.strip():
+            raise reader.fail(section, "name", "must not be empty")
+        if "pin" in table and "channel" in table:
+            raise reader.fail(section, "channel", "and pin cannot both be given: a servo is on a pin of the board or a channel of the PCA9685")
+        if "pin" in table:
+            settings[f"servo{n}_out"] = 1
+            settings[f"servo{n}_pin"] = reader.output_pin(table, "pin", section)
+        elif "channel" in table:
+            settings[f"servo{n}_out"] = 2
+            settings[f"servo{n}_chan"] = reader.integer(table, "channel", section, 0, PCA_CHANNELS - 1)
+        else:
+            raise reader.fail(None, section, "needs pin, a GPIO of the board, or channel, one of the PCA9685's")
+        for key in ("min_us", "max_us"):
+            if key in table:
+                settings[f"servo{n}_{key}"] = reader.integer(table, key, section, *SERVO_US)
+        if "range" in table:
+            span = reader.number(table, "range", section)
+            if not 0.0 < span <= SERVO_RANGE_MAX:
+                raise reader.fail(section, "range", f"must be above 0 and at most {SERVO_RANGE_MAX:g} degrees")
+            settings[f"servo{n}_range"] = span
+        span = float(settings[f"servo{n}_range"])
+        if "start" in table:
+            start = reader.number(table, "start", section)
+            if not 0.0 <= start <= span:
+                raise reader.fail(section, "start", f"must be 0 to the range, {span:g} degrees; left out, the servo gets no pulse at boot")
+            settings[f"servo{n}_start"] = start
+        else:
+            settings[f"servo{n}_start"] = -1.0
+        positions = table.get("positions", {})
+        if not isinstance(positions, dict):
+            raise reader.fail(section, "positions", "must be a table of names and angles, like { up = 30, down = 120 }")
+        if len(positions) > SERVO_POSITIONS_MAX:
+            raise reader.fail(section, "positions", f"names {len(positions)} angles; at most {SERVO_POSITIONS_MAX}")
+        named = []
+        for label, angle in positions.items():
+            if isinstance(angle, bool) or not isinstance(angle, (int, float)) or not math.isfinite(angle) or not 0.0 <= angle <= span:
+                raise reader.fail(section, "positions", f"{label} must be an angle, 0 to the range, {span:g} degrees")
+            named.append({"name": label, "angle": float(angle)})
+        reader.done(table, section, {"name", "pin", "channel", "min_us", "max_us", "range", "start", "positions"})
+        servos.append({"servo": n, "name": name, "range": span, "positions": named})
+    return servos
+
+
+def _check_servo_pins(where: str, settings: dict) -> list[tuple[str, int]]:
+    """The servos' pins and the PCA9685's bus against each other and the
+    other pins: the firmware takes them one at a time, so a pin named twice
+    is refused here, where the whole file is seen. A servo's pin may not be
+    another output's or the probe's, nor on the laser's PWM slice, whose
+    rate is the laser's, nor on another servo's PWM channel (GPIO n and
+    n + 16 share one); two servos may not share a channel of the PCA9685;
+    and the bus, when a servo is on it, is one I2C block's data and clock
+    lines and nobody else's. Returns the outputs these add, for the
+    endstops' check."""
+    laser = settings["laser_pin"]
+    others = [("output", laser), ("probe", settings["probe_pin"])]
+    if settings["tool_out"]:
+        others.append(("enable", settings["tool_pin"]))
+    driven: list[tuple[str, int]] = []
+    channels: dict[int, int] = {}
+    for n in range(1, SERVOS + 1):
+        section = f"servo.{n}"
+        out = settings[f"servo{n}_out"]
+        if out == 2:
+            channel = settings[f"servo{n}_chan"]
+            if channel in channels:
+                raise MachineError(f"{where}: [{section}] channel {channel} is [servo.{channels[channel]}]'s too")
+            channels[channel] = n
+        if out != 1:
+            continue
+        pin = settings[f"servo{n}_pin"]
+        for other, other_pin in others + driven:
+            if pin == other_pin:
+                raise MachineError(f"{where}: [{section}] pin {pin_name(pin)} is the [{other}] pin too")
+        if (pin // 2) % 8 == (laser // 2) % 8:
+            raise MachineError(
+                f"{where}: [{section}] pin {pin_name(pin)} is on PWM slice {(pin // 2) % 8} with the [output] pin {pin_name(laser)}, which runs at the laser's rate"
+            )
+        for other, other_pin in driven:
+            if (other_pin // 2) % 8 == (pin // 2) % 8 and other_pin % 2 == pin % 2:
+                raise MachineError(
+                    f"{where}: [{section}] pin {pin_name(pin)} drives the PWM channel of the [{other}] pin {pin_name(other_pin)}: GPIO n and n + 16 share one"
+                )
+        driven.append((section, pin))
+    if channels:
+        sda, scl = settings["i2c_sda"], settings["i2c_scl"]
+        if (sda // 2) % 2 != (scl // 2) % 2:
+            raise MachineError(f"{where}: [pca9685] sda {pin_name(sda)} and scl {pin_name(scl)} are not one I2C block's: {I2C_PAIRS}")
+        for key, pin in (("sda", sda), ("scl", scl)):
+            for other, other_pin in others + driven:
+                if pin == other_pin:
+                    raise MachineError(f"{where}: [pca9685] {key} {pin_name(pin)} is the [{other}] pin too")
+        driven += [("pca9685", sda), ("pca9685", scl)]
+    return driven
 
 
 def _parse_gcode_machine(reader: "_Reader", top: dict, machine_id: str, name: str, description: str) -> Machine:
@@ -460,7 +629,7 @@ def _parse_gcode_machine(reader: "_Reader", top: dict, machine_id: str, name: st
     read here like any machine's."""
     kinematics = reader.choice(top, "kinematics", ("cartesian",), "cartesian")
     tool = reader.choice(top, "tool", (NOZZLE,), NOZZLE)
-    for section in (*AXES, "dispenser", "probe", "output", "enable", "drivers", "host", "camera"):
+    for section in (*AXES, "dispenser", "probe", "output", "enable", "drivers", "host", "camera", "pca9685", "servo"):
         if section in top:
             raise reader.fail(None, section, "is for a machine on this project's firmware: a G-code machine's own controller keeps its settings")
     controls = parse_controls(reader, top, kinematics, tool, True)
@@ -607,6 +776,14 @@ class _Reader:
         if value in RESERVED_PINS:
             raise self.fail(section, key, f"{value} is a driver socket's or the driver UART's; the sockets and the UART keep "
                             + ", ".join(str(pin) for pin in sorted(RESERVED_PINS)))
+        return value
+
+    def output_pin(self, table: dict, key: str, section: str) -> int:
+        """A pin a servo's pulse or the I2C bus drives: a free GPIO, not
+        a STOP header's behind its input buffer."""
+        value = self.pin(table, key, section)
+        if value in BUFFERED_INPUTS:
+            raise self.fail(section, key, f"{pin_name(value)} is a STOP header's, an input behind a buffer that would drive against it")
         return value
 
     def one_of(self, table: dict, key: str, section: str, choices: tuple[int, ...]) -> int:

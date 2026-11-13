@@ -291,6 +291,23 @@ SETTINGS_SCHEMA = [
     {"name": "tmc_hold_delay", "unit": "", "help": "IHOLDDELAY 0 to 15: each step of the fall from run to hold current takes this many 2^18 clocks (21.8 ms); 0 drops at once"},
     {"name": "tmc_tpowerdown", "unit": "", "help": "TPOWERDOWN 0 to 255: how long a motor at rest keeps its run current, in 2^18 clocks (21.8 ms) from 87 ms after its last step, before the fall to hold; 2 or more with stealthChop"},
     {"name": "tmc_tpwmthrs", "unit": "TSTEP", "help": "TPWMTHRS 0 to 1048575: stealthChop while TSTEP is at least this, spreadCycle faster; TSTEP is the 12 MHz clocks between 1/256 microsteps, 46875 / full steps per second; 0 = stealthChop at every speed"},
+    # The PCA9685 servo driver's bus, and the four servos.
+    {"name": "i2c_sda", "unit": "GPIO", "help": "the PCA9685's I2C data line, an even pin: 0 (TX), 20, 24 for I2C0, 18, 22, 26 for I2C1; read at boot"},
+    {"name": "i2c_scl", "unit": "GPIO", "help": "its clock line, an odd pin of the same block: 1 (RX), 17, 21, 29 for I2C0, 23, 27 for I2C1; read at boot"},
+    {"name": "pca_addr", "unit": "", "help": "the PCA9685's 7-bit address, 64 to 127 (0x40 to 0x7F) as its address pins set it; read at boot"},
+    *(
+        entry
+        for n in range(1, 5)
+        for entry in (
+            {"name": f"servo{n}_out", "unit": "", "help": f"servo {n}'s output: 0 none, 1 servo{n}_pin, 2 the PCA9685's channel servo{n}_chan; read at boot"},
+            {"name": f"servo{n}_pin", "unit": "GPIO", "help": f"servo {n} on the board: its pin, not on the laser's PWM slice nor a STOP header's; read at boot"},
+            {"name": f"servo{n}_chan", "unit": "", "help": f"servo {n} on the PCA9685: its channel, 0 to 15; read at boot"},
+            {"name": f"servo{n}_min_us", "unit": "us", "help": f"servo {n}'s pulse at 0 degrees, 200 to 3000"},
+            {"name": f"servo{n}_max_us", "unit": "us", "help": f"servo {n}'s pulse at servo{n}_range degrees, 200 to 3000"},
+            {"name": f"servo{n}_range", "unit": "deg", "help": f"servo {n}'s angle from servo{n}_min_us to servo{n}_max_us, above 0 and at most 360"},
+            {"name": f"servo{n}_start", "unit": "deg", "help": f"servo {n}'s angle at boot; -1 for no pulse until moved"},
+        )
+    ),
 ]
 
 # How long a home may take before the request gives up on it: every axis
@@ -403,6 +420,13 @@ class LaserBody(Finite):
 
 class SpindleBody(Finite):
     power: float
+
+
+class ServoBody(Finite):
+    # The servo's number, 1 to 4.
+    servo: int
+    # Degrees, 0 to the servo's range; None lets it go, without a pulse.
+    angle: float | None = None
 
 
 class ModeBody(BaseModel):
@@ -1417,6 +1441,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
                     "joint": {"r": status.r, "a": status.a, "z": status.z, "h": status.h},
                     "probe": status.probe,
                     "homed": status.homed,
+                    "servos": status.servos,
                     "board": {"x": round(x, 4), "y": round(y, 4)},
                     "rate": status.rate,
                     "laser": status.laser,
@@ -2086,6 +2111,29 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         link.status_now(1.0, routine=True)
         return self.snapshot()
 
+    def servo(self, servo: int, angle: float | None) -> dict:
+        """Moves a servo from the page, or lets it go. The firmware moves it
+        once queued motion is done; a run, probing or a camera routine owns
+        the machine meanwhile, and a line from the page would land between
+        theirs, so it is refused then as a move is."""
+        with self._owner_lock:
+            link = self._movable()
+            if not 1 <= servo <= machine_files.SERVOS:
+                raise ValueError(f"servo must be 1 to {machine_files.SERVOS}")
+            values = self._values()
+            if not values.get(f"servo{servo}_out"):
+                raise ValueError(f"servo {servo} has no output: give [servo.{servo}] a pin or a channel in the machine file")
+            if angle is None:
+                line = f"servo N{servo} off"
+            else:
+                span = float(values.get(f"servo{servo}_range", 180.0))
+                if not (math.isfinite(angle) and 0.0 <= angle <= span):
+                    raise ValueError(f"angle must be 0 to {span:g} degrees")
+                line = f"servo N{servo} A{num(angle)}"
+            link.request_ok(line)
+        link.status_now(1.0, routine=True)
+        return self.snapshot()
+
     def mode(self, mode: str) -> dict:
         if self.runner.active:
             raise HTTPException(status_code=409, detail="a job is running")
@@ -2215,6 +2263,8 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             "unsaved": sorted(self._unsaved),
             "controls_from": source.id if source is not None else None,
             "controls": source.controls if source is not None else default_controls(profile["kinematics"], profile["tool"], profile["h_axis"]),
+            # The servos' names and named positions, from the same file.
+            "servos": list(source.servos) if source is not None else [],
         }
 
     def write_settings(self, values: dict | None, host: dict | None) -> dict:
@@ -4258,6 +4308,10 @@ def create_app(
     @app.post("/api/mode")
     def mode(body: ModeBody):
         return guarded(lambda: backend.mode(body.mode))
+
+    @app.post("/api/servo")
+    def servo(body: ServoBody):
+        return guarded(lambda: backend.servo(body.servo, body.angle))
 
     # --- settings ---
 

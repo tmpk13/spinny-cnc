@@ -355,31 +355,28 @@ pub fn apply(settings: &mut Settings, text: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The `[[servo]]` entries, servo 1 first: each on a GPIO of the board
-/// (`pin`) or a channel of the PCA9685 (`channel`), its pulse span, range
-/// and start angle. A servo the file does not list has no output. Its
-/// name and named positions are the page's: only their shape is checked.
-/// True when a servo is on the PCA9685.
+/// `[servo.1]` to `[servo.4]`: each servo on a GPIO of the board (`pin`)
+/// or a channel of the PCA9685 (`channel`), its pulse span, range and start
+/// angle. A servo the file leaves out has no output. Its name and named
+/// positions are the page's: only their shape is checked. True when a
+/// servo is on the PCA9685.
 fn servos(top: &Table, writes: &mut Vec<(String, String)>) -> Result<bool, String> {
-    let entries = match top.get("servo") {
-        None => Vec::new(),
-        Some(Value::Array(entries)) => entries.clone(),
-        Some(_) => return Err("servo must be an array of tables, one [[servo]] per servo".into()),
-    };
-    if entries.len() > SERVOS {
-        return Err(format!("servo lists {} servos; the board has {SERVOS}", entries.len()));
+    let tables = table_of(top, "servo")?;
+    for number in tables.keys() {
+        if !(1..=SERVOS).any(|n| n.to_string() == *number) {
+            return Err(format!("servo.{number} is not a servo: the board has servo.1 to servo.{SERVOS}"));
+        }
     }
     let mut pca_used = false;
-    for i in 0..SERVOS {
-        let n = i + 1;
-        let Some(entry) = entries.get(i) else {
-            writes.push((format!("servo{n}_out"), SERVO_NONE.to_string()));
-            continue;
-        };
-        let section = format!("servo {n}");
-        let table = match entry {
-            Value::Table(table) => table.clone(),
-            _ => return Err("servo must be an array of tables, one [[servo]] per servo".into()),
+    for n in 1..=SERVOS {
+        let section = format!("servo.{n}");
+        let table = match tables.get(&n.to_string()) {
+            None => {
+                writes.push((format!("servo{n}_out"), SERVO_NONE.to_string()));
+                continue;
+            }
+            Some(Value::Table(table)) => table.clone(),
+            Some(_) => return Err(format!("{section} must be a table")),
         };
         if let Some(name) = table.get("name") {
             name.as_str().ok_or(format!("[{section}] name must be a string"))?;
@@ -387,7 +384,11 @@ fn servos(top: &Table, writes: &mut Vec<(String, String)>) -> Result<bool, Strin
         let pin = integer(&table, "pin", &section)?;
         let channel = integer(&table, "channel", &section)?;
         match (pin, channel) {
-            (Some(_), Some(_)) => return Err(format!("[{section}] pin and channel cannot both be given: a servo is on a pin of the board or a channel of the PCA9685")),
+            (Some(_), Some(_)) => {
+                return Err(format!(
+                    "[{section}] channel and pin cannot both be given: a servo is on a pin of the board or a channel of the PCA9685"
+                ))
+            }
             (Some(pin), None) => {
                 writes.push((format!("servo{n}_out"), SERVO_PIN.to_string()));
                 writes.push((format!("servo{n}_pin"), pin));
@@ -397,7 +398,7 @@ fn servos(top: &Table, writes: &mut Vec<(String, String)>) -> Result<bool, Strin
                 writes.push((format!("servo{n}_out"), SERVO_PCA.to_string()));
                 writes.push((format!("servo{n}_chan"), channel));
             }
-            (None, None) => return Err(format!("[{section}] needs pin, a GPIO of the board, or channel, one of the PCA9685's")),
+            (None, None) => return Err(format!("{section} needs pin, a GPIO of the board, or channel, one of the PCA9685's")),
         }
         for key in ["min_us", "max_us"] {
             if let Some(value) = integer(&table, key, &section)? {
@@ -427,7 +428,9 @@ fn servos(top: &Table, writes: &mut Vec<(String, String)>) -> Result<bool, Strin
                     }
                 }
             }
-            Some(_) => return Err(format!("[{section}] positions must be a table of names and angles, like {{ up = 30, down = 120 }}")),
+            Some(_) => {
+                return Err(format!("[{section}] positions must be a table of names and angles, like {{ up = 30, down = 120 }}"))
+            }
         }
         only(&table, &section, &["name", "pin", "channel", "min_us", "max_us", "range", "start", "positions"])?;
     }
@@ -563,21 +566,21 @@ mod tests {
     }
 
     #[test]
-    fn servos_land_on_their_slots_in_file_order() {
+    fn servos_land_on_their_numbers() {
         let settings = applied(
             "[pca9685]\nsda = 20\nscl = 21\naddress = 0x41\n\
-             [[servo]]\nname = \"Pen\"\npin = 29\nmin_us = 900\nmax_us = 2100\nrange = 270\nstart = 90\npositions = { up = 30, down = 120 }\n\
-             [[servo]]\nchannel = 7\n",
+             [servo.1]\nname = \"Pen\"\npin = 29\nmin_us = 900\nmax_us = 2100\nrange = 270\nstart = 90\npositions = { up = 30, down = 120 }\n\
+             [servo.3]\nchannel = 7\n",
         );
         assert_eq!((settings.i2c_sda, settings.i2c_scl, settings.pca_addr), (20, 21, 0x41));
-        assert_eq!(settings.servo_out, [SERVO_PIN, SERVO_PCA, SERVO_NONE, SERVO_NONE]);
+        assert_eq!(settings.servo_out, [SERVO_PIN, SERVO_NONE, SERVO_PCA, SERVO_NONE]);
         assert_eq!(settings.servo_pin[0], 29);
-        assert_eq!(settings.servo_chan[1], 7);
+        assert_eq!(settings.servo_chan[2], 7);
         assert_eq!(
             (settings.servo_min_us[0], settings.servo_max_us[0], settings.servo_range[0], settings.servo_start[0]),
             (900, 2100, 270.0, 90.0)
         );
-        assert_eq!(settings.servo_start[1], -1.0, "no start: no pulse at boot");
+        assert_eq!(settings.servo_start[2], -1.0, "no start: no pulse at boot");
         // A file is the whole machine: one without servos takes them off.
         let mut fitted = settings;
         apply(&mut fitted, "").unwrap();
@@ -587,21 +590,24 @@ mod tests {
     #[test]
     fn a_servo_is_on_a_pin_or_a_channel_and_the_bus_is_one_block() {
         let refused = |text: &str| apply(&mut Settings::default(), text).unwrap_err();
-        assert_eq!(refused("[[servo]]\nname = \"x\"\n"), "[servo 1] needs pin, a GPIO of the board, or channel, one of the PCA9685's");
-        assert!(refused("[[servo]]\npin = 29\nchannel = 1\n").starts_with("[servo 1] pin and channel cannot both be given"));
-        assert_eq!(refused("[[servo]]\nchannel = 16\n"), "servo1_chan cannot be set to 16");
-        assert_eq!(refused("[[servo]]\npin = 29\n[[servo]]\npin = 19\n"), "servo2_pin cannot be set to 19");
-        assert_eq!(refused("[[servo]]\npin = 29\nmin_us = 100\n"), "servo1_min_us cannot be set to 100");
-        assert!(refused("[[servo]]\npin = 29\nstart = -5\n").contains("[servo 1] start must be 0 or more"));
-        assert!(refused("[[servo]]\npin = 29\npositions = { up = \"high\" }\n").contains("[servo 1] positions up must be an angle"));
-        assert!(refused("[[servo]]\npin = 29\nspeed = 3\n").contains("[servo 1] speed is not a key here"));
-        assert!(refused("servo = 3\n").contains("[[servo]]"));
-        assert!(refused(&"[[servo]]\npin = 29\n".repeat(5)).contains("servo lists 5 servos; the board has 4"));
-        assert!(refused("[pca9685]\nsda = 18\n[[servo]]\nchannel = 0\n").contains("different I2C blocks"));
+        assert_eq!(refused("[servo.1]\nname = \"x\"\n"), "servo.1 needs pin, a GPIO of the board, or channel, one of the PCA9685's");
+        assert!(refused("[servo.1]\npin = 29\nchannel = 1\n").starts_with("[servo.1] channel and pin cannot both be given"));
+        assert_eq!(refused("[servo.2]\nchannel = 16\n"), "servo2_chan cannot be set to 16");
+        assert_eq!(refused("[servo.2]\npin = 19\n"), "servo2_pin cannot be set to 19");
+        assert_eq!(refused("[servo.4]\npin = 25\n"), "servo4_pin cannot be set to 25", "Z-STOP is a buffered input");
+        assert_eq!(refused("[servo.1]\npin = 29\nmin_us = 100\n"), "servo1_min_us cannot be set to 100");
+        assert!(refused("[servo.1]\npin = 29\nstart = -5\n").contains("[servo.1] start must be 0 or more"));
+        assert!(refused("[servo.1]\npin = 29\npositions = { up = \"high\" }\n").contains("[servo.1] positions up must be an angle"));
+        assert!(refused("[servo.1]\npin = 29\nspeed = 3\n").contains("[servo.1] speed is not a key here"));
+        assert!(refused("[servo.5]\npin = 29\n").contains("servo.5 is not a servo: the board has servo.1 to servo.4"));
+        assert!(refused("[servo.pen]\npin = 29\n").contains("servo.pen is not a servo"));
+        assert!(refused("servo = 3\n").contains("servo must be a table"));
+        assert!(refused("[pca9685]\nsda = 18\n[servo.1]\nchannel = 0\n").contains("different I2C blocks"));
         // A bus that only servos on a pin leave unused is not started, so
         // its pins are not held to each other.
-        applied("[pca9685]\nsda = 18\n[[servo]]\npin = 29\n");
+        applied("[pca9685]\nsda = 18\n[servo.1]\npin = 29\n");
         assert_eq!(refused("[pca9685]\nsda = 1\n"), "i2c_sda cannot be set to 1");
+        assert_eq!(refused("[pca9685]\nsda = 16\n"), "i2c_sda cannot be set to 16", "E-STOP is a buffered input");
         assert_eq!(refused("[pca9685]\naddress = 0x30\n"), "pca_addr cannot be set to 48");
         assert!(refused("[pca9685]\nbus = 1\n").contains("[pca9685] bus is not a key here"));
     }

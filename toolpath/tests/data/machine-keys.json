@@ -659,6 +659,195 @@
             "bit": 0
         },
         {
+            "setting": "i2c_sda",
+            "section": "pca9685",
+            "key": "sda",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "i2c_scl",
+            "section": "pca9685",
+            "key": "scl",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "pca_addr",
+            "section": "pca9685",
+            "key": "address",
+            "kind": "integer",
+            "bit": 0
+        },
+        {
+            "setting": "servo1_pin",
+            "section": "servo.1",
+            "key": "pin",
+            "kind": "servo_pin",
+            "bit": 0
+        },
+        {
+            "setting": "servo1_chan",
+            "section": "servo.1",
+            "key": "channel",
+            "kind": "servo_channel",
+            "bit": 0
+        },
+        {
+            "setting": "servo1_min_us",
+            "section": "servo.1",
+            "key": "min_us",
+            "kind": "servo_integer",
+            "bit": 0
+        },
+        {
+            "setting": "servo1_max_us",
+            "section": "servo.1",
+            "key": "max_us",
+            "kind": "servo_integer",
+            "bit": 0
+        },
+        {
+            "setting": "servo1_range",
+            "section": "servo.1",
+            "key": "range",
+            "kind": "servo_number",
+            "bit": 0
+        },
+        {
+            "setting": "servo1_start",
+            "section": "servo.1",
+            "key": "start",
+            "kind": "servo_start",
+            "bit": 0
+        },
+        {
+            "setting": "servo2_pin",
+            "section": "servo.2",
+            "key": "pin",
+            "kind": "servo_pin",
+            "bit": 1
+        },
+        {
+            "setting": "servo2_chan",
+            "section": "servo.2",
+            "key": "channel",
+            "kind": "servo_channel",
+            "bit": 1
+        },
+        {
+            "setting": "servo2_min_us",
+            "section": "servo.2",
+            "key": "min_us",
+            "kind": "servo_integer",
+            "bit": 1
+        },
+        {
+            "setting": "servo2_max_us",
+            "section": "servo.2",
+            "key": "max_us",
+            "kind": "servo_integer",
+            "bit": 1
+        },
+        {
+            "setting": "servo2_range",
+            "section": "servo.2",
+            "key": "range",
+            "kind": "servo_number",
+            "bit": 1
+        },
+        {
+            "setting": "servo2_start",
+            "section": "servo.2",
+            "key": "start",
+            "kind": "servo_start",
+            "bit": 1
+        },
+        {
+            "setting": "servo3_pin",
+            "section": "servo.3",
+            "key": "pin",
+            "kind": "servo_pin",
+            "bit": 2
+        },
+        {
+            "setting": "servo3_chan",
+            "section": "servo.3",
+            "key": "channel",
+            "kind": "servo_channel",
+            "bit": 2
+        },
+        {
+            "setting": "servo3_min_us",
+            "section": "servo.3",
+            "key": "min_us",
+            "kind": "servo_integer",
+            "bit": 2
+        },
+        {
+            "setting": "servo3_max_us",
+            "section": "servo.3",
+            "key": "max_us",
+            "kind": "servo_integer",
+            "bit": 2
+        },
+        {
+            "setting": "servo3_range",
+            "section": "servo.3",
+            "key": "range",
+            "kind": "servo_number",
+            "bit": 2
+        },
+        {
+            "setting": "servo3_start",
+            "section": "servo.3",
+            "key": "start",
+            "kind": "servo_start",
+            "bit": 2
+        },
+        {
+            "setting": "servo4_pin",
+            "section": "servo.4",
+            "key": "pin",
+            "kind": "servo_pin",
+            "bit": 3
+        },
+        {
+            "setting": "servo4_chan",
+            "section": "servo.4",
+            "key": "channel",
+            "kind": "servo_channel",
+            "bit": 3
+        },
+        {
+            "setting": "servo4_min_us",
+            "section": "servo.4",
+            "key": "min_us",
+            "kind": "servo_integer",
+            "bit": 3
+        },
+        {
+            "setting": "servo4_max_us",
+            "section": "servo.4",
+            "key": "max_us",
+            "kind": "servo_integer",
+            "bit": 3
+        },
+        {
+            "setting": "servo4_range",
+            "section": "servo.4",
+            "key": "range",
+            "kind": "servo_number",
+            "bit": 3
+        },
+        {
+            "setting": "servo4_start",
+            "section": "servo.4",
+            "key": "start",
+            "kind": "servo_start",
+            "bit": 3
+        },
+        {
             "setting": "host.tolerance",
             "section": "host",
             "key": "tolerance",
@@ -814,7 +1003,38 @@
             "tmc_hend": 0,
             "tmc_hold_delay": 10,
             "tmc_tpowerdown": 20,
-            "tmc_tpwmthrs": 234
+            "tmc_tpwmthrs": 234,
+            "i2c_sda": 0,
+            "i2c_scl": 1,
+            "pca_addr": 65,
+            "servo1_out": 0,
+            "servo1_pin": 29,
+            "servo1_chan": 0,
+            "servo1_min_us": 1000,
+            "servo1_max_us": 2000,
+            "servo1_range": 180.0,
+            "servo1_start": -1.0,
+            "servo2_out": 2,
+            "servo2_pin": 29,
+            "servo2_chan": 3,
+            "servo2_min_us": 1000,
+            "servo2_max_us": 2200,
+            "servo2_range": 180.0,
+            "servo2_start": 45.0,
+            "servo3_out": 0,
+            "servo3_pin": 29,
+            "servo3_chan": 2,
+            "servo3_min_us": 1000,
+            "servo3_max_us": 2000,
+            "servo3_range": 180.0,
+            "servo3_start": -1.0,
+            "servo4_out": 0,
+            "servo4_pin": 29,
+            "servo4_chan": 3,
+            "servo4_min_us": 1000,
+            "servo4_max_us": 2000,
+            "servo4_range": 180.0,
+            "servo4_start": -1.0
         },
         "host": {
             "tolerance": 0.01,
@@ -822,7 +1042,7 @@
             "travel": null,
             "spinup": 2.0
         },
-        "text": "name = \"Into\"\nkinematics = \"cartesian\"\ntool = \"spindle\"\n\n[rail]\nfull_steps_per_mm = 50      # 200 steps per turn, 5 mm per turn\nmax_rate = 1200             # mm/min\nmicrosteps = 32\nsocket = \"Y\"\nendstop = \"min\"\nendstop_halt = true\n\n[table]\nsteps_per_deg = 888.888\ninvert = true\nsocket = \"X\"\n\n[host]\ntolerance = 0.01\nclearance = 3.5             # mm\n\n[focus]\nfitted = true\nfull_steps_per_mm = 40\nmicrosteps = 32\n\n[probe]\nbrake_ms = 0\npin = 26\n\n[drivers]\nhold_pct = 30\ninterpolate = false\ntpwmthrs = 234\n\n[controls]\npad = true\n",
+        "text": "name = \"Into\"\nkinematics = \"cartesian\"\ntool = \"spindle\"\n\n[rail]\nfull_steps_per_mm = 50      # 200 steps per turn, 5 mm per turn\nmax_rate = 1200             # mm/min\nmicrosteps = 32\nsocket = \"Y\"\nendstop = \"min\"\nendstop_halt = true\n\n[table]\nsteps_per_deg = 888.888\ninvert = true\nsocket = \"X\"\n\n[host]\ntolerance = 0.01\nclearance = 3.5             # mm\n\n[focus]\nfitted = true\nfull_steps_per_mm = 40\nmicrosteps = 32\n\n[probe]\nbrake_ms = 0\npin = 26\n\n[drivers]\nhold_pct = 30\ninterpolate = false\ntpwmthrs = 234\n\n[pca9685]\naddress = 65\n\n[servo.2]\nchannel = 3\nmin_us = 1000\nmax_us = 2200\nrange = 180\nstart = 45\n\n[controls]\npad = true\n",
         "changes": [
             "kinematics = \"cartesian\" (was \"polar\")",
             "tool = \"spindle\" (was \"laser\")",
@@ -843,6 +1063,12 @@
             "[drivers] hold_pct = 30 (was 50)",
             "[drivers] interpolate = false (was true)",
             "[drivers] tpwmthrs = 234 (was 0)",
+            "[pca9685] address = 65 (was 64)",
+            "[servo.2] channel = 3 (was unset)",
+            "[servo.2] min_us = 1000 (was unset)",
+            "[servo.2] max_us = 2200 (was unset)",
+            "[servo.2] range = 180 (was unset)",
+            "[servo.2] start = 45 (was unset)",
             "[host] tolerance = 0.01 (was 0.005)",
             "[host] clearance = 3.5 (was 2)"
         ],
@@ -931,6 +1157,37 @@
         "tmc_hend": 0,
         "tmc_hold_delay": 10,
         "tmc_tpowerdown": 20,
-        "tmc_tpwmthrs": 0
+        "tmc_tpwmthrs": 0,
+        "i2c_sda": 0,
+        "i2c_scl": 1,
+        "pca_addr": 64,
+        "servo1_out": 0,
+        "servo1_pin": 29,
+        "servo1_chan": 0,
+        "servo1_min_us": 1000,
+        "servo1_max_us": 2000,
+        "servo1_range": 180.0,
+        "servo1_start": -1.0,
+        "servo2_out": 0,
+        "servo2_pin": 29,
+        "servo2_chan": 1,
+        "servo2_min_us": 1000,
+        "servo2_max_us": 2000,
+        "servo2_range": 180.0,
+        "servo2_start": -1.0,
+        "servo3_out": 0,
+        "servo3_pin": 29,
+        "servo3_chan": 2,
+        "servo3_min_us": 1000,
+        "servo3_max_us": 2000,
+        "servo3_range": 180.0,
+        "servo3_start": -1.0,
+        "servo4_out": 0,
+        "servo4_pin": 29,
+        "servo4_chan": 3,
+        "servo4_min_us": 1000,
+        "servo4_max_us": 2000,
+        "servo4_range": 180.0,
+        "servo4_start": -1.0
     }
 }

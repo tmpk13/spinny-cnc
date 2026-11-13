@@ -5,7 +5,7 @@ rates and limits, the kinematics (the rail as the radius over a turning
 table, or as X beside the cross slide as Y), the tool (a laser, a
 spindle with the focus axis as its depth, or a solder paste dispenser
 whose plunger takes the table's driver), the camera on the head, if any,
-and the controls the page draws for it. Loading a file
+the servos it drives, and the controls the page draws for it. Loading a file
 writes every firmware setting, so swapping files swaps machines. The same
 files start the virtual firmware, and give the gcode tools their defaults.
 A machine whose own controller takes G-code, a pick and place machine's
@@ -18,7 +18,7 @@ connected from the Connection tab and jogged, homed and stopped like the others.
 | Backend | `GET /api/machines`, `GET`, `PUT`, `PATCH` and `DELETE /api/machines/{id}`, `POST /api/machines/{id}/check`, `POST /api/machines/{id}/apply` ([WEB_API.md](WEB_API.md)); `spinny-web --machines DIR` reads another directory |
 | Virtual firmware | `spinny-virtual --machine machines/cartesian-mill.toml`; `--settings` after it overrides single values |
 | Gcode tools | `spinny-iso --machine machines/polar-laser.toml ...`: the axis rates, the power scale and the chord tolerance stand in for the defaults; a flag given still wins |
-| Code | `spinny_laser.machines` (Python), `firmware/virtual/src/machine.rs` (Rust); the virtual firmware's tests load the shipped files, so the two stay one schema |
+| Code | `spinny_laser.machines` (Python), `firmware/virtual/src/machine.rs` (Rust), `web/frontend/src/mock/machines.ts` (the page's mock); the virtual firmware's tests load the shipped files, so the three stay one schema |
 
 The shipped files: `polar-laser` (the firmware's defaults, every key
 spelled out), `polar-laser-focus` (the focus axis fitted),
@@ -160,6 +160,21 @@ hend = 0                        # 0 to 15                  -> tmc_hend
 hold_delay = 10                 # 0 to 15                  -> tmc_hold_delay
 tpowerdown = 20                 # 0 to 255                 -> tmc_tpowerdown
 tpwmthrs = 0                    # 0 to 1048575, 0 = stealthChop at every speed -> tmc_tpwmthrs
+
+[pca9685]                       # a PCA9685 servo driver on the board's I2C bus; see Servos
+sda = 0                         # data line: an even GPIO, 0 TX on the UART header -> i2c_sda
+scl = 1                         # clock line: the odd GPIO of the same I2C block, 1 RX -> i2c_scl
+address = 0x40                  # 0x40 to 0x7F as the module's address pads set it -> pca_addr
+
+[servo.1]                       # servo.1 to servo.4, each one the file fits; see Servos
+name = "Pen"                    # the page's bar; default: Servo 1
+pin = 29                        # GPIO of the board, 29 SERVO -> servo1_out = 1, servo1_pin
+# channel = 0                   # or a PCA9685 channel, 0 to 15 -> servo1_out = 2, servo1_chan; not both
+min_us = 1000                   # pulse at 0 degrees, 200 to 3000 -> servo1_min_us
+max_us = 2000                   # pulse at the far end of the range -> servo1_max_us
+range = 180                     # degrees from min_us to max_us, (0, 360] -> servo1_range
+start = 90                      # degrees at power on, within the range; left out: no pulse until moved -> servo1_start
+positions = { up = 30, down = 120 }  # the page's buttons, at most 8, within the range; nothing of it reaches the firmware
 
 [host]                          # the host's own settings, not the firmware's
 tolerance = 0.005               # chord tolerance, mm, (0, 10]
@@ -326,6 +341,45 @@ travel height between dots and the retract at `[dispenser] max_rate`; the
 run that lays the dots is in [WEB_API.md](WEB_API.md#jobs). The shipped
 `cartesian-dispenser` has the plunger on the E socket beside the mill's
 rail, slide and depth axis.
+
+## Servos
+
+Up to four servos, `[servo.1]` to `[servo.4]`, each on a pin of the board
+(`pin`), whose PWM slice gives it a pulse every 20 ms, or on a channel of
+a PCA9685 PWM driver on the board's I2C bus (`channel`), never both. A
+servo the file leaves out has no output (`servoN_out` 0), so a file with
+none takes them all off. The pulse runs from `min_us` at 0 degrees to
+`max_us` at `range` degrees in a straight line; a servo that turns the
+other way gets the longer pulse as `min_us`. `start` is the angle the
+board drives it to at power on; left out, it gets no pulse until it is
+moved, and hangs loose meanwhile. `name` and `positions` are the page's:
+a bar per servo in the jog panel with its angle, a field to move it to
+any angle in its range, a button per named position and *Off*, which lets
+it go. The firmware's side, the `servo` line and how a servo rides through
+holds and resets, is [PROTOCOL.md](PROTOCOL.md#servos); the wiring and the
+supply, [firmware/rp2040/README.md](../firmware/rp2040/README.md#servos).
+
+`[pca9685]` says where that chip is: its I2C bus's data line `sda` (an
+even GPIO) and clock line `scl` (an odd one), which must be one I2C
+block's (data on GP0, 20 or 24 with clock on GP1, 17, 21 or 29 for I2C0,
+or GP18, 22 or 26 with GP23 or 27 for I2C1), and its `address`, 0x40 with
+every address pad open. The bus is started only for a servo with a
+channel. The SKR Pico's UART header carries GP0 and GP1, the default; the
+SERVOS (GP29) and RGB (GP24) headers reach the chip directly as well.
+
+A file is refused for what the board could not drive, since the firmware
+takes the settings one at a time: a servo's pin or a bus line on a STOP
+header (GP3, GP4, GP16, GP25), whose input buffer would drive against it;
+a servo's pin that is the laser's, the probe's, a fitted tool output's or
+another servo's, or that is on the laser's PWM slice (GP20 and GP21 with
+the laser on FAN3), whose rate is the laser's, or on another servo's PWM
+channel (GPIO n and n + 16 share one); two servos on one channel of the
+PCA9685; and, with a servo on it, a bus whose lines are not one block's
+or are another output's or the probe's. A fitted endstop may not sit on a
+servo's pin or a bus line either. The pins, the channels and the bus are
+read at boot, so a write that changes one takes effect after a restart of
+the board; the span, the range and the start apply at once (the start at
+the next power on).
 
 ## Camera
 

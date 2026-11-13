@@ -41,6 +41,8 @@ State snapshot:
     "state": "Idle", "alarm": null,
     "joint": {"r": 12.345, "a": 90.1234, "z": 0.0, "h": -1.25},
     "probe": false,
+    "homed": null,
+    "servos": [90.0, null, null, null],  // each servo's angle, null without a pulse; null with no servo fitted
     "board": {"x": 0.0, "y": 12.345},
     "rate": 0.0, "laser": 0, "mode": "dyn", "enabled": true,
     "queue": {"planner": 32, "lines": 16}
@@ -168,11 +170,18 @@ On a spindle machine (`profile.tool` `spindle`) `POST /api/laser` answers
 | `POST /api/spindle` | `{"power": 800}` starts it at that `S`, or changes its speed; 400 on a laser machine, 409 while a run is active (a run starts and stops it itself) and while the board is probed (the probe may be the tool) |
 | `POST /api/spindle/off` | stops it; 409 while a run is active, where the stop is the run's stop |
 
+Servos ([PROTOCOL.md](PROTOCOL.md#servos)), on any machine on this
+project's firmware that fits them:
+
+| Method and path | Body |
+| --- | --- |
+| `POST /api/servo` | `{"servo": 1, "angle": 90}` moves servo 1 (1 to 4) to 90 degrees, 0 to its `servoN_range`, once queued motion is done; `{"servo": 1, "angle": null}` lets it go, without a pulse; answers the state, whose `machine.servos` has the angles; 400 for a servo without an output (`servoN_out` 0), a number outside 1 to 4 or an angle outside the range, 409 while a run, probing or a camera routine owns the machine, and for a G-code machine |
+
 ## Settings
 
 | Method and path | Body |
 | --- | --- |
-| `GET /api/settings` | returns `{"values": {"r_steps": 256, ...}, "schema": [{"name", "unit", "help"}], "host": {"tolerance": 0.005, "clearance": 2.0, "travel": null, "spinup": 2.0, "speed_control": true, "gap": 0.1, "retract": 0.2, "output": 100, "extrude_rate": 60, "dwell_ms": 200}, "machine": "polar-laser", "unsaved": [], "controls_from": "polar-laser", "controls": {...}}`; `machine` is the machine file the values are, every one of them, or `null`; `unsaved` names the settings written (from the page, a machine file or the console) since the controller's were last saved to flash or loaded from it, `$defaults` for that command, as far as this backend has seen: a connect and a restart of the board start it empty; `controls` is what the page draws for jogging and the readout, a machine file's `[controls]` picked as [MACHINES.md](MACHINES.md#the-controls) says; `controls_from` is the file the controls are, `null` for the defaults |
+| `GET /api/settings` | returns `{"values": {"r_steps": 256, ...}, "schema": [{"name", "unit", "help"}], "host": {"tolerance": 0.005, "clearance": 2.0, "travel": null, "spinup": 2.0, "speed_control": true, "gap": 0.1, "retract": 0.2, "output": 100, "extrude_rate": 60, "dwell_ms": 200}, "machine": "polar-laser", "unsaved": [], "controls_from": "polar-laser", "controls": {...}}`; `machine` is the machine file the values are, every one of them, or `null`; `unsaved` names the settings written (from the page, a machine file or the console) since the controller's were last saved to flash or loaded from it, `$defaults` for that command, as far as this backend has seen: a connect and a restart of the board start it empty; `controls` is what the page draws for jogging and the readout, a machine file's `[controls]` picked as [MACHINES.md](MACHINES.md#the-controls) says; `controls_from` is the file the controls are, `null` for the defaults; `servos` is the same file's servos as `[{"servo": 1, "name": "Pen", "range": 180, "positions": [{"name": "up", "angle": 30}]}]`, the page's bar for each, `[]` without a file |
 | `PUT /api/settings` | `{"values": {"r_rate": 800}, "host": {"tolerance": 0.005, "clearance": 2.0, "spinup": 2.0, "speed_control": true, "gap": 0.1, "retract": 0.2, "output": 100, "extrude_rate": 60, "dwell_ms": 200}}`; all or nothing: an unknown name, a value that is not a finite number, a tolerance outside `(0, 10]` mm, a clearance outside `(0, 100]` mm, a travel height that is neither `null` nor within `[-100, 100]` mm, a spin-up outside `[0, 600]` s, a gap outside `(0, 10]` mm, a retract outside `[0, 50]` mm, an output outside `(0, 100000]` mm^3/mm, an extrude rate outside `(0, 10000]` mm/min or a dwell outside `[0, 60000]` ms answers 400 with nothing applied, and a value past what any firmware setting holds (a whole number past 4294967295, any other past 1e7 in magnitude) or a line longer than the link takes is refused the same way; a value the firmware refuses has the ones sent before it put back, and one lost on the link unanswered is put back with them, since it may have been taken; the host settings are stored only once the values went through; `values` answers 409 while a run or probing owns the machine, and a run or probing asked for during the write waits for it |
 | `POST /api/settings/save` | writes the firmware settings to flash |
 

@@ -25,8 +25,9 @@ def settings_of(name: str) -> dict:
 
 def test_every_firmware_setting_has_a_key():
     named = {key.setting for key in KEYS}
-    # The tool's key holds the spindle and the dispenser flags at once.
-    assert set(FIRMWARE_DEFAULTS) - named == {"dispenser"}
+    # The tool's key holds the spindle and the dispenser flags at once, and
+    # a servo's output is which of pin and channel its section gives.
+    assert set(FIRMWARE_DEFAULTS) - named == {"dispenser", "servo1_out", "servo2_out", "servo3_out", "servo4_out"}
 
 
 @pytest.mark.parametrize("name", sorted(FILES))
@@ -128,3 +129,22 @@ def test_the_machine_keys_fixture_is_current():
     written = json.loads((Path(__file__).parent / "data" / "machine-keys.json").read_text(encoding="utf-8"))
     assert written == json.loads(json.dumps(fixture())), "the keys or their reading changed: mise run keys-fixture"
     assert written["case"]["changes"] and written["case"]["left"] == []
+
+
+def test_a_servo_read_from_the_board_comes_with_its_pin_or_its_channel():
+    text = "[servo.1]\npin = 29        # the SERVOS header\nstart = 90\n\n[servo.3]\nchannel = 2\n"
+    board = dict(parse(text, "file").settings)
+    # The board has servo 1 on a channel now, servo 2 on a pin, and servo 3
+    # taken off; its span is wider.
+    board.update(servo1_out=2, servo1_chan=7, servo2_out=1, servo2_pin=24, servo2_max_us=2400, servo3_out=0)
+    read = from_board(text, board)
+    machine = parse(read.text, "read")
+    assert [machine.settings[f"servo{n}_out"] for n in range(1, 5)] == [2, 1, 2, 0]
+    assert (machine.settings["servo1_chan"], machine.settings["servo1_start"]) == (7, 90.0)
+    assert (machine.settings["servo2_pin"], machine.settings["servo2_max_us"]) == (24, 2400)
+    assert "pin = 29" not in read.text and "[servo.1] channel = 7 (was unset)" in read.changes
+    assert "[servo.2] pin = 24 (was unset)" in read.changes
+    # A servo the file has and the board does not is the file's to drop.
+    assert read.left == ["servo3_out"]
+    # A start the board does not have stays out.
+    assert value_of(next(key for key in KEYS if key.setting == "servo2_start"), board) is None

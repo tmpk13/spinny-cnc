@@ -116,6 +116,21 @@ hold_delay = 10             # run to hold current ramp, 0 to 15
 tpowerdown = 20             # standstill before the hold current, 0 to 255
 tpwmthrs = 0                # TSTEP under which stealthChop gives way; 0 is never
 
+[pca9685]                   # a PCA9685 servo driver on the board's I2C bus, started only for a servo with a channel
+sda = 0                     # data: GP0, TX on the UART header
+scl = 1                     # clock: GP1, RX
+address = 0x40              # 0x40 to 0x7F, as the module's A0 to A5 pads set it
+
+# Servos, [servo.1] to [servo.4]: none fitted here. One looks like this:
+# [servo.1]
+# name = "Pen"              # the page's bar
+# pin = 29                  # GPIO of the board: 29 SERVO; or channel = 0 for one of the PCA9685's, 0 to 15
+# min_us = 1000             # pulse at 0 degrees, 200 to 3000
+# max_us = 2000             # pulse at the far end of the range
+# range = 180               # degrees between the two
+# start = 90                # angle at power on; left out, no pulse until moved
+# positions = { up = 30, down = 120 }   # buttons on the page
+
 [host]
 tolerance = 0.005           # chord tolerance of the streamed path, mm
 

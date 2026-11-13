@@ -24,7 +24,7 @@ def shipped() -> list[Machine]:
 
 
 def test_the_defaults_cover_every_setting_once():
-    assert len(FIRMWARE_DEFAULTS) == 83
+    assert len(FIRMWARE_DEFAULTS) == 114
 
 
 def test_endstops_and_homing_are_read_per_axis():
@@ -351,7 +351,9 @@ def test_the_drivers_tuning_takes_what_the_datasheet_allows_together():
 def test_a_file_without_the_drivers_tuning_keeps_what_the_firmware_wrote_before_it():
     tuning = ["tmc_intpol", "tmc_toff", "tmc_tbl", "tmc_hstrt", "tmc_hend", "tmc_hold_delay", "tmc_tpowerdown", "tmc_tpwmthrs"]
     assert [FIRMWARE_DEFAULTS[name] for name in tuning] == [1, 3, 2, 5, 0, 10, 20, 0]
-    assert list(FIRMWARE_DEFAULTS)[-len(tuning):] == tuning, "listed last, as the firmware lists them"
+    names = list(FIRMWARE_DEFAULTS)
+    at = names.index("tmc_intpol")
+    assert names[at:at + len(tuning) + 1] == [*tuning, "i2c_sda"], "listed before the bus, as the firmware lists them"
     settings = parse("[drivers]\nhold_pct = 40\n", "rig").settings
     assert [settings[name] for name in tuning] == [1, 3, 2, 5, 0, 10, 20, 0]
 
@@ -601,3 +603,107 @@ def test_an_older_file_may_still_say_where_a_control_went():
     found = parse('[controls]\n[[controls.axes]]\naxis = "r"\nplace = "frame"\n', "rig")
     assert "place" not in found.controls["axes"][0]
     assert all("place" not in axis for axis in default_controls("polar", "laser", True)["axes"])
+
+
+SERVO_FILE = """
+[output]
+pin = 20
+
+[probe]
+pin = 22
+
+[pca9685]
+sda = 24
+scl = 29
+address = 0x41
+
+[servo.1]
+name = "Pen"
+pin = 1
+min_us = 900
+max_us = 2100
+range = 270
+start = 90
+positions = { up = 30, down = 120.5 }
+
+[servo.3]
+channel = 15
+max_us = 1200
+"""
+
+
+def test_servos_land_on_their_numbers_with_the_page_s_bars():
+    machine = parse(SERVO_FILE, "servos")
+    s = machine.settings
+    assert (s["i2c_sda"], s["i2c_scl"], s["pca_addr"]) == (24, 29, 0x41)
+    assert [s[f"servo{n}_out"] for n in range(1, 5)] == [1, 0, 2, 0]
+    assert (s["servo1_pin"], s["servo1_min_us"], s["servo1_max_us"], s["servo1_range"], s["servo1_start"]) == (1, 900, 2100, 270.0, 90.0)
+    assert (s["servo3_chan"], s["servo3_max_us"], s["servo3_start"]) == (15, 1200, -1.0)
+    assert machine.servos == [
+        {"servo": 1, "name": "Pen", "range": 270.0, "positions": [{"name": "up", "angle": 30.0}, {"name": "down", "angle": 120.5}]},
+        {"servo": 3, "name": "Servo 3", "range": 180.0, "positions": []},
+    ]
+    assert machine.document()["servos"] == machine.servos
+    # A file without servos has none: every output off.
+    plain = parse("", "plain")
+    assert plain.servos == [] and all(plain.settings[f"servo{n}_out"] == 0 for n in range(1, 5))
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("[servo.1]\nname = 'x'\n", "servo.1 needs pin, a GPIO of the board, or channel"),
+        ("[servo.1]\npin = 29\nchannel = 2\n", "[servo.1] channel and pin cannot both be given"),
+        ("[servo.5]\npin = 29\n", "servo.5 is not a servo: the board has servo.1 to servo.4"),
+        ("[servo.pen]\npin = 29\n", "servo.pen is not a servo"),
+        ("[servo.1]\npin = 13\n", "[servo.1] pin 13 is a driver socket's"),
+        ("[servo.1]\npin = 4\n", "[servo.1] pin 4 (X-STOP) is a STOP header's"),
+        ("[servo.2]\nchannel = 16\n", "[servo.2] channel must be 0 to 15"),
+        ("[servo.1]\npin = 29\nmin_us = 150\n", "[servo.1] min_us must be 200 to 3000"),
+        ("[servo.1]\npin = 29\nrange = 0\n", "[servo.1] range must be above 0 and at most 360 degrees"),
+        ("[servo.1]\npin = 29\nrange = 90\nstart = 120\n", "[servo.1] start must be 0 to the range, 90 degrees"),
+        ("[servo.1]\npin = 29\nstart = -1\n", "[servo.1] start must be 0 to the range"),
+        ("[servo.1]\npin = 29\npositions = { up = 200 }\n", "[servo.1] positions up must be an angle, 0 to the range, 180 degrees"),
+        ("[servo.1]\npin = 29\npositions = [1, 2]\n", "[servo.1] positions must be a table of names and angles"),
+        ("[servo.1]\npin = 29\nspeed = 2\n", "[servo.1] speed is not a key here"),
+        ("[servo.1]\npin = 29\nname = ' '\n", "[servo.1] name must not be empty"),
+        ("servo = 1\n", "servo must be a table"),
+        # Two outputs on one pin, the laser's PWM slice, and one PWM channel.
+        ("[servo.1]\npin = 20\n", "[servo.1] pin 20 (FAN3) is the [output] pin too"),
+        ("[servo.1]\npin = 21\n", "[servo.1] pin 21 (BED) is on PWM slice 2 with the [output] pin 20 (FAN3), which runs at the laser's rate"),
+        ("[probe]\npin = 22\n[servo.1]\npin = 22\n", "[servo.1] pin 22 (PROBE) is the [probe] pin too"),
+        ("[enable]\nfitted = true\npin = 18\n[servo.2]\npin = 18\n", "[servo.2] pin 18 (FAN2) is the [enable] pin too"),
+        ("[servo.1]\npin = 29\n[servo.2]\npin = 29\n", "[servo.2] pin 29 (SERVO) is the [servo.1] pin too"),
+        ("[servo.1]\npin = 1\n[servo.4]\npin = 17\n", "[servo.4] pin 17 (FAN1) drives the PWM channel of the [servo.1] pin 1 (RX): GPIO n and n + 16 share one"),
+        ("[servo.1]\nchannel = 4\n[servo.3]\nchannel = 4\n", "[servo.3] channel 4 is [servo.1]'s too"),
+        # The bus: one block's two lines, nobody else's, when a servo is on it.
+        ("[pca9685]\nsda = 1\n", "[pca9685] sda must be an even GPIO"),
+        ("[pca9685]\nscl = 24\n", "[pca9685] scl must be an odd GPIO"),
+        ("[pca9685]\nsda = 16\n", "[pca9685] sda 16 (E-STOP) is a STOP header's"),
+        ("[pca9685]\naddress = 0x80\n", "[pca9685] address must be 64 to 127"),
+        ("[pca9685]\nsda = 18\n[servo.1]\nchannel = 0\n", "[pca9685] sda 18 (FAN2) and scl 1 (RX) are not one I2C block's"),
+        ("[servo.1]\npin = 1\n[servo.2]\nchannel = 0\n", "[pca9685] scl 1 (RX) is the [servo.1] pin too"),
+        ("[output]\npin = 24\n[pca9685]\nsda = 24\n[servo.1]\nchannel = 0\n", "[pca9685] sda 24 (RGB) is the [output] pin too"),
+        ("[pca9685]\nbus = 1\n", "[pca9685] bus is not a key here"),
+        # An endstop on a servo's pin would read the servo's pulse.
+        ('[rail]\nendstop = "min"\nendstop_pin = 29\n[servo.1]\npin = 29\n', "[rail] endstop_pin 29 (SERVO) is the [servo.1] pin too"),
+        ('[rail]\nendstop = "min"\nendstop_pin = 0\n[servo.1]\nchannel = 0\n', "[rail] endstop_pin 0 (TX) is the [pca9685] pin too"),
+        # A G-code machine's controller keeps its own servos.
+        ('controller = "gcode"\n[servo.1]\npin = 29\n', "servo is for a machine on this project's firmware"),
+    ],
+)
+def test_servo_files_are_refused_with_the_key_named(text, message):
+    with pytest.raises(MachineError) as raised:
+        parse(text, "servos")
+    assert message in str(raised.value)
+
+
+def test_a_bus_no_servo_uses_keeps_its_pins_to_themselves():
+    # Without a servo on the PCA9685 the bus is not started: a pair of two
+    # blocks, or a pin another output has, is no clash.
+    s = parse("[pca9685]\nsda = 18\nscl = 1\n[servo.1]\npin = 29\n", "bus").settings
+    assert (s["i2c_sda"], s["i2c_scl"]) == (18, 1)
+    parse("[output]\npin = 24\n[pca9685]\nsda = 24\n", "bus")
+    # Servos on the two channels of one PWM slice both run.
+    s = parse("[servo.1]\npin = 26\n[servo.2]\npin = 27\n", "slice").settings
+    assert (s["servo1_pin"], s["servo2_pin"]) == (26, 27)

@@ -643,3 +643,43 @@ def test_the_camera_pattern_is_filled_dots_on_a_laser_and_plunges_on_a_mill(clie
     group = milled["job"]["groups"][0]
     assert group["depth"] == 0.05 and len(group["paths"]) == 8 and all(len(path) == 1 for path in group["paths"])
     assert milled["summary"][1] == "one plunge each 0.05 mm deep, the tool's width across; plunge 30 mm/min, spindle S1000"
+
+
+def test_a_servo_moves_from_the_page_and_its_angle_comes_back_in_the_state(client, fake):
+    connect(client)
+    # Without an output the servo is not there to move.
+    response = client.post("/api/servo", json={"servo": 1, "angle": 90})
+    assert response.status_code == 400
+    assert "servo 1 has no output" in response.json()["detail"]
+    assert client.get("/api/state").json()["machine"]["servos"] is None
+    for line in ("$servo1_out=1", "$servo3_out=2", "$servo3_range=90"):
+        assert client.post("/api/command", json={"line": line}).json()["lines"] == ["ok"]
+    response = client.post("/api/servo", json={"servo": 1, "angle": 45.5})
+    assert response.status_code == 200, response.text
+    assert "servo N1 A45.5" in fake.received_lines
+    assert fake.servos[0] == 45.5
+    response = client.post("/api/servo", json={"servo": 3, "angle": 90})
+    assert response.status_code == 200, response.text
+    deadline = time.monotonic() + 2.0
+    while client.get("/api/state").json()["machine"]["servos"] != [45.5, None, 90.0, None]:
+        assert time.monotonic() < deadline, client.get("/api/state").json()["machine"]["servos"]
+        time.sleep(0.02)
+    # Past its range, a servo that is not one of the four, and letting go.
+    response = client.post("/api/servo", json={"servo": 3, "angle": 91})
+    assert response.status_code == 400
+    assert "0 to 90 degrees" in response.json()["detail"]
+    assert client.post("/api/servo", json={"servo": 5, "angle": 10}).status_code == 400
+    assert client.post("/api/servo", json={"servo": 1, "angle": None}).status_code == 200
+    assert "servo N1 off" in fake.received_lines
+    assert fake.servos[0] is None
+
+
+def test_the_status_line_s_servo_field_is_read():
+    from spinny_web.link import parse_status
+
+    status = parse_status("<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0|Z:0.000|D:R|S:90,,12.5,>")
+    assert status is not None
+    assert status.homed == "R"
+    assert status.servos == [90.0, None, 12.5, None]
+    plain = parse_status("<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0|Z:0.000>")
+    assert plain is not None and plain.servos is None

@@ -5,7 +5,9 @@ text brought to the values a board runs with.
 file sets it with (spinny_laser.machines reads them the other way) and how
 the setting holds it: a number as it is, a flag as 0/1, one bit of a mask,
 an endstop word by its index, a socket letter by its digit, the scale in
-full steps or as the firmware's number. `value_of` reads a key's value out
+full steps or as the firmware's number, a servo's key only while that servo
+has an output (its pin or its channel only while it is on that one, its
+start only when it has one). `value_of` reads a key's value out
 of a full set of settings, so a file's and a board's can be compared key by
 key, and `from_board` writes the keys whose values differ into the text,
 comments and order kept.
@@ -19,12 +21,20 @@ import re
 import sys
 from dataclasses import asdict, dataclass
 
-from spinny_laser.machines import AXES, ENDSTOPS, FIRMWARE_DEFAULTS, SOCKETS, TUNING_KEYS, MachineError, close, parse
+from spinny_laser.machines import AXES, ENDSTOPS, FIRMWARE_DEFAULTS, SERVOS, SOCKETS, TUNING_KEYS, MachineError, close, parse
 
 # How a key's value sits in its setting.
 NUMBER, INTEGER, FLAG, BIT, WORD, SOCKET, SCALE, KINEMATICS, TOOL, HOST = (
     "number", "integer", "flag", "bit", "word", "socket", "scale", "kinematics", "tool", "host",
 )
+# A servo's keys, whose `bit` is the servo's number less 1: its pin while it
+# is on the board, its channel while it is on the PCA9685, a whole number or
+# a number held while it has an output, and its start angle while it has one.
+SERVO_PIN, SERVO_CHANNEL, SERVO_INTEGER, SERVO_NUMBER, SERVO_START = (
+    "servo_pin", "servo_channel", "servo_integer", "servo_number", "servo_start",
+)
+# A servo's output setting: 1 on a pin of the board, 2 on the PCA9685.
+_SERVO_OUT = {SERVO_PIN: 1, SERVO_CHANNEL: 2}
 
 
 @dataclass(frozen=True)
@@ -36,7 +46,8 @@ class Key:
     section: str | None
     key: str
     kind: str
-    # The bit of a mask, or the digit of `sockets`, counted from 0.
+    # The bit of a mask, the digit of `sockets` or a servo's number, counted
+    # from 0.
     bit: int = 0
 
     def to_dict(self) -> dict:
@@ -98,7 +109,21 @@ def _keys() -> tuple[Key, ...]:
         Key("tmc_stealth", "drivers", "stealth", FLAG),
         Key("tmc_intpol", "drivers", "interpolate", FLAG),
         *(Key(f"tmc_{key}", "drivers", key, INTEGER) for key in TUNING_KEYS),
+        Key("i2c_sda", "pca9685", "sda", INTEGER),
+        Key("i2c_scl", "pca9685", "scl", INTEGER),
+        Key("pca_addr", "pca9685", "address", INTEGER),
     ]
+    for i in range(SERVOS):
+        n = i + 1
+        section = f"servo.{n}"
+        keys += [
+            Key(f"servo{n}_pin", section, "pin", SERVO_PIN, i),
+            Key(f"servo{n}_chan", section, "channel", SERVO_CHANNEL, i),
+            Key(f"servo{n}_min_us", section, "min_us", SERVO_INTEGER, i),
+            Key(f"servo{n}_max_us", section, "max_us", SERVO_INTEGER, i),
+            Key(f"servo{n}_range", section, "range", SERVO_NUMBER, i),
+            Key(f"servo{n}_start", section, "start", SERVO_START, i),
+        ]
     for key in ("tolerance", "travel", "clearance", "spinup", "speed_control", "gap", "retract", "output", "extrude_rate", "dwell_ms"):
         keys.append(Key(f"host.{key}", "host", key, HOST))
     return tuple(keys)
@@ -138,6 +163,13 @@ def value_of(key: Key, settings: dict) -> object:
             return None
         digit = int(digits[key.bit])
         return SOCKETS[digit - 1] if 1 <= digit <= len(SOCKETS) else None
+    if key.kind in (SERVO_PIN, SERVO_CHANNEL, SERVO_INTEGER, SERVO_NUMBER, SERVO_START):
+        out = int(settings.get(f"servo{key.bit + 1}_out", 0))
+        if out == 0 or (key.kind in _SERVO_OUT and out != _SERVO_OUT[key.kind]):
+            return None
+        if key.kind == SERVO_START:
+            return float(value) if float(value) >= 0 else None
+        return float(value) if key.kind == SERVO_NUMBER else int(value)
     if key.kind == INTEGER:
         return int(value)
     return float(value)
@@ -204,6 +236,20 @@ def has_key(text: str, section: str | None, key: str) -> bool:
     lines = text.split("\n")
     pattern = re.compile(rf"^\s*{re.escape(key)}\s*=")
     return any(pattern.match(lines[i]) for name, a, b in _sections(lines) if name == section for i in range(a, b))
+
+
+def remove_key(text: str, section: str | None, key: str) -> str:
+    """The text without the `key = ...` line of its section, when it has one."""
+    lines = text.split("\n")
+    pattern = re.compile(rf"^\s*{re.escape(key)}\s*=")
+    for name, a, b in _sections(lines):
+        if name != section:
+            continue
+        for i in range(a, b):
+            if pattern.match(lines[i]):
+                del lines[i]
+                return "\n".join(lines)
+    return text
 
 
 def set_key(text: str, section: str | None, key: str, value: object) -> str:
@@ -304,6 +350,10 @@ def from_board(text: str, live: dict, host: dict | None = None, where: str = "ma
                 mine = mine / int(machine.settings[f"tmc_{key.setting[0]}_micro"])
         if same(board, mine):
             continue
+        # A servo is on a pin or on a channel: the one the board has goes
+        # in, and the other comes out.
+        if key.kind in _SERVO_OUT:
+            text = remove_key(text, section, "channel" if key.kind == SERVO_PIN else "pin")
         text = set_key(text, section, name, board)
         where_key = f"[{section}] {name}" if section else name
         changes.append(f"{where_key} = {toml_value(board)} (was {toml_value(mine) if mine is not None else 'unset'})")
@@ -367,6 +417,14 @@ brake_ms = 0
 hold_pct = 30
 interpolate = false
 tpwmthrs = 234
+
+[pca9685]
+address = 65
+
+[servo.2]
+channel = 3
+max_us = 2200
+start = 45
 """
 
 

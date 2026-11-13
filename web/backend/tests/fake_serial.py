@@ -83,7 +83,15 @@ DEFAULT_SETTINGS = {
     "stop_invert": 0, "limits": 0,
     "tmc_intpol": 1, "tmc_toff": 3, "tmc_tbl": 2, "tmc_hstrt": 5, "tmc_hend": 0,
     "tmc_hold_delay": 10, "tmc_tpowerdown": 20, "tmc_tpwmthrs": 0,
+    "i2c_sda": 0, "i2c_scl": 1, "pca_addr": 64,
+    **{
+        f"servo{n}_{key}": value
+        for n in range(1, 5)
+        for key, value in (("out", 0), ("pin", 29), ("chan", n - 1), ("min_us", 1000), ("max_us", 2000), ("range", 180), ("start", -1))
+    },
 }
+# Settings that may be below 0.
+NEGATIVE_OK = re.compile(r"^(\w+_home_pos|servo\d_start)$")
 
 
 class FakeSerial:
@@ -155,6 +163,9 @@ class FakeSerial:
         # The joints homed, as letters in joint order, reported in the
         # status line's D field while any axis has an endstop.
         self.homed = ""
+        # Each servo's angle, None without a pulse; reported in the S field
+        # while any servo has an output.
+        self.servos: list[float | None] = [None] * 4
         # Counted so a probe waiting behind motion can tell that a jog
         # cancel or a reset came while it waited.
         self._jog_cancels = 0
@@ -267,10 +278,13 @@ class FakeSerial:
             laser = self.duty(self.spindle)
         focus = f"|H:{self.h:.3f}|P:{int(self.touching())}" if self.settings["h_axis"] else ""
         stops = f"|D:{self.homed}" if self.stops_fitted() else ""
+        fitted = [bool(self.settings[f"servo{n}_out"]) for n in range(1, 5)]
+        angles = ",".join(_show(angle) if angle is not None and on else "" for angle, on in zip(self.servos, fitted))
+        servos = f"|S:{angles}" if any(fitted) else ""
         return (
             f"<{self.state()}|J:{r:.3f},{a:.4f}|V:{rate}|L:{laser}"
             f"|Q:{self.blocks},{self.credits - waiting}|M:{self.mode}|E:{int(self.enabled)}"
-            f"|Z:{self.z:.3f}{focus}{stops}>"
+            f"|Z:{self.z:.3f}{focus}{stops}{servos}>"
         )
 
     def stops_fitted(self) -> bool:
@@ -438,6 +452,8 @@ class FakeSerial:
                 return ["error:5 not now"]
             self.spindle = int(values["S"])
             return ["ok"]
+        if keyword == "servo":
+            return self._servo(words[1:], values)
         if keyword in ("go", "cut", "jog", "jogto") and self.settings["cartesian"]:
             return self._cartesian(keyword, values)
         if keyword in ("go", "cut", "jog", "jogto"):
@@ -608,6 +624,31 @@ class FakeSerial:
         self.spindle = 0
         return [f"[PRB:{target:.4f}:0]", "ALARM:2 probe missed, check the head before moving", "error:11 probe missed"]
 
+    def _servo(self, words: list[str], values: dict[str, float]) -> list[str]:
+        """`servo N<n> A<deg> [T<ms>]` or `servo N<n> off`, taken at once:
+        the fake has no queue for it to wait behind."""
+        off = any(word.lower() == "off" for word in words)
+        if "N" not in values or (not off and "A" not in values):
+            return ["error:3 missing word"]
+        number = values["N"]
+        if number != int(number):
+            return ["error:2 bad word"]
+        if not 1 <= number <= 4:
+            return ["error:4 out of range"]
+        n = int(number)
+        if not self.settings[f"servo{n}_out"]:
+            return ["error:2 bad word"]
+        if self.alarm is not None or self.state() == "Jog":
+            return ["error:5 not now"]
+        if off:
+            self.servos[n - 1] = None
+            return ["ok"]
+        angle = values["A"]
+        if not 0 <= angle <= self.settings[f"servo{n}_range"]:
+            return ["error:4 out of range"]
+        self.servos[n - 1] = angle
+        return ["ok"]
+
     def _setting(self, text: str) -> list[str]:
         body = text[1:]
         if body == "":
@@ -628,7 +669,7 @@ class FakeSerial:
             number = float(value)
         except ValueError:
             return ["error:7 bad setting value"]
-        if number < 0:
+        if number < 0 and not NEGATIVE_OK.match(name):
             return ["error:7 bad setting value"]
         if name == "spindle" and number != self.settings[name]:
             # What runs on the output stops with the change of what it is.

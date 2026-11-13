@@ -114,6 +114,9 @@ class Status:
     # The letters of the joints homed since the position was last lost,
     # reported only by a machine with an endstop; None without one.
     homed: str | None = None
+    # Each servo's angle in degrees, servo 1 first, None for one without a
+    # pulse; reported only by a machine with a servo fitted, None without.
+    servos: list[float | None] | None = None
     rate: float = 0.0
     laser: int = 0
     planner: int = 0
@@ -167,7 +170,8 @@ class Pending:
 
 def parse_status(text: str) -> Status | None:
     """`<Run|J:7.512,135.0000|V:300|L:400|Q:30,16|M:dyn|E:1|Z:0.000>` to a
-    Status; a machine with a focus axis adds `|H:-1.250|P:0`."""
+    Status; a machine with a focus axis adds `|H:-1.250|P:0`, one with an
+    endstop `|D:RA`, one with a servo `|S:90,,,`."""
     if len(text) < 2 or text[0] != "<" or text[-1] != ">":
         return None
     parts = text[1:-1].split("|")
@@ -194,6 +198,8 @@ def parse_status(text: str) -> Status | None:
                 status.probe = value.strip() not in ("0", "")
             elif key == "D":
                 status.homed = value.strip()
+            elif key == "S":
+                status.servos = [float(angle) if angle.strip() else None for angle in value.split(",")]
             elif key == "V":
                 status.rate = float(value)
             elif key == "L":
