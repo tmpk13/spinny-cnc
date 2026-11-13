@@ -8,7 +8,7 @@
 // run. Its own setup steps lead through all of it.
 
 import { activePage, button, el, labeled, lockFor, numberField, readStored, replace, resizableBox, setLocked, Tracked, writeStored } from "../dom.ts";
-import { formatFixed, parseNumber } from "../format.ts";
+import { formatFixed, formatPercent, parseNumber } from "../format.ts";
 import { isCartesian } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
 import type { BoardLook, Component, Job, PnpSettings, PnpState, SpotPolarity } from "../types.ts";
@@ -17,6 +17,7 @@ import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
 import { mountCameraViews } from "./camview.ts";
 import { into, type Ctx } from "./context.ts";
+import { mountFindBoard, shownGuesses } from "./findboard.ts";
 import { PLACING_SETUP, gcodePlacing, mountHead, upCameraText } from "./placing.ts";
 import { mountPnpFeeders } from "./pnpfeeders.ts";
 import { mountPnpRefs } from "./pnprefs.ts";
@@ -24,6 +25,7 @@ import { mountPnpRun } from "./pnprun.ts";
 import { infoTip } from "./infotip.ts";
 import { mountJog } from "./jog.ts";
 import { connectStep, mountSteps, type Setup } from "./steps.ts";
+import type { MachineBox } from "./picture.ts";
 import { mountTopCamera } from "./topcamera.ts";
 
 const SIDE_KEY = "spinny.pnp.side";
@@ -266,22 +268,66 @@ export function fitLabels(root: SVGElement, box: Box, view: Box, unit: number, r
     }
 }
 
-/** The picture a camera's board look sees, on the board drawing: its corners and center in the job's frame; taken out for none. */
-export function placeLookView(root: SVGElement, box: Box, look: BoardLook | null | undefined, label: string): void {
+/**
+ * What a camera's look for the board drawn says, on the board drawing:
+ * while it looks for this board, where each guess at or over the threshold
+ * (and the most likely whatever its share) says the newest picture lies,
+ * labeled with its rank and share, the found one solid; with no guesses,
+ * the newest pose's picture. And a ring at each corner taken of this board
+ * by hand. `job` is the job drawn; all taken out for none.
+ */
+export function placeLookView(root: SVGElement, box: Box, look: BoardLook | null | undefined, label: string, threshold: number, job: string | null): void {
     root.querySelector(".pnp-look")?.remove();
-    if (!look || !look.view || look.view.length !== 4) {
+    if (!look || job === null) {
         return;
     }
     const sx = (x: number): string => (x - box.x0).toFixed(3);
     const sy = (y: number): string => (box.y1 - y).toFixed(3);
-    const group = svg("g", { class: `pnp-look${look.found ? " found" : ""}` },
-        svg("title", {}, `${label}: what its picture shows of the board${look.found ? ", the board found" : ""}`),
-        svg("polygon", { points: look.view.map(([x, y]) => `${sx(x)},${sy(y)}`).join(" ") }),
-    );
-    if (look.seen) {
-        group.append(svg("text", { x: sx(look.seen[0]), y: sy(look.seen[1]) }, label));
+    const points = (corners: [number, number][]): string => corners.map(([x, y]) => `${sx(x)},${sy(y)}`).join(" ");
+    const group = svg("g", { class: `pnp-look${look.found ? " found" : ""}` });
+    const looking = look.job === job;
+    const guesses = looking ? shownGuesses(look, threshold).filter((guess) => guess.view !== null && guess.view.length === 4) : [];
+    if (guesses.length > 0) {
+        for (const guess of guesses) {
+            const rank = (look.guesses ?? []).indexOf(guess) + 1;
+            const found = rank === 1 && look.found === true;
+            const under = guess.probability < threshold - 1e-9;
+            const item = svg("g", { class: `pnp-guess${found ? " found" : ""}${under ? " under" : ""}` },
+                svg("title", {}, `${label}, guess #${rank}: ${formatPercent(guess.probability)} of the evidence${found ? ", found" : under ? ", under the threshold" : ""}; where it says the picture lies on the board`),
+                svg("polygon", { points: points(guess.view!) }),
+            );
+            if (guess.seen) {
+                item.append(svg("text", { x: sx(guess.seen[0]), y: sy(guess.seen[1]) }, `#${rank} ${formatPercent(guess.probability)}`));
+            }
+            group.append(item);
+        }
+    } else if (looking && look.view && look.view.length === 4) {
+        group.append(
+            svg("title", {}, `${label}: what its picture shows of the board${look.found ? ", the board found" : ""}`),
+            svg("polygon", { points: points(look.view) }),
+        );
+        if (look.seen) {
+            group.append(svg("text", { x: sx(look.seen[0]), y: sy(look.seen[1]) }, label));
+        }
     }
-    root.append(group);
+    const corners = look.corners;
+    if (corners && corners.job === job) {
+        const size = Math.max(box.x1 - box.x0, box.y1 - box.y0);
+        const ring = size / 60;
+        corners.points.forEach((point, index) => {
+            // The number sits outside the board, off the corner, clear of a guess's label.
+            const outX = point.corner.endsWith("left") ? -1 : 1;
+            const outY = point.corner.startsWith("bottom") ? -1 : 1;
+            group.append(svg("g", { class: "pnp-corner" },
+                svg("title", {}, `corner ${index + 1}, ${point.corner}: taken with the ${label} at ${formatFixed(point.machine[0], 2)}, ${formatFixed(point.machine[1], 2)}`),
+                svg("circle", { cx: sx(point.job[0]), cy: sy(point.job[1]), r: ring.toFixed(3) }),
+                svg("text", { x: sx(point.job[0] + outX * ring * 1.6), y: sy(point.job[1] + outY * ring * 1.6), "text-anchor": outX < 0 ? "end" : "start" }, `${index + 1}`),
+            ));
+        });
+    }
+    if (group.childNodes.length > 0) {
+        root.append(group);
+    }
 }
 
 /** A cross with a ring and a label at a board point, sized to the drawing. */
@@ -429,11 +475,19 @@ export interface PnpRoots {
     feeders: HTMLElement;
     /** Placing with a G-code machine. */
     run: HTMLElement;
+    /** The look for the board with a camera picked. */
+    find: HTMLElement;
+}
+
+export interface PnpPanels {
+    /** The box the top camera's search keeps to, drawn on its picture. */
+    topBox(): MachineBox | null;
 }
 
 const COLUMNS: [SortKey, string][] = [["ref", "Ref"], ["value", "Value"], ["footprint", "Footprint"], ["x", "X"], ["y", "Y"], ["rotation", "Rot"], ["side", "Side"]];
 
-export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
+/** The PNP page in `roots`; `headBox` is the box the head camera's search keeps to, drawn on its picture on the Jobs page. */
+export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | null = () => null): PnpPanels {
     let selected: string | null = null;
     // The job, and where it lay, the parts were asked for: a reply for
     // another is dropped, and a job moved, turned or aligned is asked again.
@@ -447,7 +501,13 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     mountPnpFeeders(roots.feeders, ctx);
     mountPnpRun(roots.run, ctx);
     const views = mountCameraViews({ bottom: roots.view, top: roots.topView }, ctx);
-    mountTopCamera(roots.top, ctx, () => visible() && gcodePlacing(ctx.store.get()), () => views.top.box());
+    mountTopCamera(roots.top, ctx, () => visible() && gcodePlacing(ctx.store.get()));
+    // The board drawing shows the look of the camera this panel picks.
+    const find = mountFindBoard(roots.find, ctx, {
+        page: "pnp",
+        boxes: { head: headBox, top: () => views.top.box() },
+        onChange: () => renderBoard(ctx.store.get()),
+    });
 
     // --- the jog: the machine connected's, whichever it is; the panel is
     // the jog panel itself, one head and its buttons, as on the Jobs page ---
@@ -510,7 +570,8 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     fit.title = "the whole board again";
     roots.board.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Board"), fit),
-        el("div", { class: "panel-body" }, drawing, el("p", { class: "muted hint" }, "Click a part to pick it; Ctrl and the wheel zoom, a drag pans, a double-click fits. Hollow dots are on the back; the dashed box is what a camera looking for the board sees of it.")),
+        el("div", { class: "panel-body" }, drawing, el("p", { class: "muted hint" }, "Click a part to pick it; Ctrl and the wheel zoom, a drag pans, a double-click fits. Hollow dots are on the back."
+            + " An outline is where a guess of the Find board panel says the camera's picture lies on the board, labeled with its share (dashed: the most likely, under the threshold); a ring is a corner taken.")),
     );
 
     // --- the up camera ---
@@ -992,13 +1053,12 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
         }
         if (drawn) {
             placeHead(drawn.root, drawn.box, !gcodePlacing(state) && state.snapshot.connected && machine ? machine.board : null);
-            // What a camera looking for this board sees of it: the top
-            // camera's on a G-code machine, else the head camera's.
+            // What the camera the Find board panel looks with says of this
+            // board: its guesses and the corners taken of it.
             const job = state.job?.id ?? null;
-            const top = state.placing?.top?.board_look;
-            const head = state.camera?.board_look;
-            const look = gcodePlacing(state) ? (top?.job === job ? top : null) : (head?.job === job ? head : null);
-            placeLookView(drawn.root, drawn.box, look, gcodePlacing(state) ? "top camera" : "camera");
+            const camera = find.camera(state);
+            const look = camera === "top" ? state.placing?.top?.board_look : state.camera?.board_look;
+            placeLookView(drawn.root, drawn.box, look, camera === "top" ? "top camera" : "head camera", find.threshold(state), job);
             fitDrawing();
         }
     }
@@ -1190,4 +1250,5 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx): void {
     renderBoard(now);
     renderCamera(now);
     void loadParts(now);
+    return { topBox: () => views.top.box() };
 }

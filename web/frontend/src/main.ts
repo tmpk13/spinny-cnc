@@ -29,6 +29,7 @@ import { mountPageSettings } from "./views/pagesettings.ts";
 import { mountSearch } from "./views/search.ts";
 import { mountPanels } from "./views/panels.ts";
 import { mountPnp } from "./views/pnp.ts";
+import { mountFindBoard } from "./views/findboard.ts";
 import { mountPreviewPanel } from "./views/previewpanel.ts";
 import { mountStatusBar } from "./views/statusbar.ts";
 import { mountSteps } from "./views/steps.ts";
@@ -295,7 +296,7 @@ function main(): void {
     mountHeightMap(panel("heightmap"), ctx);
     mountPreviewPanel(panel("preview"), ctx);
     mountJobJson(panel("jobjson"), ctx);
-    mountVision(panel("camera"), ctx, panel("camera-view"));
+    const vision = mountVision(panel("camera"), ctx, panel("camera-view"));
     mountAlign(panel("align"), ctx);
     mountConsole(panel("console"), ctx);
     // The Plot page: the position, the jog and the spindle again beside
@@ -312,7 +313,7 @@ function main(): void {
     mountPreviewPanel(panel("cam-preview"), ctx);
     // The PNP page: the parts, the board, the jog, the cameras, the nozzle,
     // and a G-code machine's panels.
-    mountPnp({
+    const pnpPanels = mountPnp({
         steps: panel("pnp-steps"),
         parts: panel("pnp-parts"),
         board: panel("pnp-board"),
@@ -326,7 +327,11 @@ function main(): void {
         refs: panel("pnp-refs"),
         feeders: panel("pnp-feeders"),
         run: panel("pnp-run"),
-    }, ctx);
+        find: panel("pnp-find"),
+    }, ctx, () => vision.view.box());
+    // The look for a board on the Jobs page too, its camera picked apart
+    // from the PNP page's.
+    mountFindBoard(panel("find"), ctx, { page: "jobs", boxes: { head: () => vision.view.box(), top: () => pnpPanels.topBox() } });
     // The Auto page: the conversation with a model that makes jobs and
     // other data through the backend's tools, and which model it is.
     mountAuto({ chat: panel("auto-chat"), about: panel("auto-about") }, ctx);

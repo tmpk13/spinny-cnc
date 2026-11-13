@@ -262,7 +262,7 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
             await page.click("#pnp-camera button:has-text('Look once')");
             await page.click("#pnp-top button:has-text('Look once')");
             // A job without its board file leaves the button locked.
-            await page.click("#pnp-top button:has-text('Look for board')", { timeout: 1000 }).catch(() => undefined);
+            await page.click("#pnp-find button:has-text('Look for board')", { timeout: 1000 }).catch(() => undefined);
             await page.waitForTimeout(800);
         },
     },
@@ -278,7 +278,7 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
             await tab(page, "jobs");
             await page.click("#camera button:has-text('Start')");
             await page.waitForTimeout(300);
-            await page.click("#camera button:has-text('Look for board')", { timeout: 1000 }).catch(() => undefined);
+            await page.click("#find button:has-text('Look for board')", { timeout: 1000 }).catch(() => undefined);
             await page.waitForTimeout(800);
         },
     },

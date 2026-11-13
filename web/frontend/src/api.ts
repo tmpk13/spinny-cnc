@@ -16,6 +16,7 @@ import type {
     CamerasResponse,
     CameraState,
     ControlledCamera,
+    CornerName,
     CamGcodeResponse,
     CamJobResponse,
     CamLogEntry,
@@ -261,8 +262,12 @@ export interface Api {
     /** Finds the mark in the picture and centers the picture on it, measuring the offset, the scale and the roll; on its own thread. */
     cameraFind(step: number): Promise<CameraState>;
     cameraAbort(): Promise<CameraState>;
-    /** Moves the head camera over a box (board frame mm; null: the board's size about where it looks now) until enough looks agree on the board loaded. */
+    /** Moves the head camera over a box (board frame mm; null: where the corners taken put the board, else the board's size about where it looks now) until a guess of the board loaded is likely enough. */
     cameraSearch(box: [number, number, number, number] | null): Promise<CameraState>;
+    /** The head camera's picture's center is on this corner of the job's board: its place is kept. */
+    cameraCorner(jobId: string, corner: CornerName): Promise<CameraState>;
+    /** The head camera's corners taken are forgotten. */
+    cameraCornersClear(): Promise<CameraState>;
     /** A camera's V4L2 controls as its device has them now, with the values it keeps. */
     cameraControls(camera: ControlledCamera): Promise<CameraControls>;
     /** Sets control values now and keeps them, to be set at each start; null forgets a kept one. */
@@ -352,10 +357,14 @@ export interface Api {
     topLook(): Promise<PlacingState>;
     /** The job's board loaded into the top camera's pcbv, its poses read into `top.board_look`; null unloads it. */
     topBoard(jobId: string | null): Promise<PlacingState>;
-    /** Moves the top camera over a box (machine X Y; null: the board's size about where it looks now) until enough looks agree. */
+    /** Moves the top camera over a box (machine X Y; null: where the corners taken put the board, else the board's size about where it looks now) until a guess is likely enough. */
     topSearch(box: [number, number, number, number] | null): Promise<PlacingState>;
-    /** The board's place the look found kept as the job's references. */
+    /** The board's place the look found, else the one its corners give, kept as the job's references. */
     topPlace(jobId: string): Promise<PlacingState>;
+    /** The top camera's picture's center is on this corner of the job's board: its place is kept. */
+    topCorner(jobId: string, corner: CornerName): Promise<PlacingState>;
+    /** The top camera's corners taken are forgotten. */
+    topCornersClear(): Promise<PlacingState>;
 
     /** The Auto tab's provider, its model and address, and whether each provider's key is set where the backend runs. */
     autoSettings(): Promise<AutoSettings>;
@@ -884,6 +893,14 @@ export class HttpApi implements Api {
         return this.request<CameraState>("POST", "/api/camera/search", box ? { box } : {});
     }
 
+    cameraCorner(jobId: string, corner: CornerName): Promise<CameraState> {
+        return this.request<CameraState>("POST", "/api/camera/corner", { job: jobId, corner });
+    }
+
+    cameraCornersClear(): Promise<CameraState> {
+        return this.request<CameraState>("DELETE", "/api/camera/corners");
+    }
+
     cameraControls(camera: ControlledCamera): Promise<CameraControls> {
         return this.request<CameraControls>("GET", `/api/cameras/controls?camera=${encodeURIComponent(camera)}`);
     }
@@ -1092,6 +1109,14 @@ export class HttpApi implements Api {
 
     topPlace(jobId: string): Promise<PlacingState> {
         return this.request<PlacingState>("POST", "/api/pnp/top/place", { job: jobId });
+    }
+
+    topCorner(jobId: string, corner: CornerName): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/top/corner", { job: jobId, corner });
+    }
+
+    topCornersClear(): Promise<PlacingState> {
+        return this.request<PlacingState>("DELETE", "/api/pnp/top/corners");
     }
 
     autoSettings(): Promise<AutoSettings> {

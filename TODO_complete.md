@@ -764,3 +764,12 @@
   file, the outcome), listed in the camera panels with a report page, and
   `mise run search-report` to measure them, try other consensus settings
   on the same poses and give the pictures to another pcbv build.
+- Find board (2026-11-12): looking for a board in a panel of its own on the
+  Jobs and PNP pages, the camera picked from the running ones; the looks
+  sorted into guesses with their share of the evidence (weighed by how
+  well pcbv matched), shown as an equalizer of columns with a threshold
+  line to drag or slide (kept per camera); each guess over the line drawn
+  on the PNP Board drawing where it says the picture lies; a rough place
+  from corners taken by hand, which rules out guesses that put a corner
+  elsewhere, narrows the search and is kept as the board's place when
+  nothing is found.

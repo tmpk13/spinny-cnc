@@ -118,6 +118,7 @@ export function pnpRoots() {
         refs: document.createElement("section"),
         feeders: document.createElement("section"),
         run: document.createElement("section"),
+        find: document.createElement("section"),
     };
     for (const root of Object.values(roots)) {
         document.body.append(root);

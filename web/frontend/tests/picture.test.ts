@@ -185,9 +185,30 @@ describe("the board drawing's labels and a camera's controls", () => {
         expect(crowded).toEqual([true, false, false]);
         fitLabels(drawn.root, box, box, 0.2, 16);
         expect(Number(drawn.root.querySelector("text")!.getAttribute("font-size"))).toBeCloseTo(0.7 * 16 * 0.2, 6);
-        placeLookView(drawn.root, box, { job: "a1", found: true, view: [[0, 0], [10, 0], [10, 5], [0, 5]], seen: [5, 2.5] }, "top camera");
+        // A look with no guesses: the newest pose's picture.
+        placeLookView(drawn.root, box, { job: "a1", found: true, view: [[0, 0], [10, 0], [10, 5], [0, 5]], seen: [5, 2.5] }, "top camera", 0.5, "a1");
         expect(drawn.root.querySelector(".pnp-look.found polygon")).not.toBeNull();
-        placeLookView(drawn.root, box, { job: null }, "top camera");
+        placeLookView(drawn.root, box, { job: null }, "top camera", 0.5, "a1");
+        expect(drawn.root.querySelector(".pnp-look")).toBeNull();
+        // Guesses: the most likely and those at or over the threshold, each
+        // where it says the picture lies, labeled; one ruled out is left out.
+        const guess = (probability: number, x: number, ruled = false) => ({
+            rotation: 0, shift: [0, 0] as [number, number], center: [0, 0] as [number, number], rms: 0, looks: 5, probability, share: probability,
+            spread_mm: 0, spread_deg: 0, ruled_out: ruled, corner_mm: null, view: [[x, 0], [x + 4, 0], [x + 4, 3], [x, 3]] as [number, number][], seen: [x + 2, 1.5] as [number, number],
+        });
+        const look = {
+            job: "a1", found: false, guesses: [guess(0.45, 0), guess(0.35, 5), guess(0.2, 10), guess(0, 15, true)],
+            corners: { job: "a1", points: [{ corner: "bottom left" as const, job: [0, 0] as [number, number], machine: [100, 50] as [number, number] }], rough: null },
+        };
+        placeLookView(drawn.root, box, look, "top camera", 0.3, "a1");
+        const labels = Array.from(drawn.root.querySelectorAll(".pnp-guess text")).map((text) => text.textContent);
+        expect(labels).toEqual(["#1 45%", "#2 35%"]);
+        expect(drawn.root.querySelectorAll(".pnp-guess.under").length).toBe(0);
+        expect(drawn.root.querySelectorAll(".pnp-corner circle").length).toBe(1);
+        // Over the line only the most likely is left, dashed under it; another job's look draws nothing.
+        placeLookView(drawn.root, box, look, "top camera", 0.6, "a1");
+        expect(Array.from(drawn.root.querySelectorAll(".pnp-guess")).map((group) => group.getAttribute("class"))).toEqual(["pnp-guess under"]);
+        placeLookView(drawn.root, box, look, "top camera", 0.6, "b2");
         expect(drawn.root.querySelector(".pnp-look")).toBeNull();
     });
 

@@ -5,6 +5,7 @@ import { FIND_STEP_SECONDS, MockBackend } from "../src/mock/backend.ts";
 import { BOARD_MISPLACEMENT, CAMERA_TRUTH, MOCK_CAMERAS, boardVector, picturePoint } from "../src/mock/vision.ts";
 import type { WsEvent } from "../src/types.ts";
 import { cameraLabel } from "../src/views/camerapick.ts";
+import { mountFindBoard } from "../src/views/findboard.ts";
 import { cameraBadge, mountVision, poseText, routineText } from "../src/views/vision.ts";
 import { click, findButton, settle, setup } from "./harness.ts";
 
@@ -228,14 +229,18 @@ describe("the mock camera", () => {
             await settle();
             await settle();
             expect(calls.filter((c) => c.name === "cameraSettings").at(-1)?.args[0]).toEqual({ fps: 15 });
+            // The board is looked for from the Find board panel.
+            const findRoot = document.createElement("section");
+            document.body.append(findRoot);
+            mountFindBoard(findRoot, ctx, { page: "vision-test", boxes: { head: () => panel.view.box(), top: () => null } });
             const jobs = await api.jobs();
             await ctx.selectJob(jobs[0]!.id);
-            expect(findButton(root, "Look for board").disabled).toBe(true);
+            expect(findButton(findRoot, "Look for board").disabled).toBe(true);
             const job = await backend.uploadJob(new File(["x"], "board.kicad_pcb"), {});
             await ctx.refreshJobs();
             await ctx.selectJob(job.id);
-            expect(findButton(root, "Look for board").disabled).toBe(false);
-            click(root, "Look for board");
+            expect(findButton(findRoot, "Look for board").disabled).toBe(false);
+            click(findRoot, "Look for board");
             await settle();
             await settle();
             expect(store.get().camera?.board).toBe(job.id);

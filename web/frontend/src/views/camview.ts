@@ -10,7 +10,7 @@
 
 import { activePage, el } from "../dom.ts";
 import type { AppState } from "../state.ts";
-import type { Job, RoutineSpot, SpotLook } from "../types.ts";
+import type { BoardCorners, BoardEstimate, Job, RoutineSpot, SpotLook } from "../types.ts";
 import type { Ctx } from "./context.ts";
 import { type Calibration, type Mark, machineToPicturePoints, mountPicture, type PictureView, spotMarks } from "./picture.ts";
 import { gcodePlacing } from "./placing.ts";
@@ -48,9 +48,17 @@ export function reachMark(mm: number | null | undefined, calibration: Calibratio
 /**
  * The job's outline where a board look's estimate puts it, in the picture:
  * each outline point turned and shifted onto the machine, then seen from
- * the picture's center.
+ * the picture's center; the rough place the corners taken give drawn as
+ * `rough`.
  */
-export function boardMarks(job: Job | null, estimate: { rotation: number; shift: [number, number] } | null | undefined, center: [number, number] | null, calibration: Calibration | null, size: [number, number]): Mark[] {
+export function boardMarks(
+    job: Job | null,
+    estimate: { rotation: number; shift: [number, number] } | null | undefined,
+    center: [number, number] | null,
+    calibration: Calibration | null,
+    size: [number, number],
+    tone: "board" | "rough" = "board",
+): Mark[] {
     if (!job || !estimate || center === null || calibration === null) {
         return [];
     }
@@ -60,9 +68,14 @@ export function boardMarks(job: Job | null, estimate: { rotation: number; shift:
     return job.outline.map((path) => ({
         kind: "line" as const,
         points: machineToPicturePoints(path.map(([x, y]) => [x * c - y * s + estimate.shift[0], x * s + y * c + estimate.shift[1]] as [number, number]), center, calibration, size),
-        tone: "board" as const,
-        title: "the board where the looks put it",
+        tone,
+        title: tone === "rough" ? "the board where the corners taken put it" : "the board where the looks put it",
     }));
+}
+
+/** The rough place the corners taken of the job drawn give, when they are of that job. */
+export function roughOf(job: Job | null, corners: BoardCorners | null | undefined): BoardEstimate | null {
+    return job !== null && corners && corners.job === job.id ? corners.rough : null;
 }
 
 /** The bottom camera's calibration on the machine its routines move. */
@@ -160,6 +173,7 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
             return [
                 ...reachMark(state.placing?.document?.top?.within ?? null, calibration, size, "marks and fiducials are looked for within this circle"),
                 ...foundMarks(topState?.routine, topState?.look, size),
+                ...boardMarks(state.job, roughOf(state.job, look?.corners), topCenter(state), calibration, size, "rough"),
                 ...boardMarks(job, look?.estimate ?? null, topCenter(state), calibration, size),
             ];
         },

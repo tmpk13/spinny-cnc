@@ -24,9 +24,13 @@ describe("the board look's words", () => {
     test("say how many looks agree, the board found, or why a pose was not used", () => {
         expect(lookText({ job: null })).toBe("");
         expect(lookText({ job: "a1", looks: 7, locked: 4, agree: 3, need: 5, found: false, pose: "locked", problem: "the head is moving", estimate: null }, "board"))
-            .toBe("looking for board: 3 of 5 looks in a row agree, 4 of 7 locked, now locked (the head is moving)");
+            .toBe("looking for board: 3 of 5 looks agree, 4 of 7 locked, now locked (the head is moving)");
         expect(lookText({ job: "a1", agree: 5, need: 5, found: true, spread_mm: 0.1, spread_deg: 0.2, estimate: { rotation: 1, shift: [0, 0], center: [10, 20], rms: 0 } }, "board"))
-            .toBe("board found: 5 looks in a row agree within 0.10 mm and 0.20 deg; middle at 10.00, 20.00, turned 1.00 deg");
+            .toBe("board found: 5 looks agree within 0.10 mm and 0.20 deg; middle at 10.00, 20.00, turned 1.00 deg");
+        // With guesses: the most likely one's share, against the threshold while short of it.
+        const lead = { rotation: 0, shift: [0, 0] as [number, number], center: [10, 20] as [number, number], rms: 0, looks: 6, probability: 0.4, share: 0.4, spread_mm: 0, spread_deg: 0, ruled_out: false, corner_mm: null, view: null, seen: null };
+        expect(lookText({ job: "a1", looks: 20, locked: 15, agree: 6, need: 5, found: false, pose: "locked", threshold: 0.6, guesses: [lead] }, "board"))
+            .toBe("looking for board: 6 of 5 looks agree, 40% of the evidence (needs 60%), 15 of 20 locked, now locked");
         const base = { running: true, board: "a1", pose: { state: "lost" }, routine: null } as unknown as CameraState;
         expect(cameraBadge(base)).toBe("looking");
         expect(cameraBadge({ ...base, board_look: { job: "a1", found: true } })).toBe("found");
@@ -131,7 +135,7 @@ describe("looking for a board in the mock", () => {
             expect(state.board_look?.found).toBe(true);
         }
         await backend.cameraBoard(null);
-        expect((await backend.camera()).board_look).toEqual({ job: null });
+        expect((await backend.camera()).board_look).toMatchObject({ job: null, threshold: 0.5, corner_mm: 2, corners: null });
     });
 
     test("a camera's controls are listed, set and kept; a bridge Pi's camera has none here", async () => {

@@ -110,6 +110,7 @@ export function checkCameraSettings(patch: Partial<CameraSettings>): void {
     if (patch.roll !== undefined && !(typeof patch.roll === "number" && Number.isFinite(patch.roll) && Math.abs(patch.roll) <= 360)) {
         throw new Error("roll must be a number within 360");
     }
+    checkLook(patch);
     if (patch.mm_per_px !== undefined && !(typeof patch.mm_per_px === "number" && Number.isFinite(patch.mm_per_px) && patch.mm_per_px >= 0)) {
         throw new Error("mm_per_px must be 0 or more");
     }
@@ -302,4 +303,16 @@ export function controlsNote(device: string): string | null {
         return "a pcbv serving over TCP has no controls here: its camera's are set on the computer it runs on";
     }
     return "pictures replayed from files have no controls";
+}
+
+/** A camera's look settings, as the backend checks them: the threshold 0 to 1, the corners' tolerance 0.1 to 50 mm. */
+export function checkLook(settings: { look_threshold?: number; corner_mm?: number }): void {
+    const threshold = settings.look_threshold;
+    if (threshold !== undefined && !(typeof threshold === "number" && Number.isFinite(threshold) && threshold >= 0 && threshold <= 1)) {
+        throw new Error("the look's threshold must be 0 to 1");
+    }
+    const corner = settings.corner_mm;
+    if (corner !== undefined && !(typeof corner === "number" && Number.isFinite(corner) && corner >= 0.1 && corner <= 50)) {
+        throw new Error("the corners' tolerance must be 0.1 to 50 mm");
+    }
 }

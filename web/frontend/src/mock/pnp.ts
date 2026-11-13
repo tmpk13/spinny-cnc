@@ -10,7 +10,7 @@ import type { Component, Job, PnpSettings, SpotPolarity, TopSettings } from "../
 import { svgUrl } from "./camlog.ts";
 import { round4 } from "./jobs.ts";
 import { CAMERA_SIZE } from "./machines.ts";
-import { inPicture, parseSize } from "./vision.ts";
+import { checkLook, inPicture, parseSize } from "./vision.ts";
 
 /** How the up camera really sits, and the part the mock's nozzle holds. */
 export interface UpTruth {
@@ -74,6 +74,7 @@ export function checkTopSettings(settings: TopSettings): void {
     if (!(Number.isFinite(settings.roll) && Math.abs(settings.roll) <= 360)) {
         throw new Error("the top camera roll must be within 360 degrees");
     }
+    checkLook(settings);
 }
 
 /** The top camera's picture as an SVG data URL, `width` pixels wide: a stretch of board with a fiducial at its middle and the crosshair. */

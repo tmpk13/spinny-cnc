@@ -1348,8 +1348,8 @@ export interface PnpReference {
     job: string;
     ref: string;
     at: [number, number];
-    /** How the place was read: the nozzle over it, the top camera over it, a fiducial found, or the top camera's board look. */
-    by?: "nozzle" | "camera" | "fiducial" | "look";
+    /** How the place was read: the nozzle over it, the top camera over it, a fiducial found, the top camera's board look, or the board's corners taken by hand. */
+    by?: "nozzle" | "camera" | "fiducial" | "look" | "corners";
 }
 
 export interface PlacingRun {
@@ -1391,6 +1391,9 @@ export interface TopSettings {
     mm_per_px: number;
     roll: number;
     mirror: boolean;
+    /** The look for a board: the least share of the evidence the most likely guess must hold, 0 to 1, and how far a guess may put a corner taken by hand from where it was taken, mm. */
+    look_threshold?: number;
+    corner_mm?: number;
 }
 
 export type TopStep = "lifting" | "moving" | "lowering" | "scale" | "centering" | "fitting" | "done" | string;
@@ -1492,6 +1495,9 @@ export interface CameraSettings {
     roll: number;
     /** mm per picture pixel at the board; 0 until measured, or taken from a lock. */
     mm_per_px: number;
+    /** The look for a board: the least share of the evidence the most likely guess must hold, 0 to 1, and how far a guess may put a corner taken by hand from where it was taken, mm. */
+    look_threshold?: number;
+    corner_mm?: number;
 }
 
 /** A size a camera captures at, with the best rate it gives there. */
@@ -1592,15 +1598,47 @@ export interface SpotLook extends SpotShape {
     dy?: number;
 }
 
-/** Where looks at a board put it on the machine: the turn and shift that take the job's frame onto the machine's, its middle there, and the fit's rms. */
+/** Where looks at a board put it on the machine: the turn and shift that take the job's frame onto the machine's, its middle there, the fit's rms, and how well pcbv matched the looks behind it (0 to 1). */
 export interface BoardEstimate {
     rotation: number;
     shift: [number, number];
     center: [number, number];
     rms: number;
+    match?: number;
 }
 
-/** A camera's look for a board: the job loaded, the poses read and locked, how many in a row agree out of the needed, the agreed estimate, the newest picture's corners and center in the job's frame, and why the newest locked pose was not used. */
+/**
+ * One place a camera's looks put the board: usable looks within the
+ * agreement of one another, their median place, how many, and the share of
+ * the evidence they hold (`probability`; nothing when the corners taken
+ * rule it out, `share` being what it holds of every guess's all the same);
+ * how far apart its looks lie, the furthest it puts a corner taken from
+ * where it was taken, and where it says the newest picture lies on the
+ * board (corners clockwise from the top left, and center, the job's frame).
+ */
+export interface BoardGuess extends BoardEstimate {
+    looks: number;
+    probability: number;
+    share: number;
+    spread_mm: number;
+    spread_deg: number;
+    ruled_out: boolean;
+    corner_mm: number | null;
+    view: [number, number][] | null;
+    seen: [number, number] | null;
+}
+
+/** A corner of a board's outline box, as the board drawing shows it (the job's y up). */
+export type CornerName = "bottom left" | "bottom right" | "top right" | "top left";
+
+/** Corners of a job's board taken by hand: each corner in the job's frame and the machine point the picture's center was on, and where they put the board (one corner: not turned). */
+export interface BoardCorners {
+    job: string;
+    points: { corner: CornerName; job: [number, number]; machine: [number, number] }[];
+    rough: BoardEstimate | null;
+}
+
+/** A camera's look for a board: the job loaded, the poses read and locked, how many looks agree on the most likely guess out of the needed, where it puts the board, the newest picture's corners and center in the job's frame, why the newest locked pose was not used, the guesses, and the corners taken by hand. */
 export interface BoardLook {
     job: string | null;
     looks?: number;
@@ -1617,6 +1655,14 @@ export interface BoardLook {
     problem?: string | null;
     /** The id of the newest search record of this look or its search (spinny_web.searchlog). */
     record?: string | null;
+    /** The camera's least share of the evidence for the most likely guess, 0 to 1, and its corners' tolerance, mm. */
+    threshold?: number;
+    corner_mm?: number;
+    /** The guesses, the most likely first, and how many more were not sent. */
+    guesses?: BoardGuess[];
+    more?: number;
+    /** The corners taken by hand, of this job's board or another's; null with none. */
+    corners?: BoardCorners | null;
 }
 
 /** One V4L2 control of a camera on the backend's computer, as v4l2-ctl lists it, with the value the camera keeps for it (set at each start). */

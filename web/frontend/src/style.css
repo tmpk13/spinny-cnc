@@ -3034,8 +3034,10 @@ table.pnp-parts tr.dnp td {
     display: none;
 }
 
-/* What a camera looking for the board sees of it. */
-.pnp-board .pnp-look polygon {
+/* What a camera looking for the board sees of it: the newest pose's
+   picture, or where each guess at or over the threshold says the picture
+   lies (the most likely dashed while under it), and the corners taken. */
+.pnp-board .pnp-look > polygon {
     fill: color-mix(in oklab, var(--cyan) 12%, transparent);
     stroke: var(--cyan);
     stroke-width: 1.5;
@@ -3043,13 +3045,38 @@ table.pnp-parts tr.dnp td {
     vector-effect: non-scaling-stroke;
 }
 
-.pnp-board .pnp-look.found polygon {
+.pnp-board .pnp-look.found > polygon {
     stroke: var(--green);
     fill: color-mix(in oklab, var(--green) 12%, transparent);
 }
 
 .pnp-board .pnp-look text {
-    fill: var(--cyan);
+    fill: var(--text);
+}
+
+.pnp-board .pnp-guess polygon {
+    fill: color-mix(in oklab, var(--accent) 10%, transparent);
+    stroke: var(--accent);
+    stroke-width: 1.5;
+    vector-effect: non-scaling-stroke;
+}
+
+.pnp-board .pnp-guess.under polygon {
+    fill: none;
+    stroke: var(--muted);
+    stroke-dasharray: 4 3;
+}
+
+.pnp-board .pnp-guess.found polygon {
+    fill: color-mix(in oklab, var(--green) 12%, transparent);
+    stroke: var(--green);
+}
+
+.pnp-board .pnp-corner circle {
+    fill: none;
+    stroke: var(--violet);
+    stroke-width: 2;
+    vector-effect: non-scaling-stroke;
 }
 
 /* PNP page: a G-code machine's panels. */
@@ -3201,6 +3228,7 @@ table.pnp-parts tr.dnp td {
 .picture-marks .mark-miss { stroke: var(--red); }
 .picture-marks .mark-box { stroke: var(--yellow); stroke-dasharray: 8 4; stroke-width: 2; }
 .picture-marks .mark-board { stroke: var(--cyan); stroke-dasharray: 3 3; stroke-width: 2; }
+.picture-marks .mark-rough { stroke: var(--violet); stroke-dasharray: 10 4; stroke-width: 2; }
 .picture-marks .mark-drag { stroke: var(--orange); stroke-width: 2; }
 
 /* The grip under a picture: drag it to make the picture's box taller or
@@ -4209,6 +4237,140 @@ button:disabled {
     border-radius: var(--radius);
     box-shadow: var(--shadow-lg);
     pointer-events: none;
+}
+
+/* The Find board panel: the guesses as columns of their share of the
+   evidence, the threshold a line across them that a press or a drag moves
+   (findboard.ts). Sizes inside the graph are its view box's units, so its
+   words grow and shrink with it; it is kept to a width that reads well. */
+.find-graph-box {
+    max-width: 30rem;
+}
+
+.find-graph {
+    display: block;
+    width: 100%;
+    height: auto;
+    touch-action: none;
+    user-select: none;
+    cursor: ns-resize;
+}
+
+.find-graph text {
+    font-family: var(--font);
+}
+
+.find-graph .find-gridline,
+.find-graph .find-base {
+    stroke: var(--border);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+}
+
+.find-graph .find-base {
+    stroke: var(--border-strong);
+}
+
+.find-graph .find-tick,
+.find-graph .find-empty {
+    fill: var(--muted);
+}
+
+.find-graph .find-value,
+.find-graph .find-line-label {
+    fill: var(--text);
+    font-weight: 600;
+}
+
+.find-graph .find-hit {
+    fill: transparent;
+}
+
+.find-graph .find-column:not(.ruled) path {
+    fill: color-mix(in oklab, var(--muted) 35%, var(--panel));
+}
+
+.find-graph .find-column.over path {
+    fill: var(--accent);
+}
+
+.find-graph .find-column.found path {
+    fill: var(--green);
+}
+
+.find-graph .find-column.ruled path {
+    stroke: var(--red);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+}
+
+.find-graph .find-hatch-ground {
+    fill: color-mix(in oklab, var(--red) 10%, var(--panel));
+}
+
+.find-graph .find-hatch-line {
+    stroke: var(--red);
+    stroke-width: 1.5;
+}
+
+.find-graph .find-line {
+    stroke: var(--strong);
+    stroke-width: 2;
+    vector-effect: non-scaling-stroke;
+}
+
+.find-graph .find-grip {
+    fill: var(--panel);
+    stroke: var(--strong);
+    stroke-width: 2;
+    vector-effect: non-scaling-stroke;
+}
+
+.find-slider {
+    width: 12rem;
+    max-width: 100%;
+    accent-color: var(--accent);
+}
+
+.find-slider-value {
+    font-variant-numeric: tabular-nums;
+    min-width: 3em;
+}
+
+/* The guesses in numbers; a narrow panel scrolls the table, not the page. */
+.find-table-box {
+    overflow-x: auto;
+}
+
+table.find-guesses {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+}
+
+table.find-guesses th {
+    text-align: left;
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 0.2rem 0.35rem;
+    white-space: nowrap;
+}
+
+table.find-guesses td {
+    padding: 0.2rem 0.35rem;
+    border-top: thin solid var(--border);
+    white-space: nowrap;
+}
+
+table.find-guesses tr.under td,
+table.find-guesses tr.ruled-out td {
+    color: var(--muted);
+}
+
+table.find-guesses tr.found td {
+    font-weight: 600;
 }
 
 /* Flow: the space between blocks stacked in a box belongs to the box, not

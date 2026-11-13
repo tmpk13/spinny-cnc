@@ -434,9 +434,9 @@ there ([ARCHITECTURE.md](ARCHITECTURE.md#controller-on-a-raspberry-pi)),
 and a release built beside pcb-vision carries it as `bin/pcbv`
 ([RELEASE.md](RELEASE.md#the-other-programs)). The
 Camera panel on the Jobs page starts it and holds its settings; its
-picture is the Camera view panel beside it, and with *Look for board* on
-a job imported from a KiCad file the panels say where on the board the
-picture is and how well it is locked (below).
+picture is the Camera view panel beside it, and with *Look for board* (the
+Find board panel) on a job imported from a KiCad file the panels say where
+on the board the picture is and how well it is locked (below).
 
 Every camera picture (the head camera's, and the PNP page's bottom and top
 cameras') works the same way. It is asked for at the size it is shown, so
@@ -496,23 +496,52 @@ The camera is useful once the machine knows where it looks from the tool:
 
 #### Looking for the board
 
+The Find board panel (on the Jobs page and the PNP page, each keeping its
+own pick) looks with one camera: the head camera, or a G-code machine's
+top camera, picked from the running ones in its Camera list.
+
 *Look for board* loads the selected job's board into pcbv, which looks for
 it in every picture until *Unload*. The backend reads its pose about five
 times a second and, while the head stands still, turns each lock into
-where the board lies on the machine; the board is *found* once five looks
-in a row agree within half a millimeter and a degree (the badge turns
-from *looking* to *found*, and the line under the picture says how many
-agree, how far apart, and why a look was not used, such as the head
-moving). The Jobs preview draws the board's outline dashed where the looks
-put it, and *Capture* in the Align panel takes that agreed place.
+where the board lies on the machine. Looks that agree (within half a
+millimeter and a degree) make one guess, and each guess is a column in
+the panel's graph, as tall as its share of the evidence: its looks, each
+counted by how well pcbv matched it. The board is *found* once the most
+likely guess has five looks or more and reaches the threshold line (half
+the evidence unless moved; drag the line, press the graph at a height or
+use the slider under it; each camera keeps its own). The badge turns from
+*looking* to *found*, the line under the buttons says how many looks agree
+and why a look was not used (the head moving, say), and the table under
+the graph gives each guess's numbers. A column under the line is grey,
+one ruled out by the corners hatched. The PNP page's Board drawing shows
+where each guess at or over the line (and the most likely one) says the
+camera's picture lies on the board, labeled with its share. The Jobs
+preview draws the board's outline dashed where the most likely guess puts
+it, and the camera pictures draw it over what they show.
+
+*Use as board place* keeps where the found board lies: with the top camera
+as the job's references (two parts far apart; *Find fiducials* then makes
+them exact), with the head camera as marks in the Align panel.
 
 *Search* moves the camera over a box in steps of its picture until the
 board is found, then puts the picture's center over the board's middle;
 it ends by itself (found, or every step looked at) or with *Abort*. Draw
 the box with Shift and a drag on the picture; *Add view* grows it to take
 in what the picture shows now (jog to one corner, draw, jog to the other,
-*Add view*), and *Clear box* forgets it. With no box it searches a square
-the board's diagonal on a side about where the picture is.
+*Add view*), and *Clear box* forgets it. With no box it searches where the
+corners taken put the board, else a square the board's diagonal on a side
+about where the picture is.
+
+*Rough place by corners*: put the picture's center on a corner of the
+board (jog, or double-click the corner in the camera's picture), pick
+which corner it is (as the Board drawing shows the board) and press
+*Corner here*; then the same at another corner. Two corners give the
+board's place and turn, one its place only (taken square). The camera
+pictures draw the board's outline where they put it, dash-dotted. The
+corners narrow a search to the board, *Use as board place* takes their
+place when nothing is found, and a guess that puts a corner further than
+*Within* (2 mm unless set) from where it was taken is ruled out: a look a
+pitch off cannot then be called found.
 
 Both camera panels have the camera log: *log every look* keeps every
 picture the cameras' routines look at (finding the mark, centering the
@@ -689,13 +718,14 @@ the file says: the switches find home to a few hundredths, the fiducial
 ties the numbers to the bed itself. *Find fiducials* (or
 *find fiducials first* on a run) fits the board on its fiducials,
 footprints FID* or named Fiducial, from where the references put them.
-Its Board part finds a board with no references at all: *Look for board*
-with the board's job picked, *Search* (over a box drawn on the top
-camera's picture, as for the head camera), then *Use as board place*
-keeps where the looks put the board as two references (the two parts
-furthest apart), which *Find fiducials* then makes exact. The Board
-drawing shows what the camera's picture sees of the board, dashed, and
-green once found. A
+A board with no references at all is found with the Find board panel
+and the top camera picked (Looking for the board, above): *Look for
+board* with the board's job picked, *Search* (over a box drawn on the top
+camera's picture, or where corners taken put the board), then *Use as
+board place* keeps where the looks put the board (else where the corners
+put it) as two references (the two parts furthest apart), which *Find
+fiducials* then makes exact. The Board drawing shows where each guess
+says the camera's picture lies on the board, green once found. A
 feeder with `pocket` has each pocket looked at before its pick (an empty
 one is passed over), one with `marks` has its marks found once a run and
 its places moved to follow them.
