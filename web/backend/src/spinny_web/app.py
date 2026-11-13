@@ -4496,8 +4496,12 @@ def create_app(
         lambda: f"{backend.updater.version} ({backend.updater.state.get('kind', 'checkout')})",
     )
     reports.add_routes(app, app.state.reports)
-    # Plugins for the page, each off until the operator turns it on.
-    plugins.add_routes(app, plugins.PluginStore(backend.config_path.parent / "plugins"))
+    # Plugins for the page, each off until the operator turns it on; every
+    # change goes to every page, which starts and stops its plugins by it.
+    plugins.add_routes(app, plugins.PluginStore(
+        backend.config_path.parent / "plugins",
+        publish=lambda listed: backend.broadcast.publish_threadsafe({"type": "plugins", "plugins": listed}),
+    ))
 
     @app.delete("/api/jobs/{job_id}")
     def delete_job(job_id: str):

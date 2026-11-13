@@ -236,6 +236,9 @@ export function applyEvent(ctx: Ctx, event: WsEvent): void {
             }
             break;
         }
+        case "plugins":
+            store.set({ plugins: event.data.plugins });
+            break;
         case "align":
             store.set({ align: event.data });
             // An alignment applied has moved the job: the selected copy is stale.

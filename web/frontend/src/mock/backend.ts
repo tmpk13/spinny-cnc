@@ -2034,7 +2034,7 @@ export class MockBackend implements Api, EventFeed {
     /** Bug reports and the link they are handed on to. */
     private readonly reportDesk = new MockReports();
     /** The page's plugins, the example of docs/PLUGINS.md among them. */
-    readonly pluginShelf = new MockPlugins();
+    readonly pluginShelf = new MockPlugins((list) => this.emit({ type: "plugins", data: { plugins: list } }));
     private cameraJob: string | null = null;
     private cameraMarkPoint: Board | null = null;
     /** Where the loaded board really lies: the job's design a little off, so alignment has something to find. */

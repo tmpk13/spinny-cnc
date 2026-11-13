@@ -428,9 +428,9 @@ says how one is made). Each has a switch, what it does, who made it,
 its source in a fold, and *Delete*. A plugin runs with the page's whole
 power, moving the machine and firing the laser included, so each is off
 until turned on here, which asks first, and goes off again when its file
-changes. On or off applies at once, and every browser starts the ones
-on when it loads; turned off, a plugin's panels go at once, and anything
-else it left goes with a reload.
+changes. On or off applies at once in every browser open, and in each
+one that loads later; turned off, a plugin's panels go at once, and
+anything else it left goes with a reload.
 
 ### The travel height
 

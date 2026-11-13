@@ -24,11 +24,11 @@ fold) before turning it on.
 
 ## Turning one on and off
 
-The switch turns a plugin on in this page at once, after a question that
-names what a plugin can do, and the backend keeps it on, so every browser
-starts it when it loads (or when it shows the Plugins tab). Off stops it
-at once: its own undo runs (see below), then the panels it added go and
-its listeners stop. Anything else it did without the host (a timer it did
+The switch turns a plugin on, after a question that names what a plugin
+can do. The backend keeps it on and tells every page open, so it starts
+at once in every browser, and in each one that loads later. Off stops it
+at once everywhere: its own undo runs (see below), then the panels it
+added go and its listeners stop. Anything else it did without the host (a timer it did
 not clear) goes with a reload. A plugin that fails to load or start says
 why under its name, and so does one that failed while it ran (it is
 stopped then).

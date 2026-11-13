@@ -2,11 +2,11 @@
 // a switch, what it says it does, who made it (Auto, or a file put there
 // by hand), its source in a fold, and Delete. A plugin runs in this page
 // with the page's whole power, the machine's moves included, so turning
-// one on asks first, saying so. The backend keeps which are on, so every
-// browser starts the same ones when it loads; a switch applies here at
-// once, and another browser follows when it loads or shows this page.
-// The list is read again when this page is shown and when an Auto tool
-// changed a plugin.
+// one on asks first, saying so. The backend keeps which are on and sends
+// the list to every page after each change (a switch, a tool writing one
+// again, a delete), and each page starts and stops its plugins by it: a
+// switch applies in every browser at once. The list is read again when
+// this page is shown and when the event feed opens again.
 
 import { button, el } from "../dom.ts";
 import { askConfirm } from "../confirm.ts";
@@ -50,7 +50,7 @@ export function turnOnQuestion(info: PluginInfo): string {
 }
 
 /** Mounts the Plugins page's panel in `root`, and starts the plugins the backend has turned on. */
-export function mountPlugins(root: HTMLElement, ctx: Ctx, options: RuntimeOptions = {}): { runtime: PluginRuntime; refresh(): Promise<void> } {
+export function mountPlugins(root: HTMLElement, ctx: Ctx, options: RuntimeOptions = {}): { runtime: PluginRuntime; refresh(): Promise<void>; settled(): Promise<void> } {
     const runtime = new PluginRuntime(ctx, options);
     const reload = button("Reload list", () => refresh(), "btn btn-small btn-quiet", "read the plugins again from the backend");
     const list = el("ul", { class: "plugin-list", "aria-label": "Plugins" });
@@ -66,6 +66,8 @@ export function mountPlugins(root: HTMLElement, ctx: Ctx, options: RuntimeOption
 
     let shown: PluginInfo[] = [];
     const rows = new Map<string, Row>();
+    // The plugins started and stopped by the last list, when that is done.
+    let syncing: Promise<void> = Promise.resolve();
 
     async function showSource(info: PluginInfo, row: Row): Promise<void> {
         if (row.shown === info.hash) {
@@ -89,24 +91,22 @@ export function mountPlugins(root: HTMLElement, ctx: Ctx, options: RuntimeOption
             await refresh();
             return;
         }
-        shown = shown.map((entry) => (entry.id === kept.id ? kept : entry));
-        draw();
-        if (on) {
-            await runtime.start(kept);
-        } else {
-            runtime.stop(kept.id);
+        // Started or stopped by the list, as every other page does with the backend's.
+        ctx.store.set({ plugins: (ctx.store.get().plugins ?? shown).map((entry) => (entry.id === kept.id ? kept : entry)) });
+        await syncing;
+        if (!on) {
             ctx.toast("info", `${kept.name} is off: what it added is gone, and a reload clears anything it left`);
         }
-        draw();
     }
 
     async function remove(info: PluginInfo): Promise<void> {
         if (!(await askConfirm(`Delete the plugin "${info.name}"? Its file goes from var/plugins.`, "Delete"))) {
             return;
         }
-        runtime.stop(info.id);
-        await ctx.call(ctx.api.deletePlugin(info.id));
-        await refresh();
+        if (await ctx.call(ctx.api.deletePlugin(info.id).then(() => true))) {
+            ctx.store.set({ plugins: (ctx.store.get().plugins ?? shown).filter((entry) => entry.id !== info.id) });
+            await syncing;
+        }
     }
 
     function rowFor(info: PluginInfo): Row {
@@ -193,31 +193,31 @@ export function mountPlugins(root: HTMLElement, ctx: Ctx, options: RuntimeOption
     async function refresh(): Promise<void> {
         const got = await ctx.call(ctx.api.plugins());
         if (got) {
-            shown = got;
-            draw();
-            await runtime.sync(got);
-            draw();
+            ctx.store.set({ plugins: got });
+            await syncing;
         }
     }
 
     runtime.onChange(() => draw());
+    // The list, from a reply or the event feed: drawn, and the plugins on
+    // in it started, the rest stopped.
+    ctx.store.subscribe((state: AppState) => {
+        shown = state.plugins ?? [];
+        draw();
+        const list = shown;
+        syncing = syncing.then(() => runtime.sync(list)).then(() => draw());
+    }, ["plugins"]);
     onPage((page) => {
         if (page === "plugins") {
             void refresh();
         }
     });
-    // A tool call that changed a plugin: the list again.
-    let heard = Math.max(0, ...(ctx.store.get().auto?.entries ?? []).map((entry) => entry.id));
-    ctx.store.subscribe((state: AppState) => {
-        const entries = state.auto?.entries ?? [];
-        const fresh = entries.filter((entry) => entry.id > heard && entry.role === "tool" && entry.done);
-        if (fresh.length > 0) {
-            heard = Math.max(heard, ...fresh.map((entry) => entry.id));
-            if (fresh.some((entry) => (entry.changed ?? []).includes("plugins"))) {
-                void refresh();
-            }
+    // Events missed while the feed was down: the list again.
+    ctx.store.subscribe((state: AppState, previous: AppState) => {
+        if (state.link === "open" && previous.link !== "open") {
+            void refresh();
         }
-    }, ["auto"]);
+    }, ["link"]);
 
     draw();
     const started = refresh();
@@ -226,6 +226,11 @@ export function mountPlugins(root: HTMLElement, ctx: Ctx, options: RuntimeOption
         async refresh() {
             await started;
             await refresh();
+        },
+        /** Waits for the plugins of the last list to be started and stopped. */
+        async settled() {
+            await started;
+            await syncing;
         },
     };
 }

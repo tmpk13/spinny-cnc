@@ -81,6 +81,9 @@ interface Kept {
 }
 
 export class MockPlugins {
+    /** `changed` hears the whole list after every change, as the backend publishes it. */
+    constructor(private readonly changed: (list: PluginInfo[]) => void = () => undefined) {}
+
     private readonly kept = new Map<string, Kept>([
         ["big-position", { source: EXAMPLE_PLUGIN, written: null, enabled: null, rewritten: false, modified: "2026-11-13T12:00:00+00:00" }],
     ]);
@@ -143,6 +146,7 @@ export class MockPlugins {
             modified: new Date().toISOString().replace(/\.\d+Z$/, "+00:00"),
         };
         this.kept.set(id, kept);
+        this.changed(this.list());
         return this.info(id, kept);
     }
 
@@ -154,12 +158,14 @@ export class MockPlugins {
         }
         kept.enabled = enabled ? now : null;
         kept.rewritten = false;
+        this.changed(this.list());
         return this.info(id, kept);
     }
 
     delete(id: string): void {
         this.entry(id);
         this.kept.delete(id);
+        this.changed(this.list());
     }
 
     /** The module's address while the plugin is on as `info.hash`. */

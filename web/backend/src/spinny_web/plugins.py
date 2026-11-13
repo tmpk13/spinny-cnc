@@ -24,6 +24,7 @@ import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
@@ -91,11 +92,18 @@ class EnabledBody(BaseModel):
 
 
 class PluginStore:
-    """The folder of plugins and what was written and turned on there."""
+    """The folder of plugins and what was written and turned on there.
+    `publish` hears the whole list after every change made through the
+    store, so every page open starts and stops plugins as one."""
 
-    def __init__(self, folder: Path) -> None:
+    def __init__(self, folder: Path, publish: Callable[[list[dict]], None] | None = None) -> None:
         self.folder = folder
+        self.publish = publish
         self._lock = threading.Lock()
+
+    def _changed(self) -> None:
+        if self.publish is not None:
+            self.publish(self.list())
 
     def _registry(self) -> dict[str, dict]:
         try:
@@ -183,7 +191,9 @@ class PluginStore:
             was_on = isinstance(before.get("enabled"), str) or before.get("rewritten") is True
             registry[plugin_id] = {"written": hashlib.sha256(data).hexdigest(), "enabled": None, "rewritten": was_on}
             self._keep(registry)
-            return self._one(plugin_id, registry)[0]
+            info = self._one(plugin_id, registry)[0]
+        self._changed()
+        return info
 
     def set_enabled(self, plugin_id: str, enabled: bool, digest: str | None) -> dict:
         """Turns the plugin on as the text whose SHA-256 is `digest`, or off."""
@@ -197,7 +207,9 @@ class PluginStore:
             entry.pop("rewritten", None)
             registry[plugin_id] = entry
             self._keep(registry)
-            return self._one(plugin_id, registry)[0]
+            info = self._one(plugin_id, registry)[0]
+        self._changed()
+        return info
 
     def delete(self, plugin_id: str) -> None:
         path = self._file(plugin_id)
@@ -209,6 +221,7 @@ class PluginStore:
             registry = self._registry()
             if registry.pop(plugin_id, None) is not None:
                 self._keep(registry)
+        self._changed()
 
 
 def add_routes(app: FastAPI, store: PluginStore) -> None:

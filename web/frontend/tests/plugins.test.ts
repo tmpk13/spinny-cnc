@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { HttpApi } from "../src/api.ts";
-import { createContext } from "../src/main.ts";
+import { applyEvent, createContext } from "../src/main.ts";
 import { MockBackend } from "../src/mock/backend.ts";
 import { EXAMPLE_PLUGIN, exportedText, MockPlugins, textHash } from "../src/mock/plugins.ts";
 import { PluginRuntime, type PluginHost, type PluginInfo, type PluginModule } from "../src/plugins.ts";
@@ -9,6 +9,7 @@ import { Store, initialState, type AppState } from "../src/state.ts";
 import { LAYOUT_KEY, mountPanels } from "../src/views/panels.ts";
 import { mountPlugins, pluginState, turnOnQuestion } from "../src/views/plugins.ts";
 import { showPage } from "../src/views/tabs.ts";
+import { parseEvent } from "../src/ws.ts";
 import { connected } from "./harness.ts";
 
 const settle = async (): Promise<void> => {
@@ -114,6 +115,16 @@ describe("HttpApi plugin routes", () => {
         ]);
         expect(api.pluginModuleUrl({ id: "big-position", hash: "a b" } as PluginInfo)).toBe("http://host/api/plugins/big-position/module.js?v=a%20b");
         expect(new HttpApi("").pluginModuleUrl({ id: "x", hash: "h" } as PluginInfo)).toEndWith("/api/plugins/x/module.js?v=h");
+    });
+});
+
+describe("the plugins event", () => {
+    test("the backend's flat frame reads as the list, and the page puts it in the store", () => {
+        const event = parseEvent(JSON.stringify({ type: "plugins", plugins: [{ id: "a" }] }));
+        expect(event).toEqual({ type: "plugins", data: { plugins: [{ id: "a" }] } } as never);
+        const { store, ctx } = context();
+        applyEvent(ctx, event!);
+        expect(store.get().plugins).toEqual([{ id: "a" }] as never);
     });
 });
 
@@ -275,6 +286,8 @@ describe("the Plugins page", () => {
     function mount() {
         makePages();
         const { store, backend, ctx } = context();
+        // The event feed into the store, as the page wires it.
+        backend.onEvent((event) => applyEvent(ctx, event));
         const root = document.getElementById("plugins")!;
         const view = mountPlugins(root, ctx, { load: importing });
         return { store, backend, root, view };
@@ -325,7 +338,7 @@ describe("the Plugins page", () => {
         expect(document.querySelector("#plugin-big-position")).toBeNull();
     });
 
-    test("declined, it stays off; a plugin a tool wrote shows up, off, by Auto", async () => {
+    test("declined, it stays off; a plugin a tool wrote shows up by the event feed, off, by Auto", async () => {
         const { root, view, backend, store } = mount();
         await view.refresh();
         const toggle = root.querySelector<HTMLInputElement>("input[role=switch]")!;
@@ -337,11 +350,23 @@ describe("the Plugins page", () => {
         expect(toggle.checked).toBe(false);
         expect((await backend.plugins())[0]!.enabled).toBe(false);
         backend.pluginShelf.write("clock", 'export const name = "Clock";\nexport function activate(host) {}\n');
-        store.set({ auto: { busy: false, entries: [{ id: 3, role: "tool", text: "", done: true, name: "write_plugin", changed: ["plugins"] }] } });
         await settle();
+        expect(store.get().plugins?.map((info) => info.id)).toEqual(["big-position", "clock"]);
         const clock = root.querySelector(".plugin-item[data-id=clock]")!;
         expect(clock.querySelector(".plugin-by")!.textContent).toBe("Auto");
         expect(clock.querySelector(".plugin-state")!.textContent).toBe("Off.");
+    });
+
+    test("a plugin turned on or off in another browser starts or stops here by the event feed", async () => {
+        const { view, backend } = mount();
+        await view.refresh();
+        const example = (await backend.plugins())[0]!;
+        await backend.setPluginEnabled(example.id, true, example.hash);
+        await view.settled();
+        expect(document.querySelector("#page-jobs #plugin-big-position")).not.toBeNull();
+        await backend.setPluginEnabled(example.id, false, null);
+        await view.settled();
+        expect(document.querySelector("#plugin-big-position")).toBeNull();
     });
 
     test("Delete asks, stops it and takes it out", async () => {

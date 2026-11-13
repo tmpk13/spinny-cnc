@@ -623,7 +623,9 @@ Plugin: `{"id": "big-position", "name": "Big position", "description":
 string literals, read without running it (the id when there is no
 name); `changed` is true once a plugin that was on has had its file
 written again or edited, which leaves it off, until it is turned on or
-off again.
+off again. After every write, switch and delete through these routes
+the backend sends the whole list as a `plugins` event, and each page
+starts and stops its plugins by it.
 
 ## Height map
 
@@ -1287,4 +1289,5 @@ it does not watch then.
 | `markers` | `{"markers": [...]}` whenever the list is put |
 | `camlog` | the camera log state, as `GET /api/camlog` answers it with no query (the newest entries of every camera), after every change |
 | `searchlog` | the search records, as `GET /api/searchlog` answers it with no query, when a record begins or ends |
+| `plugins` | `{"plugins": [plugin, ...]}`, the whole list as `GET /api/plugins` answers it, after every write, switch and delete through the plugin routes |
 | `auto` | `{"entry": entry or null, "busy": true, "cleared": false}`: an entry of the Auto conversation added or changed, or none when only `busy` changed (a turn ended); `cleared` when the conversation was cleared. An answer being written is sent at most ten times a second, its whole text so far each time, and once more when it is done |

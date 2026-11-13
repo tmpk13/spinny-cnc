@@ -1,6 +1,7 @@
 // One store for the page. Views subscribe to the keys they draw from.
 
 import type { JobPlace } from "./jsontext.ts";
+import type { PluginInfo } from "./plugins.ts";
 import type { Dimension } from "./preview.ts";
 import type { PathRef } from "./regroup.ts";
 
@@ -134,6 +135,8 @@ export interface AppState {
     auto: AutoConversation | null;
     /** The Auto tab's provider settings; null until read. */
     autoSettings: AutoSettings | null;
+    /** The page's plugins as the backend lists them, which are on among them; null until read. */
+    plugins: PluginInfo[] | null;
     /** The Plot page's operations as a job not made yet, drawn on its preview; null with nothing to show. */
     millPlan: Job | null;
     /** The sizes of the Plot page's operation in its fields, drawn over its preview as a sketch's. */
@@ -184,6 +187,7 @@ export function initialState(mock: boolean): AppState {
         markers: [],
         auto: null,
         autoSettings: null,
+        plugins: null,
         millPlan: null,
         millDims: [],
         mapChoice: "off",

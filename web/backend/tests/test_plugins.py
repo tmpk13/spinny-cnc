@@ -7,12 +7,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
 
 from spinny_web.app import Backend, create_app
-from spinny_web.plugins import MAX_SOURCE, exported
+from spinny_web.plugins import MAX_SOURCE, PluginStale, PluginStore, exported
 from spinny_web.tools import ToolBox
 
 SOURCE = """\
@@ -153,6 +154,41 @@ def test_the_tools_write_a_plugin_switched_off_and_cannot_turn_it_on(client):
 
     asyncio.run(go())
     assert client.get("/api/plugins").json() == {"plugins": []}
+
+
+def test_every_change_made_through_the_store_publishes_the_whole_list(tmp_path):
+    heard: list[list[dict]] = []
+    store = PluginStore(tmp_path / "plugins", publish=heard.append)
+    info = store.write("big-position", SOURCE)
+    store.set_enabled("big-position", True, info["hash"])
+    store.set_enabled("big-position", False, None)
+    store.delete("big-position")
+    assert [[(entry["id"], entry["enabled"]) for entry in listed] for listed in heard] == [
+        [("big-position", False)],
+        [("big-position", True)],
+        [("big-position", False)],
+        [],
+    ]
+    # Refused, nothing is published.
+    store.write("big-position", SOURCE)
+    with pytest.raises(PluginStale):
+        store.set_enabled("big-position", True, "0")
+    assert len(heard) == 5
+
+
+def test_the_app_sends_the_list_to_every_page_as_a_plugins_event(client):
+    queue = client.app.state.backend.broadcast.subscribe()
+    info = client.put("/api/plugins/big-position", json={"source": SOURCE}).json()
+    client.put("/api/plugins/big-position/enabled", json={"enabled": True, "hash": info["hash"]})
+    events = []
+    for _ in range(100):
+        while not queue.empty():
+            events.append(queue.get_nowait())
+        if len([event for event in events if event.get("type") == "plugins"]) >= 2:
+            break
+        time.sleep(0.01)
+    sent = [event for event in events if event.get("type") == "plugins"]
+    assert [[entry["enabled"] for entry in event["plugins"]] for event in sent] == [[False], [True]]
 
 
 def test_name_and_description_are_read_from_plain_literals_only():

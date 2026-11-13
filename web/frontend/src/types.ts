@@ -1,5 +1,7 @@
 // Shapes of the backend's JSON, one type per route body or response.
 
+import type { PluginInfo } from "./plugins.ts";
+
 export interface Port {
     url: string;
     description: string;
@@ -1002,7 +1004,8 @@ export type WsEvent =
     | { type: "markers"; data: MarkersResponse }
     | { type: "camlog"; data: CamLogState }
     | { type: "searchlog"; data: SearchLogState }
-    | { type: "auto"; data: AutoEvent };
+    | { type: "auto"; data: AutoEvent }
+    | { type: "plugins"; data: { plugins: PluginInfo[] } };
 
 // --- The Auto tab ----------------------------------------------------------------
 
