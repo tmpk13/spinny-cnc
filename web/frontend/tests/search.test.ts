@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { collectFeatures, fuzzyScore, mountSearch, rankFeatures, type Feature } from "../src/views/search.ts";
+import { collectFeatures, featurePath, fuzzyScore, mountSearch, rankFeatures, type Feature } from "../src/views/search.ts";
 
 afterEach(() => {
     document.getElementById("app")?.remove();
@@ -62,4 +62,18 @@ test("the box opens with Ctrl+K, lists matches, and Enter takes the page there",
     expect(sheet.hidden).toBe(true);
     expect(app.getAttribute("data-page")).toBe("config");
     expect(document.getElementById("machine-file")!.classList.contains("pulse")).toBe(true);
+});
+
+test("a match's tooltip gives its whole path and what its button's tooltip says", () => {
+    const app = makeApp();
+    mountSearch(app.querySelector(".tabs-tools") as HTMLElement);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
+    const input = app.querySelector(".search-sheet input") as HTMLInputElement;
+    input.value = "probe";
+    input.dispatchEvent(new Event("input"));
+    expect((app.querySelector(".search-item") as HTMLElement).title).toBe("Jobs > Height map > Probe: probe the grid");
+    const features = collectFeatures();
+    expect(featurePath(features.find((feature) => feature.label === "Save map")!)).toBe("Jobs > Height map > Save map");
+    expect(featurePath(features.find((feature) => feature.kind === "panel" && feature.label === "Machine file")!)).toBe("Config > Machine file");
+    expect(featurePath(features.find((feature) => feature.kind === "page" && feature.label === "Jobs")!)).toBe("Jobs tab: jobs, the preview and runs");
 });

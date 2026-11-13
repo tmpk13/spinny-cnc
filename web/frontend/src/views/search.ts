@@ -66,6 +66,17 @@ export function fuzzyScore(query: string, text: string): number | null {
     return score;
 }
 
+/**
+ * A feature's whole path, as its tooltip in the list gives it: the page,
+ * the panel and the button ("Jobs > Height map > Probe"), then what the
+ * button's own tooltip says of it, where it has one. The list cuts a long
+ * path short; hovering a match shows it whole.
+ */
+export function featurePath(feature: Feature): string {
+    const path = feature.kind === "page" ? `${feature.label} tab` : `${feature.where} > ${feature.label}`;
+    return feature.more.trim() === "" ? path : `${path}: ${feature.more.trim()}`;
+}
+
 /** The features matching `query`, best first: the label weighs most, then where it is, then its tooltip. */
 export function rankFeatures(features: Feature[], query: string, count = SHOWN): Feature[] {
     const scored: { feature: Feature; score: number }[] = [];
@@ -145,7 +156,7 @@ export function mountSearch(tools: HTMLElement): void {
         matches = input.value.trim() === "" ? [] : rankFeatures(features, input.value);
         active = Math.min(active, Math.max(0, matches.length - 1));
         replace(list, ...matches.map((feature, index) => {
-            const item = el("li", { class: "search-item", role: "option", "aria-selected": String(index === active) },
+            const item = el("li", { class: "search-item", role: "option", "aria-selected": String(index === active), title: featurePath(feature) },
                 el("span", { class: "search-label" }, feature.label),
                 el("span", { class: "muted search-where" }, feature.kind === "page" ? "tab" : feature.where),
             );
