@@ -35,3 +35,27 @@ Why it matters: the line in TODO.md was cut off.
 - B. The board preview: the same points ringed on the Jobs page's preview.
 Applied: A, in be4bf97.
 Answer:
+
+## Q6. How many servos should the board drive?
+Why it matters: each slot is seven firmware settings and a bar in the jog panel; a PCA9685 has sixteen channels.
+- A. Four (recommended): servo.1 to servo.4, enough for a pen, a shutter, a probe and a gate; the settings list stays short.
+- B. Eight: twice the settings (59 more instead of 31) and a longer stored blob version.
+- C. Sixteen, a whole PCA9685: suits a bank of servo feeders, at 112 servo settings.
+Applied: A, in b318e42.
+Answer:
+
+## Q7. What should a reset, an alarm or a disconnect do to a servo?
+Why it matters: a servo holding a tool clear of the work drops it if its pulse stops; one mid-move keeps going if it does not.
+- A. Leave it where it is (recommended): only a `servo` line or Off moves it; a reset stops motion and the beam, not the servos.
+- B. Let it go: no pulse after a reset, so it can be turned by hand, and a gravity-loaded arm falls.
+- C. Send it to its start angle, as at power on.
+Applied: A, in b318e42.
+Answer:
+
+## Q8. Should the laser and tool outputs refuse the STOP headers' pins too?
+Why it matters: GP3, GP4, GP16 and GP25 reach the chip through a 74LVC2G34 input buffer; `[output] pin = 4` would drive the laser PWM against that buffer's output. The servos and the I2C bus now refuse them; the laser and tool pins never did.
+- A. Refuse them in machine files only (recommended): a file naming one is refused with the reason; the firmware keeps reading a stored setting that has one, so nothing already saved is thrown away.
+- B. Refuse them in the firmware as well: also catches the console, but a board with such a setting stored would come up with every setting at its default, wiring included.
+- C. Leave them as they are.
+Applied: C for now (nothing changed); A is a small change in the three machine file readers.
+Answer:
