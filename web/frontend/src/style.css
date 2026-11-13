@@ -3405,6 +3405,20 @@ table.pnp-parts tr.dnp td {
     background: repeating-linear-gradient(45deg, transparent 0 0.2em, var(--border) 0.2em 0.3em);
 }
 
+/* The zoom typed in under a camera's picture, between its - and +, as
+   tall as the small buttons beside it. */
+.picture-zoom {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+}
+
+.picture-zoom input.num.field {
+    min-height: 2.25rem;
+    padding: 0.2rem 0.4rem;
+    text-align: right;
+}
+
 /* A camera's controls, folded under its settings: a row a control. */
 .camera-controls > summary {
     cursor: pointer;

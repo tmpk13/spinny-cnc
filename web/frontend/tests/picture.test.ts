@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
 import { boardMarks, foundMarks, frameSize, reachMark } from "../src/views/camview.ts";
-import { armedPick, armPick, disarmPick, dragMove, frameRequestWidth, growBox, machineToPicture, mountPicture, pictureToMachine, spotMarks } from "../src/views/picture.ts";
-import { setup, settle } from "./harness.ts";
+import { armedPick, armPick, clampZoom, disarmPick, dragMove, frameRequestWidth, growBox, machineToPicture, mountPicture, pictureToMachine, spotMarks, stepZoom, zoomText } from "../src/views/picture.ts";
+import { click, setup, settle } from "./harness.ts";
 
 describe("picture geometry", () => {
     test("a picture displacement turns into the machine's mm and back, mirrored or not", () => {
@@ -37,6 +37,23 @@ describe("picture geometry", () => {
         // Size unknown: what is shown, within the backend's range.
         expect(frameRequestWidth(50, 1, 1, null)).toBe(160);
         expect(frameRequestWidth(9000, 1, 1, null)).toBe(4096);
+    });
+
+    test("a zoom typed in is held within the steps' range, and the steps go to the one beside it", () => {
+        expect(clampZoom(null)).toBeNull();
+        expect(clampZoom(Number.NaN)).toBeNull();
+        expect(clampZoom(0.5)).toBe(1);
+        expect(clampZoom(20)).toBe(8);
+        expect(clampZoom(2.3456)).toBe(2.35);
+        expect(stepZoom(1, 1)).toBe(1.5);
+        expect(stepZoom(2, 1)).toBe(3);
+        expect(stepZoom(2.5, 1)).toBe(3);
+        expect(stepZoom(2.5, -1)).toBe(2);
+        expect(stepZoom(8, 1)).toBe(8);
+        expect(stepZoom(1, -1)).toBe(1);
+        expect(stepZoom(1.2, -1)).toBe(1);
+        expect(zoomText(2.5)).toBe("2.5");
+        expect(zoomText(1)).toBe("1");
     });
 
     test("a box grows to take in another", () => {
@@ -182,6 +199,45 @@ describe("the picture view", () => {
         pointer(stage, "pointerdown", 100, 100);
         pointer(stage, "pointerup", 100, 100);
         expect(picked).toHaveLength(1);
+        view.stop();
+    });
+
+    test("a zoom typed in is taken on Enter, held within range, and the buttons step from it", () => {
+        const { view } = mounted(false);
+        const field = view.root.querySelector('input[aria-label="Test camera zoom"]') as HTMLInputElement;
+        const img = view.root.querySelector("img.picture-img") as HTMLImageElement;
+        const marks = view.root.querySelector(".picture-marks") as SVGElement;
+        expect(field.value).toBe("1");
+        field.value = "2.5";
+        field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+        expect(view.zoom()).toBe(2.5);
+        // The marks' view box is the part the zoom shows; the frame asked
+        // for is the full size, since 500 px shown at 2.5 need 1250.
+        const width = Number((marks.getAttribute("viewBox") ?? "").split(" ")[2]);
+        expect(width).toBeCloseTo(400, 2);
+        expect(img.getAttribute("src")).toBe("data:image/svg+xml,w=1000&o=0");
+        // Arithmetic works as in any number field; past the end is held there.
+        field.value = "5/2*2";
+        field.dispatchEvent(new Event("change"));
+        expect(view.zoom()).toBe(5);
+        field.value = "20";
+        field.dispatchEvent(new Event("change"));
+        expect(view.zoom()).toBe(8);
+        expect(field.value).toBe("8");
+        // No number: the zoom stays and its words come back.
+        field.value = "abc";
+        field.dispatchEvent(new Event("change"));
+        expect(view.zoom()).toBe(8);
+        expect(field.value).toBe("8");
+        expect(field.classList.contains("invalid")).toBe(false);
+        // The buttons go to the step beside a zoom typed in, and say it in the field.
+        view.setZoom(2.5);
+        click(view.root, "-");
+        expect(view.zoom()).toBe(2);
+        view.setZoom(2.5);
+        click(view.root, "+");
+        expect(view.zoom()).toBe(3);
+        expect(field.value).toBe("3");
         view.stop();
     });
 

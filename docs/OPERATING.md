@@ -462,10 +462,12 @@ on the board the picture is and how well it is locked (below).
 Every camera picture (the head camera's, and the PNP page's bottom and top
 cameras') works the same way. It is asked for at the size it is shown, so
 it stays sharp when zoomed: *+* and *-* under it, or Ctrl and the wheel (a
-pinch on a touchpad), zoom on its center, and the plain wheel scrolls the
-page. A drag moves the head so what the camera sees follows the pointer,
-a line showing the move; a double-click brings a point to the crosshair
-(both once the camera's scale is measured). The grip under the picture
+pinch on a touchpad), zoom on its center by steps, and the plain wheel
+scrolls the page; the zoom between *-* and *+* is a field, so any zoom
+from 1 to 8 can be typed in and taken with Enter. A drag moves the head
+so what the camera sees follows the pointer, a line showing the move; a
+double-click brings a point to the crosshair (both once the camera's
+scale is measured). The grip under the picture
 makes its box taller or shorter, kept per camera; a double-click on the
 grip gives the picture its own shape back. *Overlay* switches the page's
 marks over it (the crosshair, the circle a spot is looked for within, a

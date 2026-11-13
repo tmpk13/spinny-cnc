@@ -6,19 +6,45 @@
 // (the crosshair, the circles looked within, the spots found, the box a
 // search covers, the board where the looks put it), so their lines stay
 // thin and sharp at any zoom. Ctrl and the wheel zoom on the picture's
-// center (the plain wheel scrolls the page); a drag moves the head so what
+// center (the plain wheel scrolls the page), as do the buttons under it and
+// a zoom typed in between them; a drag moves the head so what
 // the camera sees follows the pointer, a line showing the move; a
 // double-click brings a point to the crosshair; Shift and a drag draw the
 // box a search keeps to, in the machine's frame.
 
-import { button, el, readStored, writeStored } from "../dom.ts";
-import { formatFixed } from "../format.ts";
+import { button, el, numberField, readStored, writeStored } from "../dom.ts";
+import { formatFixed, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { Ctx } from "./context.ts";
 
 /** How often a picture is asked for while it shows, ms. */
 export const FRAME_INTERVAL_MS = 250;
+/** The zooms the buttons and the wheel step through; a zoom typed in may lie anywhere from the first to the last. */
 export const ZOOMS = [1, 1.5, 2, 3, 4, 6, 8];
+
+/** The zoom a value typed in asks for: within the steps' range, to a hundredth; null for no number. */
+export function clampZoom(value: number | null): number | null {
+    if (value === null || !Number.isFinite(value)) {
+        return null;
+    }
+    const low = ZOOMS[0]!;
+    const high = ZOOMS[ZOOMS.length - 1]!;
+    return Math.round(Math.max(low, Math.min(high, value)) * 100) / 100;
+}
+
+/** The next step from `zoom` in or out (a zoom between steps goes to the step beside it), the end step at most. */
+export function stepZoom(zoom: number, direction: 1 | -1): number {
+    if (direction > 0) {
+        return ZOOMS.find((value) => value > zoom + 1e-9) ?? ZOOMS[ZOOMS.length - 1]!;
+    }
+    return [...ZOOMS].reverse().find((value) => value < zoom - 1e-9) ?? ZOOMS[0]!;
+}
+
+/** A zoom as its field shows it: 1, 2.5, 1.25. */
+export function zoomText(zoom: number): string {
+    return String(Math.round(zoom * 100) / 100);
+}
+
 /** The picture box's height the grip keeps it within, rem. */
 export const MIN_BOX_REM = 6;
 export const MAX_BOX_REM = 80;
@@ -257,7 +283,12 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     const stage = el("div", { class: "picture-stage" }, picture, layer);
     const box = el("div", { class: "picture-box", "data-camera": options.key }, stage);
     const grip = el("div", { class: "picture-grip", role: "separator", "aria-label": `${options.label} picture height`, title: "drag to make the picture's box taller or shorter; double-click for the picture's own shape" });
-    const zoomLine = el("span", { class: "muted mono picture-zoom" }, "1x");
+    // The zoom as a field: typed (2.5, or 5/2) and taken on Enter or on
+    // leaving it; the buttons and the wheel write theirs into it.
+    const zoomField = numberField({ value: 1, min: ZOOMS[0], max: ZOOMS[ZOOMS.length - 1], step: 0.5, width: "3.5rem" });
+    zoomField.setAttribute("aria-label", `${options.label} zoom`);
+    zoomField.title = `zoom, ${ZOOMS[0]} to ${ZOOMS[ZOOMS.length - 1]} times: type one and press Enter`;
+    const zoomLine = el("label", { class: "picture-zoom" }, zoomField, el("span", { class: "muted" }, "x"));
     const out = button("-", () => step(-1), "btn btn-quiet btn-small");
     out.title = "zoom out (or Ctrl and the wheel)";
     const into = button("+", () => step(1), "btn btn-quiet btn-small");
@@ -368,18 +399,38 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
 
     // --- zoom --------------------------------------------------------------------
 
+    /** Zooms to `next`, held within the steps' range; a zoom it already has only puts its words back in the field. */
     function setZoom(next: number): void {
-        zoom = ZOOMS.reduce((best, value) => (Math.abs(value - next) < Math.abs(best - next) ? value : best), ZOOMS[0]!);
+        const value = clampZoom(next) ?? zoom;
+        zoomField.value = zoomText(value);
+        zoomField.classList.remove("invalid");
+        zoomField.removeAttribute("aria-invalid");
+        if (value === zoom) {
+            return;
+        }
+        zoom = value;
         picture.style.transform = `scale(${zoom})`;
-        zoomLine.textContent = `${zoom}x`;
         draw(ctx.store.get());
         refresh(true);
     }
 
     function step(direction: 1 | -1): void {
-        const at = ZOOMS.indexOf(zoom);
-        setZoom(ZOOMS[Math.max(0, Math.min(ZOOMS.length - 1, at + direction))]!);
+        setZoom(stepZoom(zoom, direction));
     }
+
+    /** Takes the zoom typed in; a field that holds no number gets the zoom back. */
+    function typedZoom(): void {
+        setZoom(parseNumber(zoomField.value.trim()) ?? zoom);
+    }
+    zoomField.addEventListener("change", typedZoom);
+    zoomField.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            typedZoom();
+        } else if (event.key === "Escape") {
+            setZoom(zoom);
+        }
+    });
 
     // The plain wheel scrolls the page; Ctrl and the wheel (a pinch on a
     // touchpad) zooms the picture.
