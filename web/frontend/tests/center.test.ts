@@ -6,7 +6,7 @@ import { createContext } from "../src/main.ts";
 import { MockBackend } from "../src/mock/backend.ts";
 import { Store, initialState, type AppState } from "../src/state.ts";
 import { centerRequest, type CenterFields } from "../src/views/center.ts";
-import { mountJobs } from "../src/views/jobs.ts";
+import { mountTests } from "../src/views/tests.ts";
 
 function fields(overrides: Partial<CenterFields> = {}): CenterFields {
     return {
@@ -79,7 +79,7 @@ describe("center panel", () => {
         const ctx = createContext(backend, store);
         const root = document.createElement("section");
         document.body.append(root);
-        mountJobs(root, ctx, root);
+        mountTests(root, ctx);
         const panel = root.querySelector(".center-test")!;
         const inputs = Array.from(panel.querySelectorAll("input"));
         const fine = inputs[0]!;
@@ -108,7 +108,7 @@ describe("center panel", () => {
         const store = new Store<AppState>(initialState(true));
         const ctx = createContext(new MockBackend({ timers: false }), store);
         const root = document.createElement("section");
-        mountJobs(root, ctx, root);
+        mountTests(root, ctx);
         const panel = root.querySelector(".center-test")!;
         expect(panel.classList.contains("hidden")).toBe(false);
         const snapshot = store.get().snapshot;
@@ -122,4 +122,18 @@ describe("center panel", () => {
         store.set({ settings: settings as unknown as AppState["settings"] });
         expect(panel.classList.contains("hidden")).toBe(true);
     });
+});
+
+test("the Tests panel hides when neither test applies to the machine", () => {
+    const store = new Store<AppState>(initialState(true));
+    const ctx = createContext(new MockBackend({ timers: false }), store);
+    const root = document.createElement("section");
+    mountTests(root, ctx);
+    expect(root.querySelector("h2")?.textContent).toBe("Tests");
+    expect(root.classList.contains("hidden")).toBe(false);
+    const snapshot = store.get().snapshot;
+    store.set({ snapshot: { ...snapshot, profile: { kinematics: "cartesian", tool: "dispenser", h_axis: false, r_max: 0, z_max: 0 } } });
+    expect(root.classList.contains("hidden")).toBe(true);
+    store.set({ snapshot: { ...snapshot, profile: { kinematics: "cartesian", tool: "laser", h_axis: false, r_max: 0, z_max: 0 } } });
+    expect(root.classList.contains("hidden")).toBe(false);
 });

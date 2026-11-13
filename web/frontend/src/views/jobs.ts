@@ -10,8 +10,6 @@ import { GCODE_SUFFIXES, GERBER_SUFFIXES } from "../uploads.ts";
 import { type ArraySpec, type PathRef, type Regrouped, arrayPaths, arrayRefusal, boxedAfter, groupRefs, pathsMiddle, regroup, regroupRefusal, removePaths, tidyRefs } from "../regroup.ts";
 import type { AppState } from "../state.ts";
 import type { Anchor, BoardMode, ClearPattern, DepositFill, Job, UploadOptions } from "../types.ts";
-import { calibrationTest } from "./calibrate.ts";
-import { centerTest } from "./center.ts";
 import { runActive } from "./heightmap.ts";
 import { choiceRow, type Ctx } from "./context.ts";
 import { mountRun } from "./run.ts";
@@ -263,7 +261,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
     combineButton.title = "join the checked jobs into one, in the order checked";
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Jobs"), el("div", { class: "button-row" }, combineButton, saveButton, deleteAllButton)),
-        drop, chooser, options, centerTest(ctx), calibrationTest(ctx), list, details,
+        drop, chooser, options, list, details,
     );
 
     /** The selected job as the file it is kept in, to put back with an upload. */

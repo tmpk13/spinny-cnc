@@ -6,6 +6,7 @@ import { dotCenters, dotsSvg, filledDot, ladder } from "../src/mock/calibrate.ts
 import { Store, initialState, type AppState } from "../src/state.ts";
 import { calibrateRequest } from "../src/views/calibrate.ts";
 import { mountJobs, showsFocus } from "../src/views/jobs.ts";
+import { mountTests } from "../src/views/tests.ts";
 import { connected } from "./harness.ts";
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -33,7 +34,7 @@ describe("calibration test", () => {
         const ctx = createContext(backend, store);
         const root = document.createElement("section");
         document.body.append(root);
-        mountJobs(root, ctx, root);
+        mountTests(root, ctx);
         const panel = root.querySelector(".calibrate-test")!;
         expect(panel.classList.contains("hidden")).toBe(false);
         const steps = panel.querySelector('input[aria-label="power steps"]') as HTMLInputElement;
@@ -76,7 +77,9 @@ describe("calibration test", () => {
         const ctx = createContext(backend, store);
         const root = document.createElement("section");
         document.body.append(root);
+        // The Jobs panel too: the ladder's focus shows in its groups table.
         mountJobs(root, ctx, root);
+        mountTests(root, ctx);
         const panel = root.querySelector(".calibrate-test")!;
         const which = panel.querySelector('select[aria-label="Test"]') as HTMLSelectElement;
         const shown = (element: Element): boolean => !element.classList.contains("hidden");
@@ -142,7 +145,7 @@ describe("calibration test", () => {
         const ctx = createContext(backend, store);
         const root = document.createElement("section");
         document.body.append(root);
-        mountJobs(root, ctx, root);
+        mountTests(root, ctx);
         const panel = root.querySelector(".calibrate-test")!;
         const which = panel.querySelector('select[aria-label="Test"]') as HTMLSelectElement;
         which.value = "dots";

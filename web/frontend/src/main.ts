@@ -35,6 +35,7 @@ import { mountFindBoard } from "./views/findboard.ts";
 import { mountPreviewPanel } from "./views/previewpanel.ts";
 import { mountStatusBar } from "./views/statusbar.ts";
 import { mountSteps } from "./views/steps.ts";
+import { mountTests } from "./views/tests.ts";
 import { mountTabs } from "./views/tabs.ts";
 import { mountToasts } from "./views/toasts.ts";
 import { mountVision } from "./views/vision.ts";
@@ -303,6 +304,7 @@ function main(): void {
     mountJobJson(panel("jobjson"), ctx);
     const vision = mountVision(panel("camera"), ctx, panel("camera-view"));
     mountAlign(panel("align"), ctx);
+    mountTests(panel("tests"), ctx);
     mountConsole(panel("console"), ctx);
     // The Plot page: the position, the jog and the spindle again beside
     // its operations, the markers, and a preview of the operation planned.

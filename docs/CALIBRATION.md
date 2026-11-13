@@ -1,6 +1,6 @@
 # Finding the axis and placing the board
 
-How a burnt coupon shows where the rotation axis really is, how the fine pattern amplifies what is left, and where to put the board. The same patterns are built as jobs from *Centering test* in the web page's Jobs panel, shown when the machine file's `[controls] centering` is on (a polar machine's default).
+How a burnt coupon shows where the rotation axis really is, how the fine pattern amplifies what is left, and where to put the board. The same patterns are built as jobs from *Centering test* in the web page's Tests panel (stacked with Align on the Jobs page), shown when the machine file's `[controls] centering` is on (a polar machine's default).
 
 ## Finding the axis
 
@@ -14,7 +14,7 @@ uv run spinny-center --rotary-max-rate 400
 ```
 
 The web page builds the same pattern as a job, options included, from
-*Centering test* in the Jobs panel, pacing it at the table rate it read.
+*Centering test* in the Tests panel, pacing it at the table rate it read.
 
 A radial cut holds the table still and runs the head along the rail, so
 what it burns is the rail itself: a straight line lying the rail's own
@@ -100,7 +100,7 @@ does. The preview marks the axis, that radius, and the rail.
 
 ## Material and depth tests
 
-*Calibration test* in the Jobs panel makes the test for the machine as a
+*Calibration test* in the Tests panel makes the test for the machine as a
 job, every patch a group of its own, so the groups table names what each
 was cut with and one can be switched off or cut again alone.
 

@@ -190,7 +190,7 @@ pad_steps = [0.1, 1, 10]        # mm, 1 to 8 steps; an axis without steps of its
 pad_step = 1                    # picked at the start; left out: the middle one
 feed = true                     # a feed field (mm/min, blank = the firmware's jog rate) for the pad and the axes that take it
 center = { r = 0 }              # where Center sends the joints; left out: no button
-centering = true                # the Jobs panel's Centering test, which burns where the rail crosses the rotation axis; left out: true when polar
+centering = true                # the Tests panel's Centering test, which burns where the rail crosses the rotation axis; left out: true when polar
 
 [[controls.axes]]               # one per joint shown, in this order
 axis = "r"                      # the firmware's joint: r, a, z or h (h needs [focus] fitted; a is the plunger with tool = dispenser)
