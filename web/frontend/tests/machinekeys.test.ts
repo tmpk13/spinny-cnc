@@ -14,9 +14,11 @@ describe("machine keys", () => {
         expect(DEFAULT_SETTINGS).toEqual(fixture.defaults);
         expect(Object.keys(DEFAULT_SETTINGS)).toEqual(Object.keys(fixture.defaults));
         expect(SETTINGS_SCHEMA.map((entry) => entry.name)).toEqual(Object.keys(fixture.defaults));
-        // Every setting has its key in a file, the dispenser flag in the tool's.
+        // Every setting has its key in a file, the dispenser flag in the
+        // tool's, and a servo's output in which of pin and channel its
+        // section gives.
         const named = new Set(MACHINE_KEYS.map((entry) => entry.setting));
-        expect(Object.keys(fixture.defaults).filter((name) => !named.has(name))).toEqual(["dispenser"]);
+        expect(Object.keys(fixture.defaults).filter((name) => !named.has(name))).toEqual(["dispenser", "servo1_out", "servo2_out", "servo3_out", "servo4_out"]);
     });
 
     test("read a board into a file as the backend does, line for line", () => {

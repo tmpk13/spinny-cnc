@@ -6,8 +6,14 @@
 
 import { commentStart } from "./toml.ts";
 
-/** How a key's value sits in its setting. */
-export type KeyKind = "number" | "integer" | "flag" | "bit" | "word" | "socket" | "scale" | "kinematics" | "tool" | "host";
+/**
+ * How a key's value sits in its setting. A servo's keys hold a value only
+ * while that servo has an output: its pin while it is on the board, its
+ * channel while it is on the PCA9685, its start while it has one.
+ */
+export type KeyKind =
+    | "number" | "integer" | "flag" | "bit" | "word" | "socket" | "scale" | "kinematics" | "tool" | "host"
+    | "servo_pin" | "servo_channel" | "servo_integer" | "servo_number" | "servo_start";
 
 export interface MachineKey {
     /** The firmware setting, or for the host's own values `host.<key>`. */
@@ -16,7 +22,7 @@ export interface MachineKey {
     section: string | null;
     key: string;
     kind: KeyKind;
-    /** The bit of a mask, or the digit of `sockets`, counted from 0. */
+    /** The bit of a mask, the digit of `sockets` or a servo's number, counted from 0. */
     bit: number;
 }
 
@@ -28,6 +34,10 @@ export const ENDSTOPS: readonly string[] = ["none", "min", "max", "both"];
 export const SOCKETS: readonly string[] = ["X", "Y", "Z", "E"];
 /** The `[drivers]` keys of the drivers' register fields, each its setting's name less the `tmc_`, as spinny_laser.machines.TUNING_KEYS. */
 export const TUNING_KEYS = ["toff", "tbl", "hstrt", "hend", "hold_delay", "tpowerdown", "tpwmthrs"] as const;
+/** Servos the firmware drives, servo.1 to servo.4, as spinny_laser.machines.SERVOS. */
+export const SERVOS = 4;
+/** A servo's output setting for the key that names it: 1 on a pin of the board, 2 on the PCA9685. */
+const SERVO_OUT: Partial<Record<KeyKind, number>> = { servo_pin: 1, servo_channel: 2 };
 /** Section, axis letter, the firmware's scale key and the axis's bit (in dir_invert and the other masks), as spinny_laser.machines.AXES. */
 export const AXES: readonly [string, string, string, number][] = [
     ["rail", "r", "steps_per_mm", 0],
@@ -93,6 +103,21 @@ export const MACHINE_KEYS: MachineKey[] = [
     key("tmc_stealth", "drivers", "stealth", "flag"),
     key("tmc_intpol", "drivers", "interpolate", "flag"),
     ...TUNING_KEYS.map((name) => key(`tmc_${name}`, "drivers", name, "integer")),
+    key("i2c_sda", "pca9685", "sda", "integer"),
+    key("i2c_scl", "pca9685", "scl", "integer"),
+    key("pca_addr", "pca9685", "address", "integer"),
+    ...Array.from({ length: SERVOS }, (_, i) => {
+        const n = i + 1;
+        const section = `servo.${n}`;
+        return [
+            key(`servo${n}_pin`, section, "pin", "servo_pin", i),
+            key(`servo${n}_chan`, section, "channel", "servo_channel", i),
+            key(`servo${n}_min_us`, section, "min_us", "servo_integer", i),
+            key(`servo${n}_max_us`, section, "max_us", "servo_integer", i),
+            key(`servo${n}_range`, section, "range", "servo_number", i),
+            key(`servo${n}_start`, section, "start", "servo_start", i),
+        ];
+    }).flat(),
     ...["tolerance", "travel", "clearance", "spinup", "speed_control", "gap", "retract", "output", "extrude_rate", "dwell_ms"].map((name) => key(`host.${name}`, "host", name, "host")),
 ];
 
@@ -120,6 +145,17 @@ export function valueOf(entry: MachineKey, settings: Record<string, number>, hos
         return settings["dispenser"] ? "dispenser" : "laser";
     }
     const value = settings[entry.setting]!;
+    if (entry.kind.startsWith("servo_")) {
+        const out = Math.trunc(settings[`servo${entry.bit + 1}_out`] ?? 0);
+        const needs = SERVO_OUT[entry.kind];
+        if (out === 0 || (needs !== undefined && out !== needs)) {
+            return null;
+        }
+        if (entry.kind === "servo_start") {
+            return value >= 0 ? value : null;
+        }
+        return entry.kind === "servo_number" ? value : Math.trunc(value);
+    }
     switch (entry.kind) {
         case "flag":
             return Boolean(value);
@@ -220,6 +256,17 @@ export function keyLine(text: string, section: string | null, name: string): num
 
 export function hasKey(text: string, section: string | null, name: string): boolean {
     return keyLine(text, section, name) !== null;
+}
+
+/** The text without the `key = ...` line of its section, when it has one. */
+export function removeKey(text: string, section: string | null, name: string): string {
+    const line = keyLine(text, section, name);
+    if (line === null) {
+        return text;
+    }
+    const lines = text.split("\n");
+    lines.splice(line, 1);
+    return lines.join("\n");
 }
 
 /**
@@ -353,6 +400,11 @@ export function fromBoard(text: string, live: Record<string, number>, host: Reco
         }
         if (sameValue(board, mine)) {
             continue;
+        }
+        // A servo is on a pin or on a channel: the one the board has goes
+        // in, and the other comes out.
+        if (entry.kind === "servo_pin" || entry.kind === "servo_channel") {
+            text = removeKey(text, section, entry.kind === "servo_pin" ? "channel" : "pin");
         }
         text = setKey(text, section, name, board);
         const at = section ? `[${section}] ${name}` : name;

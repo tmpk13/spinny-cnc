@@ -20,6 +20,14 @@ describe("the mock's TOML reader", () => {
         expect(parseToml(text)).toEqual({ name: 'a "b"', lit: "c\\d", n: -100050, flag: false, list: ["G21", "G90"], empty: [] });
     });
 
+    test("reads hex, octal and binary integers as Bun's reader does", () => {
+        const text = "address = 0x40\nbig = 0xDEAD_BEEF\nmode = 0o755\nbits = 0b1010\n";
+        expect(parseToml(text)).toEqual({ address: 64, big: 0xdeadbeef, mode: 0o755, bits: 10 });
+        expect(parseToml(text)).toEqual(Bun.TOML.parse(text) as TomlTable);
+        expect(() => parseToml("a = 0x\n")).toThrow(/cannot read the value 0x/);
+        expect(() => parseToml("a = 0b102\n")).toThrow(/cannot read the value 0b102/);
+    });
+
     test("names the line of what it cannot read", () => {
         expect(() => parseToml("a = 1\nb\n")).toThrow(new TomlError(2, "expected key = value"));
         expect(() => parseToml("a = 1\na = 2\n")).toThrow(/line 2: a is given twice/);

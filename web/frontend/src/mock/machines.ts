@@ -15,7 +15,9 @@ import { errorText } from "../api.ts";
 import { defaultControls } from "../controls.ts";
 import { AXES, ENDSTOPS, SOCKETS, TUNING_KEYS, closeTo } from "../machinekeys.ts";
 import { parseToml, type TomlTable, type TomlValue } from "../toml.ts";
-import type { AxisControl, CameraFinish, CameraSettings, CameraSide, Controls, HostSettings, JointAxis, Kinematics, MachineDocument, MachineSummary, Tool } from "../types.ts";
+import type {
+    AxisControl, CameraFinish, CameraSettings, CameraSide, Controls, HostSettings, JointAxis, Kinematics, MachineDocument, MachineSummary, ServoInfo, ServoPosition, Tool,
+} from "../types.ts";
 import { deviceDocument, parseGcodeTables, type MockDevice } from "./openpnp.ts";
 
 /**
@@ -121,6 +123,20 @@ export const DEFAULT_SETTINGS: Record<string, number> = {
     tmc_hold_delay: 10,
     tmc_tpowerdown: 20,
     tmc_tpwmthrs: 0,
+    i2c_sda: 0,
+    i2c_scl: 1,
+    pca_addr: 64,
+    ...Object.fromEntries(
+        [1, 2, 3, 4].flatMap((n) => [
+            [`servo${n}_out`, 0],
+            [`servo${n}_pin`, 29],
+            [`servo${n}_chan`, n - 1],
+            [`servo${n}_min_us`, 1000],
+            [`servo${n}_max_us`, 2000],
+            [`servo${n}_range`, 180],
+            [`servo${n}_start`, -1],
+        ]),
+    ),
 };
 
 export const MACHINE_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -130,7 +146,18 @@ export const RESERVED_PINS = new Set([2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 
 const HEADERS: Record<number, string> = {
     17: "FAN1", 18: "FAN2", 20: "FAN3", 21: "BED", 23: "HE", 29: "SERVO", 24: "RGB",
     4: "X-STOP", 3: "Y-STOP", 25: "Z-STOP", 16: "E-STOP", 22: "PROBE", 26: "THB", 27: "TH0",
+    0: "TX", 1: "RX",
 };
+/** The STOP headers' GPIOs, which reach the chip through an input buffer: no servo's pulse or I2C line goes there. */
+export const BUFFERED_INPUTS = new Set([3, 4, 16, 25]);
+/** The RP2040's I2C pins less the reserved and buffered ones, for the messages. */
+const I2C_PAIRS = "data on GP0, 20 or 24 with clock on GP1, 17, 21 or 29 (I2C0), or GP18, 22 or 26 with GP23 or 27 (I2C1)";
+/** The servo slots, their pulse bounds and widest range, the PCA9685's channels and addresses, and the named angles a bar offers at most. */
+export const SERVO_US: [number, number] = [200, 3000];
+export const SERVO_RANGE_MAX = 360;
+const PCA_CHANNELS = 16;
+const PCA_ADDRESSES: [number, number] = [0x40, 0x7f];
+const SERVO_POSITIONS_MAX = 8;
 const KINEMATICS: Kinematics[] = ["polar", "cartesian"];
 const TOOLS: Tool[] = ["laser", "spindle", "dispenser"];
 const CONTROLLERS = ["spinny", "gcode"];
@@ -303,6 +330,15 @@ class Reader {
         const value = this.integer(table, key, section, 0, PIN_MAX);
         if (RESERVED_PINS.has(value)) {
             throw this.fail(section, key, `${value} is a driver socket's or the driver UART's; the sockets and the UART keep ${[...RESERVED_PINS].sort((a, b) => a - b).join(", ")}`);
+        }
+        return value;
+    }
+
+    /** A pin a servo's pulse or the I2C bus drives: a free GPIO, not a STOP header's behind its input buffer. */
+    outputPin(table: TomlTable, key: string, section: string): number {
+        const value = this.pin(table, key, section);
+        if (BUFFERED_INPUTS.has(value)) {
+            throw this.fail(section, key, `${pinName(value)} is a STOP header's, an input behind a buffer that would drive against it`);
         }
         return value;
     }
@@ -514,6 +550,8 @@ export function parseMachine(text: string, id: string): MachineDocument {
             }
         }
     }
+    const servos = parseServos(reader, top, settings);
+    const driven = checkServoPins(where, settings);
     // A fitted endstop is an input like the probe, which it may share; on
     // an output's pin it would read the output.
     for (const [index, [, axis]] of AXES.entries()) {
@@ -526,6 +564,7 @@ export function parseMachine(text: string, id: string): MachineDocument {
         if (settings["tool_out"]) {
             outputs.push(["enable", settings["tool_pin"]!]);
         }
+        outputs.push(...driven);
         for (const [other, otherPin] of outputs) {
             if (pin === otherPin) {
                 throw new Error(`${where}: [${section}] endstop_pin ${pinName(pin)} is the [${other}] pin too`);
@@ -583,8 +622,174 @@ export function parseMachine(text: string, id: string): MachineDocument {
     const camera = parseCamera(reader, reader.table(top, "camera"));
     const focus = settings["h_axis"] === 1;
     const controls = parseControls(reader, top, kinematics, tool, focus);
-    reader.done(top, null, ["name", "description", "controller", "kinematics", "tool", ...AXES.map((axis) => axis[0]), "dispenser", "probe", "output", "enable", "drivers", "host", "camera", "controls"]);
-    return { id, name, description, kinematics, tool, focus, settings, host, camera, controls, controller: "spinny" };
+    reader.done(top, null, [
+        "name", "description", "controller", "kinematics", "tool", ...AXES.map((axis) => axis[0]), "dispenser", "probe", "output", "enable", "drivers", "host", "camera",
+        "controls", "pca9685", "servo",
+    ]);
+    return { id, name, description, kinematics, tool, focus, settings, host, camera, controls, servos, controller: "spinny" };
+}
+
+/**
+ * `[pca9685]` and `[servo.1]` to `[servo.4]` into the settings, as
+ * spinny_laser.machines reads them: each servo on a pin of the board or a
+ * channel of the PCA9685, its pulse span, range and start; a servo the file
+ * leaves out has no output. Returns the page's bars for the servos given.
+ */
+function parseServos(reader: Reader, top: TomlTable, settings: Record<string, number>): ServoInfo[] {
+    const pca = reader.table(top, "pca9685");
+    for (const [key, setting] of [["sda", "i2c_sda"], ["scl", "i2c_scl"]] as [string, string][]) {
+        if (key in pca) {
+            settings[setting] = reader.outputPin(pca, key, "pca9685");
+        }
+    }
+    if ("sda" in pca && settings["i2c_sda"]! % 2 !== 0) {
+        throw reader.fail("pca9685", "sda", `must be an even GPIO, an I2C block's data line: ${I2C_PAIRS}`);
+    }
+    if ("scl" in pca && settings["i2c_scl"]! % 2 === 0) {
+        throw reader.fail("pca9685", "scl", `must be an odd GPIO, an I2C block's clock line: ${I2C_PAIRS}`);
+    }
+    if ("address" in pca) {
+        settings["pca_addr"] = reader.integer(pca, "address", "pca9685", ...PCA_ADDRESSES);
+    }
+    reader.done(pca, "pca9685", ["sda", "scl", "address"]);
+
+    const tables = reader.table(top, "servo");
+    for (const number of Object.keys(tables)) {
+        if (!["1", "2", "3", "4"].includes(number)) {
+            throw reader.fail(null, `servo.${number}`, "is not a servo: the board has servo.1 to servo.4");
+        }
+    }
+    const servos: ServoInfo[] = [];
+    for (const n of [1, 2, 3, 4]) {
+        const value = tables[String(n)];
+        if (value === undefined) {
+            settings[`servo${n}_out`] = 0;
+            continue;
+        }
+        const section = `servo.${n}`;
+        if (!isTable(value)) {
+            throw reader.fail(null, section, "must be a table");
+        }
+        const table = value;
+        const name = reader.text(table, "name", `Servo ${n}`);
+        if (!name.trim()) {
+            throw reader.fail(section, "name", "must not be empty");
+        }
+        if ("pin" in table && "channel" in table) {
+            throw reader.fail(section, "channel", "and pin cannot both be given: a servo is on a pin of the board or a channel of the PCA9685");
+        }
+        if ("pin" in table) {
+            settings[`servo${n}_out`] = 1;
+            settings[`servo${n}_pin`] = reader.outputPin(table, "pin", section);
+        } else if ("channel" in table) {
+            settings[`servo${n}_out`] = 2;
+            settings[`servo${n}_chan`] = reader.integer(table, "channel", section, 0, PCA_CHANNELS - 1);
+        } else {
+            throw reader.fail(null, section, "needs pin, a GPIO of the board, or channel, one of the PCA9685's");
+        }
+        for (const key of ["min_us", "max_us"]) {
+            if (key in table) {
+                settings[`servo${n}_${key}`] = reader.integer(table, key, section, ...SERVO_US);
+            }
+        }
+        if ("range" in table) {
+            const span = reader.number(table, "range", section);
+            if (!(span > 0 && span <= SERVO_RANGE_MAX)) {
+                throw reader.fail(section, "range", `must be above 0 and at most ${SERVO_RANGE_MAX} degrees`);
+            }
+            settings[`servo${n}_range`] = span;
+        }
+        const span = settings[`servo${n}_range`]!;
+        if ("start" in table) {
+            const start = reader.number(table, "start", section);
+            if (!(start >= 0 && start <= span)) {
+                throw reader.fail(section, "start", `must be 0 to the range, ${span} degrees; left out, the servo gets no pulse at boot`);
+            }
+            settings[`servo${n}_start`] = start;
+        } else {
+            settings[`servo${n}_start`] = -1;
+        }
+        const positions = table["positions"] ?? {};
+        if (!isTable(positions)) {
+            throw reader.fail(section, "positions", "must be a table of names and angles, like { up = 30, down = 120 }");
+        }
+        const entries = Object.entries(positions);
+        if (entries.length > SERVO_POSITIONS_MAX) {
+            throw reader.fail(section, "positions", `names ${entries.length} angles; at most ${SERVO_POSITIONS_MAX}`);
+        }
+        const named: ServoPosition[] = [];
+        for (const [label, angle] of entries) {
+            if (!isNumber(angle) || angle < 0 || angle > span) {
+                throw reader.fail(section, "positions", `${label} must be an angle, 0 to the range, ${span} degrees`);
+            }
+            named.push({ name: label, angle });
+        }
+        reader.done(table, section, ["name", "pin", "channel", "min_us", "max_us", "range", "start", "positions"]);
+        servos.push({ servo: n, name, range: span, positions: named });
+    }
+    return servos;
+}
+
+/**
+ * The servos' pins and the PCA9685's bus against each other and the other
+ * pins, as spinny_laser.machines checks them. Returns the outputs these
+ * add, for the endstops' check.
+ */
+function checkServoPins(where: string, settings: Record<string, number>): [string, number][] {
+    const laser = settings["laser_pin"]!;
+    const slice = (pin: number): number => Math.floor(pin / 2) % 8;
+    const others: [string, number][] = [["output", laser], ["probe", settings["probe_pin"]!]];
+    if (settings["tool_out"]) {
+        others.push(["enable", settings["tool_pin"]!]);
+    }
+    const driven: [string, number][] = [];
+    const channels = new Map<number, number>();
+    for (const n of [1, 2, 3, 4]) {
+        const section = `servo.${n}`;
+        const out = settings[`servo${n}_out`];
+        if (out === 2) {
+            const channel = settings[`servo${n}_chan`]!;
+            const holder = channels.get(channel);
+            if (holder !== undefined) {
+                throw new Error(`${where}: [${section}] channel ${channel} is [servo.${holder}]'s too`);
+            }
+            channels.set(channel, n);
+        }
+        if (out !== 1) {
+            continue;
+        }
+        const pin = settings[`servo${n}_pin`]!;
+        for (const [other, otherPin] of [...others, ...driven]) {
+            if (pin === otherPin) {
+                throw new Error(`${where}: [${section}] pin ${pinName(pin)} is the [${other}] pin too`);
+            }
+        }
+        if (slice(pin) === slice(laser)) {
+            throw new Error(`${where}: [${section}] pin ${pinName(pin)} is on PWM slice ${slice(pin)} with the [output] pin ${pinName(laser)}, which runs at the laser's rate`);
+        }
+        for (const [other, otherPin] of driven) {
+            if (slice(otherPin) === slice(pin) && otherPin % 2 === pin % 2) {
+                throw new Error(`${where}: [${section}] pin ${pinName(pin)} drives the PWM channel of the [${other}] pin ${pinName(otherPin)}: GPIO n and n + 16 share one`);
+            }
+        }
+        driven.push([section, pin]);
+    }
+    if (channels.size > 0) {
+        const sda = settings["i2c_sda"]!;
+        const scl = settings["i2c_scl"]!;
+        if (Math.floor(sda / 2) % 2 !== Math.floor(scl / 2) % 2) {
+            throw new Error(`${where}: [pca9685] sda ${pinName(sda)} and scl ${pinName(scl)} are not one I2C block's: ${I2C_PAIRS}`);
+        }
+        for (const [key, pin] of [["sda", sda], ["scl", scl]] as [string, number][]) {
+            for (const [other, otherPin] of [...others, ...driven]) {
+                if (pin === otherPin) {
+                    throw new Error(`${where}: [pca9685] ${key} ${pinName(pin)} is the [${other}] pin too`);
+                }
+            }
+        }
+        driven.push(["pca9685", sda], ["pca9685", scl]);
+    }
+    return driven;
 }
 
 /**
@@ -595,7 +800,7 @@ export function parseMachine(text: string, id: string): MachineDocument {
 function parseGcodeMachine(reader: Reader, top: TomlTable, id: string, name: string, description: string): { document: MachineDocument; machine: MockDevice } {
     const kinematics = reader.choice(top, "kinematics", ["cartesian"], "cartesian") as Kinematics;
     const tool = reader.choice(top, "tool", ["nozzle"], "nozzle") as Tool;
-    for (const section of [...AXES.map((axis) => axis[0]), "dispenser", "probe", "output", "enable", "drivers", "host", "camera"]) {
+    for (const section of [...AXES.map((axis) => axis[0]), "dispenser", "probe", "output", "enable", "drivers", "host", "camera", "pca9685", "servo"]) {
         if (section in top) {
             throw reader.fail(null, section, "is for a machine on this project's firmware: a G-code machine's own controller keeps its settings");
         }

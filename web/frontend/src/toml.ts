@@ -1,6 +1,7 @@
 // A small TOML reader: enough of the format for the CAM profiles and the
 // machine files (tables, arrays of tables, dotted table names one level
-// deep, inline tables, strings, numbers, booleans and arrays of those), the
+// deep, inline tables, strings, numbers with hex, octal and binary
+// integers among them, booleans and arrays of those), the
 // line named in every refusal. The in-page mock reads the files with it,
 // and the editors check what is typed with it as it is typed. The backend
 // reads the language in full; this reads what the shipped files and the
@@ -24,6 +25,9 @@ export interface TomlTable {
 
 const BARE_KEY = /^[A-Za-z0-9_-]+$/;
 const NUMBER = /^[+-]?(\d[\d_]*)(\.\d[\d_]*)?([eE][+-]?\d+)?$/;
+/** Integers in hex, octal or binary, `0x40`, with the base after the 0 and underscores between digits. */
+const PREFIXED = /^0([xob])([0-9A-Fa-f]+(?:_[0-9A-Fa-f]+)*)$/;
+const BASES: Record<string, [number, RegExp]> = { x: [16, /^[0-9A-Fa-f_]+$/], o: [8, /^[0-7_]+$/], b: [2, /^[01_]+$/] };
 
 /** Where a line's comment begins: its first `#` outside a string, or the line's length when it has none. */
 export function commentStart(line: string): number {
@@ -196,6 +200,14 @@ function parseValue(text: string, line: number): TomlValue {
             table[pair[1]!] = parseValue(pair[2]!, line);
         }
         return table;
+    }
+    const prefixed = PREFIXED.exec(text);
+    if (prefixed) {
+        const [base, digits] = BASES[prefixed[1]!]!;
+        if (!digits.test(prefixed[2]!)) {
+            throw new TomlError(line, `cannot read the value ${text}`);
+        }
+        return parseInt(prefixed[2]!.replace(/_/g, ""), base);
     }
     if (NUMBER.test(text)) {
         const value = Number(text.replace(/_/g, ""));

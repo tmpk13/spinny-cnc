@@ -11,7 +11,9 @@
 // field, so the next arrow key jogs. In the head: Fine, which jogs every
 // bar by its smallest step (so does holding Shift with a jog key), and
 // Hold to move, under which a button or key held moves the axis until let
-// go, the step read as the distance per second.
+// go, the step read as the distance per second. A bar per servo follows
+// the axes' (servos.ts): where it is, its named positions, an angle to send
+// it to, and Off, which lets it go.
 
 import { askConfirm } from "../confirm.ts";
 import { controlOf, controlsOf, sameControls, unitOf } from "../controls.ts";
@@ -19,6 +21,7 @@ import { activePage, button, el, inputHasFocus, labeled, lockFieldset, modalOpen
 import { parseNumber } from "../format.ts";
 import { gotoPlanText, type PlanInput, type PlanWant } from "../gotoplan.ts";
 import { profileOf } from "../profile.ts";
+import { angleText, readAngle, servoBars, servoKey, type ServoBar } from "../servos.ts";
 import type { AppState } from "../state.ts";
 import type { AxisControl, Controls, GotoRequest, JogRequest, JointAxis, Tool } from "../types.ts";
 import { choiceRow, setPressed, type Ctx } from "./context.ts";
@@ -154,6 +157,9 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
     // the joint is a dispenser's plunger.
     let drawnTool: Tool | null = null;
     let drawnController = "spinny";
+    // The servos the bars were drawn for, and each one's angle readout.
+    let drawnServos = "";
+    const servoAngles = new Map<number, HTMLElement>();
     let motors: HTMLButtonElement | null = null;
     let home: HTMLButtonElement | null = null;
     // The travel height, a host value: written when the field changes, and
@@ -351,6 +357,48 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
                 jogButton(buttons[1], () => onMove(1), onHold(1), `${title}: on by the step`),
             ),
             zero,
+        );
+    }
+
+    /** The servos the state fits, as their bars. */
+    const servosOf = (state: AppState): ServoBar[] =>
+        servoBars(state.settings?.values, state.settings?.servos, profileOf(state.snapshot).controller === "gcode");
+
+    /**
+     * A servo as a bar: its number and name with where it is, a button per
+     * named position, a field for any angle in its range with Go, and Off,
+     * which takes its pulse away so it stops holding.
+     */
+    function servoBar(servo: ServoBar): HTMLDivElement {
+        const move = (angle: number | null): Promise<unknown> => ctx.call(ctx.api.servo(servo.servo, angle));
+        const angle = numberField({ placeholder: `0 to ${servo.range}`, min: 0, max: servo.range, width: "6.5rem" });
+        angle.setAttribute("aria-label", `${servo.name} angle`);
+        const go = button("Go", async () => {
+            const read = readAngle(angle.value, servo.range);
+            if ("problem" in read) {
+                ctx.toast("error", `${servo.name}: ${read.problem}`);
+                return;
+            }
+            await move(read.angle);
+        }, "btn btn-axis", `${servo.name}: to the angle typed`);
+        angle.addEventListener("keydown", onEnter(go));
+        const readout = el("span", { class: "servo-angle" }, angleText(null));
+        servoAngles.set(servo.servo, readout);
+        return el("div", { class: "axis-bar servo-bar", "data-servo": String(servo.servo) },
+            el("div", { class: "axis-bar-head" },
+                el("span", { class: "axis-bar-letter" }, `S${servo.servo}`),
+                el("span", { class: "axis-bar-title" }, servo.name),
+                readout,
+            ),
+            el("div", { class: "axis-bar-steps" },
+                ...servo.positions.map((position) =>
+                    button(position.name, () => move(position.angle), "btn btn-quiet", `${servo.name} to ${position.angle} deg`)),
+                angle,
+            ),
+            el("div", { class: "axis-bar-buttons" },
+                go,
+                button("Off", () => move(null), "btn btn-axis", `${servo.name}: no pulse, so it stops holding its angle`),
+            ),
         );
     }
 
@@ -570,6 +618,12 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
             const zero = axis.zero ? button(`Set ${axis.letter}=0 here`, () => declare(axis), "btn btn-quiet btn-small", `call this place ${axis.letter} 0`) : null;
             bars.append(bar(axis.axis, axis.letter, axis.label, axis.note, unitOf(axis.axis, profile), axis, axis.buttons, (sign) => jogAxis(axis, sign), (sign) => holdAxis(axis, sign), zero));
         }
+        const servos = servosOf(ctx.store.get());
+        drawnServos = servoKey(servos);
+        servoAngles.clear();
+        for (const servo of servos) {
+            bars.append(servoBar(servo));
+        }
 
         const rows: HTMLElement[] = [];
         if (controls.feed) {
@@ -618,13 +672,23 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
         if (home) {
             home.classList.toggle("hidden", typeof state.snapshot.machine?.homed !== "string" && profileOf(state.snapshot).controller !== "gcode");
         }
+        const angles = state.snapshot.machine?.servos ?? null;
+        for (const [servo, readout] of servoAngles) {
+            readout.textContent = angleText(angles?.[servo - 1]);
+        }
         showTravel(state);
         showPlan(state);
     }
 
     ctx.store.subscribe((state) => {
         const next = controlsOf(state);
-        if (drawn === null || !sameControls(drawn, next) || drawnTool !== profileOf(state.snapshot).tool || drawnController !== (profileOf(state.snapshot).controller ?? "spinny")) {
+        if (
+            drawn === null
+            || !sameControls(drawn, next)
+            || drawnTool !== profileOf(state.snapshot).tool
+            || drawnController !== (profileOf(state.snapshot).controller ?? "spinny")
+            || drawnServos !== servoKey(servosOf(state))
+        ) {
             controls = next;
             draw();
         } else {

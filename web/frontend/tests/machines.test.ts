@@ -57,8 +57,8 @@ describe("machine files with a dispenser and a camera", () => {
         expect(doc.host).toEqual({ gap: 0.15, retract: 0.3, output: 120, extrude_rate: 80, dwell_ms: 250 });
         expect(doc.camera).toEqual({ device: "socket://pi:9000", size: "1920x1080", fps: 25, pcbv: "pcbv", side: "back", finish: "bare", offset: [12.5, -3.2], roll: 0.4, mm_per_px: 0.021 });
         expect(doc.controls).toEqual((fixture as unknown as Record<string, Controls>)["cartesian-dispenser-focus"]!);
-        expect(Object.keys(DEFAULT_SETTINGS)).toHaveLength(83);
-        expect(Object.keys(DEFAULT_SETTINGS).at(-1)).toBe("tmc_tpwmthrs");
+        expect(Object.keys(DEFAULT_SETTINGS)).toHaveLength(114);
+        expect(Object.keys(DEFAULT_SETTINGS).at(-1)).toBe("servo4_start");
         expect(parseMachine('name = "x"', "x").camera).toEqual(CAMERA_DEFAULTS);
         expect(parseMachine('name = "x"', "x").settings["dispenser"]).toBe(0);
     });

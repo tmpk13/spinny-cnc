@@ -93,8 +93,24 @@ export interface Machine {
     probe?: boolean | null;
     /** The letters of the joints homed since the position was last lost (R, A, H, Z); null on a machine with no endstop. */
     homed?: string | null;
+    /** Each servo's angle in degrees, servo 1 first, null for one without a pulse; null on a machine with no servo fitted. */
+    servos?: (number | null)[] | null;
     /** How old the report is, s: a machine that has gone quiet shows here before the link gives it up. */
     age?: number;
+}
+
+/** A named angle a servo's bar offers as a button. */
+export interface ServoPosition {
+    name: string;
+    angle: number;
+}
+
+/** A servo as its machine file describes it for the page: its number (1 to 4), name, range in degrees and named positions. */
+export interface ServoInfo {
+    servo: number;
+    name: string;
+    range: number;
+    positions: ServoPosition[];
 }
 
 /** How the head moves over the board: the rail and the table, or the rail and the cross slide. */
@@ -297,6 +313,8 @@ export interface SettingsResponse {
     controls_from?: string | null;
     /** The page's controls: the file's, or the defaults for what the settings say the machine is. Missing from a backend that predates it. */
     controls?: Controls;
+    /** The servos of the file the controls are from, for their bars' names and buttons; [] without a file. Missing from an older backend. */
+    servos?: ServoInfo[];
     /** `gcode` for a G-code machine, which has none of the firmware's settings. */
     controller?: Controller;
 }
@@ -378,6 +396,8 @@ export interface MachineDocument extends MachineSummary {
     /** The file's [camera], filled in from the defaults. */
     camera: CameraSettings;
     controls: Controls;
+    /** The servos the file fits, servo 1 first; missing from an older backend. */
+    servos?: ServoInfo[];
     /** A G-code machine's own tables, read. */
     gcode?: GcodeDocument;
 }

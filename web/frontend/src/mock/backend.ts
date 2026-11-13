@@ -54,9 +54,12 @@ import {
     MICROSTEPS,
     MOCK_MACHINE_TEXTS,
     gcodeMachineOf,
+    BUFFERED_INPUTS,
     PIN_MAX,
     PROBE_MS_MAX,
     RESERVED_PINS,
+    SERVO_RANGE_MAX,
+    SERVO_US,
     TUNING_BOUNDS,
     matches,
     parseMachine,
@@ -404,7 +407,25 @@ export const SETTINGS_SCHEMA: SettingSchema[] = [
     { name: "tmc_hold_delay", unit: "", help: "IHOLDDELAY 0 to 15: each step of the fall from run to hold current takes this many 2^18 clocks (21.8 ms); 0 drops at once" },
     { name: "tmc_tpowerdown", unit: "", help: "TPOWERDOWN 0 to 255: how long a motor at rest keeps its run current, in 2^18 clocks (21.8 ms) from 87 ms after its last step, before the fall to hold; 2 or more with stealthChop" },
     { name: "tmc_tpwmthrs", unit: "TSTEP", help: "TPWMTHRS 0 to 1048575: stealthChop while TSTEP is at least this, spreadCycle faster; TSTEP is the 12 MHz clocks between 1/256 microsteps, 46875 / full steps per second; 0 = stealthChop at every speed" },
+    // The PCA9685 servo driver's bus, and the four servos.
+    { name: "i2c_sda", unit: "GPIO", help: "the PCA9685's I2C data line, an even pin: 0 (TX), 20, 24 for I2C0, 18, 22, 26 for I2C1; read at boot" },
+    { name: "i2c_scl", unit: "GPIO", help: "its clock line, an odd pin of the same block: 1 (RX), 17, 21, 29 for I2C0, 23, 27 for I2C1; read at boot" },
+    { name: "pca_addr", unit: "", help: "the PCA9685's 7-bit address, 64 to 127 (0x40 to 0x7F) as its address pins set it; read at boot" },
+    ...[1, 2, 3, 4].flatMap((n): SettingSchema[] => [
+        { name: `servo${n}_out`, unit: "", help: `servo ${n}'s output: 0 none, 1 servo${n}_pin, 2 the PCA9685's channel servo${n}_chan; read at boot` },
+        { name: `servo${n}_pin`, unit: "GPIO", help: `servo ${n} on the board: its pin, not on the laser's PWM slice nor a STOP header's; read at boot` },
+        { name: `servo${n}_chan`, unit: "", help: `servo ${n} on the PCA9685: its channel, 0 to 15; read at boot` },
+        { name: `servo${n}_min_us`, unit: "us", help: `servo ${n}'s pulse at 0 degrees, 200 to 3000` },
+        { name: `servo${n}_max_us`, unit: "us", help: `servo ${n}'s pulse at servo${n}_range degrees, 200 to 3000` },
+        { name: `servo${n}_range`, unit: "deg", help: `servo ${n}'s angle from servo${n}_min_us to servo${n}_max_us, above 0 and at most 360` },
+        { name: `servo${n}_start`, unit: "deg", help: `servo ${n}'s angle at boot; -1 for no pulse until moved` },
+    ]),
 ];
+
+/** Servos the firmware drives, numbered from 1. */
+const SERVO_COUNT = 4;
+/** A servo's settings that say where its pulse goes: a change of one leaves it without a pulse until it is moved. */
+const SERVO_WIRING = ["out", "pin", "chan"];
 
 /** Settings the firmware holds as 0 or 1. */
 const FLAG_SETTINGS = new Set(["en_invert", "laser_invert", "tmc_stealth", "h_axis", "probe_invert", "cartesian", "spindle", "tool_out", "tool_invert", "dispenser", "tmc_intpol"]);
@@ -446,6 +467,10 @@ const INT_SETTINGS = new Set([
     "tmc_hold_delay",
     "tmc_tpowerdown",
     "tmc_tpwmthrs",
+    "i2c_sda",
+    "i2c_scl",
+    "pca_addr",
+    ...[1, 2, 3, 4].flatMap((n) => ["out", "pin", "chan", "min_us", "max_us"].map((key) => `servo${n}_${key}`)),
 ]);
 /** The pin settings: a GPIO the driver sockets and the driver UART leave free. */
 const PIN_SETTINGS = ["laser_pin", "probe_pin", "tool_pin", "r_stop_pin", "a_stop_pin", "h_stop_pin", "z_stop_pin"];
@@ -453,6 +478,10 @@ const PIN_SETTINGS = ["laser_pin", "probe_pin", "tool_pin", "r_stop_pin", "a_sto
 const WIRING_SETTINGS = [
     "laser_invert", "en_invert", "probe_invert", "dir_invert", "sockets", "laser_pin", "probe_pin", "tool_out", "tool_pin", "tool_invert",
     "r_stop", "a_stop", "h_stop", "z_stop", "r_stop_pin", "a_stop_pin", "h_stop_pin", "z_stop_pin", "stop_invert", "limits",
+    // The servos and their bus: where each pulse goes and the span its
+    // mechanism was set up to stay within.
+    "i2c_sda", "i2c_scl", "pca_addr",
+    ...[1, 2, 3, 4].flatMap((n) => ["out", "pin", "chan", "min_us", "max_us", "range", "start"].map((key) => `servo${n}_${key}`)),
 ];
 /** Settings that scale or turn the axes, so the focus axis frame a height map is tied to. */
 const FRAME_SETTINGS = new Set(["r_steps", "a_steps", "z_steps", "h_steps", "dir_invert", "cartesian", "h_axis", "sockets"]);
@@ -524,11 +553,33 @@ export function settingsValid(settings: Record<string, number>): boolean {
         // TOFF above 0, which would switch a driver off; the rules joining
         // two of them are the machine file's.
         Object.entries(TUNING_BOUNDS).every(([key, [low, high]]) => within(`tmc_${key}`, low, high)) &&
+        // The servos and the bus: each pin one a pulse or a line may drive,
+        // the data line even and the clock odd; whether the two are one
+        // I2C block's is the machine file's, which sees both.
+        outputPin(value("i2c_sda")) && value("i2c_sda") % 2 === 0 &&
+        outputPin(value("i2c_scl")) && value("i2c_scl") % 2 === 1 &&
+        within("pca_addr", 0x40, 0x7f) &&
+        [1, 2, 3, 4].every(
+            (n) =>
+                within(`servo${n}_out`, 0, 2) &&
+                outputPin(value(`servo${n}_pin`)) &&
+                within(`servo${n}_chan`, 0, 15) &&
+                within(`servo${n}_min_us`, ...SERVO_US) &&
+                within(`servo${n}_max_us`, ...SERVO_US) &&
+                value(`servo${n}_range`) > 0 &&
+                value(`servo${n}_range`) <= SERVO_RANGE_MAX &&
+                within(`servo${n}_start`, -1, SERVO_RANGE_MAX),
+        ) &&
         value("s_max") > 0 &&
         value("s_max") <= FLOAT_MAX &&
         within("s_min", 0, value("s_max")) &&
         socketsValid(value("sockets"))
     );
+}
+
+/** A pin a servo's pulse or the I2C bus may drive: a free GPIO, not a STOP header's behind its input buffer. */
+function outputPin(pin: number): boolean {
+    return pin >= 0 && pin <= PIN_MAX && !RESERVED_PINS.has(pin) && !BUFFERED_INPUTS.has(pin);
 }
 
 /** Four digits, each of the four driver sockets 1 to 4 once, as the firmware takes them. */
@@ -560,7 +611,7 @@ function decimal(text: string): number | null {
     return /^[+-]?(\d+(\.\d*)?|\.\d+)$/.test(text) ? Number(text) : null;
 }
 
-export type MoveKind = "go" | "cut" | "jog" | "dwell" | "spindle";
+export type MoveKind = "go" | "cut" | "jog" | "dwell" | "spindle" | "servo";
 
 export interface Move {
     kind: MoveKind;
@@ -586,6 +637,9 @@ export interface Move {
     ms?: number;
     /** `spindle off` rather than a speed. */
     off?: boolean;
+    /** A servo line's servo, from 0, and its angle, null to let it go. */
+    servo?: number;
+    angle?: number | null;
     /** Job group index, for progress. */
     group: number;
 }
@@ -685,10 +739,49 @@ export class MockMachine {
     /** Modal S for `cut`, back to 0 on a reset. */
     power = 0;
 
+    /** Each servo's angle as driven, null without a pulse. */
+    servos: (number | null)[] = new Array<number | null>(SERVO_COUNT).fill(null);
+
     /** `settings` over the shipped defaults, as though stored in flash. */
     constructor(settings: Record<string, number> = {}) {
         this.settings = { ...DEFAULT_SETTINGS, ...settings };
         this.flash = { ...this.settings };
+    }
+
+    /** Servo `index` (from 0) has an output. */
+    servoFitted(index: number): boolean {
+        return (this.settings[`servo${index + 1}_out`] ?? 0) !== 0;
+    }
+
+    /** Some servo has an output: the status then reports the servos. */
+    anyServo(): boolean {
+        return [0, 1, 2, 3].some((index) => this.servoFitted(index));
+    }
+
+    /** Servo `index`'s angle as driven, null without a pulse or an output. */
+    servoAngle(index: number): number | null {
+        return this.servoFitted(index) ? this.servos[index] ?? null : null;
+    }
+
+    /**
+     * `servo N<n> A<deg> [T<ms>]` / `servo N<n> off`: refused for a servo
+     * without an output and an angle past its range, taken where a move
+     * would be, and waiting for the motion queued before it; a wait keeps
+     * the state at Run for its time, as a dwell does.
+     */
+    servo(index: number, angle: number | null, ms: number): void {
+        if (!this.servoFitted(index)) {
+            throw new MachineError(2, "bad word");
+        }
+        if (angle !== null && angle > (this.settings[`servo${index + 1}_range`] ?? 180)) {
+            throw new MachineError(4, "out of range");
+        }
+        this.checkMotionState(false);
+        if (this.queue.length > 0 || this.active !== null || ms > 0) {
+            this.queue.push({ kind: "servo", target: this.endpoint(), servo: index, angle, ms, power: 0, feed: null, group: -1 });
+            return;
+        }
+        this.servos[index] = angle;
     }
 
     hasFocusAxis(): boolean {
@@ -881,6 +974,7 @@ export class MockMachine {
             queue: this.queueFree(),
             probe: focus ? this.probeActive() : null,
             homed: this.hasStops() ? this.homed : null,
+            servos: this.anyServo() ? [0, 1, 2, 3].map((index) => this.servoAngle(index)) : null,
         };
     }
 
@@ -1146,9 +1240,9 @@ export class MockMachine {
         }
     }
 
-    /** The move taken off the queue: where it goes and how long it takes. A spindle line acts as it starts. */
+    /** The move taken off the queue: where it goes and how long it takes. A spindle or a servo line acts as it starts. */
     private activate(move: Move): Active {
-        const motion = move.kind !== "dwell" && move.kind !== "spindle";
+        const motion = move.kind !== "dwell" && move.kind !== "spindle" && move.kind !== "servo";
         const to = motion ? move.target : { ...this.joint };
         const toH = motion ? move.h ?? this.h : this.h;
         const toZ = motion ? move.z ?? this.z : this.z;
@@ -1157,6 +1251,9 @@ export class MockMachine {
             seconds = (move.ms ?? 0) / 1000;
         } else if (move.kind === "spindle") {
             this.spindle = move.off ? 0 : move.power;
+        } else if (move.kind === "servo") {
+            this.servos[move.servo ?? 0] = move.angle ?? null;
+            seconds = (move.ms ?? 0) / 1000;
         } else {
             seconds = this.secondsFor(move, this.joint, this.h, toH, this.z, toZ);
         }
@@ -1445,6 +1542,13 @@ export class MockMachine {
         if ((settings["spindle"] ?? 0) !== (this.settings["spindle"] ?? 0) || (settings["dispenser"] ?? 0) !== (this.settings["dispenser"] ?? 0)) {
             // The output changes meaning: whatever ran on it stops.
             this.outputOff();
+        }
+        // A servo wired anew goes without a pulse until it is moved, rather
+        // than jump to the angle the old wiring held.
+        for (let n = 1; n <= SERVO_COUNT; n++) {
+            if (SERVO_WIRING.some((key) => (settings[`servo${n}_${key}`] ?? 0) !== (this.settings[`servo${n}_${key}`] ?? 0))) {
+                this.servos[n - 1] = null;
+            }
         }
         this.settings = { ...settings };
     }
@@ -3274,6 +3378,43 @@ export class MockBackend implements Api, EventFeed {
                 machine.spin(speed);
                 return ["ok"];
             }
+            case "servo": {
+                const offs = tokens.filter((token) => token.toLowerCase() === "off").length;
+                if (offs > 1) {
+                    return ["error:2 bad word"];
+                }
+                const words = readWords(
+                    tokens.filter((token) => token.toLowerCase() !== "off"),
+                    offs === 1 ? "N" : "NAT",
+                );
+                if (words === null) {
+                    return ["error:2 bad word"];
+                }
+                const number = get(words, "N");
+                if (number === null) {
+                    return ["error:3 missing word"];
+                }
+                if (!Number.isInteger(number)) {
+                    return ["error:2 bad word"];
+                }
+                if (number < 1 || number > SERVO_COUNT) {
+                    return ["error:4 out of range"];
+                }
+                if (offs === 1) {
+                    machine.servo(number - 1, null, 0);
+                    return ["ok"];
+                }
+                const angle = get(words, "A");
+                if (angle === null) {
+                    return ["error:3 missing word"];
+                }
+                const t = get(words, "T") ?? 0;
+                if (angle < 0 || t < 0 || t > DWELL_MAX_MS) {
+                    return ["error:4 out of range"];
+                }
+                machine.servo(number - 1, angle, Math.floor(t + 0.5));
+                return ["ok"];
+            }
             case "set": {
                 const words = read("RAHZ");
                 needAxis(words);
@@ -3411,6 +3552,27 @@ export class MockBackend implements Api, EventFeed {
         this.exchange(`spindle S${gnum(power)}`, () => this.machine.spin(power));
     }
 
+    /** Moves a servo, or lets it go (`angle` null), as the backend's /api/servo does. */
+    async servo(servo: number, angle: number | null): Promise<void> {
+        this.notOwned();
+        this.requireConnected();
+        if (!(Number.isInteger(servo) && servo >= 1 && servo <= SERVO_COUNT)) {
+            throw new ApiError(400, `servo must be 1 to ${SERVO_COUNT}`);
+        }
+        if (!this.machine.servoFitted(servo - 1)) {
+            throw new ApiError(400, `servo ${servo} has no output: give [servo.${servo}] a pin or a channel in the machine file`);
+        }
+        if (angle === null) {
+            this.exchange(`servo N${servo} off`, () => this.machine.servo(servo - 1, null, 0));
+            return;
+        }
+        const span = this.machine.settings[`servo${servo}_range`] ?? 180;
+        if (!(Number.isFinite(angle) && angle >= 0 && angle <= span)) {
+            throw new ApiError(400, `angle must be 0 to ${span} degrees`);
+        }
+        this.exchange(`servo N${servo} A${gnum(angle)}`, () => this.machine.servo(servo - 1, angle, 0));
+    }
+
     /** Stops the spindle, which on a laser machine is the beam. */
     async spindleOff(): Promise<void> {
         if (this.session) {
@@ -3477,6 +3639,7 @@ export class MockBackend implements Api, EventFeed {
             unsaved: this.unsavedSettings(),
             controls_from: source?.id ?? null,
             controls: source?.controls ?? defaultControls(this.machine.profile()),
+            servos: source?.servos ?? [],
         };
     }
 
@@ -9133,6 +9296,10 @@ export function formatMove(move: Move): string {
             return move.power > 0 ? `dwell T${move.ms ?? 0} S${move.power}` : `dwell T${move.ms ?? 0}`;
         case "spindle":
             return move.off ? "spindle off" : `spindle S${gnum(move.power)}`;
+        case "servo": {
+            const wait = (move.ms ?? 0) > 0 ? ` T${move.ms}` : "";
+            return move.angle === null || move.angle === undefined ? `servo N${(move.servo ?? 0) + 1} off` : `servo N${(move.servo ?? 0) + 1} A${gnum(move.angle)}${wait}`;
+        }
     }
 }
 
@@ -9143,9 +9310,12 @@ export function statusLine(machine: MockMachine): string {
     // The focus axis fields are there only with the axis fitted.
     const focus = machine.hasFocusAxis() ? `|H:${formatFixed(machine.h, 3)}|P:${machine.probeActive() ? 1 : 0}` : "";
     const stops = machine.hasStops() ? `|D:${machine.homed}` : "";
+    // Each servo's angle, two decimals at most, empty without a pulse.
+    const angles = [0, 1, 2, 3].map((index) => machine.servoAngle(index)).map((angle) => (angle === null ? "" : String(Math.round(angle * 100) / 100)));
+    const servos = machine.anyServo() ? `|S:${angles.join(",")}` : "";
     const joint = `J:${formatFixed(machine.joint.r, 3)},${formatFixed(machine.joint.a, 4)}`;
     const duty = Math.round(machine.status().laser);
-    return `<${state}|${joint}|V:${formatFixed(machine.rate, 0)}|L:${duty}|Q:${free.planner},${free.lines}|M:${machine.mode}|E:${machine.enabled ? 1 : 0}|Z:${formatFixed(machine.z, 3)}${focus}${stops}>`;
+    return `<${state}|${joint}|V:${formatFixed(machine.rate, 0)}|L:${duty}|Q:${free.planner},${free.lines}|M:${machine.mode}|E:${machine.enabled ? 1 : 0}|Z:${formatFixed(machine.z, 3)}${focus}${stops}${servos}>`;
 }
 
 /**

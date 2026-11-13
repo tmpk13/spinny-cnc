@@ -1615,6 +1615,12 @@ button.badge.state {
     font-weight: 600;
 }
 
+/* Where a servo is, beside its name: the angle it holds, or off. */
+.servo-angle {
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
 /* Jobs */
 
 .drop {

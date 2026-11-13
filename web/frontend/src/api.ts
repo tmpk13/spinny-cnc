@@ -153,6 +153,8 @@ export interface Api {
     /** Starts the spindle at `S`, or changes its speed. */
     spindle(power: number): Promise<void>;
     spindleOff(): Promise<void>;
+    /** Moves servo `servo` (1 to 4) to `angle` degrees, or lets it go without a pulse for null. */
+    servo(servo: number, angle: number | null): Promise<void>;
     mode(mode: Mode): Promise<void>;
 
     settings(): Promise<SettingsResponse>;
@@ -582,6 +584,10 @@ export class HttpApi implements Api {
 
     async spindleOff(): Promise<void> {
         await this.request("POST", "/api/spindle/off");
+    }
+
+    async servo(servo: number, angle: number | null): Promise<void> {
+        await this.request("POST", "/api/servo", { servo, angle });
     }
 
     async mode(mode: Mode): Promise<void> {
