@@ -197,16 +197,23 @@ class Guess:
 
 @dataclass
 class Corner:
-    """A corner of the board's outline taken by hand: its name (CORNERS),
-    where it lies in the job's frame, and the machine point the picture's
-    center was on."""
+    """A corner of the board's outline taken: its name (CORNERS), where it
+    lies in the job's frame, and its machine point: the picture's center
+    put on it by hand, or where the board's two edges seen in the picture
+    meet (`by` "edges"), which also tells the board's turn (`angle`,
+    degrees)."""
 
     name: str
     job: Point
     machine: Point
+    angle: float | None = None
+    by: str = "hand"
 
     def to_dict(self) -> dict:
-        return {"corner": self.name, "job": _rounded(self.job), "machine": _rounded(self.machine)}
+        data = {"corner": self.name, "job": _rounded(self.job), "machine": _rounded(self.machine), "by": self.by}
+        if self.angle is not None:
+            data["angle"] = round(self.angle, 4)
+        return data
 
 
 def corner_of(box: Box, name: str) -> Point:
@@ -225,17 +232,19 @@ def corners_from(data) -> list[Corner]:
         if isinstance(item, dict):
             job, machine = _point(item.get("job")), _point(item.get("machine"))
             if job is not None and machine is not None:
-                corners.append(Corner(str(item.get("corner")), job, machine))
+                angle = item.get("angle")
+                corners.append(Corner(str(item.get("corner")), job, machine, float(angle) if _number(angle) else None, str(item.get("by") or "hand")))
     return corners
 
 
 def rough_place(corners: list[Corner], middle: Point) -> Estimate | None:
-    """Where corners taken by hand put the board: with two or more, the
-    turn and shift that fit them best; with one, not turned, shifted so it
-    lies where it was taken. None with none."""
+    """Where corners taken put the board: with two or more, the turn and
+    shift that fit them best; with one, turned as its edges say (else not
+    turned), shifted so it lies where it was taken. None with none."""
     if not corners:
         return None
-    fit = fit_rigid([(corner.job, corner.machine) for corner in corners])
+    angle = corners[0].angle if len(corners) == 1 else None
+    fit = fit_rigid([(corner.job, corner.machine) for corner in corners], angle=angle)
     return Estimate(fit.rotation, fit.shift, fit.apply(middle), fit.rms)
 
 
@@ -254,6 +263,81 @@ def rival_of(raw: dict) -> float:
     rival = raw.get("rival")
     ratio = rival.get("ratio") if isinstance(rival, dict) else None
     return max(float(ratio), 0.0) if _number(ratio) else 0.0
+
+
+# A corner seen in a picture: the board's two edges there run within this
+# many degrees of square to each other, and meet within this share of the
+# shorter one's length (or 1 mm) beyond the ends of both.
+EDGE_SQUARE_DEG = 15.0
+EDGE_REACH = 0.25
+# The job's direction (degrees, y up) of the edge that leaves each corner
+# first counterclockwise: the other leaves a quarter turn on.
+CORNER_FIRST = {"bottom left": 0.0, "bottom right": 90.0, "top right": 180.0, "top left": 270.0}
+
+
+def corner_from_edges(lines: list[dict], name: str, frame: PictureFrame, scale: float, size: tuple[float, float]) -> tuple[Point, float]:
+    """A board's corner and turn from the straight edges pcbv found in a
+    picture (its `edges` reply's lines, strongest first): the strongest
+    two that run square to each other and meet at the ends of both are the
+    board's sides at the corner `name`; their crossing is the corner on the
+    machine, and the turn is how far the sides leave it from the job's
+    directions there (averaged over the two). `frame` places the picture,
+    `scale` is mm per px, `size` the picture's width and height. A
+    ValueError when no two edges make a corner."""
+    if name not in CORNER_FIRST:
+        raise ValueError(f"no corner {name!r}: one of {', '.join(CORNERS)}")
+    width, height = size
+
+    def machine(x: float, y: float) -> Point:
+        off = picture_to_machine(x - width / 2.0, y - height / 2.0, scale, frame.roll, frame.mirror)
+        return (frame.center[0] + off[0], frame.center[1] + off[1])
+
+    segments = []
+    for line in lines:
+        try:
+            a, b = machine(float(line["x0"]), float(line["y0"])), machine(float(line["x1"]), float(line["y1"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if math.dist(a, b) > 1e-6:
+            segments.append((a, b))
+    for i, (a0, a1) in enumerate(segments):
+        for b0, b1 in segments[i + 1:]:
+            da = (a1[0] - a0[0], a1[1] - a0[1])
+            db = (b1[0] - b0[0], b1[1] - b0[1])
+            cross = da[0] * db[1] - da[1] * db[0]
+            la, lb = math.hypot(*da), math.hypot(*db)
+            # sin of the angle between them: 1 when square.
+            if abs(cross) / (la * lb) < math.cos(math.radians(EDGE_SQUARE_DEG)):
+                continue
+            # Where the two lines cross, as a share along each segment.
+            t = ((b0[0] - a0[0]) * db[1] - (b0[1] - a0[1]) * db[0]) / cross
+            u = ((b0[0] - a0[0]) * da[1] - (b0[1] - a0[1]) * da[0]) / cross
+            reach = max(EDGE_REACH * min(la, lb), 1.0)
+            if not (_near_end(t, la, reach) and _near_end(u, lb, reach)):
+                continue
+            point = (a0[0] + t * da[0], a0[1] + t * da[1])
+            # Each side leaves the corner toward its far end.
+            sides = []
+            for (p0, p1) in ((a0, a1), (b0, b1)):
+                far = p1 if math.dist(p1, point) >= math.dist(p0, point) else p0
+                sides.append(math.degrees(math.atan2(far[1] - point[1], far[0] - point[0])))
+            first, second = sides
+            if _wrap(second - first) < 0.0:
+                first, second = second, first
+            base = CORNER_FIRST[name]
+            rotation = _wrap(first - base + _wrap((second - 90.0) - first) / 2.0)
+            return point, rotation
+    raise ValueError(
+        f"no corner of a board in the picture: {len(segments)} straight edges, none two square to each other and meeting;"
+        " put the picture's center near the board's corner, with the bed around it in view"
+    )
+
+
+def _near_end(share: float, length: float, reach: float) -> bool:
+    """Whether a point `share` of the way along a segment `length` long lies
+    within `reach` of one of its ends, beyond it or short of it."""
+    along = share * length
+    return abs(along) <= reach or abs(along - length) <= reach
 
 
 def match_of(raw: dict) -> float:
@@ -778,13 +862,14 @@ class BoardLook:
         if record is not None:
             record.event("settings", **tuning_fields(consensus))
 
-    def add_corner(self, job_id: str, name: str, job_point: Point, machine: Point, middle: Point) -> None:
-        """The picture's center was on a corner of the job's board when
-        `machine` was read: kept in place of one of the same name, and any
-        of another job's board dropped."""
+    def add_corner(self, job_id: str, name: str, job_point: Point, machine: Point, middle: Point, angle: float | None = None, by: str = "hand") -> None:
+        """A corner of the job's board lies at `machine` (the picture's
+        center put on it, or its edges' crossing, which tells the board's
+        `angle` too): kept in place of one of the same name, and any of
+        another job's board dropped."""
         with self._lock:
             kept = self.corners if self.corners_job == job_id else []
-            self.corners = [corner for corner in kept if corner.name != name] + [Corner(name, job_point, machine)]
+            self.corners = [corner for corner in kept if corner.name != name] + [Corner(name, job_point, machine, angle, by)]
             self.corners_job = job_id
             self._corners_middle = middle
         self.retune()

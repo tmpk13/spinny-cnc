@@ -31,7 +31,7 @@ from .cameras import apply_kept, check_controls
 from .kinematics import FOCUS_DECIMALS, coord
 from .link import Link, LinkError, idle_status, settle
 from .log import log
-from .vision import VisionClient, VisionError, check_lens, scale_range
+from .vision import VisionClient, VisionError, check_colors, check_lens, scale_range
 
 Point = tuple[float, float]
 RUNNING, DONE, STOPPED, ERROR = "running", "done", "stopped", "error"
@@ -142,12 +142,17 @@ class CameraSettings(BaseModel):
     # The lens correction measured from a dot grid (k1, k2 and the picture
     # size), sent to pcbv at every start; None for none.
     lens: dict[str, float] | None = None
+    # Colors picked from the picture for what the camera looks for
+    # (vision.COLOR_ITEMS): spots of that color instead of a shade, the
+    # board's pads, a blank board's edges.
+    colors: dict[str, list[int]] = Field(default_factory=dict)
 
     def check(self) -> None:
         if not self.device.strip():
             raise ValueError("the camera device must be named")
         check_controls(self.controls)
         check_lens(self.lens)
+        check_colors(self.colors)
         check_look(self.look_threshold, self.corner_mm)
         if not machine_files._CAMERA_SIZE.match(self.size):
             raise ValueError("the camera size must be WIDTHxHEIGHT")
@@ -452,7 +457,7 @@ class Camera:
         camera's side and finish, and the scale range its search keeps to
         once the scale is measured."""
         settings = self.settings()
-        return {"side": settings.side, "finish": settings.finish, "scale": scale_range(settings.mm_per_px)}
+        return {"side": settings.side, "finish": settings.finish, "scale": scale_range(settings.mm_per_px), "color": settings.colors.get("board")}
 
     def frame(self, width: int, overlay: bool) -> bytes:
         if not self.client.running:
@@ -650,7 +655,8 @@ class Camera:
         if self._abort.is_set():
             raise CameraError("stopped")
         wait_settled(self.client)
-        reply = self.client.spot()
+        color = self.settings().colors.get("spots")
+        reply = self.client.spot(**({"color": color} if color is not None else {}))
         if self.camlog is not None:
             # Kept before a miss is refused: a look that found nothing is
             # the one to see.

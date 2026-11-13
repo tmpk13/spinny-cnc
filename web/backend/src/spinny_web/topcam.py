@@ -33,7 +33,7 @@ from .camera import CORNER_MM, LOOK_THRESHOLD, Spot, check_look, feature_limits,
 from .cameras import check_controls
 from .openpnp import SHADES
 from .pnp import Mover, PickCamera, PnpError, RoutineProgress, calibrate
-from .vision import check_lens
+from .vision import check_colors, check_lens
 
 Point = tuple[float, float]
 OFFSET_STEPS = ("lifting", "moving", "lowering", "scale", "centering", "done")
@@ -89,11 +89,16 @@ class TopCameraSettings(BaseModel):
     paste: bool = False
     # The lens correction measured from a dot grid, sent at every start.
     lens: dict[str, float] | None = None
+    # Colors picked from the picture for what the camera looks for
+    # (vision.COLOR_ITEMS): spots of that color instead of a shade, the
+    # board's pads, a blank board's edges.
+    colors: dict[str, list[int]] = Field(default_factory=dict)
 
     def check(self) -> None:
         if not self.device.strip():
             raise ValueError("the top camera device must be named")
         check_lens(self.lens)
+        check_colors(self.colors)
         if self.side not in machine_files.CAMERA_SIDES:
             raise ValueError("the top camera side must be front or back")
         if self.finish not in machine_files.CAMERA_FINISHES:

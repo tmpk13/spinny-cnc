@@ -67,9 +67,14 @@ def board_fields(
     scale: tuple[float, float] | None = None,
     paste: bool = False,
     placed: list[str] | None = None,
+    color: list[int] | None = None,
 ) -> dict:
-    """The fields of a board request, as a search record keeps them too."""
+    """The fields of a board request, as a search record keeps them too:
+    `color`, a color picked from a picture, has pcbv look for the board's
+    pads by that color instead of its own looks."""
     fields: dict = {"path": path, "side": side, "finish": finish}
+    if color is not None:
+        fields["color"] = [int(c) for c in color]
     if scale is not None:
         fields["scale"] = f"{scale[0]:.6g}:{scale[1]:.6g}"
     if paste:
@@ -80,6 +85,19 @@ def board_fields(
 
 
 LENS_KEYS = ("k1", "k2", "width", "height")
+# What a camera can be told to look for by a color picked from its
+# picture: marks and fiducials (spots), the board's pads (board), and a
+# blank board against the bed (edges).
+COLOR_ITEMS = ("spots", "board", "edges")
+
+
+def check_colors(colors: dict) -> None:
+    """A camera's picked colors: each item's red, green and blue, 0 to 255."""
+    for item, rgb in colors.items():
+        if item not in COLOR_ITEMS:
+            raise ValueError(f"no color item {item!r}: one of {', '.join(COLOR_ITEMS)}")
+        if not (isinstance(rgb, (list, tuple)) and len(rgb) == 3 and all(isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 255 for v in rgb)):
+            raise ValueError(f"the {item} color must be three whole numbers 0 to 255")
 
 
 def check_lens(lens: dict | None) -> None:
@@ -357,14 +375,32 @@ class VisionClient:
         scale: tuple[float, float] | None = None,
         paste: bool = False,
         placed: list[str] | None = None,
+        color: list[int] | None = None,
     ) -> dict:
         """Loads a board for pcbv to look for in every picture: its side
         and finish, the scale range (mm per pixel of the full size picture,
-        low and high) the search keeps to when known, and the paste and
-        parts on it; None unloads it."""
+        low and high) the search keeps to when known, the paste and parts
+        on it, and the pads' color when one was picked; None unloads it."""
         if path is None:
             return self.request("board", path=None)
-        return self.request("board", timeout=LOAD_SECONDS, **board_fields(path, side, finish, scale, paste, placed))
+        return self.request("board", timeout=LOAD_SECONDS, **board_fields(path, side, finish, scale, paste, placed, color))
+
+    def edges(self, most: int = 8, color: list[int] | None = None) -> dict:
+        """The straight edges in the newest frame, strongest first (pcbv's
+        `edges`): on the likeness to a picked color when given."""
+        fields: dict = {"max": int(most)}
+        if color is not None:
+            fields["color"] = [int(c) for c in color]
+        return self.request("edges", **fields)
+
+    def color(self, x: float, y: float, radius: float = 3.0) -> list[int]:
+        """The mean color of the newest frame within `radius` px of a point
+        of the full size picture, red, green and blue 0 to 255."""
+        reply = self.request("color", x=float(x), y=float(y), radius=float(radius))
+        rgb = reply.get("rgb")
+        if not (isinstance(rgb, list) and len(rgb) == 3 and all(isinstance(v, (int, float)) for v in rgb)):
+            raise VisionError(f"pcbv answered color with {reply!r}")
+        return [int(round(v)) for v in rgb]
 
     def lens(self, lens: dict | None) -> dict:
         """pcbv corrects every point of a picture of the lens' size by its

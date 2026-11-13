@@ -53,6 +53,7 @@ from .boardlook import (
     PictureFrame,
     RestTracker,
     check_places,
+    corner_from_edges,
     corner_of,
     found_text,
     pick_features,
@@ -582,6 +583,18 @@ class CameraLensBody(Finite):
     # or bright on dark (a laser on anodized aluminum), and their pitch, mm.
     polarity: Literal["dark", "bright"] = "dark"
     pitch: float = 2.0
+
+
+class CameraColorBody(Finite):
+    # Which camera, and what it looks for by the color picked: marks and
+    # fiducials (spots), the board's pads (board), a blank board's edges.
+    camera: Literal["head", "up", "top"]
+    item: Literal["spots", "board", "edges"]
+    # The point of the full size picture the color is read at; left out
+    # with `clear`, which forgets the item's color.
+    x: float | None = None
+    y: float | None = None
+    clear: bool = False
 
 
 class CameraControlsBody(Finite):
@@ -3184,6 +3197,70 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         )
         return {"camera": body.camera, "measured": reply, "state": publish()}
 
+    def camera_color(self, body: CameraColorBody) -> dict:
+        """A color picked from the camera's picture (the mean about a point
+        of the full size picture) kept for what it looks for: spots, the
+        board's pads or a blank board's edges; or forgotten. A board loaded
+        with the board's color is loaded again with it."""
+        owner, publish = self._controlled(body.camera)
+        colors = dict(owner.settings().colors)
+        rgb = None
+        if body.clear:
+            colors.pop(body.item, None)
+        else:
+            if body.x is None or body.y is None:
+                raise ValueError("give the point of the picture to read the color at, or clear")
+            if not owner.client.running:
+                raise ValueError("the camera is not running: start it first")
+            rgb = owner.client.color(body.x, body.y)
+            colors[body.item] = rgb
+        owner.update({"colors": colors})
+        if body.item == "board":
+            self._reload_board(body.camera)
+        return {"camera": body.camera, "item": body.item, "rgb": rgb, "state": publish()}
+
+    def _reload_board(self, camera: str) -> None:
+        """A camera's board loaded again with its settings as they are now,
+        when one is loaded."""
+        if camera == "head" and self.head_look.job is not None and self.camera.running:
+            self.camera_board(self.head_look.job)
+        elif camera == "top" and self.top_look.job is not None and self.top.running and not self.top.routine_active:
+            self.top_board(self.top_look.job)
+
+    def camera_edge_corner(self, body: BoardCornerBody) -> dict:
+        """The head camera sees a corner of the job's (blank) board against
+        the bed: where its two edges meet is kept as that corner, with the
+        board's turn the edges show (boardlook.corner_from_edges)."""
+        job = self._job(body.job)
+        point = self._corner_point(job, body.corner)
+        link = self.require_link()
+        status = link.status_now(1.0, routine=True)
+        if status.state != "Idle":
+            raise ValueError(f"the machine is {status.state}: find a corner with the head at rest")
+        settings = self.camera.settings()
+        if settings.mm_per_px <= 0.0:
+            raise ValueError("the camera's scale is not measured: Find mark first")
+        if not self.camera.running:
+            raise ValueError("the camera is not running: start it first")
+        head = head_board(status.r, self.table_angle(status), status.z, self.cartesian)
+        frame = PictureFrame((head[0] + settings.offset[0], head[1] + settings.offset[1]), settings.roll, False)
+        machine, rotation = self._edge_corner(self.camera.client, body.corner, frame, settings)
+        middle, _ = self._board_size(job)
+        self.head_look.add_corner(job.id, body.corner, point, machine, middle, rotation, "edges")
+        self.publish_message("info", f"{body.corner} corner found by its edges at {machine[0]:.3f}, {machine[1]:.3f} mm, the board turned {rotation:+.3f} degrees")
+        return self.publish_camera()
+
+    def _edge_corner(self, client, corner: str, frame: PictureFrame, settings) -> tuple[tuple[float, float], float]:
+        """Where a board's corner is in a camera's picture now, and its turn,
+        from the straight edges pcbv finds (on the edges' picked color when
+        there is one)."""
+        wait_settled(client)
+        reply = client.edges(8, settings.colors.get("edges"))
+        width, height = reply.get("width"), reply.get("height")
+        if not isinstance(width, (int, float)) or not isinstance(height, (int, float)):
+            raise VisionError("pcbv's edges came without the picture's size")
+        return corner_from_edges(reply.get("lines") or [], corner, frame, settings.mm_per_px, (float(width), float(height)))
+
     def camera_lens_clear(self, camera: str) -> dict:
         """The camera's lens correction forgotten."""
         owner, publish = self._controlled(camera)
@@ -3433,7 +3510,9 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             if self.camera.aborting():
                 raise CameraError("stopped")
             wait_settled(client)
-            reply = client.spot(radius=within / scale, polarity=shade, **limits)
+            # A color picked for spots finds fiducials and pads; holes are dark.
+            color = settings.colors.get("spots") if feature.kind != "hole" else None
+            reply = client.spot(radius=within / scale, polarity=shade, color=color, **limits)
             if not reply.get("found"):
                 raise CameraError(f"{feature.name}: nothing within {within:.2f} mm of where the board's place puts it: Search again, or check the camera's scale")
             problem = round_problem(reply) if round_kind else None
@@ -4468,6 +4547,14 @@ def create_app(
     def camera_controls(camera: Literal["head", "up", "top"] = "head"):
         return guarded(lambda: backend.camera_controls(camera))
 
+    @app.post("/api/cameras/color")
+    def camera_color(body: CameraColorBody):
+        return guarded(lambda: backend.camera_color(body))
+
+    @app.post("/api/camera/edge-corner")
+    def camera_edge_corner(body: BoardCornerBody):
+        return guarded(lambda: backend.camera_edge_corner(body))
+
     @app.post("/api/camera/refine")
     def camera_refine(body: CameraRefineBody):
         return guarded(lambda: backend.camera_refine(body))
@@ -4765,6 +4852,10 @@ def create_app(
     @app.post("/api/pnp/top/corner")
     def top_corner(body: BoardCornerBody):
         return guarded(lambda: backend.top_corner(body))
+
+    @app.post("/api/pnp/top/edge-corner")
+    def top_edge_corner(body: BoardCornerBody):
+        return guarded(lambda: backend.top_edge_corner(body))
 
     @app.delete("/api/pnp/top/corners")
     def top_corners_clear():

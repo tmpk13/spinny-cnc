@@ -297,7 +297,7 @@ class PlacingPart:
         settings = self.top.settings()
         return {
             "side": settings.side, "finish": settings.finish, "scale": scale_range(settings.mm_per_px),
-            "paste": settings.paste, "placed": list(self._board_placed.get(job_id, [])),
+            "paste": settings.paste, "placed": list(self._board_placed.get(job_id, [])), "color": settings.colors.get("board"),
         }
 
     def _tell_assembly(self, job_id: str) -> None:
@@ -437,6 +437,27 @@ class PlacingPart:
         offset = self._top_offset(machine)
         middle, _ = self._board_size(job)
         self.top_look.add_corner(job.id, body.corner, point, (float(here["x"]) + offset[0], float(here["y"]) + offset[1]), middle)
+        return self.publish_placing()
+
+    def top_edge_corner(self, body: BoardCornerBody) -> dict:
+        """The top camera sees a corner of the job's (blank) board against
+        the bed: where its two edges meet is kept as that corner, with the
+        board's turn they show."""
+        machine = self._placing_idle()
+        job = self._job(body.job)
+        point = self._corner_point(job, body.corner)
+        settings = self.top.settings()
+        if settings.mm_per_px <= 0.0:
+            raise ValueError("the top camera's scale is not measured: Measure offset first")
+        if not self.top.client.running:
+            raise ValueError("the top camera is not running: start it first")
+        here = self._here(machine)
+        offset = self._top_offset(machine)
+        frame = PictureFrame((float(here["x"]) + offset[0], float(here["y"]) + offset[1]), settings.roll, settings.mirror)
+        corner, rotation = self._edge_corner(self.top.client, body.corner, frame, settings)
+        middle, _ = self._board_size(job)
+        self.top_look.add_corner(job.id, body.corner, point, corner, middle, rotation, "edges")
+        self.publish_message("info", f"{body.corner} corner found by its edges at {corner[0]:.3f}, {corner[1]:.3f} mm, the board turned {rotation:+.3f} degrees")
         return self.publish_placing()
 
     def top_corners_clear(self) -> dict:

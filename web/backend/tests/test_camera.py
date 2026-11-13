@@ -877,3 +877,157 @@ def test_the_head_camera_centers_holes_far_apart_and_makes_them_the_alignment_ma
         assert mark["machine"] == pytest.approx(list(seen_point(seen, mark["design"])), abs=0.02)
     fit = client.get("/api/align").json()["fit"]
     assert fit["rotation"] == pytest.approx(1.0, abs=0.01) and fit["rms"] < 0.02
+
+
+def _png(path, width: int, height: int, pixel) -> None:
+    """A PNG of `pixel(x, y)` -> (r, g, b), written with zlib alone."""
+    import struct
+    import zlib
+
+    rows = bytearray()
+    for y in range(height):
+        rows.append(0)
+        for x in range(width):
+            rows.extend(pixel(x, y))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(bytes(rows), 6)) + chunk(b"IEND", b"")
+    )
+
+
+def test_a_real_pcbv_finds_a_blank_boards_corner_by_its_edges_and_reads_a_picked_color(tmp_path):
+    # pcbv as built in the sibling repository, fed a picture of a blank
+    # copper board's corner on a dark bed: its edges give the corner and
+    # the board's turn, and a color read off the board is the copper's.
+    from spinny_web.boardlook import PictureFrame, corner_from_edges
+
+    try:
+        program = find_pcbv("pcbv")
+    except VisionError:
+        pytest.skip("pcbv is not built")
+    width, height, scale = 640, 480, 0.05
+    corner, turn = (1.0, -0.5), 4.0
+    c, s = math.cos(math.radians(turn)), math.sin(math.radians(turn))
+    bed, copper = (40, 42, 45), (200, 120, 60)
+
+    def inside(px: float, py: float) -> bool:
+        mx, my = (px - width / 2) * scale - corner[0], -(py - height / 2) * scale - corner[1]
+        return c * mx + s * my >= 0.0 and -s * mx + c * my >= 0.0
+
+    def pixel(x: int, y: int):
+        share = sum(inside(x + (i + 0.5) / 3, y + (j + 0.5) / 3) for i in range(3) for j in range(3)) / 9
+        return tuple(round(b + (k - b) * share) for b, k in zip(bed, copper))
+
+    picture = tmp_path / "corner.png"
+    _png(picture, width, height, pixel)
+    client = VisionClient()
+    try:
+        client.start(str(picture), f"{width}x{height}", 10, program)
+        reply = client.edges(8)
+        assert reply["width"] == width and reply["lines"], reply
+        point, rotation = corner_from_edges(reply["lines"], "bottom left", PictureFrame((0.0, 0.0), 0.0, False), scale, (width, height))
+        assert point == pytest.approx(corner, abs=0.05) and rotation == pytest.approx(turn, abs=0.3)
+        # The board's color read off its middle, the bed's beside it.
+        on_board = (width / 2 + 3.0 / scale, height / 2 - 3.0 / scale)
+        assert client.color(*on_board) == pytest.approx(list(copper), abs=2)
+        assert client.color(20.0, height - 20.0) == pytest.approx(list(bed), abs=2)
+    finally:
+        client.close()
+
+
+def test_a_real_pcbv_measures_a_lens_from_a_dot_grid_and_takes_it(tmp_path, client):
+    # A dot grid seen through a lens with k1 -0.08: the route measures it,
+    # keeps it in the camera's settings and pcbv says it holds it.
+    try:
+        program = find_pcbv("pcbv")
+    except VisionError:
+        pytest.skip("pcbv is not built")
+    width, height, k1 = 960, 720, -0.08
+    cx, cy, reach = width / 2, height / 2, math.hypot(width / 2, height / 2)
+
+    def raw(u: tuple[float, float]) -> tuple[float, float]:
+        # The raw point whose correction is `u`: u = c + (d - c)(1 + k1 r^2).
+        d = u
+        for _ in range(30):
+            r2 = ((d[0] - cx) ** 2 + (d[1] - cy) ** 2) / reach ** 2
+            d = (cx + (u[0] - cx) / (1 + k1 * r2), cy + (u[1] - cy) / (1 + k1 * r2))
+        return d
+
+    dots = [raw((cx + i * 36.0, cy + j * 36.0)) for i in range(-12, 13) for j in range(-9, 10)]
+    dots = [d for d in dots if 8 <= d[0] <= width - 8 and 8 <= d[1] <= height - 8]
+    shade = [[235] * width for _ in range(height)]
+    for x0, y0 in dots:
+        for y in range(int(y0) - 7, int(y0) + 8):
+            for x in range(int(x0) - 7, int(x0) + 8):
+                share = sum(math.hypot(x + (i + 0.5) / 3 - x0, y + (j + 0.5) / 3 - y0) <= 6.0 for i in range(3) for j in range(3)) / 9
+                shade[y][x] = round(235 - 205 * share)
+    picture = tmp_path / "dots.png"
+    _png(picture, width, height, lambda x, y: (shade[y][x],) * 3)
+    camera = client.backend.camera
+    camera.client = VisionClient()
+    camera.client.start(str(picture), f"{width}x{height}", 10, program)
+    try:
+        response = client.post("/api/cameras/lens", json={"camera": "head", "polarity": "dark", "pitch": 2.0})
+        assert response.status_code == 200, response.text
+        measured = response.json()["measured"]
+        assert measured["k1"] == pytest.approx(k1, abs=0.02) and measured["rms_px"] < measured["rms_before_px"]
+        assert camera.settings().lens["width"] == width
+        assert camera.client.request("hello")["lens"]["k1"] == pytest.approx(measured["k1"])
+    finally:
+        camera.client.close()
+
+
+class EdgesStandIn(LensStandIn):
+    """pcbv's color and edges requests: a blank board's bottom left corner
+    turned 2 degrees at machine point `corner`, as the head camera sees it
+    from where the fake machine's tool stands."""
+
+    def __init__(self, fake, offset, corner, turn: float, scale: float) -> None:
+        super().__init__()
+        self.fake, self.offset, self.corner, self.turn, self.scale = fake, offset, corner, turn, scale
+        self.colors: list = []
+
+    def color(self, x, y, radius=3.0):
+        return [200, 120, 60]
+
+    def edges(self, most=8, color=None):
+        self.colors.append(color)
+        center = (self.fake.joint[0] + self.offset[0], self.fake.z + self.offset[1])
+        lines = []
+        for angle in (self.turn, self.turn + 90.0):
+            ends = [(self.corner[0] + d * math.cos(math.radians(angle)), self.corner[1] + d * math.sin(math.radians(angle))) for d in (0.2, 6.0)]
+            px = [(640.0 + (x - center[0]) / self.scale, 360.0 - (y - center[1]) / self.scale) for x, y in ends]
+            lines.append({"x0": px[0][0], "y0": px[0][1], "x1": px[1][0], "y1": px[1][1]})
+        return {"lines": lines, "width": 1280, "height": 720}
+
+
+def test_a_blank_boards_corner_is_taken_by_its_edges_and_colors_are_picked_per_item(client, fake):
+    job = Job(
+        name="blank", source="kicad", groups=[Group(label="g", paths=[[(0.0, 0.0), (1.0, 0.0)]])],
+        outline=[[(0.0, 0.0), (40.0, 0.0), (40.0, 30.0), (0.0, 30.0), (0.0, 0.0)]], design=Design(shift=(0.0, 0.0), board=True),
+    )
+    client.backend.store.add(job)
+    client.put("/api/camera/settings", json={"offset": [12.5, -3.25], "roll": 0.0, "mm_per_px": 0.02})
+    stand_in = EdgesStandIn(fake, (12.5, -3.25), (52.0, 31.0), 2.0, 0.02)
+    client.backend.camera.client = stand_in
+    # The picture's center about the corner, a few mm off it.
+    fake.joint[0], fake.z = 52.0 + 2.0 - 12.5, 31.0 + 1.5 + 3.25
+    response = client.post("/api/cameras/color", json={"camera": "head", "item": "edges", "x": 300.0, "y": 200.0})
+    assert response.status_code == 200, response.text
+    assert response.json()["rgb"] == [200, 120, 60] and client.backend.camera.settings().colors == {"edges": [200, 120, 60]}
+    response = client.post("/api/camera/edge-corner", json={"job": job.id, "corner": "bottom left"})
+    assert response.status_code == 200, response.text
+    corners = response.json()["board_look"]["corners"]
+    point = corners["points"][0]
+    assert point["by"] == "edges" and point["machine"] == pytest.approx([52.0, 31.0], abs=1e-3) and point["angle"] == pytest.approx(2.0, abs=1e-3)
+    # The edges were looked for on the color picked for them; one corner
+    # with its turn is a whole rough place.
+    assert stand_in.colors[-1] == [200, 120, 60]
+    assert corners["rough"]["rotation"] == pytest.approx(2.0, abs=1e-3)
+    assert client.post("/api/cameras/color", json={"camera": "head", "item": "edges", "clear": True}).json()["state"]["colors"] == {}
+    assert client.post("/api/cameras/color", json={"camera": "head", "item": "spots"}).status_code == 400
+    assert client.post("/api/cameras/color", json={"camera": "head", "item": "nozzle", "x": 1, "y": 1}).status_code == 422

@@ -234,7 +234,7 @@ def test_a_look_keeps_corners_of_one_board_and_notes_changes_in_its_record():
     look.add_corner("j1", "bottom left", (0.0, 0.0), (11.0, 20.0), MIDDLE)
     state = look.state()
     assert state["job"] is None and state["threshold"] == 0.5 and state["corner_mm"] == 2.0
-    assert state["corners"]["job"] == "j1" and state["corners"]["points"] == [{"corner": "bottom left", "job": [0.0, 0.0], "machine": [11.0, 20.0]}]
+    assert state["corners"]["job"] == "j1" and state["corners"]["points"] == [{"corner": "bottom left", "job": [0.0, 0.0], "machine": [11.0, 20.0], "by": "hand"}]
     assert state["corners"]["rough"]["shift"] == [11.0, 20.0] and look.rough("j2") is None
     # Another job's corner starts its own set.
     look.add_corner("j2", "top right", (40.0, 30.0), (60.0, 60.0), MIDDLE)
@@ -330,3 +330,56 @@ def test_features_to_center_are_far_apart_clear_of_the_rest_fiducials_first():
     assert pick_features([], [], pads, use="pads") == []
     with pytest.raises(ValueError):
         pick_features([], [], [], use="vias")
+
+
+def _corner_lines(corner: str, rotation: float, at, scale: float = 0.02, size=(1280, 720), roll: float = 0.0, mirror: bool = False):
+    """The two edges pcbv would find of a board turned `rotation` whose
+    corner `corner` lies at machine point `at`, seen by a picture centered
+    on the machine's origin: each from near the corner to 8 mm along its
+    side, in picture px."""
+    from spinny_web.camera import picture_to_machine
+
+    first = boardlook.CORNER_FIRST[corner] + rotation
+    lines = []
+    for angle in (first, first + 90.0):
+        a = (at[0] + 0.3 * math.cos(math.radians(angle)), at[1] + 0.3 * math.sin(math.radians(angle)))
+        b = (at[0] + 8.0 * math.cos(math.radians(angle)), at[1] + 8.0 * math.sin(math.radians(angle)))
+        px = []
+        for point in (b, a) if angle == first else (a, b):
+            # The picture's px of a machine point: picture_to_machine undone
+            # by solving its 2 by 2 linear map.
+            ux, uy = picture_to_machine(1.0, 0.0, scale, roll, mirror)
+            vx, vy = picture_to_machine(0.0, 1.0, scale, roll, mirror)
+            det = ux * vy - vx * uy
+            dx = (point[0] * vy - vx * point[1]) / det
+            dy = (ux * point[1] - point[0] * uy) / det
+            px.append((size[0] / 2.0 + dx, size[1] / 2.0 + dy))
+        lines.append({"x0": px[0][0], "y0": px[0][1], "x1": px[1][0], "y1": px[1][1]})
+    return lines
+
+
+@pytest.mark.parametrize("corner", ["bottom left", "bottom right", "top right", "top left"])
+@pytest.mark.parametrize("mirror", [False, True])
+def test_a_corner_and_the_boards_turn_come_from_two_square_edges_meeting(corner, mirror):
+    from spinny_web.boardlook import corner_from_edges
+
+    lines = _corner_lines(corner, 3.0, (1.5, -2.0), roll=12.0, mirror=mirror)
+    # A stray line first that crosses nothing square.
+    stray = {"x0": 100.0, "y0": 600.0, "x1": 300.0, "y1": 610.0}
+    point, rotation = corner_from_edges([stray, *lines], corner, PictureFrame((0.0, 0.0), 12.0, mirror), 0.02, (1280.0, 720.0))
+    assert point == pytest.approx((1.5, -2.0), abs=1e-6) and rotation == pytest.approx(3.0, abs=1e-6)
+
+
+def test_no_corner_without_two_square_edges_and_one_corner_gives_a_turned_rough_place():
+    from spinny_web.boardlook import corner_from_edges
+
+    lines = _corner_lines("bottom left", 0.0, (0.0, 0.0))
+    with pytest.raises(ValueError, match="no corner"):
+        corner_from_edges(lines[:1], "bottom left", PictureFrame((0.0, 0.0), 0.0), 0.02, (1280.0, 720.0))
+    # Two parallel edges are no corner.
+    parallel = [lines[0], {**lines[0], "y0": lines[0]["y0"] + 50.0, "y1": lines[0]["y1"] + 50.0}]
+    with pytest.raises(ValueError):
+        corner_from_edges(parallel, "bottom left", PictureFrame((0.0, 0.0), 0.0), 0.02, (1280.0, 720.0))
+    place = rough_place([Corner("bottom left", (0.0, 0.0), (150.0, 80.0), 2.0, "edges")], MIDDLE)
+    assert place.rotation == pytest.approx(2.0) and place.apply((0.0, 0.0)) == pytest.approx((150.0, 80.0))
+    assert Corner("top left", (0.0, 30.0), (1.0, 2.0), 1.5, "edges").to_dict()["by"] == "edges"

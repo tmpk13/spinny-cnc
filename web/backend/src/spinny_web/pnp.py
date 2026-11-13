@@ -42,7 +42,7 @@ from .kinematics import FOCUS_DECIMALS, coord
 from .link import LinkError, idle_status, settle
 from .log import log
 from .openpnp import SHADES
-from .vision import VisionClient, VisionError, check_lens
+from .vision import VisionClient, VisionError, check_colors, check_lens
 
 Point = tuple[float, float]
 NOZZLE_STEPS = ("lifting", "moving", "lowering", "scale", "centering", "done")
@@ -408,12 +408,17 @@ class UpCameraSettings(BaseModel):
     controls: dict[str, int] = Field(default_factory=dict)
     # The lens correction measured from a dot grid, sent at every start.
     lens: dict[str, float] | None = None
+    # Colors picked from the picture for what the camera looks for
+    # (vision.COLOR_ITEMS): spots of that color instead of a shade, the
+    # board's pads, a blank board's edges.
+    colors: dict[str, list[int]] = Field(default_factory=dict)
 
     def check(self) -> None:
         if not self.device.strip():
             raise ValueError("the bottom camera device must be named")
         check_controls(self.controls)
         check_lens(self.lens)
+        check_colors(self.colors)
         if not machine_files._CAMERA_SIZE.match(self.size):
             raise ValueError("the bottom camera size must be WIDTHxHEIGHT")
         if not 1 <= int(self.fps) <= 120:
@@ -768,7 +773,8 @@ class PickCamera:
             raise ValueError("the spot is dark or bright")
         if not self.client.running:
             raise PnpError(f"the {self.label} is not running: start it first")
-        reply = self.client.spot(radius=radius, polarity=polarity)
+        color = getattr(self.settings(), "colors", {}).get("spots")
+        reply = self.client.spot(radius=radius, polarity=polarity, **({"color": color} if color is not None else {}))
         self._log_look("a look by hand", "look", reply, polarity)
         self.look = look_dict(reply, polarity, radius)
         self._publish()
@@ -778,6 +784,9 @@ class PickCamera:
         """pcbv's spot in a picture taken once the head came to rest after
         the move before it."""
         wait_settled(self.client)
+        color = getattr(self.settings(), "colors", {}).get("spots")
+        if color is not None and "color" not in fields:
+            fields["color"] = color
         return self.client.spot(**fields)
 
     def shutdown(self) -> None:
