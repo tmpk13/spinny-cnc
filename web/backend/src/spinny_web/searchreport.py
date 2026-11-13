@@ -10,7 +10,7 @@ reaches the machine:
   the search found (or a place given, from fiducials or a ruler), and the
   outliers; stops where the board filled a good part of the picture and
   pcbv never locked (misses, pictures to try pcbv on);
-- what other consensus settings (looks needed in a row, the distance they
+- what other consensus settings (looks one guess needs, the distance they
   must agree within) would have called on the same poses, and whether that
   call would have been right;
 - with a pcbv program, what it makes of the record's pictures now
@@ -46,7 +46,7 @@ from typing import TypeGuard
 
 from spinny_laser.align import turn
 
-from .boardlook import Consensus, Estimate
+from .boardlook import Consensus, Estimate, corners_from
 from .camera import picture_to_machine
 from .searchlog import BOARD, EVENTS, RECORD, RECORD_ID
 
@@ -205,8 +205,8 @@ def _estimate(data) -> Estimate | None:
     center, shift, rotation = _point(data.get("center")), _point(data.get("shift")), data.get("rotation")
     if center is None or shift is None or not _number(rotation):
         return None
-    rms = data.get("rms")
-    return Estimate(float(rotation), shift, center, float(rms) if _number(rms) else 0.0, [], _point(data.get("seen")))
+    rms, match = data.get("rms"), data.get("match")
+    return Estimate(float(rotation), shift, center, float(rms) if _number(rms) else 0.0, [], _point(data.get("seen")), 0.0, float(match) if _number(match) else 1.0)
 
 
 # --- geometry: how much of a picture the board covers --------------------------------------
@@ -426,22 +426,32 @@ def summarize(record: Record, truth: Place | None = None) -> dict:
 
 def what_ifs(record: Record, truth: Place | None = None, needs=NEEDS, agrees=AGREES) -> list[dict]:
     """The record's poses run again through a consensus for each number of
-    looks needed in a row and distance they must agree within: when it
+    looks one guess needs and distance they must agree within: when it
     would have called the board found, and how far from the truth. The
     search would have ended there; what came after it is not asked."""
     truth = truth or found_place(record)
     truth_middle = truth.apply(record.middle) if truth is not None else None
     settings = record.settings
-    poses = record.of("pose")
     rows = []
     for need in needs:
         for agree in agrees:
-            consensus = Consensus(record.middle, need=int(need), agree_mm=float(agree), agree_deg=settings.get("agree_deg"), window=settings.get("window"))
+            consensus = Consensus(
+                record.middle, need=int(need), agree_mm=float(agree), agree_deg=settings.get("agree_deg"), history=settings.get("history"),
+                threshold=settings.get("threshold"), corner_mm=settings.get("corner_mm"), corners=corners_from(settings.get("corners")),
+            )
             row: dict = {
                 "need": int(need), "agree_mm": float(agree), "found": False,
                 "recorded": int(need) == settings.get("need") and math.isclose(float(agree), float(settings.get("agree_mm") or -1.0)),
             }
-            for count, event in enumerate(poses, 1):
+            count = 0
+            for event in record.events:
+                if event.get("event") == "settings":
+                    # The threshold or the corners changed as the look went on.
+                    consensus.tune(event.get("threshold"), event.get("corner_mm"), corners_from(event.get("corners")))
+                    continue
+                if event.get("event") != "pose":
+                    continue
+                count += 1
                 consensus.see(event.get("state"), _estimate(event.get("estimate")), event.get("refused") or event.get("problem"))
                 if consensus.found and consensus.best is not None:
                     best = consensus.best
@@ -600,7 +610,7 @@ def text(summary: dict, ifs: list[dict] | None = None, pcbv: list[dict] | None =
     if s["errors"]:
         lines.append("pcbv errors: " + "; ".join(str(e) for e in s["errors"]))
     if ifs:
-        lines.append("other settings on the same poses (need in a row, agree within mm: when found, how far off):")
+        lines.append("other settings on the same poses (looks needed, agree within mm: when found, how far off):")
         for row in ifs:
             mark = " (as recorded)" if row["recorded"] else ""
             if row["found"]:
@@ -730,7 +740,8 @@ def _map_svg(record: Record, summary: dict, truth: Place | None) -> str:
 
 def _timeline_svg(record: Record, summary: dict) -> str:
     """Each pose read along the time (used high, refused in the middle, not
-    locked low), the run of agreeing looks below it, and the stops' starts."""
+    locked low), the looks agreeing on the most likely guess below it, and
+    the stops' starts."""
     poses = record.of("pose")
     end = max([float(event.get("t") or 0.0) for event in record.events] + [float(summary.get("seconds") or 0.0), 0.001])
     width, height = 1000.0, 160.0
@@ -822,7 +833,7 @@ def html(record: Record, truth: Place | None = None, ifs: list[dict] | None = No
         out.append('<p class="muted">Pictures by stop: magenta found, yellow used poses, red missed (the board covered at least a quarter of the picture and nothing was used), grey nothing, cyan the look at the middle; green the board where it lies, dots where each used pose put its middle (red: outside the agreement). The machine\'s Y points up.</p>')
         out.append(_map_svg(record, s, truth))
     out.append("<h2>Along the time</h2>")
-    out.append('<p class="muted">Each pose read: used (green), locked but refused (yellow), not locked (grey); the magenta line is the run of looks agreeing, the dashed one the run that calls the board found; numbers mark the stops.</p>')
+    out.append('<p class="muted">Each pose read: used (green), locked but refused (yellow), not locked (grey); the magenta line is the looks agreeing on the most likely guess, the dashed one the looks that call it found (with its share of the evidence over the threshold); numbers mark the stops.</p>')
     out.append(_timeline_svg(record, s))
     if s["stops"]:
         out.append("<h2>Stops</h2>")
@@ -843,7 +854,7 @@ def html(record: Record, truth: Place | None = None, ifs: list[dict] | None = No
         rows = [[_f(o["t"], 2), _e(_stop_name(o.get("stop"), s["stop_count"])), _e(o["frame"]), _f(o["mm"], 3), _f(o["deg"], 3), f"{o.get('inliers')}/{o.get('expected')}", _f(o.get("rms_mm"), 3), _e(o.get("look") or "-")] for o in s["outliers"]]
         out.append(_table(["t s", "Stop", "Frame", "Off mm", "Off deg", "Paired", "rms mm", "Look"], rows))
     out.append("<h2>Other settings on the same poses</h2>")
-    out.append('<p class="muted">The poses run again through the consensus: when each number of looks in a row, agreeing within each distance, would have called the board found, and how far from where it lies (red: further than its own agreement). The search would have ended there.</p>')
+    out.append('<p class="muted">The poses run again through the consensus: when each number of looks agreeing within each distance, with the threshold and corners recorded, would have called the board found, and how far from where it lies (red: further than its own agreement). The search would have ended there.</p>')
     rows, classes = [], []
     for row in ifs:
         off = f"{row['error_mm']:.3f} mm, {row['error_deg']:.3f} deg" if "error_mm" in row else "-"
@@ -997,7 +1008,7 @@ def main(argv: list[str] | None = None) -> int:
     show = commands.add_parser("show", help="what one record says")
     show.add_argument("record", help="a record's id, or its folder")
     show.add_argument("--truth", help="X,Y,DEG: where the board's middle lies on the machine and its turn, from fiducials or a ruler (default: where the record found it)")
-    show.add_argument("--need", default=",".join(str(n) for n in NEEDS), help="looks in a row to try on the poses (default %(default)s)")
+    show.add_argument("--need", default=",".join(str(n) for n in NEEDS), help="looks one guess needs, to try on the poses (default %(default)s)")
     show.add_argument("--agree", default=",".join(f"{a:g}" for a in AGREES), help="agreement distances to try, mm (default %(default)s)")
     show.add_argument("--pcbv", metavar="PROGRAM", help="run PROGRAM locate on each picture with the record's board")
     show.add_argument("--json", action="store_true", help="print the summary, the other settings and pcbv's results as JSON")
@@ -1005,7 +1016,7 @@ def main(argv: list[str] | None = None) -> int:
     sweeping = commands.add_parser("sweep", help="every record's poses through other consensus settings, and with --pcbv every picture through a pcbv build, totalled")
     sweeping.add_argument("--camera", choices=("head", "top"), help="only this camera's records")
     sweeping.add_argument("--kind", choices=("search", "look"), help="only searches, or only looks")
-    sweeping.add_argument("--need", default=",".join(str(n) for n in NEEDS), help="looks in a row to try (default %(default)s)")
+    sweeping.add_argument("--need", default=",".join(str(n) for n in NEEDS), help="looks one guess needs, to try (default %(default)s)")
     sweeping.add_argument("--agree", default=",".join(f"{a:g}" for a in AGREES), help="agreement distances to try, mm (default %(default)s)")
     sweeping.add_argument("--pcbv", metavar="PROGRAM", help="run PROGRAM locate on every record's pictures")
     sweeping.add_argument("--json", action="store_true", help="print the totals as JSON")

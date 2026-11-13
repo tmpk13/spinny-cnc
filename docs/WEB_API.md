@@ -697,13 +697,15 @@ when a job's board is loaded, through the job's `design`.
 | `GET /api/cameras/controls?camera=head` | a camera's V4L2 controls (`head`, `up`, or `top`, a G-code machine's) as `v4l2-ctl -d DEVICE --list-ctrls-menus` lists them now: `{"camera": "head", "device": "/dev/video0", "local": true, "note": null, "controls": [{"name": "brightness", "section": "User Controls", "kind": "int", "min": 0, "max": 255, "step": 1, "default": 128, "value": 140, "inactive": false, "kept": null}, {"name": "auto_exposure", "kind": "menu", ..., "items": [{"value": 1, "label": "Manual Mode"}, {"value": 3, "label": "Aperture Priority Mode"}]}], "kept": {"exposure_time_absolute": 300}}`. Only numbers (`int`), switches (`bool`) and menus (`menu`, `intmenu`) that can be set are listed; `inactive` ones do nothing while another (an automatic one) is on; `kept` is the value the camera keeps for it, set every time it starts. A device that is not a `/dev/` node (an HTTP camera, a bridge Pi's snapshots; a pcbv over TCP; a picture file) has none here: `local` false, `controls` empty, `note` says why. 502 when v4l2-ctl is not installed or fails |
 | `PUT /api/cameras/controls` | `{"camera": "head", "values": {"auto_exposure": 1, "exposure_time_absolute": 300, "gain": null}}`: each value set on the device now (automatic ones first, each on its own; the camera may be streaming) and kept in that camera's settings (`controls`), to be set again whenever it starts; `null` forgets a kept value. Answers the listing with `refused`, each control v4l2-ctl refused and why. 400 for a name that is not a control's or a value that is not whole |
 | `GET /api/camera` | the camera state (below) |
-| `PUT /api/camera/settings` | any of `{"device": "/dev/video0", "size": "1280x720", "fps": 30, "pcbv": "pcbv", "side": "front", "finish": "masked", "offset": [dx, dy], "roll": 0.4, "mm_per_px": 0.021}` (and `controls`, which the controls' route keeps), kept in the backend's config; 400 for a size that is not `WIDTHxHEIGHT`, a side or finish that is not one of its two words, an offset past 1000 mm, a roll past 360 degrees or a negative scale. A running camera given another `device`, `size`, `fps` or `pcbv` starts again on them and looks for the board it looked for (409 while the find routine runs; when the start fails, 502 with pcbv's reason, the camera stopped and the settings kept). Returns the state |
+| `PUT /api/camera/settings` | any of `{"device": "/dev/video0", "size": "1280x720", "fps": 30, "pcbv": "pcbv", "side": "front", "finish": "masked", "offset": [dx, dy], "roll": 0.4, "mm_per_px": 0.021, "look_threshold": 0.5, "corner_mm": 2.0}` (and `controls`, which the controls' route keeps), kept in the backend's config; `look_threshold` and `corner_mm` are the board look's (Board look, below). 400 for a size that is not `WIDTHxHEIGHT`, a side or finish that is not one of its two words, an offset past 1000 mm, a roll past 360 degrees, a negative scale, a threshold past 0 to 1 or a tolerance past 0.1 to 50 mm. A running camera given another `device`, `size`, `fps` or `pcbv` starts again on them and looks for the board it looked for (409 while the find routine runs; when the start fails, 502 with pcbv's reason, the camera stopped and the settings kept). Returns the state |
 | `POST /api/camera/start` | starts pcbv on the device (`pcbv serve`, or a connection to the socket) with the size and fps; 502 when the program is not found or does not answer `hello` within 5 s, 409 when running. Returns the state; the first frame may take a moment, `frame` is null until then |
 | `POST /api/camera/stop` | stops it; 409 while the find routine runs. The state |
 | `GET /api/camera/frame.jpg?width=640&overlay=1` | the newest picture as JPEG, shrunk to at most `width` (160 to 4096; left out, 640), with the spots and the pose drawn on it when `overlay` is 1 and a crosshair at the center always; 404 when the camera is not running or has no frame yet, 502 when pcbv fails or another request has had it for over 1 s (`the camera is busy`). `Cache-Control: no-store`; the page asks again for every picture |
 | `GET /api/camera/pose` | the newest pose: `{"state": "locked" \| "coasting" \| "lost" \| "none" \| null, "center": [x, y], "angle_deg": 1.3, "mm_per_px": 0.021, "inliers": 171, "expected": 190, "rms_mm": 0.04, "spots": 190, "fps": 14.0, "age_ms": 40, "job_center": [x, y] or null}`; `null` state with the camera stopped, `none` with no board loaded, and the pose fields only on `locked`; `job_center` is the picture's center in the loaded job's frame |
 | `POST /api/camera/board` | `{"job": "a1b2"}`: pcbv looks for the job's board in the pictures (a `.kicad_pcb` upload only: 400 for a job without its board file; the camera's `side` and `finish` apply), and the backend reads its poses into the state's `board_look` until it is unloaded or the camera stops (Board look, below); `{"job": null}` unloads it. The state |
-| `POST /api/camera/search` | `{"box": [x0, y0, x1, y1]}` (board frame mm, where the picture's center may go; left out, a square the board's diagonal on a side about where the picture's center is now): the head goes over the box in camera-sized steps until the board is found, on the camera's routine thread, owning the machine as the find routine does (`routine.kind` `search`, `done` the stop it is at of `total`). It ends `done` with the picture's center over the board's middle once enough looks agree, `error` (`no board found: ...`) once every stop was looked at, or `stopped` by `POST /api/camera/abort`. 400 with no board loaded, no picture yet, or no scale (`mm_per_px` 0 and no lock), or a box over 400 stops; 409 unless Idle and free |
+| `POST /api/camera/search` | `{"box": [x0, y0, x1, y1]}` (board frame mm, where the picture's center may go; left out, the box where the corners taken of the board put it, grown by `corner_mm` (and a tenth of the board's diagonal with one corner), else a square the board's diagonal on a side about where the picture's center is now): the head goes over the box in camera-sized steps until the board is found, on the camera's routine thread, owning the machine as the find routine does (`routine.kind` `search`, `done` the stop it is at of `total`). It ends `done` with the picture's center over the board's middle once a guess is found, `error` (`no board found: ...`) once every stop was looked at, or `stopped` by `POST /api/camera/abort`. 400 with no board loaded, no picture yet, or no scale (`mm_per_px` 0 and no lock), or a box over 400 stops; 409 unless Idle and free |
+| `POST /api/camera/corner` | `{"job": "a1b2", "corner": "bottom left"}` (`bottom left`, `bottom right`, `top right` or `top left` of the job's outline's box, as the board drawing shows it): the picture's center is on that corner of the board; the tool's point plus the camera's offset is kept for it, in place of one of the same name (corners of another job's board are dropped). The state's `board_look.corners` (Board look, below). 400 for another corner name or a job with no outline, or with the machine not Idle |
+| `DELETE /api/camera/corners` | the head camera's corners are forgotten; the camera state |
 | `POST /api/camera/mark` | `{"depth": 0.1, "plunge": 30, "speed": 1000}`: makes a mark with the tool where it stands, to measure the camera against: a job of one drill named `camera mark` is stored and run from the tool's point (a spindle machine with the focus axis, 400 otherwise; `depth` 0.01 to 5 mm, `plunge` 1 to 1000 mm/min, `speed` the spindle's `S`, `s_max` when left out; 409 while a run or probing owns the machine), its progress coming as `progress` events, and the tool's board point is recorded as the mark. `{"here": true}` only records the tool's point, for a mark made by hand or a hole in the board. The state |
 | `POST /api/camera/find` | `{"step": 2.0}`: finds the mark in the picture and puts the picture's center on it, which measures the offset. On its own thread, owning the machine as probing does: the head lifts to the travel height (`travel`, else `clearance` taken as an H) when the machine has a focus axis and is lower, goes where the camera should see the mark (the mark less the offset in force), and the dark spot nearest the picture's center is taken for the mark (400 with no mark or no running camera, 409 unless Idle and free); with `step` above 0 (0 to 20 mm, default 2), or with `mm_per_px` 0, the head is moved `step` along +X and back, and how the spot moved in the picture gives `mm_per_px` and `roll`; then the head is moved by the spot's distance from the center, up to three times, until the spot is within 0.02 mm of it, and `offset` is the mark less the tool's point, saved in the settings. The routine's progress comes as `camera` events; a spot lost on the way ends it as `error` with the head where it stopped. The state |
 | `POST /api/camera/abort` | stops the find routine as a probing is stopped (hold, reset); 409 when none runs. The state |
@@ -743,32 +745,65 @@ where the board lies on the machine: the turn and shift that take the
 job's frame onto the machine's, fitted to the board points pcbv sees
 under the picture's center and corners against the machine points the
 camera's offset, roll, mirror and pcbv's scale put them at (a pose with
-no corners: its center and angle). The board is `found` once 5 estimates
-in a row lie within 0.5 mm (the board's middle) and 1 degree of the
-median of the newest 9; the estimate is the median of those that agree.
-A picture mirrored against the board is refused (`problem`).
+no corners: its center and angle), and how well pcbv matched it
+(`match`: the features it paired of those it expected, an unsure one
+counted half among those expected; 1 when pcbv does not say). The newest
+40 estimates are sorted into guesses: those whose middles lie within
+0.5 mm of one another and whose turns within 1 degree make one, its
+place and turn their medians. A guess's `probability` is its share of
+the evidence (its looks' matches summed, over every guess's). The board
+is `found` once the most likely guess has 5 looks or more, at least the
+camera's `look_threshold` of the evidence (its settings, 0 to 1, 0.5
+unless set), and more than the next guess. Corners taken by hand
+(`POST /api/camera/corner`, `/api/pnp/top/corner`) rule out a guess that
+puts one further than the camera's `corner_mm` (0.1 to 50, 2 unless set)
+from where it was taken: its probability is 0 and the others share the
+evidence. Both settings are set with the camera's settings
+(`PUT /api/camera/settings`, `PUT /api/pnp/top`). A picture mirrored
+against the board is refused (`problem`).
 
 ```json
-{"job": "a1b2", "looks": 42, "locked": 30, "pose": "locked", "agree": 5, "need": 5, "found": true,
+{"job": "a1b2", "looks": 42, "locked": 30, "pose": "locked", "agree": 25, "need": 5, "found": true,
  "spread_mm": 0.08, "spread_deg": 0.12,
- "estimate": {"rotation": 1.02, "shift": [40.1, 29.9], "center": [59.8, 45.3], "rms": 0.01},
+ "estimate": {"rotation": 1.02, "shift": [40.1, 29.9], "center": [59.8, 45.3], "rms": 0.01, "match": 0.91},
  "view": [[7.2, 22.3], [32.9, 22.1], [32.7, 7.7], [7.1, 7.9]], "seen": [20.0, 15.0], "problem": null,
+ "threshold": 0.5, "corner_mm": 2.0,
+ "guesses": [{"rotation": 1.02, "shift": [40.1, 29.9], "center": [59.8, 45.3], "rms": 0.01, "match": 0.91,
+              "looks": 25, "probability": 0.86, "share": 0.86, "spread_mm": 0.08, "spread_deg": 0.12,
+              "ruled_out": false, "corner_mm": null,
+              "view": [[7.2, 22.3], [32.9, 22.1], [32.7, 7.7], [7.1, 7.9]], "seen": [20.0, 15.0]},
+             {"rotation": 1.0, "shift": [42.64, 29.9], "center": [62.34, 45.3], "rms": 0.02, "match": 0.62,
+              "looks": 5, "probability": 0.14, "share": 0.14, "spread_mm": 0.03, "spread_deg": 0.05,
+              "ruled_out": false, "corner_mm": null,
+              "view": [[4.7, 22.3], [30.4, 22.1], [30.2, 7.7], [4.6, 7.9]], "seen": [17.5, 15.0]}],
+ "more": 0,
+ "corners": null,
  "record": "20261112-153012-000"}
 ```
 
 `looks` counts the poses read, `locked` the ones that gave an estimate,
-`pose` the newest pose's state, `agree` how many of the newest estimates
-in a row agree; `estimate` (machine frame: the board frame for the head
-camera, X and Y for the top camera) is null until one agrees with the
-median. `view` is the newest locked picture's corners and `seen` its
-center in the job's frame (null while not locked); `problem` why the
-newest locked pose was not used (the head moving, the offset not
-known, a mirrored picture). `record` is the id of the newest search
-record of this look or its search (Search records, below). With no board
-loaded, `{"job": null}`.
+`pose` the newest pose's state, `agree` how many looks the most likely
+guess has; `estimate` (machine frame: the board frame for the head
+camera, X and Y for the top camera) is where it puts the board, null
+with no guess (or every one ruled out), and `spread_mm`, `spread_deg`
+how far its looks lie from it. `view` is the newest locked picture's
+corners and `seen` its center in the job's frame (null while not
+locked); `problem` why the newest locked pose was not used (the head
+moving, the offset not known, a mirrored picture). `guesses` are the
+most likely 8, each with `share`, its part of every guess's evidence
+corners or not, `corner_mm` the furthest it puts a corner taken from
+where it was taken, and `view`, `seen` where it says the newest picture
+(locked or not) lies on the board; `more` counts those not sent.
+`corners` holds the corners taken, of this board or another's:
+`{"job", "points": [{"corner", "job": [x, y], "machine": [x, y]}],
+"rough"}`, `rough` the place they give (two or more: the turn and shift
+that fit them; one: not turned), or null with none. `record` is the id of
+the newest search record of this look or its search (Search records,
+below). With no board loaded, `{"job": null, "threshold", "corner_mm",
+"corners"}`.
 `POST /api/align/capture` takes a found estimate (the board's middle, its
-place and turn) when the camera has one for that job, else the newest
-pose as before.
+place and turn) when the camera has one for that job, else a mark at each
+corner taken of that board, else the newest pose as before.
 
 ## Camera log
 
@@ -965,7 +1000,7 @@ reference, the angle, a count) needs a G-code machine to keep it for.
 | `POST /api/pnp/nozzle` | on a G-code machine, the bottom camera's nozzle routine (as above) with the nozzle turned to 0, its moves the file's move word and wait command, its place read with the position command; what it measures is kept as the placing state's `camera`. The routine shows in the bottom camera state with `"target": "gcode"` |
 | `POST /api/pnp/runout` | over the bottom camera, the tip found at six turns of the nozzle: the circle they lie on gives `camera.runout` (the tip off the turning axis at 0, mm), which places and looks then make up for; a tip going round the wrong way for `rotation_cw` fails naming it. Kind `runout` in the bottom camera's routine |
 | `POST /api/pnp/fiducials` | `{"job"}`: the top camera finds the board's fiducials where the references put them; two or more replace the hand references (`by: fiducial`); fails when one is not within `within`, or they disagree with their fit by over 0.25 mm. Kind `fiducials` in `top.routine` |
-| `PUT /api/pnp/top` | the top camera's settings, any of `device`, `size`, `fps`, `pcbv`, `mark_spot`, `mark_at`, `offset`, `mm_per_px`, `roll`, `mirror`, and `clear` (`mark_at`, `offset`); a running camera given another device, size, fps or program starts again |
+| `PUT /api/pnp/top` | the top camera's settings, any of `device`, `size`, `fps`, `pcbv`, `mark_spot`, `mark_at`, `offset`, `mm_per_px`, `roll`, `mirror`, the board look's `look_threshold` (0 to 1) and `corner_mm` (0.1 to 50), and `clear` (`mark_at`, `offset`); a running camera given another device, size, fps or program starts again |
 | `POST /api/pnp/top/start`, `.../stop` | starts or stops its pcbv |
 | `GET /api/pnp/top/frame.jpg?width=640&overlay=1` | its picture; 404 before the first |
 | `POST /api/pnp/top/mark` | the nozzle's tip is over a mark: the head's place is kept as `mark_at` |
@@ -974,7 +1009,9 @@ reference, the angle, a count) needs a G-code machine to keep it for.
 | `POST /api/pnp/top/look` | the `mark_spot` spot nearest the picture's center found once, no move, kept as `top.look` (as the bottom camera's) |
 | `POST /api/pnp/top/board` | `{"job": "a1b2"}`: pcbv looks for the job's board (front, masked) and the backend reads its poses into `top.board_look` (Board look, under Camera) until unloaded, the camera stopped or started again; `{"job": null}` unloads it. 400 with the camera stopped or a job without its board file |
 | `POST /api/pnp/top/search` | `{"box": [x0, y0, x1, y1]}`, machine X and Y for the picture's center, or `{}` for a square the board's diagonal on a side about where it is now: the head rises to the safe height, goes to `[top_camera] z`, and visits the box in camera-sized steps nearest first; pcbv is told to `reset` at each stop, and a stop is left when no lock comes within 2.5 s or after 5 s; ends `done` once enough looks agree (the picture's center put over the board's middle), `error` once every stop was looked at. Kind `search`, steps `lifting`, `stop 1` ... `stop N`. 400 as for the head camera's search |
-| `POST /api/pnp/top/place` | `{"job": "a1b2"}`: the place the look found becomes the job's references: the two parts furthest apart (fiducials when there are two) where the estimate puts them, `by: "look"`, replacing earlier ones by look; 400 until the look has found this job's board |
+| `POST /api/pnp/top/place` | `{"job": "a1b2"}`: the place the look found (else the rough place the corners taken of the board give) becomes the job's references: the two parts furthest apart (fiducials when there are two) where it puts them, `by: "look"` (or `"corners"`), replacing earlier ones by look or by corners; 400 until the look has found this job's board or a corner of it is taken |
+| `POST /api/pnp/top/corner` | `{"job": "a1b2", "corner": "top right"}`: as the head camera's corner, the head's place plus the top camera's offset kept for it; 400 without the offset measured, 409 while the machine is busy |
+| `DELETE /api/pnp/top/corners` | the top camera's corners are forgotten; the placing state |
 | `POST /api/pnp/top/abort` | ends the top camera's routine and sends the stop command |
 
 A feeder bus (`[bus]`) carries packets to smart feeders through the
@@ -1015,7 +1052,7 @@ Placing state:
          "mark_at": [120.0, 80.0], "offset": [35.0, -10.0], "mm_per_px": 0.02, "roll": 1.5, "mirror": false,
          "frame": {"width": 1280, "height": 720, "age_ms": 40, "fps": 15.0}, "routine": null,
          "fiducials": {"job": "a1b2", "found": [{"ref": "FID1", "at": [100.0, 50.0]}], "fit": {"rotation": 0.6, "rms": 0.01}},
-         "look": null, "board_look": {"job": null}},
+         "look": null, "board_look": {"job": null, "threshold": 0.5, "corner_mm": 2.0, "corners": null}},
  "connected": true, "url": "/dev/ttyACM1", "lost": null, "running": false, "homed": true,
  "position": {"x": 100.0, "y": 50.0, "z": 0.0},
  "progress": {"state": "done", "sent": 42, "total": 42, "part": null, "placed": ["R1", "R2"],

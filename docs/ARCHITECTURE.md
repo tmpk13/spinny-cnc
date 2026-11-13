@@ -99,7 +99,7 @@ flowchart LR
         UST --> VIDPI[/dev/v4l/by-id camera on the Pi]
         PV2 --> VID2[/dev/videoM fixed to the machine, looking up]
         BE --> FIND[cameras: the ones attached for the device lists, from pcbv cameras and from asking the forwarded ports for ustreamer state]
-        BE --> LOOK[boardlook: the head and top cameras' poses read into where the board lies, found once enough agree; the search over a box]
+        BE --> LOOK[boardlook: the head and top cameras' poses read into guesses of where the board lies, the most likely found at the camera's threshold; corners taken by hand; the search over a box]
         LOOK --> PV
         LOOK --> PV3
         LOOK --> SLOG[searchlog: every look and search recorded in var/searchlog: poses, stops, a picture at each, the board file, the outcome; searchreport and spinny-search read them back]

@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from spinny_laser import machines as machine_files
 
-from .camera import Spot, picture_to_machine, spot_of
+from .camera import CORNER_MM, LOOK_THRESHOLD, Spot, check_look, picture_to_machine, spot_of
 from .cameras import check_controls
 from .openpnp import SHADES
 from .pnp import Mover, PickCamera, PnpError, RoutineProgress, calibrate
@@ -76,11 +76,16 @@ class TopCameraSettings(BaseModel):
     mirror: bool = False
     # V4L2 control values set on the device each time the camera starts.
     controls: dict[str, int] = Field(default_factory=dict)
+    # The look for a board: the threshold of the most likely guess, and
+    # the corners' tolerance (mm).
+    look_threshold: float = LOOK_THRESHOLD
+    corner_mm: float = CORNER_MM
 
     def check(self) -> None:
         if not self.device.strip():
             raise ValueError("the top camera device must be named")
         check_controls(self.controls)
+        check_look(self.look_threshold, self.corner_mm)
         if not machine_files._CAMERA_SIZE.match(self.size):
             raise ValueError("the top camera size must be WIDTHxHEIGHT")
         if not 1 <= int(self.fps) <= 120:

@@ -723,3 +723,40 @@ def test_the_head_camera_searches_for_the_board_and_a_capture_takes_the_agreed_p
     assert response.status_code == 200, response.text
     mark = response.json()["marks"][-1]
     assert mark["machine"] == pytest.approx(list(middle), abs=0.01) and mark["angle"] == pytest.approx(1.0, abs=0.01)
+
+
+def test_head_camera_corners_make_alignment_marks_and_its_look_settings_are_checked(client, fake):
+    job = Job(
+        name="board", source="kicad", groups=[Group(label="g", paths=[[(0.0, 0.0), (1.0, 0.0)]])],
+        outline=[[(0.0, 0.0), (40.0, 0.0), (40.0, 30.0), (0.0, 30.0), (0.0, 0.0)]],
+        design=Design(shift=(-100.0, -70.0), board=True),
+    )
+    client.backend.store.add(job)
+    client.put("/api/camera/settings", json={"offset": [12.5, -3.25], "roll": 0.0, "mm_per_px": 0.02})
+
+    def take(corner: str, point: tuple[float, float]) -> dict:
+        # The picture's center put on the corner of a board turned a degree
+        # and shifted to (40, 30): the tool there less the camera's offset.
+        c, s = math.cos(math.radians(1.0)), math.sin(math.radians(1.0))
+        fake.joint[0] = 40.0 + c * point[0] - s * point[1] - 12.5
+        fake.z = 30.0 + s * point[0] + c * point[1] + 3.25
+        response = client.post("/api/camera/corner", json={"job": job.id, "corner": corner})
+        assert response.status_code == 200, response.text
+        return response.json()["board_look"]
+
+    assert client.post("/api/camera/corner", json={"job": job.id, "corner": "middle"}).status_code == 400
+    take("bottom left", (0.0, 0.0))
+    look = take("bottom right", (40.0, 0.0))
+    # No board looked for: the corners and their rough place all the same.
+    assert look["job"] is None and [point["corner"] for point in look["corners"]["points"]] == ["bottom left", "bottom right"]
+    assert look["corners"]["rough"]["rotation"] == pytest.approx(1.0, abs=0.01)
+    # A capture with no board found takes a mark at each corner.
+    marks = client.post("/api/align/capture", json={"job": job.id}).json()["marks"]
+    assert [mark["design"] for mark in marks[-2:]] == [[0.0, 0.0], [40.0, 0.0]]
+    assert marks[-1]["machine"] == pytest.approx([40.0 + 40.0 * math.cos(math.radians(1.0)), 30.0 + 40.0 * math.sin(math.radians(1.0))], abs=0.01)
+    assert client.delete("/api/camera/corners").json()["board_look"]["corners"] is None
+    # The look's settings are the camera's, checked.
+    assert client.put("/api/camera/settings", json={"corner_mm": 0.0}).status_code == 400
+    assert client.put("/api/camera/settings", json={"look_threshold": -0.1}).status_code == 400
+    look = client.put("/api/camera/settings", json={"look_threshold": 0.7, "corner_mm": 4.0}).json()["board_look"]
+    assert look["threshold"] == 0.7 and look["corner_mm"] == 4.0

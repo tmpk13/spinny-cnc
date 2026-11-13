@@ -14,12 +14,19 @@ center and corners (or, from a pose without corners, its center and the
 picture's angle on the board).
 
 One pose can be wrong: a repeated pattern matched a pitch off, a picture
-taken while the head still moved. So the board is called found only when
-several looks in a row agree: the newest estimates within AGREE_MM of the
-median place of the board's middle and AGREE_DEG of the median turn, NEED
-of them in a row. The estimate reported is the median of the ones that
-agree, and the spread says how far they lie apart. A pose is used only
-when the head is known to have been at rest when its frame was taken.
+taken while the head still moved. So the newest HISTORY estimates are
+sorted into guesses, estimates whose middles lie within AGREE_MM of one
+another and whose turns within AGREE_DEG making one guess, its place and
+turn their medians. A guess's probability is its share of the evidence:
+its looks, each weighed by how well pcbv matched it (the features it
+paired of those it expected), over every guess's. The board is called
+found when the most likely guess has NEED looks or more, at least the
+camera's threshold of the evidence, and more of it than the next guess.
+Corners of the board taken by hand (the picture's center put on each)
+rule out every guess that puts one further than the camera's corner_mm
+from where it was taken, and make a rough place of their own. A pose is
+used only when the head is known to have been at rest when its frame was
+taken.
 
 The search moves the head so the picture's center visits a grid of stops
 over a box, a picture's size apart less an overlap, nearest the start
@@ -40,7 +47,7 @@ from typing import Callable
 from spinny_laser.align import fit_rigid, turn
 
 from . import camera as camera_module
-from .camera import picture_to_machine
+from .camera import CORNER_MM, LOOK_THRESHOLD, picture_to_machine
 from .kinematics import FOCUS_DECIMALS, coord
 from .link import idle_status, settle
 from .log import log
@@ -49,13 +56,26 @@ from .vision import VisionClient, VisionError
 Point = tuple[float, float]
 Box = tuple[float, float, float, float]
 
-# Estimates agree when the board's middle lies within this of their median,
-# mm, and the turn within this of theirs, degrees; this many in a row call
-# the board found, out of the newest this many kept.
+# Estimates make one guess when their middles lie within this of one
+# another, mm, and their turns within this, degrees; a guess needs this many
+# looks to be called found, and the guesses are made from the newest this
+# many estimates.
 AGREE_MM = 0.5
 AGREE_DEG = 1.0
 NEED = 5
-WINDOW = 9
+HISTORY = 40
+# The most guesses told to the page, the most likely first.
+GUESSES = 8
+# The least share of the evidence the most likely guess must hold, and how
+# far it may put a corner taken by hand from where it was taken (mm), when
+# a camera says none (its look_threshold and corner_mm).
+THRESHOLD = LOOK_THRESHOLD
+# What a feature that may or may not show counts among those pcbv expected,
+# against one for a sure feature, as pcbv weighs it (its unsure_weight).
+UNSURE_WEIGHT = 0.5
+# The corners of a board's outline box that can be taken by hand, by name,
+# as the board drawing shows them (the job's y up).
+CORNERS = ("bottom left", "bottom right", "top right", "top left")
 # How often the watcher asks pcbv for its pose while a board is loaded, s,
 # and how often at most it tells the page that the look changed.
 SAMPLE_SECONDS = 0.2
@@ -89,7 +109,8 @@ class Estimate:
     """Where one pose puts the board: the turn (degrees counterclockwise)
     and shift that take the job's frame onto the machine's, the board's
     middle on the machine, the fit's rms (mm), the picture's corners and
-    center in the job's frame, and when the frame was taken."""
+    center in the job's frame, when the frame was taken, and how well pcbv
+    matched the pose (match_of)."""
 
     rotation: float
     shift: Point
@@ -98,10 +119,15 @@ class Estimate:
     corners: list[Point] = field(default_factory=list)
     seen: Point | None = None
     captured: float = 0.0
+    match: float = 1.0
 
     def apply(self, point: Point) -> Point:
         x, y = turn(point, self.rotation)
         return (x + self.shift[0], y + self.shift[1])
+
+    def unapply(self, point: Point) -> Point:
+        """A machine point back in the job's frame."""
+        return turn((point[0] - self.shift[0], point[1] - self.shift[1]), -self.rotation)
 
     def to_dict(self) -> dict:
         return {
@@ -109,7 +135,98 @@ class Estimate:
             "shift": [round(self.shift[0], 4), round(self.shift[1], 4)],
             "center": [round(self.center[0], 4), round(self.center[1], 4)],
             "rms": round(self.rms, 4),
+            "match": round(self.match, 4),
         }
+
+
+@dataclass
+class Guess:
+    """One place the looks put the board: estimates within the agreement of
+    one another, their median place and turn (`estimate`, whose match is
+    theirs on average), how many, their matches summed (`weight`), how far
+    they lie from the median, the history's index of the newest, and the
+    share of the evidence the guess holds; with corners taken by hand, the
+    furthest it puts one from where it was taken, and whether that rules
+    it out (its probability then nothing)."""
+
+    estimate: Estimate
+    looks: int
+    weight: float
+    spread_mm: float
+    spread_deg: float
+    newest: int
+    probability: float = 0.0
+    corner_mm: float | None = None
+    ruled_out: bool = False
+
+
+@dataclass
+class Corner:
+    """A corner of the board's outline taken by hand: its name (CORNERS),
+    where it lies in the job's frame, and the machine point the picture's
+    center was on."""
+
+    name: str
+    job: Point
+    machine: Point
+
+    def to_dict(self) -> dict:
+        return {"corner": self.name, "job": _rounded(self.job), "machine": _rounded(self.machine)}
+
+
+def corner_of(box: Box, name: str) -> Point:
+    """The corner of a board's outline box (x0 y0 x1 y1, the job's frame) by its name."""
+    x0, y0, x1, y1 = box
+    places = {"bottom left": (x0, y0), "bottom right": (x1, y0), "top right": (x1, y1), "top left": (x0, y1)}
+    if name not in places:
+        raise ValueError(f"no corner {name!r}: one of {', '.join(CORNERS)}")
+    return places[name]
+
+
+def corners_from(data) -> list[Corner]:
+    """Corners as a record keeps them (Corner.to_dict), back; bad ones left out."""
+    corners = []
+    for item in data if isinstance(data, list) else []:
+        if isinstance(item, dict):
+            job, machine = _point(item.get("job")), _point(item.get("machine"))
+            if job is not None and machine is not None:
+                corners.append(Corner(str(item.get("corner")), job, machine))
+    return corners
+
+
+def rough_place(corners: list[Corner], middle: Point) -> Estimate | None:
+    """Where corners taken by hand put the board: with two or more, the
+    turn and shift that fit them best; with one, not turned, shifted so it
+    lies where it was taken. None with none."""
+    if not corners:
+        return None
+    fit = fit_rigid([(corner.job, corner.machine) for corner in corners])
+    return Estimate(fit.rotation, fit.shift, fit.apply(middle), fit.rms)
+
+
+def rough_box(place: Estimate, outline: Box, margin: float) -> Box:
+    """The box on the machine that holds a board's outline box (the job's
+    frame) where `place` puts it, grown by `margin` mm on every side."""
+    x0, y0, x1, y1 = outline
+    points = [place.apply(point) for point in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
+    xs, ys = [p[0] for p in points], [p[1] for p in points]
+    return (min(xs) - margin, min(ys) - margin, max(xs) + margin, max(ys) + margin)
+
+
+def match_of(raw: dict) -> float:
+    """How well a locked pose matched the board, 0 to 1: the features pcbv
+    paired of those it expected in the picture, an unsure feature counted
+    among those expected at pcbv's weight (pcbv refuses a lock under a
+    quarter). pcbv counts an unsure feature paired as a whole one, so with
+    unsure features about the share reads a little high; it is capped at
+    1, and 1 for a pose that does not say."""
+    inliers, expected, unsure = raw.get("inliers"), raw.get("expected"), raw.get("unsure")
+    if not _number(inliers) or not _number(expected):
+        return 1.0
+    whole = float(expected) + UNSURE_WEIGHT * (float(unsure) if _number(unsure) else 0.0)
+    if whole <= 0.0:
+        return 1.0
+    return min(max(float(inliers) / whole, 0.0), 1.0)
 
 
 def _number(value) -> bool:
@@ -160,7 +277,7 @@ def pose_estimate(raw: dict, frame: PictureFrame, to_job: Callable[[Point], Poin
         if _area(jobs) * _area(machines) < 0.0:
             return None, "the picture is mirrored against the board: check the camera's side (front or back) and its mirror"
         fit = fit_rigid(pairs)
-        estimate = Estimate(fit.rotation, fit.shift, fit.apply(middle), fit.rms, jobs, seen, captured)
+        estimate = Estimate(fit.rotation, fit.shift, fit.apply(middle), fit.rms, jobs, seen, captured, match_of(raw))
         return estimate, None
     angle = raw.get("angle_deg")
     if not _number(angle):
@@ -170,16 +287,17 @@ def pose_estimate(raw: dict, frame: PictureFrame, to_job: Callable[[Point], Poin
     rotation = _wrap(frame.roll - float(angle))
     tx, ty = turn(seen, rotation)
     shift = (frame.center[0] - tx, frame.center[1] - ty)
-    estimate = Estimate(rotation, shift, (0.0, 0.0), 0.0, [], seen, captured)
+    estimate = Estimate(rotation, shift, (0.0, 0.0), 0.0, [], seen, captured, match_of(raw))
     estimate.center = estimate.apply(middle)
     return estimate, None
 
 
 class Consensus:
-    """The newest estimates, and whether enough of them in a row agree to
-    call the board found. The thresholds are the module's unless given:
-    a search record's poses are replayed with others to see what they
-    would have called (searchreport.py)."""
+    """The newest estimates sorted into guesses, and whether the most
+    likely one is likely enough to call the board found. The settings are
+    the module's unless given: a search record's poses are replayed with
+    others to see what they would have called (searchreport.py). `tune`
+    changes the threshold, the corners and their tolerance as they go."""
 
     def __init__(
         self,
@@ -187,92 +305,229 @@ class Consensus:
         need: int | None = None,
         agree_mm: float | None = None,
         agree_deg: float | None = None,
-        window: int | None = None,
+        history: int | None = None,
+        threshold: float | None = None,
+        corner_mm: float | None = None,
+        corners: list[Corner] | None = None,
     ) -> None:
         self.middle = middle
         self.need = NEED if need is None else need
         self.agree_mm = AGREE_MM if agree_mm is None else agree_mm
         self.agree_deg = AGREE_DEG if agree_deg is None else agree_deg
-        # The window holds at least the run that calls the board found.
-        self.window = max(WINDOW if window is None else window, self.need)
+        # The history holds at least the looks that call the board found.
+        self.history = max(HISTORY if history is None else history, self.need)
+        self.threshold = THRESHOLD if threshold is None else threshold
+        self.corner_mm = CORNER_MM if corner_mm is None else corner_mm
+        self.corners: list[Corner] = list(corners or [])
+        # The watcher sees poses while a request tunes or reads.
+        self._mutex = threading.RLock()
         self.reset()
 
     def reset(self) -> None:
-        self.estimates: deque[Estimate] = deque(maxlen=self.window)
+        self.estimates: deque[Estimate] = deque(maxlen=self.history)
         # Poses read, and the locked ones that gave an estimate.
         self.looks = 0
         self.locked = 0
         self.last_state: str | None = None
         self.problem: str | None = None
-        self.agree = 0
-        self.best: Estimate | None = None
-        self.spread_mm: float | None = None
-        self.spread_deg: float | None = None
+        # The most likely first.
+        self.guesses: list[Guess] = []
         # The newest pose's picture on the board, while it is locked.
         self.view: Estimate | None = None
+        # The newest picture's place on the machine, its size (px) and its
+        # scale (mm per px): where each guess says it lies on the board.
+        self.picture: tuple[PictureFrame, float, float, float] | None = None
+
+    @property
+    def lead(self) -> Guess | None:
+        """The most likely guess; None with none, or every one ruled out."""
+        guesses = self.guesses
+        return guesses[0] if guesses and guesses[0].probability > 0.0 else None
+
+    @property
+    def agree(self) -> int:
+        """The looks that agree on the most likely guess."""
+        lead = self.lead
+        return lead.looks if lead is not None else 0
+
+    @property
+    def best(self) -> Estimate | None:
+        """Where the most likely guess puts the board."""
+        lead = self.lead
+        return lead.estimate if lead is not None else None
+
+    @property
+    def spread_mm(self) -> float | None:
+        lead = self.lead
+        return lead.spread_mm if lead is not None else None
+
+    @property
+    def spread_deg(self) -> float | None:
+        lead = self.lead
+        return lead.spread_deg if lead is not None else None
 
     @property
     def found(self) -> bool:
-        return self.agree >= self.need
+        """The most likely guess has enough looks, at least the threshold's
+        share of the evidence, and more of it than the next guess."""
+        guesses = self.guesses
+        lead = self.lead
+        if lead is None or lead.looks < self.need or lead.probability < self.threshold - 1e-9:
+            return False
+        return len(guesses) < 2 or lead.probability > guesses[1].probability + 1e-9
 
     def see(self, state: str | None, estimate: Estimate | None, problem: str | None) -> None:
         """One pose read: its state, the estimate it gave (None when it gave
         none, or could not be used), and why not when it could not."""
-        self.looks += 1
-        self.last_state = state
-        self.problem = problem
-        if state != "locked":
-            self.view = None
-        if estimate is None:
-            return
-        self.locked += 1
-        self.view = estimate
-        self.estimates.append(estimate)
-        self._settle()
+        with self._mutex:
+            self.looks += 1
+            self.last_state = state
+            self.problem = problem
+            if state != "locked":
+                self.view = None
+            if estimate is None:
+                return
+            self.locked += 1
+            self.view = estimate
+            self.estimates.append(estimate)
+            self._settle()
+
+    def tune(self, threshold: float | None = None, corner_mm: float | None = None, corners: list[Corner] | None = None) -> None:
+        """Another threshold, tolerance or set of corners (None keeps
+        each): the guesses are weighed again."""
+        with self._mutex:
+            if threshold is not None:
+                self.threshold = threshold
+            if corner_mm is not None:
+                self.corner_mm = corner_mm
+            if corners is not None:
+                self.corners = list(corners)
+            self._weigh(list(self.guesses))
+
+    def _near(self, a: Estimate, b: Estimate) -> bool:
+        return math.dist(a.center, b.center) <= self.agree_mm and abs(_wrap(a.rotation - b.rotation)) <= self.agree_deg
 
     def _settle(self) -> None:
-        estimates = list(self.estimates)
-        newest = estimates[-1]
-        turns = [newest.rotation + _wrap(e.rotation - newest.rotation) for e in estimates]
-        mx = statistics.median(e.center[0] for e in estimates)
-        my = statistics.median(e.center[1] for e in estimates)
-        mr = statistics.median(turns)
-        inside = [math.dist(e.center, (mx, my)) <= self.agree_mm and abs(r - mr) <= self.agree_deg for e, r in zip(estimates, turns)]
-        agree = 0
-        for ok in reversed(inside):
-            if not ok:
-                break
-            agree += 1
-        self.agree = agree
-        kept = [(e, r) for (e, r), ok in zip(zip(estimates, turns), inside) if ok]
-        if not kept:
-            self.best = None
-            self.spread_mm = self.spread_deg = None
-            return
-        cx = statistics.median(e.center[0] for e, _ in kept)
-        cy = statistics.median(e.center[1] for e, _ in kept)
-        rotation = statistics.median(r for _, r in kept)
+        """Sorts the estimates into guesses: the estimate with the most
+        evidence within the agreement of it (ties: the newest) seeds a guess
+        of those, then the same again with the rest."""
+        items = list(self.estimates)
+        count = len(items)
+        near = [[self._near(a, b) for b in items] for a in items]
+        # Each estimate's evidence within the agreement, among those left.
+        weights = [sum(items[j].match for j in range(count) if near[i][j]) for i in range(count)]
+        left = set(range(count))
+        guesses = []
+        while left:
+            seed = max(left, key=lambda i: (weights[i], i))
+            members = sorted(j for j in left if near[seed][j])
+            left.difference_update(members)
+            for j in members:
+                for i in left:
+                    if near[i][j]:
+                        weights[i] -= items[j].match
+            guesses.append(self._guess(items, seed, members))
+        self._weigh(guesses)
+
+    def _guess(self, items: list[Estimate], seed: int, members: list[int]) -> Guess:
+        """The guess of `members` (indices into `items`, oldest first): their
+        median place and turn, the turns taken about the seed's across the wrap."""
+        group = [items[j] for j in members]
+        pivot = items[seed].rotation
+        turns = [pivot + _wrap(e.rotation - pivot) for e in group]
+        cx = statistics.median(e.center[0] for e in group)
+        cy = statistics.median(e.center[1] for e in group)
+        rotation = statistics.median(turns)
         tx, ty = turn(self.middle, rotation)
-        self.best = Estimate(_wrap(rotation), (cx - tx, cy - ty), (cx, cy), statistics.median(e.rms for e, _ in kept), newest.corners, newest.seen, newest.captured)
-        self.spread_mm = max(math.dist(e.center, (cx, cy)) for e, _ in kept)
-        self.spread_deg = max(abs(r - rotation) for _, r in kept)
+        newest = group[-1]
+        weight = sum(e.match for e in group)
+        estimate = Estimate(
+            _wrap(rotation), (cx - tx, cy - ty), (cx, cy), statistics.median(e.rms for e in group),
+            newest.corners, newest.seen, newest.captured, weight / len(group),
+        )
+        return Guess(
+            estimate, len(group), weight,
+            max(math.dist(e.center, (cx, cy)) for e in group),
+            max(abs(r - rotation) for r in turns),
+            members[-1],
+        )
+
+    def _weigh(self, guesses: list[Guess]) -> None:
+        """Each guess's verdict from the corners and share of the evidence;
+        kept the most likely first (ties: the most looks, then the newest)."""
+        for guess in guesses:
+            if self.corners:
+                guess.corner_mm = max(math.dist(guess.estimate.apply(corner.job), corner.machine) for corner in self.corners)
+                guess.ruled_out = guess.corner_mm > self.corner_mm
+            else:
+                guess.corner_mm = None
+                guess.ruled_out = False
+        total = sum(guess.weight for guess in guesses if not guess.ruled_out)
+        for guess in guesses:
+            guess.probability = guess.weight / total if total > 0.0 and not guess.ruled_out else 0.0
+        guesses.sort(key=lambda guess: (-guess.probability, -guess.looks, -guess.newest))
+        self.guesses = guesses
+
+    def footprint(self, estimate: Estimate) -> tuple[list[Point], Point] | None:
+        """Where the newest picture lies on the board if `estimate` is
+        right: its corners (clockwise from its top left) and its center in
+        the job's frame; None before a picture's place is known."""
+        if self.picture is None:
+            return None
+        frame, width, height, scale = self.picture
+
+        def job_of(px: float, py: float) -> Point:
+            off = picture_to_machine(px - width / 2.0, py - height / 2.0, scale, frame.roll, frame.mirror)
+            return estimate.unapply((frame.center[0] + off[0], frame.center[1] + off[1]))
+
+        corners = [job_of(x, y) for x, y in ((0.0, 0.0), (width, 0.0), (width, height), (0.0, height))]
+        return corners, estimate.unapply(frame.center)
+
+    def guess_dict(self, guess: Guess, total: float) -> dict:
+        """A guess for the page: where it puts the board, how likely, its
+        share of every guess's evidence (`share`, corners or not), and where
+        it says the newest picture lies on the board (`view`, `seen`)."""
+        data = {
+            **guess.estimate.to_dict(),
+            "looks": guess.looks,
+            "probability": round(guess.probability, 4),
+            "share": round(guess.weight / total, 4) if total > 0.0 else 0.0,
+            "spread_mm": round(guess.spread_mm, 4),
+            "spread_deg": round(guess.spread_deg, 4),
+            "ruled_out": guess.ruled_out,
+            "corner_mm": round(guess.corner_mm, 4) if guess.corner_mm is not None else None,
+            "view": None,
+            "seen": None,
+        }
+        footprint = self.footprint(guess.estimate)
+        if footprint is not None:
+            data["view"] = [_rounded(point) for point in footprint[0]]
+            data["seen"] = _rounded(footprint[1])
+        return data
 
     def to_dict(self) -> dict:
-        view = self.view
-        return {
-            "looks": self.looks,
-            "locked": self.locked,
-            "pose": self.last_state,
-            "agree": self.agree,
-            "need": self.need,
-            "found": self.found,
-            "spread_mm": round(self.spread_mm, 4) if self.spread_mm is not None else None,
-            "spread_deg": round(self.spread_deg, 4) if self.spread_deg is not None else None,
-            "estimate": self.best.to_dict() if self.best is not None else None,
-            "view": [[round(x, 4), round(y, 4)] for x, y in view.corners] if view is not None and view.corners else None,
-            "seen": [round(view.seen[0], 4), round(view.seen[1], 4)] if view is not None and view.seen is not None else None,
-            "problem": self.problem,
-        }
+        with self._mutex:
+            view = self.view
+            best = self.best
+            total = sum(guess.weight for guess in self.guesses)
+            return {
+                "looks": self.looks,
+                "locked": self.locked,
+                "pose": self.last_state,
+                "agree": self.agree,
+                "need": self.need,
+                "found": self.found,
+                "spread_mm": round(self.spread_mm, 4) if self.spread_mm is not None else None,
+                "spread_deg": round(self.spread_deg, 4) if self.spread_deg is not None else None,
+                "estimate": best.to_dict() if best is not None else None,
+                "view": [[round(x, 4), round(y, 4)] for x, y in view.corners] if view is not None and view.corners else None,
+                "seen": [round(view.seen[0], 4), round(view.seen[1], 4)] if view is not None and view.seen is not None else None,
+                "problem": self.problem,
+                "threshold": round(self.threshold, 4),
+                "corner_mm": round(self.corner_mm, 4),
+                "guesses": [self.guess_dict(guess, total) for guess in self.guesses[:GUESSES]],
+                "more": max(0, len(self.guesses) - GUESSES),
+            }
 
 
 class RestTracker:
@@ -314,13 +569,30 @@ class BoardLook:
     frame taken at a time; `paused` holds the watcher off while a routine
     moves the head and reads the poses itself; `publish` tells the page."""
 
-    def __init__(self, client: Callable[[], VisionClient], publish: Callable[[], None], paused: Callable[[], bool]) -> None:
+    def __init__(
+        self,
+        client: Callable[[], VisionClient],
+        publish: Callable[[], None],
+        paused: Callable[[], bool],
+        tuning: Callable[[], tuple[float, float]] | None = None,
+    ) -> None:
         self._client = client
         self._publish = publish
         self._paused = paused
+        # The camera's threshold and corners' tolerance, as they are now.
+        self.tuning: Callable[[], tuple[float, float]] = tuning or (lambda: (THRESHOLD, CORNER_MM))
         self.job: str | None = None
         self._to_job: Callable[[Point], Point] | None = None
         self._place: PlaceOf | None = None
+        # Corners of one job's board taken by hand, kept whether or not its
+        # board is loaded, and that board's middle for their rough place.
+        self.corners: list[Corner] = []
+        self.corners_job: str | None = None
+        self._corners_middle: Point = (0.0, 0.0)
+        # The newest scale pcbv reported, for pictures without a lock.
+        self._scale: float | None = None
+        # The camera's own settings are read once a board is loaded: the
+        # backend holding them may not be whole yet.
         self.consensus = Consensus()
         self._frame: object = None
         self._lock = threading.Lock()
@@ -351,7 +623,7 @@ class BoardLook:
             self.job = job_id
             self._to_job = to_job
             self._place = place
-            self.consensus = Consensus(middle)
+            self.consensus = self._consensus(middle, job_id)
             self._frame = None
             self._end = threading.Event()
             end = self._end
@@ -390,15 +662,68 @@ class BoardLook:
             self.job = None
             self._to_job = None
             self._place = None
-            self.consensus = Consensus()
+            self.consensus = self._consensus((0.0, 0.0), None)
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=2.0)
 
     def restart(self) -> None:
         """A fresh consensus for the board loaded: a search starts over."""
         with self._lock:
-            self.consensus = Consensus(self.consensus.middle)
+            self.consensus = self._consensus(self.consensus.middle, self.job)
             self._frame = None
+
+    def _consensus(self, middle: Point, job_id: str | None) -> Consensus:
+        threshold, corner_mm = self.tuning()
+        return Consensus(middle, threshold=threshold, corner_mm=corner_mm, corners=self.corners_of(job_id))
+
+    def corners_of(self, job_id: str | None) -> list[Corner]:
+        """The corners taken of a job's board; none for another job's."""
+        return list(self.corners) if job_id is not None and job_id == self.corners_job else []
+
+    def retune(self) -> None:
+        """The consensus follows the camera's threshold and tolerance and
+        the corners as they are now; a change goes into the record, so a
+        replay weighs the poses after it as the look did."""
+        threshold, corner_mm = self.tuning()
+        consensus = self.consensus
+        corners = self.corners_of(self.job)
+        if (threshold, corner_mm, corners) == (consensus.threshold, consensus.corner_mm, consensus.corners):
+            return
+        consensus.tune(threshold, corner_mm, corners)
+        self._changed = True
+        record = self.record
+        if record is not None:
+            record.event("settings", **tuning_fields(consensus))
+
+    def add_corner(self, job_id: str, name: str, job_point: Point, machine: Point, middle: Point) -> None:
+        """The picture's center was on a corner of the job's board when
+        `machine` was read: kept in place of one of the same name, and any
+        of another job's board dropped."""
+        with self._lock:
+            kept = self.corners if self.corners_job == job_id else []
+            self.corners = [corner for corner in kept if corner.name != name] + [Corner(name, job_point, machine)]
+            self.corners_job = job_id
+            self._corners_middle = middle
+        self.retune()
+
+    def clear_corners(self) -> None:
+        with self._lock:
+            self.corners = []
+            self.corners_job = None
+        self.retune()
+
+    def rough(self, job_id: str) -> Estimate | None:
+        """Where the corners taken of a job's board put it; None with none."""
+        return rough_place(self.corners_of(job_id), self._corners_middle)
+
+    def corners_state(self) -> dict | None:
+        """The corners taken and their rough place, for the page; None with none."""
+        corners = list(self.corners)
+        job = self.corners_job
+        if job is None or not corners:
+            return None
+        rough = rough_place(corners, self._corners_middle)
+        return {"job": job, "points": [corner.to_dict() for corner in corners], "rough": rough.to_dict() if rough is not None else None}
 
     def sample(self, place: PlaceOf | None = None) -> str:
         """Reads pcbv's newest pose into the consensus, and into the record
@@ -432,18 +757,27 @@ class BoardLook:
         state = raw.get("state")
         estimate: Estimate | None = None
         problem: str | None = None
-        where: PictureFrame | str | None = None
+        # Where the picture lay, asked of every pose: each guess says where
+        # on the board that is, locked or not.
+        where = place(captured)
+        if state == "locked" and _number(raw.get("mm_per_px")) and raw["mm_per_px"] > 0.0:
+            self._scale = float(raw["mm_per_px"])
         if state == "locked":
-            where = place(captured)
             if isinstance(where, str):
                 problem = where
             else:
                 estimate, problem = pose_estimate(raw, where, to_job, self.consensus.middle, captured)
+        width, height = raw.get("width"), raw.get("height")
+        if isinstance(where, PictureFrame) and self._scale is not None and _number(width) and _number(height) and width > 0 and height > 0:
+            self.consensus.picture = (where, float(width), float(height), self._scale)
         self.consensus.see(state, estimate, problem)
         self._changed = True
         seen = "used" if estimate is not None else "locked" if state == "locked" else "none"
         if record is not None:
-            record.event("pose", **pose_fields(record, raw, received, captured, where, estimate, problem, seen, self.consensus))
+            # A record keeps the place of a locked pose only, as it did
+            # before every pose was placed.
+            kept = where if state == "locked" else None
+            record.event("pose", **pose_fields(record, raw, received, captured, kept, estimate, problem, seen, self.consensus))
             if record.kind == "look":
                 self._look_record(record)
         return seen
@@ -463,10 +797,16 @@ class BoardLook:
             self.end_record("cut short", only=record, message="the record is full; the look goes on unrecorded")
 
     def state(self) -> dict:
+        """The look for the page: the consensus with the board loaded, and
+        the camera's settings and the corners taken, loaded or not."""
+        # A setting changed elsewhere (a machine file) is followed here.
+        self.retune()
         consensus = self.consensus
+        corners = self.corners_state()
         if self.job is None:
-            return {"job": None}
-        return {"job": self.job, **consensus.to_dict(), "record": self.last_record}
+            threshold, corner_mm = self.tuning()
+            return {"job": None, "threshold": threshold, "corner_mm": corner_mm, "corners": corners}
+        return {"job": self.job, **consensus.to_dict(), "record": self.last_record, "corners": corners}
 
     def publish(self, force: bool = False) -> None:
         """Tells the page of a change, at most every PUBLISH_SECONDS unless forced."""
@@ -601,7 +941,11 @@ def search(
                 return final
         look.publish(force=True)
         covered = True
-        raise error(f"no board found: {len(stops)} stops of the camera's picture looked at without {NEED} looks agreeing; a box over where the board lies, or the board's side and finish checked")
+        raise error(
+            f"no board found: {len(stops)} stops of the camera's picture looked at without a guess of {NEED} looks holding"
+            f" {look.consensus.threshold * 100.0:.0f}% of the evidence; a box over where the board lies, the board's side and finish,"
+            " or a lower threshold"
+        )
     except BaseException as exc:
         result = "not found" if covered else "stopped" if stopped() else "error"
         look.end_record(result, only=record, message=str(exc) or type(exc).__name__, visited=visited)
@@ -623,13 +967,29 @@ def search_extra(box: Box, start: Point, stops: list[Point], view_width: float, 
     }
 
 
-def settings_now() -> dict:
-    """The look's and the search's settings as they are now, for a record."""
+def tuning_fields(consensus: Consensus) -> dict:
+    """A consensus' threshold, corners' tolerance and corners, for a record."""
+    return {
+        "threshold": consensus.threshold,
+        "corner_mm": consensus.corner_mm,
+        "corners": [corner.to_dict() for corner in consensus.corners],
+    }
+
+
+def settings_now(look: BoardLook | None = None, job_id: str | None = None) -> dict:
+    """The look's and the search's settings as they are now, for a record
+    of the look for `job_id`'s board: the camera's threshold and corners'
+    tolerance, and the corners taken of that board, from `look`."""
+    threshold, corner_mm = look.tuning() if look is not None else (THRESHOLD, CORNER_MM)
+    corners = look.corners_of(job_id) if look is not None else []
     return {
         "agree_mm": AGREE_MM,
         "agree_deg": AGREE_DEG,
         "need": NEED,
-        "window": WINDOW,
+        "history": HISTORY,
+        "threshold": threshold,
+        "corner_mm": corner_mm,
+        "corners": [corner.to_dict() for corner in corners],
         "sample_s": SAMPLE_SECONDS,
         "stop_s": STOP_SECONDS,
         "lock_s": LOCK_SECONDS,
@@ -660,9 +1020,12 @@ def pose_fields(record, raw: dict, received: float, captured: float, where, esti
     if estimate is not None:
         fields["estimate"] = {**estimate.to_dict(), "seen": _rounded(estimate.seen) if estimate.seen is not None else None}
     best = consensus.best
+    lead = consensus.lead
     fields["consensus"] = {
         "agree": consensus.agree,
         "found": consensus.found,
+        "guesses": len(consensus.guesses),
+        "probability": round(lead.probability, 4) if lead is not None else None,
         "spread_mm": round(consensus.spread_mm, 4) if consensus.spread_mm is not None else None,
         "spread_deg": round(consensus.spread_deg, 4) if consensus.spread_deg is not None else None,
         "estimate": best.to_dict() if best is not None else None,
@@ -675,9 +1038,11 @@ def found_text(found: Estimate, consensus: Consensus) -> str:
     spread = ""
     if consensus.spread_mm is not None and consensus.spread_deg is not None:
         spread = f" within {consensus.spread_mm:.2f} mm and {consensus.spread_deg:.2f} degrees"
+    lead = consensus.lead
+    share = f", {lead.probability * 100.0:.0f}% of the evidence" if lead is not None else ""
     return (
         f"board found: its middle at {found.center[0]:.3f}, {found.center[1]:.3f} mm, turned {found.rotation:+.3f} degrees;"
-        f" {consensus.agree} looks in a row agree{spread}"
+        f" {consensus.agree} looks agree{spread}{share}"
     )
 
 

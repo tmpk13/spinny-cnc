@@ -43,7 +43,21 @@ from . import __version__, calibration, center, update
 from .align import Alignment
 from .auto import Agent, AutoBusy, AutoMessageBody, AutoSettingsBody
 from .cam import NotFound, ProfileStore, build_job, gcode_of
-from .boardlook import BoardLook, BoardMover, PictureFrame, RestTracker, found_text, search, search_box, search_extra, search_stops, settings_now
+from .boardlook import (
+    CORNERS,
+    BoardLook,
+    BoardMover,
+    PictureFrame,
+    RestTracker,
+    corner_of,
+    found_text,
+    rough_box,
+    search,
+    search_box,
+    search_extra,
+    search_stops,
+    settings_now,
+)
 from .camera import Camera, CameraError, MachineAccess, pose_summary
 from .camlog import CAMERAS, CameraLog
 from .searchlog import SearchLog, SearchRecord, affine_of
@@ -485,6 +499,8 @@ class CameraSettingsBody(Finite):
     offset: tuple[float, float] | None = None
     roll: float | None = None
     mm_per_px: float | None = None
+    look_threshold: float | None = None
+    corner_mm: float | None = None
 
 
 class CameraBoardBody(BaseModel):
@@ -524,6 +540,13 @@ class BoardSearchBody(Finite):
 
 class BoardPlaceBody(Finite):
     job: str
+
+
+class BoardCornerBody(Finite):
+    # The picture's center is on this corner of the job's board's outline
+    # box, by name (boardlook.CORNERS).
+    job: str
+    corner: str
 
 
 class CameraControlsBody(Finite):
@@ -635,6 +658,8 @@ class TopSettingsBody(Finite):
     mm_per_px: float | None = None
     roll: float | None = None
     mirror: bool | None = None
+    look_threshold: float | None = None
+    corner_mm: float | None = None
     # The settings to take back to none: mark_at, offset.
     clear: list[str] = Field(default_factory=list)
 
@@ -765,11 +790,18 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         self.pnp = UpCamera(self.config, self._save_config, self.publish_pnp, self.publish_message)
         self.top = TopCamera(self._placing_config, self._save_config, self.publish_placing, self.publish_message)
         # The head and top cameras' looks for a board: pcbv's poses read
-        # while a board is loaded, into a place on the machine only enough
-        # of them agreeing call found; held off while a routine moves the
-        # head and reads them itself.
-        self.head_look = BoardLook(lambda: self.camera.client, self.publish_camera, paused=lambda: self.camera.routine_active)
-        self.top_look = BoardLook(lambda: self.top.client, self.publish_placing, paused=lambda: self.top.routine_active)
+        # while a board is loaded, sorted into guesses of where it lies, the
+        # most likely called found once it holds the camera's threshold of
+        # the evidence; held off while a routine moves the head and reads
+        # them itself.
+        self.head_look = BoardLook(
+            lambda: self.camera.client, self.publish_camera, paused=lambda: self.camera.routine_active,
+            tuning=lambda: _look_tuning(self.camera.settings()),
+        )
+        self.top_look = BoardLook(
+            lambda: self.top.client, self.publish_placing, paused=lambda: self.top.routine_active,
+            tuning=lambda: _look_tuning(self.top.settings()),
+        )
         self._head_rest = RestTracker()
         self._top_rest = RestTracker()
         # The pictures the cameras' routines looked at, kept while logging
@@ -2984,6 +3016,48 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         x0, y0, x1, y1 = box
         return ((x0 + x1) / 2.0, (y0 + y1) / 2.0), max(math.hypot(x1 - x0, y1 - y0), 1.0)
 
+    def _corners_box(self, look: BoardLook, job, corner_mm: float) -> tuple[float, float, float, float] | None:
+        """The box a search covers by default once corners of the job's
+        board were taken: where they put its outline, grown by their
+        tolerance, and by a tenth of the board's diagonal more with one
+        corner, whose turn is not known; None without corners or outline."""
+        rough = look.rough(job.id)
+        outline = self._board_box(job)
+        if rough is None or outline is None:
+            return None
+        _, diagonal = self._board_size(job)
+        margin = corner_mm + (0.1 * diagonal if len(look.corners_of(job.id)) < 2 else 0.0)
+        return rough_box(rough, outline, margin)
+
+    def _corner_point(self, job, corner: str) -> tuple[float, float]:
+        """A corner of the job's board's outline box, in its frame."""
+        outline = self._board_box(job)
+        if outline is None:
+            raise ValueError("the job has no outline to take a corner of")
+        if corner not in CORNERS:
+            raise ValueError(f"no corner {corner!r}: one of {', '.join(CORNERS)}")
+        return corner_of(outline, corner)
+
+    def camera_corner(self, body: BoardCornerBody) -> dict:
+        """The head camera's picture's center is on a corner of the job's
+        board: the machine point under it is kept for that corner, the
+        guesses weighed against it and a rough place made (boardlook.py)."""
+        job = self._job(body.job)
+        point = self._corner_point(job, body.corner)
+        link = self.require_link()
+        status = link.status_now(1.0, routine=True)
+        if status.state != "Idle":
+            raise ValueError(f"the machine is {status.state}: take a corner with the head at rest")
+        head = head_board(status.r, self.table_angle(status), status.z, self.cartesian)
+        settings = self.camera.settings()
+        middle, _ = self._board_size(job)
+        self.head_look.add_corner(job.id, body.corner, point, (head[0] + settings.offset[0], head[1] + settings.offset[1]), middle)
+        return self.publish_camera()
+
+    def camera_corners_clear(self) -> dict:
+        self.head_look.clear_corners()
+        return self.publish_camera()
+
     def _board_record(self, kind: str, camera: str, job, client, side: str, finish: str, picture: dict, extra: dict | None = None) -> SearchRecord | None:
         """A search record begun (searchlog.py) of `camera`'s look for a
         job's board (`look`) or its search over a box (`search`): what was
@@ -3004,7 +3078,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
                 "middle": [middle[0], middle[1]],
                 "outline_box": list(box) if box is not None else None,
                 "picture": picture,
-                "settings": settings_now(),
+                "settings": settings_now(self.head_look if camera == "head" else self.top_look, job.id),
                 "pcbv": hello,
                 **(extra or {}),
             }
@@ -3081,6 +3155,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             self.camera.update(body.model_dump(exclude_none=True))
         finally:
             # A restart that failed has left the camera stopped.
+            self.head_look.retune()
             state = self.publish_camera()
         return state
 
@@ -3155,7 +3230,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             )
             tool = head_board(status.r, self.table_angle(status), status.z, self.cartesian)
             here = (tool[0] + offset[0], tool[1] + offset[1])
-            box = body.box if body.box is not None else search_box(here, diagonal)
+            box = body.box if body.box is not None else self._corners_box(self.head_look, job, settings.corner_mm) or search_box(here, diagonal)
             stops = search_stops(box, (width * scale, height * scale), here)
             mover = BoardMover(access, self.camera.aborting, CameraError, lambda: self.camera._halt(link))
             look = self.head_look
@@ -3349,19 +3424,29 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         return state
 
     def align_capture(self, job_id: str) -> dict:
+        """Marks from the head camera: the board found (its middle where
+        the most likely guess puts it, and its turn), else the corners taken
+        of it (a mark each), else the newest locked pose."""
         job = self._job(job_id)
-        if not self.camera.running:
-            raise CameraError("the camera is not running")
-        if self.camera.board_job != job_id or job.design is None:
-            raise CameraError("the camera is not looking for this job's board: load it first")
-        best = self.head_look.consensus.best if self.head_look.job == job_id and self.head_look.consensus.found else None
+        looking = self.camera.running and self.camera.board_job == job_id and job.design is not None
+        best = self.head_look.consensus.best if looking and self.head_look.job == job_id and self.head_look.consensus.found else None
         if best is not None:
-            # Enough looks agree: their median place and turn of the board,
+            # A guess likely enough: its median place and turn of the board,
             # its middle in the job paired with where it is on the machine.
             middle = self.head_look.consensus.middle
             state = self.alignment.mark_camera(job, middle, best.center, best.rotation if self.camera.settings().side == "front" else None)
             self.publish_align()
             return state
+        corners = self.head_look.corners_of(job_id)
+        if corners:
+            for corner in corners:
+                state = self.alignment.mark_camera(job, corner.job, corner.machine, None)
+            self.publish_align()
+            return state
+        if not self.camera.running:
+            raise CameraError("the camera is not running")
+        if not looking:
+            raise CameraError("the camera is not looking for this job's board: load it first, or take its corners")
         raw = self.camera.pose()
         if raw is None or raw.get("state") != "locked" or not isinstance(raw.get("center"), (list, tuple)):
             raise CameraError("the camera has no lock on the board: move it over the board and wait for one")
@@ -3549,6 +3634,12 @@ def _host_number(host: dict, name: str, default: float) -> float:
     except OverflowError as exc:
         # An integer too large for a float.
         raise ValueError(f"{name} must be a number") from exc
+
+
+def _look_tuning(settings) -> tuple[float, float]:
+    """A camera's look settings: the threshold of the most likely guess
+    and the corners' tolerance."""
+    return settings.look_threshold, settings.corner_mm
 
 
 def _tolerance(value) -> float:
@@ -4272,6 +4363,14 @@ def create_app(
     def camera_board(body: CameraBoardBody):
         return guarded(lambda: backend.camera_board(body.job))
 
+    @app.post("/api/camera/corner")
+    def camera_corner(body: BoardCornerBody):
+        return guarded(lambda: backend.camera_corner(body))
+
+    @app.delete("/api/camera/corners")
+    def camera_corners_clear():
+        return guarded(backend.camera_corners_clear)
+
     @app.post("/api/camera/mark")
     def camera_mark(body: CameraMarkBody):
         return guarded(lambda: backend.camera_mark(body))
@@ -4457,6 +4556,14 @@ def create_app(
     @app.post("/api/pnp/top/place")
     def top_place(body: BoardPlaceBody):
         return guarded(lambda: backend.top_place(body))
+
+    @app.post("/api/pnp/top/corner")
+    def top_corner(body: BoardCornerBody):
+        return guarded(lambda: backend.top_corner(body))
+
+    @app.delete("/api/pnp/top/corners")
+    def top_corners_clear():
+        return guarded(backend.top_corners_clear)
 
     @app.post("/api/pnp/top/home")
     def top_home():

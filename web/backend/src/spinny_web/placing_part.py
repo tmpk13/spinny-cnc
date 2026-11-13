@@ -35,6 +35,7 @@ from .topcam import Found
 
 if TYPE_CHECKING:
     from .app import (
+        BoardCornerBody,
         BoardPlaceBody,
         BoardSearchBody,
         PnpAngleBody,
@@ -224,6 +225,7 @@ class PlacingPart:
             # A camera started again on other settings has no board loaded.
             if self.top_look.job is not None and not self._top_board_loaded():
                 self.top_look.stop()
+            self.top_look.retune()
             state = self.publish_placing()
         return state
 
@@ -321,7 +323,7 @@ class PlacingPart:
         width, height, scale = self._look_scale(self.top.client, settings.mm_per_px)
         here = self._here(machine)
         center = (float(here["x"]) + offset[0], float(here["y"]) + offset[1])
-        box = body.box if body.box is not None else search_box(center, diagonal)
+        box = body.box if body.box is not None else self._corners_box(self.top_look, job, settings.corner_mm) or search_box(center, diagonal)
         stops = search_stops(box, (width * scale, height * scale), center)
         z = machine.top.z if machine.top is not None else None
         mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
@@ -349,14 +351,21 @@ class PlacingPart:
         return self.placing_state()
 
     def top_place(self, body: BoardPlaceBody) -> dict:
-        """The board's place the top camera's look found kept as the job's
-        references: the two parts furthest apart (fiducials first) where
-        the found estimate puts them, by `look`; Find fiducials then
-        refines them."""
+        """The board's place the top camera's look found, else the place
+        the corners taken of it give, kept as the job's references: the two
+        parts furthest apart (fiducials first) where it puts them, by
+        `look` or `corners`; Find fiducials then refines them."""
         consensus = self.top_look.consensus
-        best = consensus.best
-        if self.top_look.job != body.job or best is None or not consensus.found:
-            raise ValueError("the top camera has not found this job's board: Look for board, then Search, until enough looks agree")
+        best = consensus.best if self.top_look.job == body.job and consensus.found else None
+        by = "look"
+        if best is None:
+            best = self.top_look.rough(body.job)
+            by = "corners"
+        if best is None:
+            raise ValueError(
+                "the top camera has not found this job's board: Look for board, then Search, until a guess is likely enough;"
+                " or put the picture's center on its corners and take them"
+            )
         parts = self.job_parts(body.job)["components"]
         if len(parts) < 2:
             raise ValueError("the board needs two parts to take its place from")
@@ -369,12 +378,32 @@ class PlacingPart:
         with self._config_lock:
             config = self._placing_config()
             refs = {part["ref"] for part in pair}
-            kept = [entry for entry in config.get("references", []) if not (entry.get("job") == body.job and (entry.get("ref") in refs or entry.get("by") == "look"))]
+            kept = [
+                entry for entry in config.get("references", [])
+                if not (entry.get("job") == body.job and (entry.get("ref") in refs or entry.get("by") in ("look", "corners")))
+            ]
             for part in pair:
                 at = best.apply((float(part["x"]), float(part["y"])))
-                kept.append({"job": body.job, "ref": part["ref"], "at": [round(at[0], 4), round(at[1], 4)], "by": "look"})
+                kept.append({"job": body.job, "ref": part["ref"], "at": [round(at[0], 4), round(at[1], 4)], "by": by})
             config["references"] = kept
         self._save_config()
+        return self.publish_placing()
+
+    def top_corner(self, body: BoardCornerBody) -> dict:
+        """The top camera's picture's center is on a corner of the job's
+        board: the machine point under it is kept for that corner, the
+        guesses weighed against it and a rough place made (boardlook.py)."""
+        machine = self._placing_idle()
+        job = self._job(body.job)
+        point = self._corner_point(job, body.corner)
+        here = self._here(machine)
+        offset = self._top_offset(machine)
+        middle, _ = self._board_size(job)
+        self.top_look.add_corner(job.id, body.corner, point, (float(here["x"]) + offset[0], float(here["y"]) + offset[1]), middle)
+        return self.publish_placing()
+
+    def top_corners_clear(self) -> dict:
+        self.top_look.clear_corners()
         return self.publish_placing()
 
     def top_frame(self, width: int, overlay: bool) -> bytes:

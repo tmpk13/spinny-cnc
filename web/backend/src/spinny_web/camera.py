@@ -63,6 +63,22 @@ class CameraError(Exception):
     """The camera, or its routine, is in the wrong state for the request."""
 
 
+# A camera's look for a board (boardlook.py), unless set from the page: the
+# least share of the evidence the most likely guess must hold to call the
+# board found, and how far a guess may put a corner taken by hand from
+# where it was taken, mm.
+LOOK_THRESHOLD = 0.5
+CORNER_MM = 2.0
+
+
+def check_look(threshold: float, corner_mm: float) -> None:
+    """A camera's look settings, as the page may set them."""
+    if not (math.isfinite(threshold) and 0.0 <= threshold <= 1.0):
+        raise ValueError("the look's threshold must be 0 to 1")
+    if not (math.isfinite(corner_mm) and 0.1 <= corner_mm <= 50.0):
+        raise ValueError("the corners' tolerance must be 0.1 to 50 mm")
+
+
 class CameraSettings(BaseModel):
     """What the backend keeps of the camera, in config.json's `camera`: a
     machine file's `[camera]` is laid over it when that file is loaded."""
@@ -81,11 +97,16 @@ class CameraSettings(BaseModel):
     # V4L2 control values (exposure, gain, focus, ...) set on the device
     # each time the camera starts, by the names v4l2-ctl gives them.
     controls: dict[str, int] = Field(default_factory=dict)
+    # The look for a board: the threshold of the most likely guess, and
+    # the corners' tolerance (mm).
+    look_threshold: float = LOOK_THRESHOLD
+    corner_mm: float = CORNER_MM
 
     def check(self) -> None:
         if not self.device.strip():
             raise ValueError("the camera device must be named")
         check_controls(self.controls)
+        check_look(self.look_threshold, self.corner_mm)
         if not machine_files._CAMERA_SIZE.match(self.size):
             raise ValueError("the camera size must be WIDTHxHEIGHT")
         if not 1 <= int(self.fps) <= 120:

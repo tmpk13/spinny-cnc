@@ -633,8 +633,52 @@ def test_the_top_camera_searches_a_box_for_the_board_and_keeps_its_place(client,
         part = parts[entry["ref"]]
         x, y = turn((part["x"], part["y"]), 2.0)
         assert entry["at"] == pytest.approx([x + 150.0, y + 80.0], abs=0.01)
-    # Unloaded, the look is forgotten.
-    assert client.post("/api/pnp/top/board", json={"job": None}).json()["top"]["board_look"] == {"job": None}
+    # Unloaded, the look is forgotten; its settings stay.
+    unloaded = client.post("/api/pnp/top/board", json={"job": None}).json()["top"]["board_look"]
+    assert unloaded == {"job": None, "threshold": boardlook.THRESHOLD, "corner_mm": boardlook.CORNER_MM, "corners": None}
+
+
+def test_corners_taken_with_the_top_camera_give_a_rough_place_a_search_box_and_references(client, quick_search):
+    rig(client, profile(rest=TOP))
+    job_id = outlined_job(client)
+    board = SeenBoard((0.0, 0.0, 40.0, 30.0), 2.0, (150.0, 80.0), design_shift=(-100.0, -70.0))
+    client.backend.top.client = BoardTopCamera(client.fake, (34.0, -9.0), board, roll=1.5)
+    client.put("/api/pnp/top", json={"offset": [34.0, -9.0], "mm_per_px": 0.02, "roll": 1.5, "mirror": False})
+    # Nothing found and no corners: no place to keep.
+    assert client.post("/api/pnp/top/place", json={"job": job_id}).status_code == 400
+    assert client.post("/api/pnp/top/corner", json={"job": job_id, "corner": "middle"}).status_code == 400
+
+    def take(corner: str, point: tuple[float, float]) -> dict:
+        # The picture's center put on the corner: the head there less the offset.
+        x, y = turn(point, 2.0)
+        client.post("/api/goto", json={"kind": "joint", "r": x + 150.0 - 34.0, "z": y + 80.0 + 9.0})
+        response = client.post("/api/pnp/top/corner", json={"job": job_id, "corner": corner})
+        assert response.status_code == 200, response.text
+        return response.json()["top"]["board_look"]["corners"]
+
+    take("bottom left", (0.0, 0.0))
+    corners = take("top right", (40.0, 30.0))
+    assert [point["corner"] for point in corners["points"]] == ["bottom left", "top right"]
+    assert corners["rough"]["rotation"] == pytest.approx(2.0, abs=0.01) and corners["rough"]["shift"] == pytest.approx([150.0, 80.0], abs=0.01)
+    # Kept as references by corners, with no look.
+    refs = [entry for entry in client.post("/api/pnp/top/place", json={"job": job_id}).json()["references"] if entry["job"] == job_id]
+    assert len(refs) == 2 and {entry["by"] for entry in refs} == {"corners"}
+    # A search with no box drawn keeps to where the corners put the board.
+    client.post("/api/pnp/top/board", json={"job": job_id})
+    assert client.post("/api/pnp/top/search", json={}).status_code == 200
+    assert routine_done(client, "/api/pnp/placing")["state"] == "done"
+    record_id = client.get("/api/searchlog?camera=top").json()["records"][0]["id"]
+    record = client.get(f"/api/searchlog/{record_id}").json()["record"]
+    xs = [turn(point, 2.0)[0] + 150.0 for point in ((0.0, 0.0), (40.0, 0.0), (40.0, 30.0), (0.0, 30.0))]
+    assert record["box"][0] == pytest.approx(min(xs) - 2.0, abs=0.01) and record["box"][2] == pytest.approx(max(xs) + 2.0, abs=0.01)
+    assert record["settings"]["corners"][1]["corner"] == "top right" and record["settings"]["threshold"] == boardlook.THRESHOLD
+    look = client.get("/api/pnp/placing").json()["top"]["board_look"]
+    assert look["found"] and look["guesses"][0]["probability"] == 1.0 and look["guesses"][0]["corner_mm"] < 0.05
+    # The threshold and tolerance are the camera's, set from the page, checked.
+    assert client.put("/api/pnp/top", json={"look_threshold": 1.5}).status_code == 400
+    look = client.put("/api/pnp/top", json={"look_threshold": 0.8, "corner_mm": 1.0}).json()["top"]["board_look"]
+    assert look["threshold"] == 0.8 and look["corner_mm"] == 1.0
+    assert client.delete("/api/pnp/top/corners").json()["top"]["board_look"]["corners"] is None
 
 
 def test_a_search_that_covers_its_box_without_the_board_ends_as_not_found(client, quick_search):
