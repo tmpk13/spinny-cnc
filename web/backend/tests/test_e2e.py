@@ -14,7 +14,7 @@ from starts import start_probe, start_run
 
 from spinny_web.jobs import Group, Job
 from spinny_web.kinematics import Streamer
-from spinny_web.link import REALTIME_RESET, Link
+from spinny_web.link import REALTIME_RESET, CommandError, Link
 from spinny_web.runner import DONE, STOPPED, Runner
 
 BINARY = os.environ.get("SPINNY_VIRTUAL", "")
@@ -119,6 +119,57 @@ def test_homing_and_an_endstop_halt_on_the_virtual_firmware(stops_firmware):
         assert status.r > -3.5, status.raw
         assert link.request_ok("unlock") == []
         assert link.status_now(1.0).state == "Idle"
+    finally:
+        link.close()
+
+
+@pytest.fixture
+def servo_firmware():
+    """The virtual machine with servo 1 on the SERVOS header, started at
+    90 degrees, and servo 3 on the PCA9685, without a start."""
+    if not BINARY or not Path(BINARY).exists():
+        pytest.skip("SPINNY_VIRTUAL does not name a virtual firmware binary")
+    port = free_port()
+    process = subprocess.Popen(
+        [
+            BINARY, "--listen", f"127.0.0.1:{port}", "--fast", "--quiet",
+            "--settings", "servo1_out=1", "--settings", "servo1_start=90",
+            "--settings", "servo3_out=2", "--settings", "servo3_range=90",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        if not wait_port(port):
+            pytest.fail("the virtual firmware did not open its port")
+        yield port
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
+def test_servos_start_move_and_let_go_on_the_virtual_firmware(servo_firmware):
+    link = Link(f"socket://127.0.0.1:{servo_firmware}")
+    link.open()
+    try:
+        assert link.status_now(1.0).servos == [90.0, None, None, None], "servo 1 at its start, servo 3 without a pulse"
+        # A servo line is answered once queued motion is done, and its wait
+        # holds up the line behind it.
+        assert link.request_ok("go R5") == []
+        assert link.request_ok("servo N3 A45 T300") == []
+        assert link.request_ok("servo N1 off") == []
+        status = link.status_now(1.0)
+        assert status.servos == [None, None, 45.0, None], status.raw
+        assert status.r == pytest.approx(5.0, abs=0.001), "the move ran before the servo"
+        # A servo without an output, and an angle past a servo's range.
+        for line, code in (("servo N2 A10", "error:2"), ("servo N3 A91", "error:4")):
+            with pytest.raises(CommandError) as refused:
+                link.request_ok(line)
+            assert refused.value.response.startswith(code), refused.value.response
+        assert link.status_now(1.0).servos == [None, None, 45.0, None]
     finally:
         link.close()
 
