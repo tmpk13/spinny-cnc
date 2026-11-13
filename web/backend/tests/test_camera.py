@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from spinny_web import boardlook
 from spinny_web import camera as camera_module
 from spinny_web.app import Backend, create_app
+from spinny_web.boardlook import search_stops
 from spinny_web.camera import CameraSettings, picture_to_machine, scale_from_shift
 from spinny_web.jobs import Design, Group, Job
 from spinny_web.link import Link
@@ -729,6 +730,75 @@ def test_the_head_camera_searches_for_the_board_and_a_capture_takes_the_agreed_p
     assert mark["machine"] == pytest.approx(list(middle), abs=0.01) and mark["angle"] == pytest.approx(1.0, abs=0.01)
 
 
+class NearStandIn(BoardStandIn):
+    """A head camera whose pcbv takes a known place on each reset and says
+    so, every reset's fields kept with where the picture's center was."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.resets: list[tuple[tuple[float, float], dict]] = []
+
+    def request(self, cmd, timeout=None, **fields):
+        self.asked.append(cmd)
+        if cmd == "reset":
+            self.resets.append(((self.fake.joint[0] + self.offset[0], self.fake.z + self.offset[1]), fields))
+            return {"ok": True, **({"near": True} if "near" in fields else {})}
+        return {"ok": True}
+
+
+def test_a_search_starts_where_the_board_is_known_and_tells_pcbv_but_not_at_the_check(client, fake, monkeypatch):
+    monkeypatch.setattr(boardlook, "LOCK_SECONDS", 0.15)
+    monkeypatch.setattr(boardlook, "STOP_SECONDS", 0.6)
+    monkeypatch.setattr(boardlook, "SAMPLE_SECONDS", 0.01)
+    job = Job(
+        name="board", source="kicad", groups=[Group(label="g", paths=[[(0.0, 0.0), (1.0, 0.0)]])],
+        outline=[[(0.0, 0.0), (40.0, 0.0), (40.0, 30.0), (0.0, 30.0), (0.0, 0.0)]],
+        design=Design(shift=(-100.0, -70.0), board=True),
+    )
+    client.backend.store.add(job)
+    client.backend.store.keep_board(job.id, b"(kicad_pcb)")
+    seen = SeenBoard((0.0, 0.0, 40.0, 30.0), 1.0, (40.0, 30.0), design_shift=(-100.0, -70.0))
+    stand_in = NearStandIn(fake, seen, (12.5, -3.25), 0.0, 0.02)
+    client.backend.camera.client = stand_in
+    client.put("/api/camera/settings", json={"offset": [12.5, -3.25], "roll": 0.0, "mm_per_px": 0.02})
+    truth = boardlook.Estimate(1.0, (40.0, 30.0), (0.0, 0.0), 0.0)
+    middle = truth.apply((20.0, 15.0))
+    # Two corners taken where the board lies: the known place.
+    for corner, point in (("bottom left", (0.0, 0.0)), ("top right", (40.0, 30.0))):
+        at = truth.apply(point)
+        fake.joint[0], fake.z = at[0] - 12.5, at[1] + 3.25
+        assert client.post("/api/camera/corner", json={"job": job.id, "corner": corner}).status_code == 200
+    fake.joint[0], fake.z = 0.0, 0.0
+    assert client.post("/api/camera/board", json={"job": job.id}).status_code == 200
+    # A box much wider than the board, its stops a picture apart.
+    box = [0.0, 0.0, 120.0, 100.0]
+    response = client.post("/api/camera/search", json={"box": box})
+    assert response.status_code == 200, response.text
+    state = wait_routine(client)
+    assert state["routine"]["state"] == "done", state["routine"]
+    look = state["board_look"]
+    assert look["found"] is True and look["estimate"]["center"] == pytest.approx(list(middle), abs=0.01)
+    known = look["known"]
+    assert known["source"] == "corners" and known["center"] == pytest.approx(list(middle), abs=1e-3)
+    # The first stop is the one nearest the board's known middle, not the
+    # one nearest where the camera stood.
+    stops = search_stops(tuple(box), (1280 * 0.02, 720 * 0.02), tuple(middle))
+    first_center, first = stand_in.resets[0]
+    assert first_center == pytest.approx(stops[0], abs=1e-6)
+    # pcbv was told the KiCad point and turn the known place puts there.
+    raw = seen.pose(first_center, 0.0, False, 0.02, 1280, 720, 1)
+    assert first["near"]["center"] == pytest.approx(raw["center"], abs=1e-3)
+    assert first["near"]["angle_deg"] == pytest.approx(-1.0, abs=1e-3)
+    assert first["near"]["within_mm"] == 2.0
+    # Every stop's reset told it, a look afresh at a stop told it again,
+    # and the check's told nothing.
+    checked = [fields for _, fields in stand_in.resets if "near" not in fields]
+    told = [fields for _, fields in stand_in.resets if "near" in fields]
+    assert len(checked) >= 1 and len(told) >= known["guided"] >= 1 and known["unguided"] == 0
+    record = client.get(f"/api/searchlog/{look['record']}").json()["record"]
+    assert record["known"]["source"] == "corners"
+
+
 def test_head_camera_corners_make_alignment_marks_and_its_look_settings_are_checked(client, fake):
     job = Job(
         name="board", source="kicad", groups=[Group(label="g", paths=[[(0.0, 0.0), (1.0, 0.0)]])],
@@ -935,6 +1005,54 @@ def test_a_real_pcbv_finds_a_blank_boards_corner_by_its_edges_and_reads_a_picked
         on_board = (width / 2 + 3.0 / scale, height / 2 - 3.0 / scale)
         assert client.color(*on_board) == pytest.approx(list(copper), abs=2)
         assert client.color(20.0, height - 20.0) == pytest.approx(list(bed), abs=2)
+    finally:
+        client.close()
+
+
+def test_a_real_pcbv_takes_a_known_place_on_reset_and_says_whether_its_lock_lies_there(tmp_path):
+    # pcbv (the sibling build, or the first on PATH) draws a picture of a
+    # board strewn with specks and serves it: a reset told where the board
+    # is expected is taken, a lock there says so, and a place 8 mm off
+    # still ends on the board where it is, saying it lies elsewhere.
+    try:
+        program = find_pcbv("pcbv")
+    except VisionError:
+        pytest.skip("pcbv is not built")
+    import subprocess
+    from pathlib import Path
+
+    board = Path(__file__).resolve().parents[3] / "toolpath" / "tests" / "data" / "board.kicad_pcb"
+    picture = tmp_path / "shot.png"
+    made = subprocess.run(
+        [program, "synth", str(board), "-o", str(picture), "--finish", "bare", "--angle", "12", "--px-per-mm", "20", "--specks", "300", "--speck-radius", "2,5"],
+        capture_output=True, text=True, timeout=60,
+    )
+    if made.returncode != 0:
+        pytest.skip(f"this pcbv draws no specks: {made.stderr.strip()[-200:]}")
+    client = VisionClient()
+
+    def locked() -> dict:
+        deadline = time.monotonic() + 10.0
+        while True:
+            pose = client.pose()
+            if pose.get("state") == "locked" or time.monotonic() > deadline:
+                return pose
+            time.sleep(0.05)
+
+    try:
+        client.start(str(picture), "1280x960", 10, program)
+        client.board(str(board), side="front", finish="bare", scale=(0.04, 0.06))
+        pose = locked()
+        assert pose["state"] == "locked" and "near" not in pose, pose
+        center, angle = pose["center"], pose["angle_deg"]
+        reply = client.request("reset", near={"center": center, "angle_deg": angle, "within_mm": 2.0, "within_deg": 5.0})
+        if reply.get("near") is not True:
+            pytest.skip("this pcbv takes no known place")
+        pose = locked()
+        assert pose["near"] is True and pose["center"] == pytest.approx(center, abs=0.1), pose
+        client.request("reset", near={"center": [center[0] + 8.0, center[1]], "angle_deg": angle, "within_mm": 2.0})
+        pose = locked()
+        assert pose["near"] is False and pose["center"] == pytest.approx(center, abs=0.1), pose
     finally:
         client.close()
 

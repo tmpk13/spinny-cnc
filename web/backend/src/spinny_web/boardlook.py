@@ -41,6 +41,15 @@ over the board's middle (or the part of the board with the most pads and
 holes in view) and the looks there must agree with the place found; a
 check that disagrees or sees nothing sends the search on. It always ends:
 found and checked, the box covered, or stopped.
+
+A place known before the search (where corners taken put the board, else
+where this camera found it before, else the Align marks or the references,
+else the job's own place) only orders the work: the stops nearest its
+middle come first, and at each stop pcbv is told what board point the
+known place puts under the picture's center, so its search tries the poses
+near it first and then goes on as ever. It never decides: a pose is checked
+by pcbv as any other, the guesses weigh it as any other, and the check of
+a board found is made with pcbv told nothing.
 """
 
 from __future__ import annotations
@@ -114,6 +123,18 @@ MAX_CHECKS = 3
 # seen at changed, mm/s, for when the move ends: lower than any feed, so the
 # wait is long enough.
 SLOW_MM_S = 20.0
+# How far a known place may be off: one found before or measured (mm and
+# degrees, or three times the marks' rms), a corner's edges (degrees), and
+# the job's own place, where the board was only meant to go (mm, or this
+# share of the board's diagonal, and degrees).
+KNOWN_MM = 2.0
+KNOWN_DEG = 3.0
+EDGE_DEG = 3.0
+JOB_MM = 5.0
+JOB_SHARE = 0.25
+JOB_DEG = 15.0
+# What can tell where the board is before a search, most trusted first.
+KNOWN_SOURCES = ("corners", "found", "align", "references", "job")
 
 
 @dataclass
@@ -255,6 +276,104 @@ def rough_box(place: Estimate, outline: Box, margin: float) -> Box:
     points = [place.apply(point) for point in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
     xs, ys = [p[0] for p in points], [p[1] for p in points]
     return (min(xs) - margin, min(ys) - margin, max(xs) + margin, max(ys) + margin)
+
+
+@dataclass
+class KnownPlace:
+    """Where the board is expected before a search looks: the turn and
+    shift that take the job's frame onto the machine's, with the board's
+    middle there (`place`), what said so (`source`, one of KNOWN_SOURCES),
+    and how far it may be off: `within_mm`, and `within_deg` (None: the
+    turn is not known)."""
+
+    source: str
+    place: Estimate
+    within_mm: float
+    within_deg: float | None
+
+    def to_dict(self) -> dict:
+        return {
+            "source": self.source,
+            "rotation": round(self.place.rotation, 4),
+            "shift": _rounded(self.place.shift),
+            "center": _rounded(self.place.center),
+            "within_mm": round(self.within_mm, 4),
+            "within_deg": round(self.within_deg, 4) if self.within_deg is not None else None,
+        }
+
+
+def corners_known(corners: list[Corner], middle: Point, corner_mm: float, diagonal: float) -> KnownPlace | None:
+    """Where corners taken put the board: within their tolerance (and a
+    tenth of the diagonal more with one corner); the turn within what two
+    corners that far apart allow, a corner's edges' few degrees, or not
+    known from one corner taken by hand. None without corners."""
+    place = rough_place(corners, middle)
+    if place is None:
+        return None
+    if len(corners) >= 2:
+        span = max(math.dist(a.machine, b.machine) for a in corners for b in corners)
+        within_deg: float | None = max(math.degrees(math.atan2(2.0 * corner_mm, max(span, 1e-6))), 1.0)
+    else:
+        within_deg = EDGE_DEG if corners[0].angle is not None else None
+    within_mm = corner_mm + (0.1 * diagonal if len(corners) < 2 else 0.0)
+    return KnownPlace("corners", place, within_mm, within_deg)
+
+
+def measured_known(source: str, rotation: float, shift: Point, rms: float, marks: int, middle: Point) -> KnownPlace:
+    """Where measured marks put the board (the Align marks' fit, the
+    references'): within KNOWN_MM or three times their rms, the turn known
+    from two marks or more."""
+    tx, ty = turn(middle, rotation)
+    place = Estimate(rotation, shift, (tx + shift[0], ty + shift[1]), rms)
+    return KnownPlace(source, place, max(KNOWN_MM, 3.0 * rms), KNOWN_DEG if marks >= 2 else None)
+
+
+def job_known(middle: Point, diagonal: float) -> KnownPlace:
+    """The job's own place on the machine, where the board was meant to go:
+    the job's frame is the machine's."""
+    return KnownPlace("job", Estimate(0.0, (0.0, 0.0), middle, 0.0), max(JOB_MM, JOB_SHARE * diagonal), JOB_DEG)
+
+
+def known_place(*candidates: KnownPlace | None) -> KnownPlace | None:
+    """The first known place given, the most trusted first."""
+    return next((candidate for candidate in candidates if candidate is not None), None)
+
+
+def inverse_of(transform: Callable[[Point], Point]) -> Callable[[Point], Point]:
+    """The inverse of an affine map of the plane (a flip, a turn and a
+    shift, such as a design's from KiCad's board frame to the job's), read
+    off where it takes three points."""
+    ox, oy = transform((0.0, 0.0))
+    ax, ay = transform((1.0, 0.0))
+    bx, by = transform((0.0, 1.0))
+    a, b, c, d = ax - ox, bx - ox, ay - oy, by - oy
+    det = a * d - b * c
+    if abs(det) < 1e-12:
+        raise ValueError("the map folds the plane")
+
+    def back(point: Point) -> Point:
+        x, y = point[0] - ox, point[1] - oy
+        return ((d * x - b * y) / det, (-c * x + a * y) / det)
+
+    return back
+
+
+def near_fields(known: KnownPlace, frame: PictureFrame, to_board: Callable[[Point], Point], side: str = "front") -> dict:
+    """What pcbv is told of a known place at a search stop, its `reset`
+    request's `near`: the KiCad board point (mm, y down) the known place
+    puts under the picture's center, the turn of the picture's x axis
+    there as a pose's angle_deg reads (counterclockwise on screen, in the
+    view frame: the board frame, mirrored in x for the back), and how far
+    either may be off. `to_board` takes the job's frame to KiCad's."""
+    center = to_board(known.place.unapply(frame.center))
+    step = picture_to_machine(1.0, 0.0, 1.0, frame.roll, frame.mirror)
+    ahead = to_board(known.place.unapply((frame.center[0] + step[0], frame.center[1] + step[1])))
+    sign = -1.0 if side == "back" else 1.0
+    angle = math.degrees(math.atan2(-(ahead[1] - center[1]), sign * (ahead[0] - center[0])))
+    fields: dict = {"center": _rounded(center), "angle_deg": round(angle, 4), "within_mm": round(known.within_mm, 4)}
+    if known.within_deg is not None:
+        fields["within_deg"] = round(known.within_deg, 4)
+    return fields
 
 
 def rival_of(raw: dict) -> float:
@@ -774,6 +893,19 @@ class BoardLook:
         # locks. And when it was last cleared for another lock.
         self.resets = 0
         self._recheck_at: float | None = None
+        # The place each job's board was found at by this camera, kept while
+        # the backend runs: a known place for the next search.
+        self.found_places: dict[str, Estimate] = {}
+        # The search's known place, the stops at which pcbv took it and at
+        # which it could not (a pcbv built before it could), and what it was
+        # told at the stop now, sent again when it looks afresh there.
+        self.known: KnownPlace | None = None
+        self.guided = 0
+        self.unguided = 0
+        self._stop_near: dict | None = None
+        self.searching = False
+        # The job's frame to KiCad's board frame, for what pcbv is told.
+        self.to_board: Callable[[Point], Point] | None = None
 
     @property
     def client(self) -> VisionClient:
@@ -788,8 +920,13 @@ class BoardLook:
         with self._lock:
             self.job = job_id
             self._to_job = to_job
+            try:
+                self.to_board = inverse_of(to_job)
+            except ValueError:
+                self.to_board = None
             self._place = place
             self.consensus = self._consensus(middle, job_id)
+            self._forget_known()
             self._frame = None
             self._end = threading.Event()
             end = self._end
@@ -827,8 +964,10 @@ class BoardLook:
             self._thread = None
             self.job = None
             self._to_job = None
+            self.to_board = None
             self._place = None
             self.consensus = self._consensus((0.0, 0.0), None)
+            self._forget_known()
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=2.0)
 
@@ -838,6 +977,31 @@ class BoardLook:
             self.consensus = self._consensus(self.consensus.middle, self.job)
             self._frame = None
             self._recheck_at = None
+            self._forget_known()
+
+    def _forget_known(self) -> None:
+        self.known = None
+        self.guided = 0
+        self.unguided = 0
+        self._stop_near = None
+
+    def remember_found(self, place: Estimate) -> None:
+        """The loaded job's board was found here: the next search's known place."""
+        if self.job is not None:
+            self.found_places[self.job] = place
+
+    def found_known(self, job_id: str) -> KnownPlace | None:
+        """Where this camera found a job's board before, as a known place."""
+        place = self.found_places.get(job_id)
+        return KnownPlace("found", place, KNOWN_MM, KNOWN_DEG) if place is not None else None
+
+    def known_state(self) -> dict | None:
+        """The search's known place for the page, with the stops at which
+        pcbv was told it and at which it could not take it; None with none."""
+        known = self.known
+        if known is None:
+            return None
+        return {**known.to_dict(), "guided": self.guided, "unguided": self.unguided}
 
     def _consensus(self, middle: Point, job_id: str | None) -> Consensus:
         threshold, corner_mm = self.tuning()
@@ -945,6 +1109,9 @@ class BoardLook:
         if isinstance(where, PictureFrame) and self._scale is not None and _number(width) and _number(height) and width > 0 and height > 0:
             self.consensus.picture = (where, float(width), float(height), self._scale)
         self.consensus.see(state, estimate, problem)
+        if not self.searching and self.consensus.found and self.consensus.best is not None:
+            # A search remembers only a place its check agreed with.
+            self.remember_found(self.consensus.best)
         self._changed = True
         seen = "used" if estimate is not None else "locked" if state == "locked" else "none"
         if record is not None:
@@ -968,7 +1135,9 @@ class BoardLook:
         self._recheck_at = now
         if record is not None:
             record.event("recheck", resets=self.resets + 1)
-        _reset(self)
+        # At a search stop pcbv is told the known place again; at a check
+        # it was told nothing, and is told nothing again.
+        _reset(self, self._stop_near)
 
     def _look_record(self, record) -> None:
         """A look's own record keeps a picture at its first pose and when
@@ -994,7 +1163,7 @@ class BoardLook:
         if self.job is None:
             threshold, corner_mm = self.tuning()
             return {"job": None, "threshold": threshold, "corner_mm": corner_mm, "corners": corners}
-        return {"job": self.job, **consensus.to_dict(), "record": self.last_record, "corners": corners}
+        return {"job": self.job, **consensus.to_dict(), "record": self.last_record, "corners": corners, "known": self.known_state()}
 
     def publish(self, force: bool = False) -> None:
         """Tells the page of a change, at most every PUBLISH_SECONDS unless forced."""
@@ -1134,6 +1303,8 @@ def search(
     error: type[Exception],
     record=None,
     checks: Callable[[Estimate], list[Point]] | None = None,
+    known: KnownPlace | None = None,
+    side: str = "front",
 ) -> Estimate:
     """Moves the head (`mover`, already begun and at its looking height) so
     the picture's center visits each stop (the head at the stop less the
@@ -1142,30 +1313,43 @@ def search(
     `error` once every stop was looked at, or MAX_CHECKS checks failed.
     `frame_at` is the picture's place with its center at a point; `checks`
     gives the places to check a board found at, the best first (the
-    board's middle by default). `record` (searchlog.py) gets every pose,
-    each stop's move, end and picture, each check, and how the search
-    ended."""
+    board's middle by default). `known`, where the board is expected, is
+    told to pcbv at every stop but the checks (`side`, the camera's, says
+    how pcbv reads the picture's turn). `record` (searchlog.py) gets every
+    pose, each stop's move, end and picture, each check, and how the
+    search ended."""
     # The look's own record ends with the consensus it had, then the
     # search starts one afresh.
     look.begin_record(record)
     look.restart()
+    look.known = known
+    look.searching = True
     visited = 0
     covered = False
     made = 0
     places_of = checks or (lambda found: [found.center])
 
     def visit(index: int, target: Point, middle: bool = False, check: Estimate | None = None) -> str:
-        """The picture's center to `target`, the stop looked at: its result."""
+        """The picture's center to `target`, the stop looked at: its result.
+        pcbv is told the known place at a stop, and nothing at a check: a
+        check agrees with the place found only by what pcbv sees there."""
         head = (target[0] - offset[0], target[1] - offset[1])
         if record is not None:
             record.stop = index
             record.event("stop", index=index, target=_rounded(target), head=_rounded(head), **({"middle": True} if middle else {}))
         mover.go(head)
-        _reset(look)
+        frame = frame_at(target)
+        near = near_fields(known, frame, look.to_board, side) if known is not None and check is None and look.to_board is not None else None
+        took = _reset(look, near)
+        if near is not None:
+            if took:
+                look.guided += 1
+            else:
+                look.unguided += 1
         if record is not None:
-            record.event("arrived", index=index)
+            record.event("arrived", index=index, **({"near": near, "took": took} if near is not None else {}))
         began = time.monotonic()
-        result = look_at_stop(look, frame_at(target), stopped, error, check)
+        result = look_at_stop(look, frame, stopped, error, check)
         if record is not None:
             record.event("stop_end", index=index, result=result, seconds=round(time.monotonic() - began, 3))
             record.picture(look.client, f"stop-{index:03d}", index=index)
@@ -1197,6 +1381,7 @@ def search(
                     record.event("check", result=outcome, estimate=best.to_dict(), place=_rounded(place))
                 if outcome == "agreed":
                     final = look.consensus.best or best
+                    look.remember_found(final)
                     look.publish(force=True)
                     look.end_record("found", only=record, estimate=final.to_dict(), visited=visited, found_at=index, checks=made)
                     return final
@@ -1212,6 +1397,10 @@ def search(
         result = "not found" if covered else "stopped" if stopped() else "error"
         look.end_record(result, only=record, message=str(exc) or type(exc).__name__, visited=visited)
         raise
+    finally:
+        # The watcher's looks afterwards are wherever the head is taken next.
+        look.searching = False
+        look._stop_near = None
 
 
 # --- features to center once the board is found -------------------------------------
@@ -1299,14 +1488,16 @@ def _rounded(point: Point) -> list[float]:
     return [round(point[0], 4), round(point[1], 4)]
 
 
-def search_extra(box: Box, start: Point, stops: list[Point], view_width: float, view_height: float) -> dict:
-    """A search's box, the picture's center it started from, its stops and
-    the picture's size on the machine (mm), for its record."""
+def search_extra(box: Box, start: Point, stops: list[Point], view_width: float, view_height: float, known: KnownPlace | None = None) -> dict:
+    """A search's box, the picture's center it started from, its stops, the
+    picture's size on the machine (mm) and the known place it was told,
+    for its record."""
     return {
         "box": [round(value, 4) for value in box],
         "start": _rounded(start),
         "stops": [_rounded(stop) for stop in stops],
         "view_mm": [round(view_width, 4), round(view_height, 4)],
+        "known": known.to_dict() if known is not None else None,
     }
 
 
@@ -1390,17 +1581,22 @@ def found_text(found: Estimate, consensus: Consensus) -> str:
     )
 
 
-def _reset(look: BoardLook) -> None:
+def _reset(look: BoardLook, near: dict | None = None) -> bool:
     """pcbv forgets the pose it tracked: the head moved, so it searches the
     new picture afresh rather than coasting on the old one, or a guess
-    wants a lock of another search."""
+    wants a lock of another search. With `near` (near_fields) its searches
+    try the poses near a known place first until the next reset: whether
+    it took it, which a pcbv built before it could does not say."""
     look.resets += 1
+    look._stop_near = near
     try:
-        look.client.request("reset")
+        reply = look.client.request("reset", **({"near": near} if near is not None else {}))
     except VisionError as exc:
         log.warning("board look: reset: %s", exc)
+        return False
     except AttributeError:
-        pass
+        return False
+    return near is not None and isinstance(reply, dict) and reply.get("near") is True
 
 
 class BoardMover:

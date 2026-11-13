@@ -19,7 +19,13 @@ from spinny_web.boardlook import (
     PictureFrame,
     RestTracker,
     corner_of,
+    corners_known,
+    inverse_of,
+    job_known,
+    known_place,
     match_of,
+    measured_known,
+    near_fields,
     pose_estimate,
     rough_box,
     rough_place,
@@ -53,6 +59,57 @@ def test_a_locked_pose_puts_the_board_where_it_lies(roll, mirror, rotation):
         fallback, _ = pose_estimate(bare, PictureFrame(center, roll, mirror), DESIGN.board_to_job, MIDDLE)
         assert fallback is not None and fallback.center == pytest.approx(machine_middle, abs=1e-6)
         assert math.isclose(math.cos(math.radians(fallback.rotation - rotation)), 1.0, abs_tol=1e-9)
+
+
+@pytest.mark.parametrize(("roll", "mirror", "rotation", "side"), [(0.0, False, 0.0, "front"), (1.5, False, 2.0, "front"), (-40.0, False, 170.0, "front"), (12.0, True, -5.0, "front"), (30.0, False, 20.0, "back")])
+def test_pcbv_is_told_the_board_point_and_turn_a_known_place_puts_under_the_picture(roll, mirror, rotation, side):
+    board = seen(rotation)
+    truth = Estimate(rotation, board.shift, (0.0, 0.0), 0.0)
+    middle = truth.apply(MIDDLE)
+    center = (middle[0] + 3.0, middle[1] - 2.0)
+    raw = board.pose(center, roll, mirror, 0.02, 1280, 720, 1)
+    known = known_place(None, measured_known("align", rotation, board.shift, 0.05, 3, MIDDLE))
+    near = near_fields(known, PictureFrame(center, roll, mirror), inverse_of(DESIGN.board_to_job), side)
+    # The KiCad point a pose of the truth reads under the picture's center.
+    assert near["center"] == pytest.approx(raw["center"], abs=1e-3)
+    # The picture's x axis, from its top corners, as a pose's angle reads it
+    # (counterclockwise on screen in the view frame, x mirrored for the back).
+    (x0, y0), (x1, y1) = raw["corners"][0], raw["corners"][1]
+    sign = -1.0 if side == "back" else 1.0
+    expected = math.degrees(math.atan2(-(y1 - y0), sign * (x1 - x0)))
+    assert math.isclose(math.cos(math.radians(near["angle_deg"] - expected)), 1.0, abs_tol=1e-9)
+    assert near["within_mm"] == 2.0 and near["within_deg"] == 3.0
+    # The design's map and its inverse are one another's.
+    back = inverse_of(DESIGN.board_to_job)
+    assert DESIGN.board_to_job(back((12.0, -3.0))) == pytest.approx((12.0, -3.0))
+
+
+def test_the_known_place_is_the_most_trusted_said():
+    truth = Estimate(2.0, (150.0, 80.0), (0.0, 0.0), 0.0)
+    two = [Corner("bottom left", (0.0, 0.0), truth.apply((0.0, 0.0))), Corner("top right", (40.0, 30.0), truth.apply((40.0, 30.0)))]
+    corners = corners_known(two, MIDDLE, 2.0, 50.0)
+    # Two corners 50 mm apart, each within 2 mm: the turn within 4.6 degrees.
+    assert corners.source == "corners" and corners.place.center == pytest.approx(truth.apply(MIDDLE), abs=1e-6)
+    assert corners.within_mm == 2.0 and corners.within_deg == pytest.approx(math.degrees(math.atan2(4.0, 50.0)))
+    # One corner by hand: its turn is not known, the place a tenth of the diagonal looser.
+    one = corners_known(two[:1], MIDDLE, 2.0, 50.0)
+    assert one.within_deg is None and one.within_mm == pytest.approx(7.0)
+    by_edges = corners_known([Corner("bottom left", (0.0, 0.0), (150.0, 80.0), 2.0, "edges")], MIDDLE, 2.0, 50.0)
+    assert by_edges.within_deg == boardlook.EDGE_DEG and by_edges.place.rotation == pytest.approx(2.0)
+    assert corners_known([], MIDDLE, 2.0, 50.0) is None
+    # Marks: their rms widens the place, one mark leaves the turn unknown.
+    align = measured_known("align", 2.0, (150.0, 80.0), 1.0, 2, MIDDLE)
+    assert align.within_mm == 3.0 and align.within_deg == boardlook.KNOWN_DEG and align.place.center == pytest.approx(truth.apply(MIDDLE))
+    assert measured_known("references", 0.0, (1.0, 2.0), 0.0, 1, MIDDLE).within_deg is None
+    job = job_known(MIDDLE, 50.0)
+    assert job.place.center == MIDDLE and job.within_mm == 12.5 and job.within_deg == boardlook.JOB_DEG
+    assert known_place(None, None, align, job) is align and known_place(corners, None, align, job) is corners and known_place(None, None) is None
+    # A look keeps where it found each job's board.
+    look = BoardLook(lambda: None, lambda: None, paused=lambda: False)
+    assert look.found_known("j1") is None
+    look.job = "j1"
+    look.remember_found(truth)
+    assert look.found_known("j1").source == "found" and look.found_known("j1").place is truth and look.found_known("j2") is None
 
 
 def test_a_picture_mirrored_against_the_board_is_refused_and_a_lost_pose_gives_nothing():

@@ -23,7 +23,18 @@ from fastapi import HTTPException
 
 from spinny_laser.machines import GCODE
 
-from .boardlook import PictureFrame, found_text, search, search_box, search_extra, search_stops
+from .boardlook import (
+    KnownPlace,
+    PictureFrame,
+    corners_known,
+    found_text,
+    known_place,
+    measured_known,
+    search,
+    search_box,
+    search_extra,
+    search_stops,
+)
 from .feederbus import BusError, FeederBus, slot_place
 from .gcode_link import GcodeLinkError, GcodeMover
 from .gcode_part import HOME_TIMEOUTS
@@ -360,7 +371,8 @@ class PlacingPart:
         here = self._here(machine)
         center = (float(here["x"]) + offset[0], float(here["y"]) + offset[1])
         box = body.box if body.box is not None else self._corners_box(self.top_look, job, settings.corner_mm) or search_box(center, diagonal)
-        stops = search_stops(box, (width * scale, height * scale), center)
+        known = self._top_known(job, settings.corner_mm)
+        stops = search_stops(box, (width * scale, height * scale), known.place.center if known is not None else center)
         z = machine.top.z if machine.top is not None else None
         mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
         look = self.top_look
@@ -375,17 +387,33 @@ class PlacingPart:
             record = self._board_record(
                 "search", "top", job, self.top.client, self._top_board_settings(job.id),
                 {**self._top_picture(machine), "width": width, "height": height, "mm_per_px_used": scale, "z": z},
-                search_extra(box, center, stops, width * scale, height * scale),
+                search_extra(box, center, stops, width * scale, height * scale, known),
             )
             found = search(
                 look, mover, stops, offset, lambda point: PictureFrame(point, settings.roll, settings.mirror),
                 mover.stopped, lambda index, count: self.top._step(progress, f"stop {index + 1}"), PnpError, record,
-                checks=self._check_places(job, (width * scale, height * scale)),
+                checks=self._check_places(job, (width * scale, height * scale)), known=known, side=settings.side,
             )
             self.top._message("info", found_text(found, look.consensus))
 
         self.top._begin("search", steps, mover, run)
         return self.placing_state()
+
+    def _top_known(self, job, corner_mm: float) -> KnownPlace | None:
+        """Where the top camera's search expects the job's board: where the
+        corners taken put it, else where the camera found it, else where
+        the job's references (fiducials found, places taken by hand) put
+        it (boardlook.known_place). The job's own frame is not the G-code
+        machine's, so it says nothing here."""
+        middle, diagonal = self._board_size(job)
+        references = None
+        try:
+            fit = self._board_fit(job.id, self.job_parts(job.id)["components"])
+            references = measured_known("references", fit.rotation, fit.shift, fit.rms, fit.marks, middle)
+        except Exception:  # no references, or none of the job's parts: nothing known from them
+            references = None
+        look = self.top_look
+        return known_place(corners_known(look.corners_of(job.id), middle, corner_mm, diagonal), look.found_known(job.id), references)
 
     def top_place(self, body: BoardPlaceBody) -> dict:
         """The board's place the top camera's look found, else the place

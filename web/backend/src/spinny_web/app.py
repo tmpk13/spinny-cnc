@@ -50,12 +50,17 @@ from .boardlook import (
     BoardMover,
     Estimate,
     Feature,
+    KnownPlace,
     PictureFrame,
     RestTracker,
     check_places,
     corner_from_edges,
     corner_of,
+    corners_known,
     found_text,
+    job_known,
+    known_place,
+    measured_known,
     pick_features,
     rough_box,
     search,
@@ -3393,7 +3398,8 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             tool = head_board(status.r, self.table_angle(status), status.z, self.cartesian)
             here = (tool[0] + offset[0], tool[1] + offset[1])
             box = body.box if body.box is not None else self._corners_box(self.head_look, job, settings.corner_mm) or search_box(here, diagonal)
-            stops = search_stops(box, (width * scale, height * scale), here)
+            known = self._head_known(job, settings.corner_mm)
+            stops = search_stops(box, (width * scale, height * scale), known.place.center if known is not None else here)
             mover = BoardMover(access, self.camera.aborting, CameraError, lambda: self.camera._halt(link))
             look = self.head_look
 
@@ -3409,16 +3415,29 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
                 record = self._board_record(
                     "search", "head", job, self.camera.client, self.camera.board_settings(),
                     {**self._head_picture(), "width": width, "height": height, "mm_per_px_used": scale},
-                    search_extra(box, here, stops, width * scale, height * scale),
+                    search_extra(box, here, stops, width * scale, height * scale, known),
                 )
                 found = search(
                     look, mover, stops, offset, lambda point: PictureFrame(point, settings.roll, False), mover.stopped, on_stop, CameraError, record,
-                    checks=self._check_places(job, (width * scale, height * scale)),
+                    checks=self._check_places(job, (width * scale, height * scale)), known=known, side=settings.side,
                 )
                 self.publish_message("info", found_text(found, look.consensus))
 
             self.camera.run_routine("search", len(stops) + 1, "looking for the board", link, run)
         return self.camera_state()
+
+    def _head_known(self, job, corner_mm: float) -> KnownPlace | None:
+        """Where the head camera's search expects the job's board: where
+        the corners taken put it, else where the camera found it, else the
+        Align marks' fit, else the job's own place (boardlook.known_place)."""
+        middle, diagonal = self._board_size(job)
+        try:
+            fit = self.alignment.fit(job.id)
+            align = measured_known("align", fit.rotation, fit.shift, fit.rms, fit.marks, middle)
+        except ValueError:
+            align = None
+        look = self.head_look
+        return known_place(corners_known(look.corners_of(job.id), middle, corner_mm, diagonal), look.found_known(job.id), align, job_known(middle, diagonal))
 
     def _refine_features(self, job) -> tuple[list[Feature], list[Feature], list[Feature]]:
         """A job's fiducials (from its kept board), drilled holes and pads

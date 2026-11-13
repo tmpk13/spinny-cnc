@@ -646,6 +646,14 @@ def test_the_top_camera_searches_a_box_for_the_board_and_keeps_its_place(client,
     # was told to search afresh at every stop.
     assert (client.fake.position[0] + 34.0, client.fake.position[1] - 9.0) == pytest.approx(middle, abs=0.01)
     assert "reset" in camera.asked
+    # Nothing told where the board was: no corners, no references, nothing
+    # found before, and the job's own frame is not this machine's.
+    assert look["known"] is None
+    # Searched again, the place found is where it starts.
+    assert client.post("/api/pnp/top/search", json={"box": [140.0, 70.0, 200.0, 125.0]}).status_code == 200
+    assert routine_done(client, "/api/pnp/placing")["state"] == "done"
+    known = client.get("/api/pnp/placing").json()["top"]["board_look"]["known"]
+    assert known["source"] == "found" and known["center"] == pytest.approx(list(middle), abs=0.01) and known["guided"] == 0
     # The place found becomes the job's references: two parts, by look.
     response = client.post("/api/pnp/top/place", json={"job": job_id})
     assert response.status_code == 200, response.text
@@ -704,11 +712,18 @@ def test_corners_taken_with_the_top_camera_give_a_rough_place_a_search_box_and_r
     assert record["settings"]["corners"][1]["corner"] == "top right" and record["settings"]["threshold"] == boardlook.THRESHOLD
     look = client.get("/api/pnp/placing").json()["top"]["board_look"]
     assert look["found"] and look["guesses"][0]["probability"] == 1.0 and look["guesses"][0]["corner_mm"] < 0.05
+    assert look["known"]["source"] == "corners" and record["known"]["source"] == "corners"
     # The threshold and tolerance are the camera's, set from the page, checked.
     assert client.put("/api/pnp/top", json={"look_threshold": 1.5}).status_code == 400
     look = client.put("/api/pnp/top", json={"look_threshold": 0.8, "corner_mm": 1.0}).json()["top"]["board_look"]
     assert look["threshold"] == 0.8 and look["corner_mm"] == 1.0
     assert client.delete("/api/pnp/top/corners").json()["top"]["board_look"]["corners"] is None
+    # Without corners or a place found, the references put the board.
+    job = client.backend._job(job_id)
+    assert client.backend._top_known(job, 2.0).source == "found"
+    client.backend.top_look.found_places.clear()
+    known = client.backend._top_known(job, 2.0)
+    assert known.source == "references" and known.place.rotation == pytest.approx(2.0, abs=0.01)
 
 
 def test_a_search_that_covers_its_box_without_the_board_ends_as_not_found(client, quick_search):

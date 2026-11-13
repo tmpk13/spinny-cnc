@@ -781,6 +781,25 @@ evidence. Both settings are set with the camera's settings
 (`PUT /api/camera/settings`, `PUT /api/pnp/top`). A picture mirrored
 against the board is refused (`problem`).
 
+A search starts with the place the board is known to be at, the first
+of: where the corners taken put it (`corners`, within `corner_mm` and a
+tenth of the diagonal with one corner; the turn within what two corners
+that far apart allow, 3 degrees from a corner's edges, not known from one
+taken by hand), where this camera found it before while the backend runs
+(`found`, 2 mm and 3 degrees), the Align marks' fit for the head camera
+(`align`) or the references for the top camera (`references`), within
+2 mm or three times their rms and 3 degrees (the turn not known from one
+mark), and the job's own place for the head camera (`job`, within 5 mm or
+a quarter of the board's diagonal and 15 degrees). Its stops are taken
+nearest the known place's middle first, and at each one pcbv's reset
+carries `near`: the KiCad point and turn the known place puts under the
+picture's center and how far either may be off, so its search tries the
+poses near there first (pcb-vision's docs/SERVE.md). It never decides:
+poses are weighed as any other, and the check of a place found is made
+with pcbv told nothing. The search's record keeps it (`known`) and each
+stop's `arrived` event what pcbv was told (`near`) and whether it took it
+(`took`; a pcbv built before `near` does not).
+
 ```json
 {"job": "a1b2", "looks": 42, "locked": 30, "pose": "locked", "agree": 25, "need": 5, "found": true,
  "sessions": 3, "sessions_needed": 2, "rechecking": false, "rival": 0.12, "ambiguous": false, "view_rival": 0.0,
@@ -798,6 +817,8 @@ against the board is refused (`problem`).
               "view": [[4.7, 22.3], [30.4, 22.1], [30.2, 7.7], [4.6, 7.9]], "seen": [17.5, 15.0]}],
  "more": 0,
  "corners": null,
+ "known": {"source": "corners", "rotation": 1.0, "shift": [40.0, 30.0], "center": [59.7, 45.3],
+           "within_mm": 2.0, "within_deg": 3.27, "guided": 4, "unguided": 0},
  "record": "20261112-153012-000"}
 ```
 
@@ -817,7 +838,12 @@ where it was taken, and `view`, `seen` where it says the newest picture
 `corners` holds the corners taken, of this board or another's:
 `{"job", "points": [{"corner", "job": [x, y], "machine": [x, y]}],
 "rough"}`, `rough` the place they give (two or more: the turn and shift
-that fit them; one: not turned), or null with none. `record` is the id of
+that fit them; one: not turned), or null with none. `known` is the place
+the newest search started from (above): its `source`, the turn and shift
+it gives, the board's middle there (`center`), how far it may be off
+(`within_deg` null when the turn is not known), and at how many stops
+pcbv took it (`guided`) or could not (`unguided`); null when no search
+has run on this load or none was known. `record` is the id of
 the newest search record of this look or its search (Search records,
 below). With no board loaded, `{"job": null, "threshold", "corner_mm",
 "corners"}`.
