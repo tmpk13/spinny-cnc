@@ -5,14 +5,16 @@
 //     { "name": "jobs-dark", "page": "jobs", "width": 1440, "height": 1000,
 //       "dark": true, "storage": { "spinny.look": "{...}" },
 //       "before": "document.querySelector('#jobs .panel-menu-button').click()",
+//       "click": ["#jog button:has-text('Fine')"],
 //       "drag": { "from": ".panel-tab:has-text('Markers')", "to": [180, 130] },
 //       "after": "document.querySelectorAll('.panel-tab').length",
 //       "selector": "#page-jobs .column", "wait": 400 }
 //
 // where only the name is needed: the page opened (?page=), the window's
 // size, the dark theme, localStorage set before the page loads, JavaScript
-// run in the page before the shot (what it returns is printed), a drag
-// with the mouse from an element to a point, JavaScript run after it, one
+// run in the page before the shot (what it returns is printed), elements
+// clicked in turn with the mouse, a drag with the mouse from an element to
+// a point, JavaScript run after them, one
 // element shot instead of the window, and the wait before the shot (ms).
 // Each shot is OUTDIR/NAME.png. Paths are taken from where mise was run.
 // Chromium is the one the layout check uses (CHROMIUM overrides it).
@@ -21,7 +23,7 @@ import { isAbsolute, resolve } from "node:path";
 import index from "../index.html";
 import { chromium } from "playwright-core";
 
-type Shot = { name: string; page?: string; width?: number; height?: number; before?: string; selector?: string; wait?: number; dark?: boolean; storage?: Record<string, string>; drag?: { from: string; to: [number, number] }; after?: string };
+type Shot = { name: string; page?: string; width?: number; height?: number; before?: string; selector?: string; wait?: number; dark?: boolean; storage?: Record<string, string>; click?: string[]; drag?: { from: string; to: [number, number] }; after?: string };
 
 const here = process.env["MISE_ORIGINAL_CWD"] ?? process.cwd();
 const [specArg, outArg] = process.argv.slice(2);
@@ -59,6 +61,10 @@ try {
             if (said !== undefined) {
                 console.log(`${shot.name}: ${typeof said === "string" ? said : JSON.stringify(said)}`);
             }
+        }
+        for (const selector of shot.click ?? []) {
+            await page.locator(selector).first().click();
+            await page.waitForTimeout(100);
         }
         if (shot.drag) {
             const box = (await page.locator(shot.drag.from).first().boundingBox())!;

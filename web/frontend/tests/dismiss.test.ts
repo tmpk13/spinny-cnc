@@ -130,3 +130,12 @@ test("a red button that starts something is held back like any other; one that s
     press(hold);
     expect(pressed).toEqual(["Hold"]);
 });
+
+test("a press taken that is never let go leaves later clicks alone", () => {
+    const { pop, opener, other, pressed } = setup();
+    const release = popUp({ nodes: () => [pop, opener], close: () => release() });
+    other.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+    // A click by script or a key, with no let go: a press of its own.
+    other.click();
+    expect(pressed).toEqual(["Run"]);
+});

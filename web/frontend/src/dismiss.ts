@@ -22,7 +22,11 @@ export const URGENT = ".btn-stop, .urgent";
 
 const up = new Set<PopUp>();
 let installed = false;
-let swallowing: ((event: Event) => void) | null = null;
+// The press under way was taken to close the pop-ups; then it was let go,
+// and the click that ends it, coming in the same task, is to be swallowed.
+// Only that click: one made by a key or by script comes with no let go.
+let pressTaken = false;
+let clickTaken = false;
 
 function mark(): void {
     document.documentElement.toggleAttribute("data-dismiss", up.size > 0);
@@ -44,35 +48,30 @@ function mark(): void {
     }
 }
 
-/** Swallows the click that ends a press which only took pop-ups away. */
-function swallowNextClick(): void {
-    if (swallowing) {
-        globalThis.removeEventListener("click", swallowing, true);
+function onRelease(event: Event): void {
+    if (!pressTaken) {
+        return;
     }
-    const swallow = (event: Event): void => {
+    pressTaken = false;
+    // Let go elsewhere, or cancelled, the press makes no click; else its
+    // click comes before any timer does.
+    clickTaken = event.type === "pointerup";
+    setTimeout(() => {
+        clickTaken = false;
+    }, 0);
+}
+
+function onClick(event: Event): void {
+    if (clickTaken) {
+        clickTaken = false;
         event.preventDefault();
         event.stopPropagation();
-        globalThis.removeEventListener("click", swallow, true);
-        swallowing = null;
-    };
-    swallowing = swallow;
-    globalThis.addEventListener("click", swallow, true);
-    // A press let go elsewhere makes no click: the swallow ends with the press.
-    const end = (): void => {
-        globalThis.removeEventListener("pointerup", end, true);
-        globalThis.removeEventListener("pointercancel", end, true);
-        setTimeout(() => {
-            if (swallowing === swallow) {
-                globalThis.removeEventListener("click", swallow, true);
-                swallowing = null;
-            }
-        }, 0);
-    };
-    globalThis.addEventListener("pointerup", end, true);
-    globalThis.addEventListener("pointercancel", end, true);
+    }
 }
 
 function onPress(event: Event): void {
+    pressTaken = false;
+    clickTaken = false;
     // A pop-up whose nodes all left the page (drawn over by its view) is
     // not up any more, whatever it said.
     for (const popup of [...up]) {
@@ -102,7 +101,7 @@ function onPress(event: Event): void {
     }
     event.preventDefault();
     event.stopPropagation();
-    swallowNextClick();
+    pressTaken = true;
 }
 
 /**
@@ -115,6 +114,9 @@ export function popUp(popup: PopUp): () => void {
         // On the window, in the capture phase: before any listener on the
         // document or under it, the pop-ups' own among them.
         globalThis.addEventListener("pointerdown", onPress, true);
+        globalThis.addEventListener("pointerup", onRelease, true);
+        globalThis.addEventListener("pointercancel", onRelease, true);
+        globalThis.addEventListener("click", onClick, true);
     }
     up.add(popup);
     mark();
