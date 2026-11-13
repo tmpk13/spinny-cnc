@@ -5,13 +5,15 @@
 // shows what its routines and Look once found (the circle looked within,
 // the spot's ellipse and rectangle), the circle a part or a mark is looked
 // for within, and for the top camera the box a board search keeps to and
-// the board where its looks put it. A drag moves the head (picture.ts).
+// the board where its looks put it; each rings the points whose place is
+// known (known.ts). A drag moves the head (picture.ts).
 // The pictures are asked for only while the page shows.
 
 import { activePage, el } from "../dom.ts";
 import type { AppState } from "../state.ts";
 import type { BoardCorners, BoardEstimate, Job, RoutineSpot, SpotLook } from "../types.ts";
 import type { Ctx } from "./context.ts";
+import { bottomKnown, knownMarks, topKnown } from "./known.ts";
 import { type Calibration, type Mark, machineToPicturePoints, mountPicture, type PictureView, spotMarks } from "./picture.ts";
 import { gcodePlacing } from "./placing.ts";
 
@@ -132,12 +134,15 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
         size: (state) => frameSize(state.pnp?.frame, state.pnp?.size),
         calibration: bottomCalibration,
         center: () => null,
-        marks: (state) => {
+        marks: (state, shown) => {
             const size = frameSize(state.pnp?.frame, state.pnp?.size) ?? [1280, 720];
-            const crop = gcodePlacing(state) ? state.placing?.document?.crop ?? null : null;
+            const gcode = gcodePlacing(state);
+            const crop = gcode ? state.placing?.document?.crop ?? null : null;
+            const known = bottomKnown(state, gcode);
             return [
                 ...reachMark(crop, bottomCalibration(state), size, "parts are looked for within this circle"),
                 ...foundMarks(state.pnp?.routine, state.pnp?.look, size),
+                ...knownMarks(known.points, known.center, bottomCalibration(state), shown),
             ];
         },
         move: jog,
@@ -164,7 +169,7 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
         size: (state) => frameSize(state.placing?.top?.frame, state.placing?.top?.size),
         calibration: topCalibration,
         center: topCenter,
-        marks: (state) => {
+        marks: (state, shown) => {
             const topState = state.placing?.top;
             const size = frameSize(topState?.frame, topState?.size) ?? [1280, 720];
             const calibration = topCalibration(state);
@@ -175,6 +180,7 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
                 ...foundMarks(topState?.routine, topState?.look, size),
                 ...boardMarks(state.job, roughOf(state.job, look?.corners), topCenter(state), calibration, size, "rough"),
                 ...boardMarks(job, look?.estimate ?? null, topCenter(state), calibration, size),
+                ...knownMarks(topKnown(state), topCenter(state), calibration, shown),
             ];
         },
         move: jog,
@@ -200,7 +206,7 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
         // The top camera is a G-code machine's: its panel shows with one.
         roots.top.classList.toggle("hidden", !gcodePlacing(state));
     }
-    ctx.store.subscribe((state) => render(state), ["pnp", "placing", "snapshot", "job"]);
+    ctx.store.subscribe((state) => render(state), ["pnp", "placing", "snapshot", "job", "components"]);
     render(ctx.store.get());
     globalThis.addEventListener?.("pagehide", () => {
         bottom.stop();

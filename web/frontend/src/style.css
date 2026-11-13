@@ -3419,6 +3419,19 @@ table.pnp-parts tr.dnp td {
     text-align: right;
 }
 
+/* A point whose place is known, ringed on a camera's picture, and its
+   label: light letters on a dark halo read on any picture, so they keep
+   the Solarized ends rather than the theme's text color. */
+.picture-marks .mark-known { stroke: var(--blue); stroke-width: 2; }
+
+.picture-marks .mark-label {
+    fill: var(--base3);
+    stroke: var(--base03);
+    stroke-linejoin: round;
+    paint-order: stroke;
+    font-family: var(--mono);
+}
+
 /* A camera's controls, folded under its settings: a row a control. */
 .camera-controls > summary {
     cursor: pointer;

@@ -119,14 +119,32 @@ export function growBox(box: MachineBox | null, by: MachineBox): MachineBox {
 }
 
 /** What a mark is: its color and line follow the tone. */
-export type Tone = "center" | "ring" | "spot" | "look" | "box" | "board" | "rough" | "drag" | "miss";
+export type Tone = "center" | "ring" | "spot" | "look" | "box" | "board" | "rough" | "drag" | "miss" | "known";
 
-/** A mark over the picture, in its full size px from the top left (y down). */
+/**
+ * A mark over the picture, in its full size px from the top left (y down);
+ * a text's `size` is its font size in those px, `x` and `y` where its
+ * baseline starts (`start`) or ends (`end`).
+ */
 export type Mark =
     | { kind: "circle"; x: number; y: number; r: number; tone: Tone; title?: string }
     | { kind: "ellipse"; x: number; y: number; rx: number; ry: number; angle: number; tone: Tone; title?: string }
     | { kind: "rect"; x: number; y: number; w: number; h: number; angle: number; tone: Tone; title?: string }
-    | { kind: "line"; points: [number, number][]; closed?: boolean; tone: Tone; title?: string };
+    | { kind: "line"; points: [number, number][]; closed?: boolean; tone: Tone; title?: string }
+    | { kind: "text"; x: number; y: number; text: string; size: number; anchor: "start" | "end"; tone: Tone; title?: string };
+
+/**
+ * What a picture shows now: its full size, px; the part of it the zoom
+ * shows (x, y, width, height, full size px); the CSS px a picture px takes
+ * on the screen; and the CSS px of a rem. Marks meant to keep one size on
+ * the screen are sized from it.
+ */
+export interface PictureShown {
+    size: [number, number];
+    region: [number, number, number, number];
+    scale: number;
+    rem: number;
+}
 
 /** The marks of a spot the finder found, about the picture's center: its ellipse, its rectangle, its center, and the circle it was looked for within; a miss draws only that circle. */
 export function spotMarks(
@@ -212,8 +230,8 @@ export interface PictureOptions {
     calibration(state: AppState): Calibration | null;
     /** The machine point under the picture's center now; null when not known. */
     center(state: AppState): [number, number] | null;
-    /** The page's marks over the picture besides the crosshair, the box and a drag. */
-    marks(state: AppState): Mark[];
+    /** The page's marks over the picture besides the crosshair, the box and a drag; `shown` is what the picture shows now. */
+    marks(state: AppState, shown: PictureShown): Mark[];
     /** Moves the head by a step on the machine, mm. */
     move(mm: [number, number]): Promise<void>;
     /** Said when a drag or a double-click needs the scale and there is none. */
@@ -359,9 +377,14 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         stage.style.top = `${(100 * (rect.height - shownHeight)) / 2 / rect.height}%`;
     }
 
+    // A rem in CSS px, read once and again at each resize: marks sized to
+    // the screen need it at every draw, ten times a second.
+    let rem = 0;
     const Observer = globalThis.ResizeObserver;
     const observer = Observer ? new Observer(() => {
+        rem = 0;
         fit();
+        draw(ctx.store.get());
         refresh(false);
     }) : null;
     observer?.observe(box);
@@ -577,6 +600,13 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
             case "line":
                 node = svg(mark.closed ? "polygon" : "polyline", { points: mark.points.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(" ") });
                 break;
+            case "text":
+                // The halo under the letters is a stroke a quarter of the
+                // font wide, so the words read on a light or a dark picture.
+                node = svg("text", { x: mark.x.toFixed(2), y: mark.y.toFixed(2), "font-size": mark.size.toFixed(3), "text-anchor": mark.anchor, "stroke-width": (mark.size / 4).toFixed(3) });
+                node.textContent = mark.text;
+                node.setAttribute("class", `mark-label mark-label-${mark.tone}`);
+                return node;
         }
         node.setAttribute("class", `mark mark-${mark.tone}`);
         if (mark.title) {
@@ -600,7 +630,16 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
             const arm = shownWidth / 40;
             marks.push({ kind: "line", points: [[width / 2 - arm, height / 2], [width / 2 + arm, height / 2]], tone: "center" });
             marks.push({ kind: "line", points: [[width / 2, height / 2 - arm], [width / 2, height / 2 + arm]], tone: "center" });
-            marks.push(...options.marks(state));
+            // A stage not laid out yet is taken as wide as an unknown one
+            // is asked for; the observer draws again once it is.
+            const screen = stage.getBoundingClientRect().width || box.getBoundingClientRect().width || 640;
+            const shown: PictureShown = {
+                size: [width, height],
+                region: [width / 2 - shownWidth / 2, height / 2 - shownHeight / 2, shownWidth, shownHeight],
+                scale: screen / shownWidth,
+                rem: rem || (rem = remPx()),
+            };
+            marks.push(...options.marks(state, shown));
         }
         const calibration = options.calibration(state);
         const center = options.center(state);

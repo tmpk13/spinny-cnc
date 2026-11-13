@@ -5,8 +5,9 @@
 // the picture on it. The look for a board and its search are the Find
 // board panel's (findboard.ts).
 // Its picture is a panel of its own (Camera view), refreshed while it
-// shows and the camera runs, with the routine's spot, the search box and
-// the board where the looks put it drawn over it. The file is vision.ts:
+// shows and the camera runs, with the routine's spot, the search box, the
+// board where the looks put it and the points whose place is known
+// (known.ts) drawn over it. The file is vision.ts:
 // camera.ts is the 3D preview's camera.
 
 import { askConfirm } from "../confirm.ts";
@@ -21,6 +22,7 @@ import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
 import { boardMarks, foundMarks, frameSize, roughOf } from "./camview.ts";
 import { into, type Ctx } from "./context.ts";
+import { headKnown, knownMarks } from "./known.ts";
 import { type Calibration, mountPicture, type PictureView } from "./picture.ts";
 
 export { FRAME_INTERVAL_MS } from "./picture.ts";
@@ -146,7 +148,7 @@ export function mountVisionView(root: HTMLElement, ctx: Ctx, visible: () => bool
         size: (state) => frameSize(state.camera?.frame, state.camera?.size),
         calibration: headCalibration,
         center: headCenter,
-        marks: (state) => {
+        marks: (state, shown) => {
             const camera = state.camera;
             const size = frameSize(camera?.frame, camera?.size) ?? [1280, 720];
             const look = camera?.board_look;
@@ -155,6 +157,7 @@ export function mountVisionView(root: HTMLElement, ctx: Ctx, visible: () => bool
                 ...foundMarks(camera?.routine, null, size),
                 ...boardMarks(state.job, roughOf(state.job, look?.corners), headCenter(state), headCalibration(state), size, "rough"),
                 ...boardMarks(job, look?.estimate ?? null, headCenter(state), headCalibration(state), size),
+                ...knownMarks(headKnown(state), headCenter(state), headCalibration(state), shown),
             ];
         },
         move: async (mm) => {
@@ -183,7 +186,7 @@ export function mountVisionView(root: HTMLElement, ctx: Ctx, visible: () => bool
         const look = state.camera?.board_look;
         lookLine.textContent = lookText(look, look?.job ? state.jobs.find((entry) => entry.id === look.job)?.name ?? null : null);
         lookLine.classList.toggle("hidden", lookLine.textContent === "");
-    }, ["camera", "snapshot", "job", "jobs"]);
+    }, ["camera", "snapshot", "job", "jobs", "align", "components", "markers"]);
     picture.render(ctx.store.get());
     return picture;
 }

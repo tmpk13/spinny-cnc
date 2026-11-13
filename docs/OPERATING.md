@@ -467,13 +467,27 @@ scrolls the page; the zoom between *-* and *+* is a field, so any zoom
 from 1 to 8 can be typed in and taken with Enter. A drag moves the head
 so what the camera sees follows the pointer, a line showing the move; a
 double-click brings a point to the crosshair (both once the camera's
-scale is measured). The grip under the picture
-makes its box taller or shorter, kept per camera; a double-click on the
-grip gives the picture its own shape back. *Overlay* switches the page's
-marks over it (the crosshair, the circle a spot is looked for within, a
-spot found with its ellipse and box, a search box, the board where the
-looks put it) and pcbv's pose of a loaded board; the marks keep thin
-lines at any zoom.
+scale is measured). The grip under the picture makes its box taller or
+shorter, kept per camera; a double-click on the grip gives the picture
+its own shape back. *Overlay* switches the page's marks over it (the
+crosshair, the circle a spot is looked for within, a spot found with its
+ellipse and box, a search box, the board where the looks put it, the
+known points below) and pcbv's pose of a loaded board; the marks keep
+thin lines at any zoom.
+
+Blue rings mark the points whose place on the machine is known, where
+they fall in the picture, so a glance says whether what the page holds
+sits on what the camera sees. The head camera's picture rings the
+selected job's alignment marks where they were found (*A1*, *A2*, in
+the Align table's order), its fiducials where a look that found the
+board puts them (else where the job lies, which is where it is cut),
+the corners taken by hand, the mark *Find mark* centers on, and the
+markers. The top camera's rings the fiducials *Find fiducials* found
+(the others where its look puts them once it found the board), the
+parts taken with the nozzle or the camera, the corners, its mark and the
+fiducial *Home by fiducial* finds; the bottom camera's rings the nozzle
+where the head's place puts it. A ring keeps one size at any zoom; its
+label shows only where it has room.
 
 *Picture controls*, folded under each camera's settings, lists what the
 camera lets be set (exposure, gain, focus, white balance, brightness and
