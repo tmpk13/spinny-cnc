@@ -24,13 +24,13 @@ export function mountConsole(root: HTMLElement, ctx: Ctx): void {
     // default buries everything an operator or a job did.
     const polls = el("input", { type: "checkbox", id: "show-polls" });
     polls.addEventListener("change", () => ctx.store.set({ showPolls: polls.checked }));
-    const hold = button("Hold !", () => ctx.call(ctx.api.realtime("hold")), "btn btn-quiet btn-small", "pause the machine (feed hold)");
+    const hold = button("Hold !", () => ctx.call(ctx.api.realtime("hold")), "btn btn-quiet btn-small urgent", "pause the machine (feed hold)");
     const resume = button("Resume ~", () => ctx.call(ctx.api.realtime("resume")), "btn btn-quiet btn-small", "go on after a hold");
     const realtime = el("div", { class: "button-row" },
         button("Status ?", () => ctx.call(ctx.api.realtime("status")), "btn btn-quiet btn-small", "ask for a status report"),
         hold,
         resume,
-        button("Reset", () => ctx.call(ctx.api.realtime("reset")), "btn btn-danger btn-small", "stop and empty the machine at once"),
+        button("Reset", () => ctx.call(ctx.api.realtime("reset")), "btn btn-danger btn-small urgent", "stop and empty the machine at once"),
         button("Clear", () => { ctx.store.set({ console: [] }); }, "btn btn-quiet btn-small", "clear the console"),
         button("Log", () => showLog("spinny"), "btn btn-quiet btn-small", "show the backend's log"),
         button("Wire", () => showLog("wire"), "btn btn-quiet btn-small", "show the bytes sent and received"),

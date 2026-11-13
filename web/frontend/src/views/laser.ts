@@ -15,7 +15,7 @@ export function mountLaser(root: HTMLElement, ctx: Ctx): void {
     const power = numberField({ value: 100, min: 0, step: 1 });
     const ms = numberField({ value: 1000, min: 1, step: 1 });
     const fire = button("Test beam", () => test(), "btn btn-danger btn-big", "fire the beam at this power for this long");
-    const off = button("Laser off", () => ctx.call(ctx.api.laserOff()), "btn btn-big", "turn the beam off");
+    const off = button("Laser off", () => ctx.call(ctx.api.laserOff()), "btn btn-big urgent", "turn the beam off");
     const modes = choiceRow<Mode>(["dyn", "const"], "dyn", (mode) => void ctx.call(ctx.api.mode(mode)), (mode) => mode, "Mode",
         (mode) => (mode === "dyn" ? "power follows the speed: corners burn no darker" : "the same power at any speed"));
     const title = el("h2", {}, "Laser");
@@ -29,7 +29,7 @@ export function mountLaser(root: HTMLElement, ctx: Ctx): void {
     );
     const speed = numberField({ value: 800, min: 0, step: 1 });
     const start = button("Start spindle", () => startSpindle(), "btn btn-danger btn-big", "start the spindle at this speed");
-    const stop = button("Stop spindle", () => ctx.call(ctx.api.spindleOff()), "btn btn-big", "stop the spindle");
+    const stop = button("Stop spindle", () => ctx.call(ctx.api.spindleOff()), "btn btn-big urgent", "stop the spindle");
     const spindleBody = el("div", { class: "tool-spindle hidden" },
         el("div", { class: "field-row" }, labeled("Speed S", speed)),
         el("div", { class: "button-row" }, start, stop),

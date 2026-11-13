@@ -61,7 +61,7 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
     measure.title = "move the top camera over the mark to measure its offset from the nozzle";
     const homeFiducial = button("Home by fiducial", () => into(ctx, "placing", ctx.api.topHome()), "btn",
         "home, then find the bed's homing fiducial and correct where the head is from it");
-    const abort = button("Abort", () => into(ctx, "placing", ctx.api.topAbort()), "btn btn-danger");
+    const abort = button("Abort", () => into(ctx, "placing", ctx.api.topAbort()), "btn btn-danger urgent");
     abort.title = "stop the top camera's routine (Measure offset, Home by fiducial, Find fiducials or Search) and the machine";
     const routineLine = el("p", { class: "muted vision-routine" });
     const log = el("div", { class: "camlog-box" });

@@ -142,9 +142,9 @@ export function mountRun(root: HTMLElement, ctx: Ctx, options: RunOptions = {}):
     });
     // What Run does with the map, or what the run under way does with it.
     const mapChip = el("span", { class: "badge map-use" });
-    const holdButton = button("Hold", () => ctx.call(ctx.api.runHold()), "btn", "pause the job");
+    const holdButton = button("Hold", () => ctx.call(ctx.api.runHold()), "btn urgent", "pause the job");
     const resumeButton = button("Resume", () => ctx.call(ctx.api.runResume()), "btn", "go on with the job");
-    const stopButton = button("Stop", () => ctx.call(ctx.api.runStop()), "btn btn-danger", "stop the job");
+    const stopButton = button("Stop", () => ctx.call(ctx.api.runStop()), "btn btn-danger urgent", "stop the job");
     // Why a dispenser would refuse the job, beside the run button.
     const runNote = el("span", { class: "muted run-note hidden" });
     const runRow = el("div", { class: "run-row" }, runButton, compensate, mapChip, holdButton, resumeButton, stopButton, runNote);

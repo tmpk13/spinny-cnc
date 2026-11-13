@@ -4,9 +4,11 @@
 // the button under the pointer is not pressed by it as well. The pointer
 // says so over everything but the pop-up: a circle with an x in it (the
 // stylesheet, on :root[data-dismiss]; the pop-ups are marked data-popup).
-// Stopping is never held back: a press on a stop button (.btn-stop, or any
-// .btn-danger, where Stop and Abort live) takes the pop-ups away and is
-// still a press of that button.
+// Stopping is never held back: a press on a button that stops something
+// (the bar's Stop, .btn-stop, and every Stop, Abort, Hold, Cancel, Reset,
+// Laser off and Stop spindle, marked .urgent) takes the pop-ups away and
+// is still a press of that button. The other red buttons start something
+// (Test beam, Start spindle, Make mark) and are held back like any other.
 
 export interface PopUp {
     /** What counts as inside: the pop-up and what opened it. */
@@ -16,7 +18,7 @@ export interface PopUp {
 }
 
 /** The buttons a press always reaches, a pop-up up or not. */
-export const URGENT = ".btn-stop, .btn-danger";
+export const URGENT = ".btn-stop, .urgent";
 
 const up = new Set<PopUp>();
 let installed = false;

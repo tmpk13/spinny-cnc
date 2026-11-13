@@ -666,7 +666,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     deviceCenter.title = "find where the bottom camera is and its picture's scale, roll and mirror, by moving the nozzle over it until it sits on the crosshair";
     const runout = button("Measure runout", () => into(ctx, "placing", ctx.api.pnpRunout()), "btn");
     runout.title = "turn the nozzle over the bottom camera to measure how far its tip runs off its turning axis";
-    const deviceAbort = button("Abort", () => into(ctx, "pnp", ctx.api.pnpAbort()), "btn btn-danger", "stop the routine");
+    const deviceAbort = button("Abort", () => into(ctx, "pnp", ctx.api.pnpAbort()), "btn btn-danger urgent", "stop the routine");
     const deviceCameraLine = el("p", { class: "muted" });
     const deviceRoutineLine = el("p", { class: "muted vision-routine" });
     const deviceCalibration = el("div", { class: "stack pnp-camera-device" },
@@ -722,7 +722,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     centerButton.title = "find the bottom camera's place and scale by moving the nozzle onto its crosshair";
     const partButton = button("Look at part", () => into(ctx, "pnp", ctx.api.pnpPart()), "btn");
     partButton.title = "over the bottom camera with a part on the nozzle: measure where it sits on the nozzle";
-    const abortButton = button("Abort", () => into(ctx, "pnp", ctx.api.pnpAbort()), "btn btn-danger", "stop the routine");
+    const abortButton = button("Abort", () => into(ctx, "pnp", ctx.api.pnpAbort()), "btn btn-danger urgent", "stop the routine");
     const overButton = button("Nozzle over camera", () => nozzleOverCamera(), "btn");
     overButton.title = "the nozzle over the bottom camera's place at the travel height, then down to Sharp at H";
     const routineLine = el("p", { class: "muted vision-routine" });

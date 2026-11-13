@@ -380,8 +380,11 @@ moved, and has no size handles.
 
 While a menu, a drawing, the page settings or another pop-up is open,
 the pointer outside it is a circle with an x: a press there only closes
-the pop-up and presses nothing under it. Stop and the other red buttons
-are the exception: they always take the press.
+the pop-up and presses nothing under it. The buttons that stop something
+are the exception (the bar's Stop, a run's Stop and Hold, probing's Stop,
+every Abort, the jog's Cancel, the console's Hold and Reset, Laser off,
+Stop spindle): they always take the press. The red buttons that start
+something (Test beam, Start spindle, Make mark) do not.
 
 Every button shows on hover what it does, a disabled one also why it is
 off ("connect first"), and a key in the Config tab's machine file shows

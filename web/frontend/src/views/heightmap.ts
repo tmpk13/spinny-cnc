@@ -621,7 +621,7 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
 
     const probeButton = button("Probe", () => startProbe(), "btn btn-primary", "probe the grid and build the height map");
     const continueButton = button("Continue", () => continueProbe(), "btn", "go on from where probing stopped");
-    const stopButton = button("Stop", () => ctx.call(ctx.api.probeStop()), "btn btn-danger", "stop probing");
+    const stopButton = button("Stop", () => ctx.call(ctx.api.probeStop()), "btn btn-danger urgent", "stop probing");
     const probeNote = el("p", { class: "muted hint" });
     // The pads: for a probe that must land on copper, the board is probed
     // at the selected job's pads instead of a grid.

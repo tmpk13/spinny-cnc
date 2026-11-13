@@ -261,7 +261,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
     const step = numberField({ value: 2, min: 0, max: 20, step: 0.5, width: "5rem" });
     const findButton = button("Find mark", () => findMark(), "btn btn-primary");
     findButton.title = "lift the head, center the camera on the mark and measure the offset, scale and roll";
-    const abortButton = button("Abort", () => into(ctx, "camera", ctx.api.cameraAbort()), "btn btn-danger");
+    const abortButton = button("Abort", () => into(ctx, "camera", ctx.api.cameraAbort()), "btn btn-danger urgent");
     abortButton.title = "stop the camera's routine (Find mark or Search)";
     markButton.title = "drill a mark at the tool to measure the camera against";
     hereButton.title = "a mark or a hole is under the tool already: keep the tool's point as the mark";

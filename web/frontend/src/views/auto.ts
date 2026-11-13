@@ -135,7 +135,7 @@ export function mountAuto(roots: { chat: HTMLElement; about: HTMLElement }, ctx:
         placeholder: "Message (Enter sends, Shift+Enter for a new line)",
     }) as HTMLTextAreaElement;
     const send = button("Send", () => sendMessage(), "btn btn-primary", "send the message");
-    const stop = button("Stop", () => stopTurn(), "btn btn-danger");
+    const stop = button("Stop", () => stopTurn(), "btn btn-danger urgent");
     stop.title = "stop this turn; what it made stays";
     chat.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Auto"), el("div", { class: "button-row" }, fresh)),

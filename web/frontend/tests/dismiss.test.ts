@@ -109,3 +109,24 @@ test("a pop-up whose nodes left the page holds back no press", () => {
     expect(pressed).toEqual(["Run"]);
     expect(document.documentElement.hasAttribute("data-dismiss")).toBe(false);
 });
+
+test("a red button that starts something is held back like any other; one that stops is not", () => {
+    const { pop, opener } = setup();
+    const pressed: string[] = [];
+    const fire = Object.assign(document.createElement("button"), { textContent: "Test beam", className: "btn btn-danger btn-big" });
+    const hold = Object.assign(document.createElement("button"), { textContent: "Hold", className: "btn urgent" });
+    for (const button of [fire, hold]) {
+        button.addEventListener("click", () => pressed.push(button.textContent ?? ""));
+        document.body.append(button);
+    }
+    const open = (): (() => void) => {
+        const release = popUp({ nodes: () => [pop, opener], close: () => release() });
+        return release;
+    };
+    open();
+    press(fire);
+    expect(pressed).toEqual([]);
+    open();
+    press(hold);
+    expect(pressed).toEqual(["Hold"]);
+});

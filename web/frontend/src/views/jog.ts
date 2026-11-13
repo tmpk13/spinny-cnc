@@ -126,7 +126,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
     const typed = new Map<BarId, number>();
     const feedInput = numberField({ placeholder: "default", min: 0 });
     const feed = (): number | null => parseNumber(feedInput.value);
-    const cancelButton = button("Cancel", () => cancel(), "btn btn-danger btn-small");
+    const cancelButton = button("Cancel", () => cancel(), "btn btn-danger btn-small urgent");
     cancelButton.title = "stop a jog or goto (Escape)";
     // Fine: every bar jogs by its smallest step while pressed.
     let fine = false;

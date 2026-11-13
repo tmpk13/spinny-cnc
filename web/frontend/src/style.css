@@ -4620,9 +4620,10 @@ a.btn.disabled {
 /* A pop-up up (src/dismiss.ts): everywhere else the pointer is a circle
    with an x, since a press there only takes the pop-up away. The pop-up
    and what opened it (data-popup) keep their own pointers, and so do the
-   stop buttons, which a press always reaches. */
+   buttons that stop something (.btn-stop, .urgent), which a press always
+   reaches. */
 :root[data-dismiss] body,
-:root[data-dismiss] body *:not([data-popup], [data-popup] *, .btn-stop, .btn-danger, .btn-danger *) {
+:root[data-dismiss] body *:not([data-popup], [data-popup] *, .btn-stop, .btn-stop *, .urgent, .urgent *) {
     cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9.5' fill='%23fdf6e3' fill-opacity='0.9' stroke='%23002b36' stroke-width='1.6'/%3E%3Cpath d='M8.6 8.6l6.8 6.8M15.4 8.6l-6.8 6.8' stroke='%23002b36' stroke-width='1.9' stroke-linecap='round'/%3E%3C/svg%3E") 12 12, pointer !important;
 }
 
