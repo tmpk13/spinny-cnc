@@ -20,6 +20,7 @@ import { mountCameraViews } from "./camview.ts";
 import { into, type Ctx } from "./context.ts";
 import { mountFindBoard, shownGuesses } from "./findboard.ts";
 import { PLACING_SETUP, gcodePlacing, mountHead, upCameraText } from "./placing.ts";
+import { keptOut, mountPartsFilter, pickedToPlace, readShowKeptOut, setPickedToPlace, shownParts, writeShowKeptOut } from "./partsfilter.ts";
 import { mountPnpFeeders } from "./pnpfeeders.ts";
 import { mountPnpRefs } from "./pnprefs.ts";
 import { mountPnpRun } from "./pnprun.ts";
@@ -197,7 +198,7 @@ export function boardSvg(scene: BoardScene, onPick: (ref: string) => void): { ro
     const text = size / 45;
     for (const part of scene.parts) {
         const chosen = part.ref === scene.selected;
-        const group = svg("g", { class: `pnp-part${chosen ? " selected" : ""}${part.side === "back" ? " back" : ""}${part.dnp ? " dnp" : ""}`, "data-ref": part.ref },
+        const group = svg("g", { class: `pnp-part${chosen ? " selected" : ""}${part.side === "back" ? " back" : ""}${part.dnp ? " dnp" : ""}${keptOut(part) ? " kept-out" : ""}`, "data-ref": part.ref },
             svg("title", {}, `${part.ref} ${part.value} ${footprintName(part.footprint)}`),
             svg("circle", { cx: sx(part.x), cy: sy(part.y), r: (chosen ? dot * 2 : dot).toFixed(3) }),
             svg("text", { x: sx(part.x), y: (box.y1 - part.y - dot * 2.2).toFixed(3), "font-size": text.toFixed(3) }, part.ref),
@@ -525,6 +526,14 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     sidePick.value = readSide();
     const grouped = el("input", { type: "checkbox", "aria-label": "Group by value and footprint" }) as HTMLInputElement;
     grouped.checked = readStored(GROUP_KEY) === "1";
+    const showKeptOut = el("input", { type: "checkbox", "aria-label": "Show parts kept out of the position files" }) as HTMLInputElement;
+    showKeptOut.checked = readShowKeptOut();
+    const keptOutLabel = el("label", { class: "muted", title: "list the parts KiCad keeps out of the position files: test points, mounting holes" }, showKeptOut, " kept out");
+    // A filter kept changes which parts the backend marks: they are asked for again.
+    const partsFilter = mountPartsFilter(ctx, () => {
+        asked = null;
+        void loadParts(ctx.store.get());
+    });
     const partsNote = el("p", { class: "muted hint pnp-parts-note" });
     const table = el("table", { class: "pnp-parts" });
     const correct = el("input", { type: "checkbox", "aria-label": "Correct by the part on the nozzle" }) as HTMLInputElement;
@@ -538,7 +547,8 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         el("div", { class: "panel-head" }, el("h2", {}, "Parts")),
         el("fieldset", { class: "panel-body" },
             el("div", { class: "button-row" }, labeled("Job", jobPick, "labeled inline"), uploadButton, upload),
-            el("div", { class: "button-row" }, filter, sidePick, el("label", { class: "muted" }, grouped, " group")),
+            el("div", { class: "button-row" }, filter, sidePick, el("label", { class: "muted" }, grouped, " group"), keptOutLabel),
+            partsFilter.root,
             el("div", { class: "button-row" }, gotoButton, correctLabel, withCameraLabel),
             chosenLine,
             partsNote,
@@ -558,6 +568,10 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         writeStored(GROUP_KEY, grouped.checked ? "1" : "0");
         renderParts(ctx.store.get());
     });
+    showKeptOut.addEventListener("change", () => {
+        writeShowKeptOut(showKeptOut.checked);
+        renderAll();
+    });
     upload.addEventListener("change", () => void uploadBoard());
 
     let sortKey: SortKey = (COLUMNS.map(([key]) => key)).find((key) => key === (readStored(SORT_KEY) ?? "").replace(/^-/, "")) ?? "ref";
@@ -571,7 +585,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     fit.title = "the whole board again";
     roots.board.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Board"), fit),
-        el("div", { class: "panel-body" }, drawing, el("p", { class: "muted hint" }, "Click a part to pick it; Ctrl and the wheel zoom, a drag pans, a double-click fits. Hollow dots are on the back."
+        el("div", { class: "panel-body" }, drawing, el("p", { class: "muted hint" }, "Click a part to pick it; Ctrl and the wheel zoom, a drag pans, a double-click fits. Hollow dots are on the back, grey ones dnp or kept out of the position files."
             + " An outline is where a guess of the Find board panel says the camera's picture lies on the board, labeled with its share (dashed: the most likely, under the threshold); a ring is a corner taken.")),
     );
 
@@ -888,9 +902,9 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         return state.components !== null && state.components.job === state.job?.id ? state.components.components : [];
     }
 
-    /** The parts on the side shown. */
+    /** The parts on the side shown, less the ones the filter leaves out and, unless shown, the kept-out ones. */
     function sideParts(state: AppState): Component[] {
-        return filterParts(partsOf(state), "", sidePick.value as Side);
+        return shownParts(filterParts(partsOf(state), "", sidePick.value as Side), showKeptOut.checked);
     }
 
     // What the table and the drawing were last made from: they are made
@@ -924,10 +938,22 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         }))) as HTMLTableSectionElement;
     }
 
+    /** A kept-out part's mark, with the box that picks it to be placed all the same. */
+    function placePick(part: Component): HTMLElement {
+        const job = ctx.store.get().job?.id ?? "";
+        const box = el("input", { type: "checkbox", "aria-label": `Place ${part.ref}` }) as HTMLInputElement;
+        box.checked = pickedToPlace(job).has(part.ref);
+        box.addEventListener("change", () => setPickedToPlace(job, part.ref, box.checked));
+        const label = el("label", { class: "muted pnp-place-pick", title: "kept out of the position files: tick to place it all the same" }, " kept out ", box, " place");
+        // A press on the box is not a press on the row, which picks the part.
+        label.addEventListener("click", (event) => event.stopPropagation());
+        return label;
+    }
+
     function row(part: Component, hidden = false): HTMLTableRowElement {
-        return el("tr", { class: `${part.ref === selected ? "selected" : ""}${part.dnp ? " dnp" : ""}${hidden ? " hidden" : ""}`, onclick: () => pick(part.ref) },
+        return el("tr", { class: `${part.ref === selected ? "selected" : ""}${part.dnp ? " dnp" : ""}${keptOut(part) ? " kept-out" : ""}${hidden ? " hidden" : ""}`, onclick: () => pick(part.ref) },
             el("td", { class: "mono" }, part.ref),
-            el("td", {}, part.value, part.dnp ? el("span", { class: "muted" }, " dnp") : null),
+            el("td", {}, part.value, part.dnp ? el("span", { class: "muted" }, " dnp") : null, keptOut(part) ? placePick(part) : null),
             el("td", { class: "muted", title: part.footprint }, footprintName(part.footprint)),
             el("td", { class: "mono" }, formatFixed(part.x, 2)),
             el("td", { class: "mono" }, formatFixed(part.y, 2)),
@@ -943,12 +969,13 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
             ctx.store.set({ pnpPart: null });
         }
         renderActions(state);
-        const key = JSON.stringify([state.job?.id ?? null, state.components, filter.value, sidePick.value, selected, sortKey, sortDown, grouped.checked, [...folded], loading]);
+        partsFilter.render(all);
+        const key = JSON.stringify([state.job?.id ?? null, state.components, filter.value, sidePick.value, showKeptOut.checked, selected, sortKey, sortDown, grouped.checked, [...folded], loading]);
         if (key === tableKey) {
             return;
         }
         tableKey = key;
-        const shown = sortParts(filterParts(all, filter.value, sidePick.value as Side), sortKey, sortDown);
+        const shown = sortParts(shownParts(filterParts(all, filter.value, sidePick.value as Side), showKeptOut.checked), sortKey, sortDown);
         const note = state.components !== null && state.components.job === state.job?.id ? state.components.note : null;
         partsNote.textContent = !state.job
             ? "Pick a board job, or upload a .kicad_pcb, to list its parts."
@@ -1041,7 +1068,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         const machine = state.snapshot.machine;
         const camera = !gcodePlacing(state) && isCartesian(state.snapshot) ? cameraOnBoard(state.pnp?.position ?? null, machine?.joint.a ?? 0) : null;
         const parts = sideParts(state);
-        const key = JSON.stringify([state.job?.id ?? null, state.job?.outline.length ?? 0, state.job?.pads?.length ?? 0, state.job?.rotation ?? 0, state.components, selected, camera, sidePick.value, loading]);
+        const key = JSON.stringify([state.job?.id ?? null, state.job?.outline.length ?? 0, state.job?.pads?.length ?? 0, state.job?.rotation ?? 0, state.components, selected, camera, sidePick.value, showKeptOut.checked, loading]);
         if (key !== boardKey) {
             boardKey = key;
             const before = drawn?.box ?? null;

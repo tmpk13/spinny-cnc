@@ -6,7 +6,7 @@
 // picture's center, x right and y down.
 
 import { turnPoint } from "../align.ts";
-import type { Component, Job, PnpSettings, SpotPolarity, TopSettings } from "../types.ts";
+import type { Component, Job, PartsFilter, PartsFilterState, PnpSettings, SpotPolarity, TopSettings } from "../types.ts";
 import { svgUrl } from "./camlog.ts";
 import { round4 } from "./jobs.ts";
 import { CAMERA_SIZE } from "./machines.ts";
@@ -212,8 +212,9 @@ export function upInPicture(mm: [number, number], truth: UpTruth, size: string):
 
 /**
  * The parts a board job stands for: the mock reads no board file, so each
- * pad is a one-pad part where it lies, turned with the job, and two
- * fiducials sit 2 mm off the pads' corners.
+ * pad is a one-pad part where it lies, turned with the job, two fiducials
+ * sit 2 mm off the pads' corners, and a mounting hole kept out of the
+ * position files off a third.
  */
 export function mockComponents(job: Job): Component[] {
     if (!job.design?.board) {
@@ -235,6 +236,7 @@ export function mockComponents(job: Job): Component[] {
         fiducial: false,
         body: null,
         diameter: null,
+        exclude_from_pos_files: false,
     }));
     if (pads.length > 0) {
         const xs = pads.map(([x]) => x);
@@ -254,7 +256,62 @@ export function mockComponents(job: Job): Component[] {
             fiducial: true,
             body: null,
             diameter: 1,
+            exclude_from_pos_files: false,
         }));
+        parts.push({
+            ref: "H1",
+            value: "MountingHole",
+            footprint: "MountingHole:MountingHole_3.2mm_M3",
+            side: "front",
+            x: round4(Math.min(...xs) - 2),
+            y: round4(Math.max(...ys) + 2),
+            rotation: 0,
+            pads: 0,
+            smd: false,
+            dnp: false,
+            fiducial: false,
+            body: null,
+            diameter: null,
+            exclude_from_pos_files: true,
+        });
     }
     return parts;
+}
+
+/** The parts filter's expression, any case; null for an empty one; an Error saying why for one that does not compile. */
+export function partsFilterPattern(filter: PartsFilter): RegExp | null {
+    if (filter.pattern.length > 200) {
+        throw new Error("the parts filter is longer than 200 characters");
+    }
+    if (filter.pattern.trim() === "") {
+        return null;
+    }
+    try {
+        return new RegExp(filter.pattern, "i");
+    } catch (error) {
+        const said = error instanceof Error ? error.message.replace(/^Invalid regular expression: \/.*\/[a-z]*: /, "") : String(error);
+        throw new Error(`the parts filter is not a regular expression: ${said}`);
+    }
+}
+
+/** The filter as the backend answers it, with why it leaves nothing out when it does not compile. */
+export function partsFilterState(filter: PartsFilter): PartsFilterState {
+    try {
+        partsFilterPattern(filter);
+        return { ...filter, error: null };
+    } catch (error) {
+        return { ...filter, error: error instanceof Error ? error.message : String(error) };
+    }
+}
+
+/** Each part marked `filtered` when the filter matches its reference, value, footprint or any of them. */
+export function markFiltered(parts: Component[], filter: PartsFilter): Component[] {
+    let pattern: RegExp | null = null;
+    try {
+        pattern = partsFilterPattern(filter);
+    } catch {
+        pattern = null;
+    }
+    const fields = filter.field === "any" ? (["ref", "value", "footprint"] as const) : [filter.field];
+    return parts.map((part) => ({ ...part, filtered: pattern !== null && fields.some((field) => pattern!.test(part[field])) }));
 }

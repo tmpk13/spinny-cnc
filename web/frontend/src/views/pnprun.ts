@@ -13,6 +13,7 @@ import { formatFixed } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { PlacingPlan, PlacingState, PlacingStep } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
+import { pickedToPlace, placeRefs } from "./partsfilter.ts";
 import { partsLeft, placingRunText, planText } from "./placing.ts";
 
 const REPEAT_KEY = "spinny.pnp.repeat";
@@ -140,19 +141,30 @@ export function mountPnpRun(root: HTMLElement, ctx: Ctx): void {
     });
 
     let plan: PlacingPlan | null = null;
-    // The job the plan shown is of: the download is its program, once one planned.
+    // The job the plan shown is of, and the parts it asked for: the download
+    // is its program, once one planned.
     let planJob: string | null = null;
+    let planRefs: string[] | undefined;
+
+    /** The parts a plan or a run asks for: every one that can be, and the kept-out ones picked in the Parts panel. */
+    function picked(state: AppState, job: string): string[] | undefined {
+        const parts = state.components?.job === job ? state.components.components : [];
+        return placeRefs(parts, pickedToPlace(job));
+    }
 
     async function planNow(): Promise<void> {
-        const job = ctx.store.get().job;
+        const state = ctx.store.get();
+        const job = state.job;
         if (!job) {
             ctx.toast("error", "pick a board job first");
             return;
         }
-        const result = await ctx.call(ctx.api.pnpPlan(job.id));
+        const refs = picked(state, job.id);
+        const result = await ctx.call(ctx.api.pnpPlan(job.id, refs));
         if (result) {
             plan = result;
             planJob = job.id;
+            planRefs = refs;
             renderPlan();
         }
     }
@@ -164,7 +176,7 @@ export function mountPnpRun(root: HTMLElement, ctx: Ctx): void {
             ctx.toast("error", "pick a board job first");
             return;
         }
-        const refs = rest ? partsLeft(state.placing, plan, job.id) : undefined;
+        const refs = rest ? partsLeft(state.placing, plan, job.id) : picked(state, job.id);
         if (rest && refs!.length === 0) {
             ctx.toast("info", "the last run placed every part");
             return;
@@ -175,6 +187,7 @@ export function mountPnpRun(root: HTMLElement, ctx: Ctx): void {
         }
         plan = planned;
         planJob = job.id;
+        planRefs = refs;
         renderPlan();
         const device = state.placing?.name ?? state.placing?.machine ?? "the machine";
         const left = planned.skipped.length > 0 ? ` ${planned.skipped.length} parts left out (listed below).` : "";
@@ -207,7 +220,7 @@ export function mountPnpRun(root: HTMLElement, ctx: Ctx): void {
         // would save the refusal as the file.
         const job = ctx.store.get().job;
         const ready = plan !== null && planJob !== null && job?.id === planJob;
-        download.href = ready ? ctx.api.pnpProgramUrl(planJob!) : "";
+        download.href = ready ? ctx.api.pnpProgramUrl(planJob!, planRefs) : "";
         download.classList.toggle("disabled", !ready);
         planLine.textContent = plan ? planText(plan) : "";
         replace(skipped, ...(plan?.skipped ?? []).map((entry) => el("li", {}, `${entry.ref}: ${entry.reason}`)));

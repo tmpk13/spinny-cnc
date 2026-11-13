@@ -164,9 +164,12 @@ describe("a G-code machine in the mock", () => {
         const referenced = await backend.pnpReference({ job: job.id, ref: components[0]!.ref });
         expect(referenced.references).toEqual([{ job: job.id, ref: components[0]!.ref, at: [40, 30], by: "nozzle" }]);
         const plan = await backend.pnpPlan(job.id);
-        // Three test points, a strip of two.
+        // Three test points, a strip of two; the mounting hole is kept out of the position files.
         expect(plan.parts.length).toBe(2);
-        expect(plan.skipped).toEqual([{ ref: components[2]!.ref, reason: "feeder r-10k-0603 is empty" }]);
+        expect(plan.skipped).toEqual([
+            { ref: components[2]!.ref, reason: "feeder r-10k-0603 is empty" },
+            { ref: "H1", reason: "kept out of the position files: pick it to place it" },
+        ]);
         expect(backend.pnpProgramUrl(job.id).startsWith("data:text/plain")).toBe(true);
         await backend.pnpRun(job.id);
         await expect(backend.home()).rejects.toMatchObject({ status: 409 });

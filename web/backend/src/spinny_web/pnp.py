@@ -129,7 +129,10 @@ class Footprint:
     """A footprint as the board file has it: KiCad's board frame, mm with y
     down, and its angle in degrees, counterclockwise as drawn. `body` is
     the extent of its fabrication drawing in its own frame, longer side
-    first, when it has one; `diameter` a fiducial's largest pad."""
+    first, when it has one; `diameter` a fiducial's largest pad.
+    `exclude_from_pos_files` is KiCad's flag of that name: a footprint the
+    position files leave out (a test point pad, a mounting hole, a net
+    tie), which nothing places unless it is asked for by name."""
 
     ref: str
     value: str
@@ -144,6 +147,7 @@ class Footprint:
     fiducial: bool = False
     body: tuple[float, float] | None = None
     diameter: float | None = None
+    exclude_from_pos_files: bool = False
 
 
 FAB_LAYERS = ("F.Fab", "B.Fab")
@@ -209,9 +213,10 @@ def largest_pad(node: list) -> float | None:
 
 def footprints_of(text: str) -> list[Footprint]:
     """The footprints of a .kicad_pcb text, KiCad 5 (`module`, `fp_text`)
-    to 10 (`footprint`, `property`), in file order. A footprint kept out of
-    the position files or on the board only (a logo) is not a part, and
-    neither is one with no reference; a fiducial is kept whatever its
+    to 10 (`footprint`, `property`), in file order. One on the board only
+    (a logo) is not a part, and neither is one with no reference; one kept
+    out of the position files is listed with that flag (KiCad's test point
+    pads and mounting holes carry it); a fiducial is kept whatever its
     flags, marked as one, for the top camera to find."""
     tree = parse_sexp(text)
     root = tree[0] if tree and isinstance(tree[0], list) else tree
@@ -232,7 +237,7 @@ def footprints_of(text: str) -> list[Footprint]:
         flags = {word for word in attr[1:] if isinstance(word, str)}
         name = node[1] if len(node) > 1 and isinstance(node[1], str) else ""
         fiducial = bool(ref) and is_fiducial(ref, name)
-        if not ref or "*" in ref or (("exclude_from_pos_files" in flags or "board_only" in flags) and not fiducial):
+        if not ref or "*" in ref or ("board_only" in flags and not fiducial):
             continue
         at = _child(node, "at") or ["at", "0", "0"]
         layer = _child(node, "layer")
@@ -253,6 +258,7 @@ def footprints_of(text: str) -> list[Footprint]:
                 fiducial=fiducial,
                 body=body_of(node),
                 diameter=largest_pad(node) if fiducial else None,
+                exclude_from_pos_files="exclude_from_pos_files" in flags,
             )
         )
     return found
@@ -300,6 +306,7 @@ def job_components(job, path: Path) -> list[dict]:
                 "fiducial": footprint.fiducial,
                 "body": list(footprint.body) if footprint.body is not None else None,
                 "diameter": footprint.diameter,
+                "exclude_from_pos_files": footprint.exclude_from_pos_files,
             }
         )
     return parts

@@ -22,9 +22,11 @@ from spinny_web.vision import VisionError
 
 REPO = Path(__file__).resolve().parents[3]
 BOARD_SAMPLE = REPO / "toolpath" / "tests" / "data" / "board.kicad_pcb"
+KICAD_TEST_POINT = Path("/usr/share/kicad/footprints/TestPoint.pretty/TestPoint_Pad_D1.0mm.kicad_mod")
 
 # A board as KiCad 10 writes it: every token on a line of its own, a back
-# side part, a part left out of the position files, and a logo.
+# side part, a mounting hole and a test point pad kept out of the position
+# files (the attributes as KiCad's library gives them), and a logo.
 BOARD = """(kicad_pcb
 \t(version 20260206)
 \t(footprint "Resistor_SMD:R_0603_1608Metric"
@@ -65,6 +67,16 @@ BOARD = """(kicad_pcb
 \t\t(property "Reference" "G***")
 \t\t(attr board_only)
 \t)
+\t(footprint "TestPoint:TestPoint_Pad_D1.0mm"
+\t\t(layer "F.Cu")
+\t\t(at 104 82)
+\t\t(property "Reference" "TP1")
+\t\t(property "Value" "TestPoint")
+\t\t(attr exclude_from_pos_files exclude_from_bom)
+\t\t(pad "1" smd circle
+\t\t\t(at 0 0)
+\t\t)
+\t)
 )
 """
 
@@ -90,14 +102,25 @@ def test_an_s_expression_reads_with_its_strings_unquoted():
 
 def test_the_parts_of_a_board_leave_out_what_is_no_part():
     parts = footprints_of(BOARD)
-    assert [part.ref for part in parts] == ["R1", "C1"]
-    r1, c1 = parts
+    # The logo is on the board only; the hole and the test point are kept
+    # out of the position files, and listed so.
+    assert [(part.ref, part.exclude_from_pos_files) for part in parts] == [("R1", False), ("C1", False), ("H1", True), ("TP1", True)]
+    r1, c1, _, tp1 = parts
     assert (r1.value, r1.footprint, r1.side, r1.x, r1.y, r1.rotation, r1.pads, r1.smd, r1.dnp) == (
         "10k", "Resistor_SMD:R_0603_1608Metric", "front", 110.0, 80.0, 90.0, 2, True, False,
     )
     assert (c1.side, c1.rotation, c1.dnp) == ("back", 180.0, True)
+    assert (tp1.value, tp1.x, tp1.y, tp1.pads, tp1.dnp) == ("TestPoint", 104.0, 82.0, 1, False)
     (u3,) = footprints_of(BOARD_V5)
     assert (u3.ref, u3.value, u3.x, u3.y, u3.rotation, u3.pads) == ("U3", "LM358 (dual)", 50.8, 30.48, 270.0, 1)
+
+
+@pytest.mark.skipif(not KICAD_TEST_POINT.exists(), reason="needs KiCad's footprint library")
+def test_a_test_point_from_kicads_library_is_listed_kept_out_of_the_position_files():
+    # The library's footprint as a board holds it once annotated.
+    footprint = KICAD_TEST_POINT.read_text(encoding="utf-8").replace('"REF**"', '"TP7"', 1)
+    (tp7,) = footprints_of(f"(kicad_pcb\n(version 20260206)\n{footprint}\n)\n")
+    assert tp7.ref == "TP7" and tp7.exclude_from_pos_files and not tp7.fiducial
 
 
 @pytest.mark.skipif(not BOARD_SAMPLE.exists(), reason="needs toolpath/tests/data/board.kicad_pcb")
@@ -331,6 +354,34 @@ def test_the_parts_route_and_a_goto_to_a_part(client, fake):
     body = client.get(f"/api/jobs/{drawing.id}/components").json()
     assert body["components"] == [] and "kicad_pcb" in body["note"]
     assert client.get("/api/jobs/nope/components").status_code == 404
+
+
+def test_the_parts_filter_marks_the_parts_it_matches_and_refuses_a_bad_expression(client, tmp_path):
+    job_id = _board_job(client)
+    assert client.get("/api/pnp/parts-filter").json() == {"pattern": "", "field": "ref", "error": None}
+
+    def filtered() -> list[str]:
+        parts = client.get(f"/api/jobs/{job_id}/components").json()["components"]
+        return [part["ref"] for part in parts if part["filtered"]]
+
+    assert filtered() == []
+    # By reference, any case; then by footprint, and by any of the three.
+    assert client.put("/api/pnp/parts-filter", json={"pattern": "^tp|^h"}).json() == {"pattern": "^tp|^h", "field": "ref", "error": None}
+    assert filtered() == ["H1", "TP1"]
+    client.put("/api/pnp/parts-filter", json={"pattern": "0402", "field": "footprint"})
+    assert filtered() == ["C1"]
+    client.put("/api/pnp/parts-filter", json={"pattern": "^(10k|C1)$", "field": "any"})
+    assert filtered() == ["R1", "C1"]
+    # An expression that does not compile is refused, saying where, and the
+    # one before stays; it outlives the backend in its config.
+    refused = client.put("/api/pnp/parts-filter", json={"pattern": "R(1", "field": "ref"})
+    assert refused.status_code == 400 and refused.json()["detail"] == "the parts filter is not a regular expression: missing ), unterminated subpattern at character 2"
+    assert client.put("/api/pnp/parts-filter", json={"pattern": "x", "field": "nope"}).status_code == 422
+    assert client.get("/api/pnp/parts-filter").json()["pattern"] == "^(10k|C1)$"
+    assert Backend(root=tmp_path, config_path=client.backend.config_path).parts_filter_state()["field"] == "any"
+    # One written into the config by hand that does not compile leaves nothing out, and says why.
+    client.backend.config["parts_filter"] = {"pattern": "[", "field": "ref"}
+    assert filtered() == [] and "not a regular expression" in client.get("/api/pnp/parts-filter").json()["error"]
 
 
 def test_unequal_or_skewed_moves_in_the_picture_are_refused():

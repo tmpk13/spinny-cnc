@@ -77,7 +77,10 @@ import {
     UP_TRUTH,
     checkPnpSettings,
     checkTopSettings,
+    markFiltered,
     mockComponents,
+    partsFilterPattern,
+    partsFilterState,
     topFrameSvg,
     upFrameSvg,
     upInPicture,
@@ -220,6 +223,8 @@ import type {
     PadProbePlan,
     PadProbeRequest,
     PartOffset,
+    PartsFilter,
+    PartsFilterState,
     Path,
     PlacingPlan,
     PlacingRun,
@@ -6932,7 +6937,27 @@ export class MockBackend implements Api, EventFeed {
         if (!job.design?.board) {
             return { job: jobId, components: [], note: "only a .kicad_pcb upload keeps the board its parts are read from" };
         }
-        return { job: jobId, components: mockComponents(job), note: null };
+        return { job: jobId, components: markFiltered(mockComponents(job), this.partsFilterKept), note: null };
+    }
+
+    /** The parts filter, as the backend keeps it in its config. */
+    private partsFilterKept: PartsFilter = { pattern: "", field: "ref" };
+
+    async partsFilter(): Promise<PartsFilterState> {
+        return partsFilterState(this.partsFilterKept);
+    }
+
+    async setPartsFilter(filter: PartsFilter): Promise<PartsFilterState> {
+        if (!["ref", "value", "footprint", "any"].includes(filter.field)) {
+            throw new ApiError(422, "field must be ref, value, footprint or any");
+        }
+        try {
+            partsFilterPattern(filter);
+        } catch (error) {
+            throw new ApiError(400, errorText(error));
+        }
+        this.partsFilterKept = { pattern: filter.pattern, field: filter.field };
+        return partsFilterState(this.partsFilterKept);
     }
 
     async pnpGoto(request: PnpGotoRequest): Promise<void> {
@@ -8415,7 +8440,7 @@ export class MockBackend implements Api, EventFeed {
     private devicePlanOf(jobId: string, refs: string[] | null): { device: MockDevice; plan: ReturnType<typeof planDevice> } {
         const device = this.deviceSession === null ? this.foundSlots(this.placingDevice()) : this.placingDevice();
         const job = this.requireJob(jobId);
-        const parts = mockComponents(job);
+        const parts = markFiltered(mockComponents(job), this.partsFilterKept);
         if (parts.length === 0) {
             throw new ApiError(400, "only a .kicad_pcb upload keeps the board its parts are read from");
         }

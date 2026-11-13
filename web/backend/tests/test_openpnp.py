@@ -183,6 +183,29 @@ def test_the_program_picks_from_the_feeders_and_places_on_the_fitted_board():
     assert [block.ref for block in picked.blocks] == ["C1"] and picked.skipped == [{"ref": "Q9", "reason": "not a part of this job"}]
 
 
+def test_a_part_kept_out_of_the_position_files_is_placed_only_by_name_and_a_filtered_one_never():
+    fit = board_fit([((0.0, 0.0), (100.0, 50.0))], None)
+    parts = [
+        part("TP1", "100n", "TestPoint:TestPoint_Pad_D1.0mm", 1.0, 1.0, exclude_from_pos_files=True),
+        part("TP2", "100n", "TestPoint:TestPoint_Pad_D1.0mm", 2.0, 1.0, exclude_from_pos_files=True),
+        part("C1", "100n", "Capacitor_SMD:C_0402", 3.0, 1.0, filtered=True),
+        part("C2", "100n", "Capacitor_SMD:C_0402", 4.0, 1.0),
+    ]
+    program = plan(device(), parts, fit, {})
+    assert [block.ref for block in program.blocks] == ["C2"]
+    assert program.skipped == [
+        {"ref": "TP1", "reason": "kept out of the position files: pick it to place it"},
+        {"ref": "TP2", "reason": "kept out of the position files: pick it to place it"},
+        {"ref": "C1", "reason": "left out by the parts filter"},
+    ]
+    # Asked for by name it is placed; the filter leaves its part out even then.
+    picked = plan(device(), parts, fit, {}, refs=["TP2", "C1", "C2"])
+    assert [block.ref for block in picked.blocks] == ["TP2", "C2"] and picked.skipped == [{"ref": "C1", "reason": "left out by the parts filter"}]
+    # A feeder that names it in its refs places it too.
+    named = parse(gcode_file(PROFILE.replace('match = "100n"', 'refs = ["TP1", "C2"]')), "test")
+    assert [block.ref for block in plan(named, parts, fit, {}).blocks] == ["TP1", "C2"]
+
+
 # --- the link --------------------------------------------------------------------------
 
 

@@ -55,6 +55,8 @@ import type {
     Mode,
     PadProbePlan,
     PadProbeRequest,
+    PartsFilter,
+    PartsFilterState,
     PlacingPlan,
     PlacingState,
     PnpGotoRequest,
@@ -318,6 +320,10 @@ export interface Api {
     pnpGoto(request: PnpGotoRequest): Promise<void>;
     /** The parts of a board job; none for a job that keeps no board file. */
     components(jobId: string): Promise<ComponentsResponse>;
+    /** The parts filter kept on the backend, which a placing run honors. */
+    partsFilter(): Promise<PartsFilterState>;
+    /** Keeps the parts filter; an expression that does not compile is refused (400). */
+    setPartsFilter(filter: PartsFilter): Promise<PartsFilterState>;
 
     /** What the PNP tab keeps of the G-code machine it places with: the board's references, the feeders' counts, the machine's link and a run. */
     placingState(): Promise<PlacingState>;
@@ -1015,6 +1021,14 @@ export class HttpApi implements Api {
 
     components(jobId: string): Promise<ComponentsResponse> {
         return this.request<ComponentsResponse>("GET", `/api/jobs/${encodeURIComponent(jobId)}/components`);
+    }
+
+    partsFilter(): Promise<PartsFilterState> {
+        return this.request<PartsFilterState>("GET", "/api/pnp/parts-filter");
+    }
+
+    setPartsFilter(filter: PartsFilter): Promise<PartsFilterState> {
+        return this.request<PartsFilterState>("PUT", "/api/pnp/parts-filter", filter);
     }
 
     placingState(): Promise<PlacingState> {

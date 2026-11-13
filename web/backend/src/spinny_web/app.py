@@ -91,6 +91,7 @@ from .openpnp import machine_of
 from .placing_part import PlacingPart
 from .probing_part import ProbingPart
 from .pnp import MachineMover, PnpError, UpCamera, job_components
+from .parts import KEY as PARTS_FILTER_KEY, PartsFilter, filter_of, mark as mark_filtered, state as filter_state
 from .topcam import TopCamera
 from .heightmap import (
     OFF,
@@ -3652,13 +3653,26 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         return self.pnp.state()
 
     def job_parts(self, job_id: str) -> dict:
-        """The parts of a job's board in the job's frame; none for a job
-        that keeps no board file, with why."""
+        """The parts of a job's board in the job's frame, each marked
+        `filtered` when the parts filter leaves it out; none for a job that
+        keeps no board file, with why."""
         job = self._job(job_id)
         path = self.store.board_path(job_id)
         if job.design is None or not job.design.board or path is None:
             return {"job": job_id, "components": [], "note": "only a .kicad_pcb upload keeps the board its parts are read from"}
-        return {"job": job_id, "components": job_components(job, path), "note": None}
+        return {"job": job_id, "components": mark_filtered(job_components(job, path), filter_of(self.config)), "note": None}
+
+    def parts_filter_state(self) -> dict:
+        return filter_state(filter_of(self.config))
+
+    def set_parts_filter(self, body: PartsFilter) -> dict:
+        """Keeps the parts filter; one that does not compile is refused, and
+        the one kept before stays."""
+        body.compiled()
+        with self._config_lock:
+            self.config[PARTS_FILTER_KEY] = body.model_dump()
+        self._save_config()
+        return filter_state(body)
 
     def pnp_goto(self, body: PnpGotoBody) -> dict:
         """The nozzle over a part's place, by a goto (so at the travel height
@@ -4724,6 +4738,14 @@ def create_app(
     @app.get("/api/jobs/{job_id}/components")
     def job_components_route(job_id: str):
         return guarded(lambda: backend.job_parts(job_id))
+
+    @app.get("/api/pnp/parts-filter")
+    def parts_filter_state():
+        return backend.parts_filter_state()
+
+    @app.put("/api/pnp/parts-filter")
+    def set_parts_filter(body: PartsFilter):
+        return guarded(lambda: backend.set_parts_filter(body))
 
     # --- placing with a G-code machine ---
 

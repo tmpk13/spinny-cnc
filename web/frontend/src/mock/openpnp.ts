@@ -965,6 +965,10 @@ export function planDevice(
             }
             continue;
         }
+        if (part.filtered) {
+            skipped.push({ ref: part.ref, reason: "left out by the parts filter" });
+            continue;
+        }
         if (part.dnp) {
             skipped.push({ ref: part.ref, reason: "not to be fitted (dnp)" });
             continue;
@@ -974,6 +978,11 @@ export function planDevice(
             continue;
         }
         const feeder = feederFor(device.feeders, part.value, part.footprint, part.ref);
+        // Kept out of the position files: placed only when asked for by name, or named by its feeder.
+        if (part.exclude_from_pos_files && wanted === null && !(feeder?.refs ?? []).includes(part.ref)) {
+            skipped.push({ ref: part.ref, reason: "kept out of the position files: pick it to place it" });
+            continue;
+        }
         if (!feeder) {
             skipped.push({ ref: part.ref, reason: "no feeder holds it" });
             continue;

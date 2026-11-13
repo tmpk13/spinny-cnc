@@ -706,6 +706,14 @@ through it:
 3. Pick a board job uploaded as a `.kicad_pcb`: its footprints are listed
    and drawn on the board with the head and the bottom camera; a press on a
    row or a dot picks one.
+   Footprints KiCad keeps out of the position files (its test point pads,
+   mounting holes, net ties) are listed grey as *kept out*; the *kept out*
+   box hides them, and a placing run leaves them out unless their *place*
+   box is ticked (or a feeder names them in its `refs`). *Leave out* takes
+   a regular expression (any case) tested against the reference, the
+   value, the footprint or any of them: *Apply* keeps it on the backend,
+   the parts it matches leave the list, the drawing and every placing run,
+   and the line under it counts them, or says why an expression is refused.
 4. With a part on the nozzle, *Look at part* reads where its center sits
    against the nozzle's. *Go to part* takes the nozzle over the picked
    part's place at the travel height, or, ticked, the part's center.

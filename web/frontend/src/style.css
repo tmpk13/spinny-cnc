@@ -3662,6 +3662,35 @@ table.pnp-parts tr.dnp td {
     max-height: 20rem;
 }
 
+/* The parts KiCad keeps out of the position files, muted, each with the
+   box that picks it to be placed, and the parts filter's row. */
+table.pnp-parts tr.kept-out td {
+    color: var(--muted);
+}
+
+.pnp-place-pick {
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.pnp-place-pick input {
+    vertical-align: middle;
+}
+
+.pnp-filter .labeled.inline:first-child {
+    flex: 1 1 12rem;
+    min-width: 0;
+}
+
+.pnp-filter-pattern {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.pnp-board .pnp-part.kept-out circle {
+    fill: var(--muted);
+}
+
 /* The parts table: sorted by a column pressed, grouped by value and footprint. */
 table.pnp-parts th.sortable {
     cursor: pointer;

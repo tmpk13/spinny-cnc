@@ -1077,13 +1077,15 @@ def plan(
 
     `parts` are the job's components (job frame), `fit` takes them to the
     machine, `taken` is how many parts each feeder has given already, and
-    `refs` the parts to place, every one that can be by default. A part on
-    the back, one not to be fitted, one no feeder holds (or whose feeder is
-    empty), and one whose feeder wants the up camera while the nozzle has
-    not been centered over it (`vision_ready`) is skipped, with why; a
-    fiducial is not a part, and is named only when asked for. `runout` is
-    the nozzle's tip off its turning axis at 0, the head moving to keep
-    the tip on each place at the part's angle."""
+    `refs` the parts to place, every one that can be by default. A part the
+    parts filter leaves out, one on the back, one not to be fitted, one no
+    feeder holds (or whose feeder is empty), and one whose feeder wants the
+    up camera while the nozzle has not been centered over it
+    (`vision_ready`) is skipped, with why; so is one kept out of the
+    position files, unless `refs` or a feeder's refs name it. A fiducial is
+    not a part, and is named only when asked for. `runout` is the nozzle's
+    tip off its turning axis at 0, the head moving to keep the tip on each
+    place at the part's angle."""
     given = dict(taken)
     blocks: list[Block] = []
     skipped: list[dict] = []
@@ -1100,6 +1102,9 @@ def plan(
             if wanted is not None:
                 skipped.append({"ref": ref, "reason": "a fiducial, not a part"})
             continue
+        if part.get("filtered"):
+            skipped.append({"ref": ref, "reason": "left out by the parts filter"})
+            continue
         if part.get("dnp"):
             skipped.append({"ref": ref, "reason": "not to be fitted (dnp)"})
             continue
@@ -1107,6 +1112,9 @@ def plan(
             skipped.append({"ref": ref, "reason": "on the back"})
             continue
         feeder = feeder_for(machine, part)
+        if part.get("exclude_from_pos_files") and wanted is None and not (feeder is not None and ref in feeder.refs):
+            skipped.append({"ref": ref, "reason": "kept out of the position files: pick it to place it"})
+            continue
         if feeder is None:
             skipped.append({"ref": ref, "reason": "no feeder holds it"})
             continue

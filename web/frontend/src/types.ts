@@ -1244,6 +1244,21 @@ export interface Component {
     body?: [number, number] | null;
     /** A fiducial's largest pad, mm. */
     diameter?: number | null;
+    /** KiCad keeps it out of the position files (a test point pad, a mounting hole): placed only when picked. */
+    exclude_from_pos_files?: boolean;
+    /** The parts filter leaves it out of the list and of placing. */
+    filtered?: boolean;
+}
+
+/** The parts filter: a regular expression, any case, tested against each part's reference, value, footprint or any of them. */
+export interface PartsFilter {
+    pattern: string;
+    field: "ref" | "value" | "footprint" | "any";
+}
+
+export interface PartsFilterState extends PartsFilter {
+    /** Why a kept expression leaves nothing out: it does not compile. */
+    error: string | null;
 }
 
 export interface ComponentsResponse {

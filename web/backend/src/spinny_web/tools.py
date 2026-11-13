@@ -664,7 +664,9 @@ def _tools() -> tuple[Tool, ...]:
         Tool(
             "list_board_parts",
             "The parts of a board job imported from a .kicad_pcb: reference, value, footprint, side, place in"
-            " the job's frame (x, y in mm), rotation in degrees, pads, and whether it is marked do not place."
+            " the job's frame (x, y in mm), rotation in degrees, pads, whether it is marked do not place, whether"
+            " KiCad keeps it out of the position files (test point pads, mounting holes: placed only when named in"
+            " refs), and whether the operator's parts filter leaves it out of placing."
             " Empty, with a note, for a job that keeps no board file.",
             obj({"job_id": JOB}, ("job_id",)),
             (Route(get, "/api/jobs/{job_id}/components"),),
