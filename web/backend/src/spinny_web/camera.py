@@ -80,6 +80,8 @@ MIN_ROUNDNESS = 0.7
 AREA_SPREAD = 2.0
 MIN_FILL = 0.75
 PAD_AREA = 2.5
+# A disc fills pi/4 (0.79) of its smallest rectangle, a square all of it.
+MAX_RECT_FILL = 0.9
 
 
 def feature_limits(diameter: float | None, mm_per_px: float, area: float | None = None) -> dict:
@@ -106,6 +108,13 @@ def round_problem(reply: dict) -> str | None:
     major, minor = reply.get("major"), reply.get("minor")
     if isinstance(major, (int, float)) and isinstance(minor, (int, float)) and major > 0.0 and minor / major < MIN_ROUNDNESS:
         return f"the spot found is {minor / major * 100.0:.0f}% as wide as it is long, not a round mark"
+    # A square has a disc's moments; it fills its smallest rectangle (a
+    # disc fills pi/4 of it).
+    rect, area = reply.get("rect"), reply.get("area")
+    if isinstance(rect, dict) and isinstance(area, (int, float)):
+        box = rect.get("length", 0.0) * rect.get("width", 0.0) if all(isinstance(rect.get(k), (int, float)) for k in ("length", "width")) else 0.0
+        if box > 0.0 and area / box > MAX_RECT_FILL:
+            return f"the spot found fills {area / box * 100.0:.0f}% of its rectangle, a square, not a round mark"
     return None
 
 

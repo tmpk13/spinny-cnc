@@ -383,3 +383,13 @@ def test_no_corner_without_two_square_edges_and_one_corner_gives_a_turned_rough_
     place = rough_place([Corner("bottom left", (0.0, 0.0), (150.0, 80.0), 2.0, "edges")], MIDDLE)
     assert place.rotation == pytest.approx(2.0) and place.apply((0.0, 0.0)) == pytest.approx((150.0, 80.0))
     assert Corner("top left", (0.0, 30.0), (1.0, 2.0), 1.5, "edges").to_dict()["by"] == "edges"
+
+
+def test_a_round_mark_is_told_from_a_ring_a_bar_and_a_square():
+    from spinny_web.camera import round_problem
+
+    disc = {"area": 314.0, "major": 20.0, "minor": 20.0, "fill": 1.0, "rect": {"length": 20.0, "width": 20.0, "angle": 0.0}}
+    assert round_problem(disc) is None
+    assert "fills 54%" in round_problem({**disc, "fill": 0.54})
+    assert "as wide" in round_problem({**disc, "minor": 8.0})
+    assert "square" in round_problem({**disc, "area": 395.0})
