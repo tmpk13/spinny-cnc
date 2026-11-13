@@ -64,6 +64,7 @@ import {
 } from "./machines.ts";
 import { MAX_POINTS, MIN_AREA, fillPadHeights, padMapGrid, selectPads } from "./padmap.ts";
 import { thumbnail } from "./thumbs.ts";
+import { iconProblem } from "../icons.ts";
 import { extent } from "./order.ts";
 import { buildMillJob, carryJobSettings, carrySettings, cutMiddle, labelStem, MAX_OPERATIONS, moveJob, movedAs, placed, remakeMill, unplaced } from "./mill.ts";
 import { defaultOperation, recipeOps } from "../sketch.ts";
@@ -199,6 +200,7 @@ import type {
     HolePoint,
     HostSettings,
     Job,
+    JobIcon,
     JobPatch,
     JobSummary,
     JogRequest,
@@ -3955,6 +3957,11 @@ export class MockBackend implements Api, EventFeed {
         // The source left out stays the old job's; anything else left out
         // takes a new job's default, as the backend has it.
         made.source = typeof given["source"] === "string" ? given["source"] : old.source;
+        made.icon = given["icon"] === undefined ? old.icon ?? null : (given["icon"] as JobIcon | null);
+        const iconRefused = iconProblem(made.icon);
+        if (iconRefused !== null) {
+            throw new ApiError(400, iconRefused);
+        }
         made.layer = given["layer"] === undefined ? null : (given["layer"] as string | null);
         made.recipe = given["recipe"] === undefined ? null : (given["recipe"] as Job["recipe"]);
         // A recipe makes the groups again as the file or operations make
@@ -4115,6 +4122,7 @@ export class MockBackend implements Api, EventFeed {
         }
         carrySettings(job.groups, made.groups);
         made.name = job.name;
+        made.icon = job.icon ?? null;
         made.offset = { ...job.offset };
         made.rotation = job.rotation ?? 0;
         made.recipe = { file: upload.name, options: { ...options } };
@@ -4342,6 +4350,7 @@ export class MockBackend implements Api, EventFeed {
                 rotation: job.rotation ?? 0,
                 remake: job.recipe != null,
                 holes: job.holes?.length ?? 0,
+                icon: job.icon ?? null,
                 groups: job.groups.map((group) => ({
                     label: group.label,
                     power: group.power,
@@ -4374,13 +4383,18 @@ export class MockBackend implements Api, EventFeed {
         return this.requireJob(id);
     }
 
-    /** The whole patch is checked first and applied to a copy, so a refused one changes nothing. */
+    /** The whole patch is checked first and applied to a copy, so a refused one changes nothing; one that only sets the icon is taken while the job runs. */
     async patchJob(id: string, patch: JobPatch): Promise<void> {
         const job = this.requireJob(id);
-        if (this.session && this.session.job.id === id) {
+        const iconOnly = Object.keys(patch).length === 1 && patch.icon !== undefined;
+        if (this.session && this.session.job.id === id && !iconOnly) {
             throw new ApiError(409, "the job is running");
         }
         try {
+            const problem = iconProblem(patch.icon);
+            if (problem !== null) {
+                throw new Error(problem);
+            }
             for (const change of patch.groups ?? []) {
                 if (!job.groups[change.index]) {
                     throw new Error(`no group ${change.index}`);
@@ -4496,7 +4510,12 @@ export class MockBackend implements Api, EventFeed {
             const [tx, ty] = turnPoint([cx, cy], patch.turn);
             moveJob(updated, patch.turn, cx - tx, cy - ty);
         }
-        updated.stats = computeStats(updated.groups, this.limits());
+        if (patch.icon !== undefined) {
+            updated.icon = patch.icon;
+        }
+        if (!iconOnly) {
+            updated.stats = computeStats(updated.groups, this.limits());
+        }
         this.jobStore.set(id, updated);
     }
 

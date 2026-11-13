@@ -692,10 +692,11 @@ export function movedAs(made: Job, where: Job): Job {
     return made;
 }
 
-/** A job made again from its operations put where `where` is: turned and moved as it has been since it was made, under its id. */
+/** A job made again from its operations put where `where` is: turned and moved as it has been since it was made, under its id and with its icon. */
 export function placed(made: Job, where: Job): Job {
     movedAs(made, where);
     made.id = where.id;
+    made.icon = where.icon ?? null;
     return made;
 }
 
@@ -825,6 +826,7 @@ export function remakeMill(job: Job, tool: number, limits: RateLimits): Job {
     }
     carrySettings(job.groups, made.groups);
     made.name = job.name;
+    made.icon = job.icon ?? null;
     made.stats = computeStats(made.groups, limits);
     return made;
 }

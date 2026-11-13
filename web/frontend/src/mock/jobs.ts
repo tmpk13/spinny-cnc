@@ -3,11 +3,12 @@
 // placement and stats.
 
 import { errorText } from "../api.ts";
+import { iconProblem } from "../icons.ts";
 import { jointOfBoard, moveMinutes, surfaceLength } from "../kinematics.ts";
 import { groupMoves, jointPreview } from "../moves.ts";
 import { layerLabel, readDxf } from "./dxf.ts";
 import { extent, innerFirst } from "./order.ts";
-import type { Anchor, Board, CenterRequest, DesignMap, Group, HolePoint, Job, Joint, Mirror, Move, PadPoint, Path, Point, Stats, Tool, UploadOptions } from "../types.ts";
+import type { Anchor, Board, CenterRequest, DesignMap, Group, HolePoint, Job, JobIcon, Joint, Mirror, Move, PadPoint, Path, Point, Stats, Tool, UploadOptions } from "../types.ts";
 
 /** Row-major 2x3 affine matrix [a, b, c, d, e, f] as SVG writes it. */
 type Matrix = [number, number, number, number, number, number];
@@ -1383,6 +1384,14 @@ export function jobFromJson(id: string, stem: string, data: unknown, limits: Rat
         copper: pathsOf(data["copper"], "copper"),
         stats: { length_mm: 0, seconds: 0, max_radius: 0, min_radius: 0, limited_fraction: 0, moves: 0 },
     };
+    // The operator's icon goes with the job, checked as the backend checks it.
+    if (data["icon"] !== undefined && data["icon"] !== null) {
+        const problem = isRecord(data["icon"]) ? iconProblem(data["icon"] as unknown as JobIcon) : "not a job: icon must be an object";
+        if (problem !== null) {
+            throw new Error(problem);
+        }
+        job.icon = data["icon"] as unknown as JobIcon;
+    }
     job.stats = computeStats(job.groups, limits);
     return job;
 }

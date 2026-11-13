@@ -244,6 +244,40 @@ class Recipe(Finite):
     ops: list[dict] | None = None
 
 
+# The glyphs a job's icon may show, by name: the page draws each one
+# (web/frontend/src/icons.ts).
+ICON_GLYPHS = ("board", "chip", "drill", "laser", "mill", "gear", "bolt", "star", "heart", "flag", "check", "dot")
+# Solarized's accents, by name: the color an icon is drawn on.
+ICON_COLORS = ("yellow", "orange", "red", "magenta", "violet", "blue", "cyan", "green")
+# The most letters an icon shows.
+ICON_LETTERS = 2
+
+
+class JobIcon(Finite):
+    """A job's own icon in the job list, shown in place of its drawing:
+    one of the page's glyphs, or one or two letters, on one of Solarized's
+    accents."""
+
+    glyph: str | None = None
+    letters: str | None = None
+    color: str = "blue"
+
+
+def check_icon(icon: JobIcon | None) -> None:
+    """Refuses an icon that is not exactly one known glyph or one or two
+    letters or digits, on a known color; None, the drawing, passes."""
+    if icon is None:
+        return
+    if (icon.glyph is None) == (icon.letters is None):
+        raise ValueError("an icon is a glyph or letters, one of the two")
+    if icon.glyph is not None and icon.glyph not in ICON_GLYPHS:
+        raise ValueError(f"the icon's glyph must be one of {', '.join(ICON_GLYPHS)}")
+    if icon.letters is not None and not (1 <= len(icon.letters) <= ICON_LETTERS and icon.letters.isalnum()):
+        raise ValueError(f"the icon's letters must be 1 to {ICON_LETTERS} letters or digits")
+    if icon.color not in ICON_COLORS:
+        raise ValueError(f"the icon's color must be one of {', '.join(ICON_COLORS)}")
+
+
 class JobStats(Finite):
     length_mm: float = 0.0
     seconds: float = 0.0
@@ -280,6 +314,8 @@ class Job(Finite):
     # a job whose paths do not follow the bit, or that cannot be made again.
     recipe: Recipe | None = None
     stats: JobStats = Field(default_factory=JobStats)
+    # The operator's icon for the job in the job list; None shows its drawing.
+    icon: JobIcon | None = None
 
     def summary(self) -> dict:
         return {
@@ -294,6 +330,7 @@ class Job(Finite):
             "holes": len(self.holes),
             "design": self.design.model_dump() if self.design is not None else None,
             "remake": self.recipe is not None,
+            "icon": self.icon.model_dump() if self.icon is not None else None,
             "groups": [
                 {
                     "label": group.label,
@@ -433,6 +470,15 @@ class JobPatch(Finite):
     # middle of the box round what it cuts or about the origin.
     turn: float | None = None
     about: str = "center"
+    # The job's icon in the job list; given as null it gives the drawing
+    # back, left out it stays.
+    icon: JobIcon | None = None
+
+    @property
+    def icon_only(self) -> bool:
+        """Whether the patch sets the icon and nothing else: neither a run
+        nor the job's stats care about that."""
+        return self.model_fields_set == {"icon"}
 
 
 def check_power(power: float, what: str = "power") -> None:
@@ -504,9 +550,12 @@ def apply_patch(job: Job, patch: JobPatch, streamer: Streamer) -> Job:
             raise ValueError("turn must be -360 to 360 degrees")
         if patch.turn != 0.0 and any(group.joints for group in job.groups):
             raise ValueError("a joint-space group is fixed to the axis and cannot be turned")
+    check_icon(patch.icon)
     updated = job.model_copy(deep=True)
     if patch.name:
         updated.name = patch.name
+    if "icon" in patch.model_fields_set:
+        updated.icon = patch.icon
     for change in patch.groups or []:
         group = updated.groups[change.index]
         if change.label is not None:
@@ -533,7 +582,8 @@ def apply_patch(job: Job, patch: JobPatch, streamer: Streamer) -> Job:
         updated.shift(patch.offset.x - updated.offset.x, patch.offset.y - updated.offset.y)
     if patch.turn:
         turn_job(updated, patch.turn, patch.about)
-    updated.refresh_stats(streamer)
+    if not patch.icon_only:
+        updated.refresh_stats(streamer)
     return updated
 
 
@@ -676,6 +726,7 @@ def remake_upload(job: Job, kept: Path, width: float, streamer: Streamer, margin
     carry_settings(job.groups, made.groups)
     made.id = job.id
     made.name = job.name
+    made.icon = job.icon
     made.offset = job.offset.model_copy()
     made.rotation = job.rotation
     made.recipe = Recipe(file=recipe.file, options=recipe_options(options))
@@ -848,8 +899,8 @@ def combined(jobs: list[Job], name: str | None = None) -> Job:
 def replaced(job_id: str, data: dict, old: Job) -> Job:
     """The job `data` describes, in place of `old` under its id: a job's
     JSON as the page's editor holds it, checked as an upload is. A field
-    left out keeps the default a new job has, but for the name and the
-    source, which stay the old job's. The recipe stays only while the
+    left out keeps the default a new job has, but for the name, the source
+    and the icon, which stay the old job's. The recipe stays only while the
     groups cut what the old job's did, under the same labels but for their
     numbers: a job made again from it for another width is made as its
     file or operations make it, so paths moved between groups or taken out
@@ -860,6 +911,7 @@ def replaced(job_id: str, data: dict, old: Job) -> Job:
     body = {key: value for key, value in data.items() if key not in ("id", "stats")}
     body.setdefault("name", old.name)
     body.setdefault("source", old.source)
+    body.setdefault("icon", old.icon.model_dump() if old.icon is not None else None)
     try:
         job = Job.model_validate(body)
     except ValueError as exc:
@@ -894,8 +946,13 @@ def replaced(job_id: str, data: dict, old: Job) -> Job:
 
 def checked(job: Job) -> Job:
     """The job with every group's numbers and paths checked as a run needs
-    them, and its joint-space groups drawn when they come without paths."""
+    them, its icon checked, and its joint-space groups drawn when they come
+    without paths."""
     check_spot(job.spot)
+    try:
+        check_icon(job.icon)
+    except ValueError as exc:
+        raise JobImportError(str(exc)) from exc
     for group in job.groups:
         # The firmware refuses a cut with F at or below zero, so a group
         # that carries one would end its run on the first line; a number

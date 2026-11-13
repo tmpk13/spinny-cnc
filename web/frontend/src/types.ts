@@ -503,6 +503,15 @@ export interface Job {
     outline: Path[];
     copper: Path[];
     stats: Stats;
+    /** The operator's icon for the job in the job list; missing or null shows its drawing. */
+    icon?: JobIcon | null;
+}
+
+/** A job's own icon: one of the page's glyphs (src/icons.ts) or one or two letters, on one of Solarized's accents by name. */
+export interface JobIcon {
+    glyph?: string | null;
+    letters?: string | null;
+    color: string;
 }
 
 /** How a job was made: a board upload's file and options, or the Plot page operations (`ops`; a job made before a job could hold several keeps its one in `mill`). */
@@ -638,6 +647,7 @@ export interface JobSummary {
     holes?: number;
     groups: GroupSummary[];
     stats: Stats;
+    icon?: JobIcon | null;
 }
 
 export interface JobsResponse {
@@ -671,6 +681,8 @@ export interface JobPatch {
     turn?: number;
     /** What `turn` turns about; left out, the middle. */
     about?: TurnAbout;
+    /** The job's icon in the job list; null gives its drawing back. Taken while the job runs, when it is all the patch sets. */
+    icon?: JobIcon | null;
 }
 
 export interface UploadOptions {

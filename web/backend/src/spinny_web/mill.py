@@ -421,9 +421,10 @@ def moved_as(made: Job, where: Job) -> Job:
 
 def placed(made: Job, where: Job) -> Job:
     """A job made again from its operations put where `where` is: turned and
-    moved as it has been since it was made, under its id."""
+    moved as it has been since it was made, under its id and with its icon."""
     moved_as(made, where)
     made.id = where.id
+    made.icon = where.icon
     return made
 
 
@@ -549,6 +550,7 @@ def remake(job: Job, tool: float, streamer: Streamer) -> Job:
         placed(made, job)
     carry_settings(job.groups, made.groups)
     made.name = job.name
+    made.icon = job.icon
     made.refresh_stats(streamer)
     return made
 

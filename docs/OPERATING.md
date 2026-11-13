@@ -74,7 +74,10 @@ back. A job made from a file or on the Plot page whose paths are moved,
 deleted or copied (the page asks first), or changed in the *Job JSON*
 panel, is no longer made again from it for another width, which would put
 its paths back as the file or the operations make them. Each job in the list carries a
-small drawing of itself; checking two or more and pressing *Combine* makes
+small drawing of itself; a press on it opens a picker for an icon in its
+place: one of twelve glyphs or one or two letters, on one of eight colors,
+kept with the job at once (also while it runs); *Drawing* gives the drawing
+back. Checking two or more jobs and pressing *Combine* makes
 one new job of them, cut in the order they were checked, each group's name
 led by its job's (the jobs themselves stay; jobs made for different tools
 do not combine). The *Job JSON* panel under the preview

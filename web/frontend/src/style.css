@@ -1833,6 +1833,90 @@ button.badge.state {
     color: var(--strong);
 }
 
+/* A job's own icon in place of its drawing, a glyph or one or two letters
+   on one of the accents, and the picker a press on either opens under the
+   job's row. The icon's color is the custom property --job-icon. */
+.job-thumb-button {
+    flex: none;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    border-radius: calc(var(--radius) / 2);
+    line-height: 0;
+    cursor: pointer;
+}
+
+.job-thumb-button[aria-expanded="true"] {
+    box-shadow: 0 0 0 0.15rem var(--ring);
+}
+
+.job-icon {
+    display: block;
+    width: 3rem;
+    height: 3rem;
+}
+
+.job-icon-bg {
+    fill: var(--job-icon, var(--blue));
+}
+
+.job-icon-fg {
+    fill: var(--on-fill);
+}
+
+.job-icon-letters {
+    font-family: var(--font);
+    font-weight: 700;
+    text-anchor: middle;
+    dominant-baseline: central;
+}
+
+.job-list li.job-icon-row {
+    display: block;
+    padding: 0.6rem 0.75rem;
+    background: var(--panel-2);
+}
+
+.job-icon-choice {
+    padding: 0.15rem;
+    line-height: 0;
+}
+
+.job-icon-choice .job-icon {
+    width: 1.75rem;
+    height: 1.75rem;
+}
+
+.job-icon-choice[aria-pressed="true"] {
+    box-shadow: 0 0 0 0.15rem var(--strong);
+}
+
+.job-icon-colors {
+    gap: 0.35rem;
+}
+
+.job-icon-swatch {
+    width: 1.75rem;
+    height: 1.75rem;
+    min-height: 0;
+    padding: 0;
+    border-radius: 50%;
+    background: var(--job-icon);
+    border: thin solid var(--border-strong);
+}
+
+.job-icon-swatch:hover:not(:disabled) {
+    background: var(--job-icon);
+}
+
+.job-icon-swatch[aria-pressed="true"] {
+    box-shadow: 0 0 0 0.15rem var(--panel-2), 0 0 0 0.3rem var(--job-icon);
+}
+
+.job-icon-letters-field {
+    width: 4rem;
+}
+
 /* A job's row: the box that picks it for combining, its small drawing
    beside its name, and Delete. */
 .job-check {

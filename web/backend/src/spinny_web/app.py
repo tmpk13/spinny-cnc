@@ -2650,7 +2650,10 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
 
     @editing_job
     def patch_job(self, job_id: str, patch: JobPatch) -> Job:
-        job = apply_patch(self._idle_job(job_id), patch, self.streamer())
+        """The job changed by `patch`; refused while it runs, unless the
+        patch only sets its icon."""
+        job = self._job(job_id) if patch.icon_only else self._idle_job(job_id)
+        job = apply_patch(job, patch, self.streamer())
         self.store.save(job)
         return job
 

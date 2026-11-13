@@ -12,6 +12,7 @@ import type { AppState } from "../state.ts";
 import type { Anchor, BoardMode, ClearPattern, DepositFill, Job, UploadOptions } from "../types.ts";
 import { runActive } from "./heightmap.ts";
 import { choiceRow, type Ctx } from "./context.ts";
+import { iconPicker, jobPicture } from "./jobicon.ts";
 import { mountRun } from "./run.ts";
 
 /** Every file the Jobs import reads: a drawing (SVG or DXF), a job, a board layer's gerber or the KiCad file, or gcode. */
@@ -257,6 +258,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
     // The jobs checked to be made one, in the order they were checked,
     // which is the order they are cut in.
     let combining: string[] = [];
+    // The job whose icon picker is open under its row, if one is.
+    let iconFor: string | null = null;
     const combineButton = button("Combine", () => combine(), "btn btn-quiet btn-small");
     combineButton.title = "join the checked jobs into one, in the order checked";
     root.append(
@@ -454,10 +457,27 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
     ctx.store.subscribe((state) => renderList(state), ["jobs", "job"]);
     ctx.store.subscribe((state) => renderDetails(state), ["job", "progress", "snapshot", "heightMap"]);
 
+    /** Shuts the icon picker where it stands, the rows left as they are: a row made again under a press would take no click. */
+    function closeIcon(): void {
+        iconFor = null;
+        list.querySelector(".job-icon-row")?.remove();
+        list.querySelector('.job-thumb-button[aria-expanded="true"]')?.setAttribute("aria-expanded", "false");
+    }
+
+    document.addEventListener("pointerdown", (event) => {
+        const target = event.target as Element | null;
+        if (iconFor !== null && target?.closest && !target.closest(".job-icon-row, .job-thumb-button")) {
+            closeIcon();
+        }
+    });
+
     function renderList(state: AppState): void {
         const selected = state.job?.id ?? null;
         combining = combining.filter((id) => state.jobs.some((job) => job.id === id));
-        replace(list, ...state.jobs.map((job) => {
+        if (iconFor !== null && !state.jobs.some((job) => job.id === iconFor)) {
+            iconFor = null;
+        }
+        replace(list, ...state.jobs.flatMap((job) => {
             const item = el("li", { class: job.id === selected ? "selected" : "" });
             const check = el("input", { type: "checkbox", class: "job-check", "aria-label": `combine ${job.name}`, title: "check two or more to combine" }) as HTMLInputElement;
             check.checked = combining.includes(job.id);
@@ -465,11 +485,22 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
                 combining = check.checked ? [...combining.filter((id) => id !== job.id), job.id] : combining.filter((id) => id !== job.id);
                 renderCombine();
             });
-            // A small drawing of the job; its address changes with what it
+            // A small drawing of the job, or its own icon; a press opens the
+            // icon picker. The drawing's address changes with what it
             // shows, so an unchanged job's is not asked for again.
-            const thumb = el("img", { class: "job-thumb", src: ctx.api.jobThumbUrl(job), alt: "", loading: "lazy", decoding: "async" });
+            const thumb = el("button", { type: "button", class: "job-thumb-button", title: "set this job's icon", "aria-label": `Icon of ${job.name}`, "aria-expanded": String(iconFor === job.id) },
+                jobPicture(job, ctx.api.jobThumbUrl(job)));
+            thumb.addEventListener("click", () => {
+                if (iconFor === job.id) {
+                    closeIcon();
+                } else {
+                    iconFor = job.id;
+                    renderList(ctx.store.get());
+                    // The list scrolls within its own height: the picker is brought into it.
+                    list.querySelector(".job-icon-row")?.scrollIntoView?.({ block: "nearest" });
+                }
+            });
             const pick = el("button", { type: "button", class: "job-pick", title: "pick this job", onclick: () => void ctx.selectJob(job.id) },
-                thumb,
                 el("span", { class: "job-text" },
                     el("span", { class: "job-name" }, job.name),
                     el("span", { class: "muted" }, job.layer ? ` ${job.source} ${job.layer}` : ` ${job.source}`),
@@ -477,8 +508,11 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
                 ),
             );
             const remove = button("Delete", () => removeJob(job.id, job.name), "btn btn-quiet btn-small", "delete this job");
-            item.append(check, pick, remove);
-            return item;
+            item.append(check, thumb, pick, remove);
+            if (iconFor !== job.id) {
+                return [item];
+            }
+            return [item, el("li", { class: "job-icon-row" }, iconPicker(job, ctx, closeIcon))];
         }));
         if (state.jobs.length === 0) {
             list.append(el("li", { class: "muted" }, "no jobs yet"));
