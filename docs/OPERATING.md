@@ -498,6 +498,23 @@ Automatic exposure is set before a manual exposure time; a control greyed
 out does nothing while an automatic one is on. A camera on a bridge Pi
 (an HTTP snapshot URL) has none here: they are set on the Pi.
 
+While the fold is open, *Live picture* at its head measures the camera's
+picture as its view shows it (the zoomed part when zoomed), a few times a
+second, to turn the controls by: *Sharpness*, how crisp the edges are in
+levels a pixel, with the best since the fold opened so the focus can be
+turned to the peak (*Reset best* starts it again, as another zoom or
+picture size does), and the share of pixels on an edge; *Noise*, the
+grain left in the flat parts, and the signal to noise ratio, the mean
+brightness over it in dB; *Brightness*, the mean level from 0 to 255,
+and its spread; and the share *Clipped* to pure black and white, with a
+histogram of the levels under them. Sharpness grows with contrast too,
+so compare one focus with another at one exposure. The numbers come
+only while the camera runs and its picture is on screen, and they are of
+the JPEG the page is sent, which smooths some of the sensor's noise
+away; with a board loaded and *Overlay* on, pcbv's own marks are drawn
+into that JPEG and count as edges, so *Overlay* off measures the camera
+alone.
+
 The panel's *Camera* list holds the cameras attached: the ones on the
 backend's computer, under their stable `/dev/v4l/by-id` names, and the
 streams of a Pi forwarded here (below). They are listed when the panel

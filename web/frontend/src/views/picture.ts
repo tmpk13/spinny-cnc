@@ -214,6 +214,30 @@ export function armedPick(key: string): string | null {
     return picks.get(key)?.label ?? null;
 }
 
+/** A frame a picture has just shown: its image, the zoom about its center it is shown at, and whether pcbv drew its own marks into it. */
+export interface ShownFrame {
+    image: HTMLImageElement;
+    zoom: number;
+    marked?: boolean;
+}
+
+const frameWatchers = new Map<string, Set<(frame: ShownFrame) => void>>();
+
+/** Hands `watch` each frame the picture of `key` (head, up, top) shows from now on, so another panel can measure it; the answer stops it. */
+export function watchFrames(key: string, watch: (frame: ShownFrame) => void): () => void {
+    const watchers = frameWatchers.get(key) ?? new Set<(frame: ShownFrame) => void>();
+    frameWatchers.set(key, watchers);
+    watchers.add(watch);
+    return () => {
+        watchers.delete(watch);
+    };
+}
+
+/** Tells the watchers of the picture of `key` that it shows a new frame. */
+export function frameShown(key: string, frame: ShownFrame): void {
+    frameWatchers.get(key)?.forEach((watch) => watch(frame));
+}
+
 export interface PictureOptions {
     /** Names the picture's kept height, zoom and box: `head`, `up` or `top`. */
     key: string;
@@ -666,6 +690,10 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     // --- the frames ---------------------------------------------------------------------
 
     let last = 0;
+    // Whether the frame asked for last has pcbv's marks drawn into it: a
+    // new address drops the load of the one before, so the frame that
+    // loads is that one.
+    let marked = false;
     function refresh(force = false): void {
         const state = ctx.store.get();
         if (!options.visible() || !options.running(state)) {
@@ -679,10 +707,14 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         const shown = stage.getBoundingClientRect().width || box.getBoundingClientRect().width || 640;
         const size = options.size(state);
         const width = frameRequestWidth(shown, globalThis.devicePixelRatio ?? 1, zoom, size ? size[0] : null);
-        picture.src = options.frameUrl(width, overlayOn && options.pcbvOverlay(state));
+        marked = overlayOn && options.pcbvOverlay(state);
+        picture.src = options.frameUrl(width, marked);
     }
     const timer = setInterval(() => refresh(), FRAME_INTERVAL_MS);
-    picture.addEventListener("load", () => fit());
+    picture.addEventListener("load", () => {
+        fit();
+        frameShown(options.key, { image: picture, zoom, marked });
+    });
 
     function render(state: AppState): void {
         const running = options.running(state);

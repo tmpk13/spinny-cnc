@@ -3432,6 +3432,56 @@ table.pnp-parts tr.dnp td {
     font-family: var(--mono);
 }
 
+/* Live numbers of a camera's picture at the head of its controls' fold:
+   a name and its value a row, the histogram under them, dimmed while no
+   picture comes. */
+.camera-stats {
+    display: grid;
+    gap: var(--flow-tight);
+    padding: 0.5rem 0.6rem;
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+}
+
+.camera-stats-head {
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+.camera-stats-grid {
+    display: grid;
+    gap: 0.15rem;
+    font-size: 0.85rem;
+}
+
+.camera-stat {
+    display: grid;
+    grid-template-columns: 6.5rem 1fr;
+    gap: 0.5rem;
+    align-items: baseline;
+}
+
+.camera-stat-name {
+    color: var(--muted);
+}
+
+.camera-stats-histogram {
+    display: block;
+    width: 100%;
+    height: 2.5rem;
+    border-radius: 0.25rem;
+    background: var(--panel-2);
+}
+
+.camera-stats-histogram path {
+    fill: var(--accent);
+}
+
+.camera-stats-grid.stale,
+.camera-stats-histogram.stale {
+    opacity: 0.5;
+}
+
 /* A camera's controls, folded under its settings: a row a control. */
 .camera-controls > summary {
     cursor: pointer;

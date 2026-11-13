@@ -5,10 +5,13 @@
 // is sent at once and kept by the backend, which sets it again whenever the
 // camera starts; Forget takes a kept value back, leaving the camera's own.
 // A camera reached over HTTP (a bridge Pi's snapshots) or a pcbv over TCP
-// has none here, and the fold says so.
+// has none here, and the fold says so. Live numbers of the camera's picture
+// (sharpness, noise, brightness, clipping) head the fold while it is open
+// (camerastats.ts), to turn the controls by.
 
 import { button, el, replace } from "../dom.ts";
 import type { CameraControl, CameraControls, ControlledCamera } from "../types.ts";
+import { mountCameraStats } from "./camerastats.ts";
 import type { Ctx } from "./context.ts";
 
 /** A control's name as words: v4l2-ctl's underscores as spaces. */
@@ -34,9 +37,12 @@ export function mountCameraControls(ctx: Ctx, camera: ControlledCamera, label: s
     read.title = "list the controls again, as the camera has them now";
     const summary = el("summary", { class: "camera-controls-head" }, "Picture controls");
     summary.title = `${label}'s exposure, gain, focus, white balance and the like`;
+    // Measured only while the fold is open.
+    const stats = mountCameraStats(camera);
     const root = el("details", { class: "camera-controls" },
         summary,
         el("div", { class: "button-row" }, read, el("span", { class: "muted" }, "Values set here are kept and set again each time the camera starts.")),
+        stats.root,
         note,
         list,
     ) as HTMLDetailsElement;
@@ -45,6 +51,9 @@ export function mountCameraControls(ctx: Ctx, camera: ControlledCamera, label: s
     root.addEventListener("toggle", () => {
         if (root.open) {
             void reload();
+            stats.start();
+        } else {
+            stats.stop();
         }
     });
 
