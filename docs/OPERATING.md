@@ -97,6 +97,13 @@ preview steps through the job's paths in the order they are cut (*Back*
 and *On* a path at a time): the paths cut so far are drawn, the last of
 them marked, the rest faint; at its end the job is drawn whole.
 
+The preview is drawn by the graphics card (WebGL2) in the background, so
+a board of hundreds of thousands of points still turns smoothly and the
+page answers while it does; a browser without a graphics card to draw with
+gets the plain 2D canvas, also in the background. Should a graphics driver
+draw the preview wrong, `?preview=2d` at the end of the page's address
+draws it with the 2D canvas in the page, as before.
+
 The run controls (Run, the height map choice, Hold, Resume, Stop, the
 progress and the pickup of a stopped run) are the Run panel at the foot
 of the right column, kept in view while the jobs and their groups scroll

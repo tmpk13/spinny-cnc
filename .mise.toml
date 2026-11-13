@@ -104,6 +104,14 @@ run = "cd web/frontend && bun run --silent check && bun test"
 description = "Page spacing and tooltips in Chromium over the mock: stacked blocks one --flow token apart, no text against a box's edge, a title on every button"
 run = "cd web/frontend && bun layout/check.ts"
 
+[tasks.test-render]
+description = "Preview pictures in Chromium: WebGL, in the page and in the drawing worker, against the 2D painter scene by scene, and the page's previews drawn in a worker"
+run = "cd web/frontend && bun layout/render.ts --no-drag"
+
+[tasks.bench-preview]
+description = "Time showing and dragging a 400,000 point job with each of the preview's painters in Chromium (software GL headless; add -- --headed for the graphics card)"
+run = "cd web/frontend && bun layout/render.ts"
+
 [tasks.test-sim]
 description = "Gcode simulator"
 run = "cd sim && cargo test -q"
@@ -121,7 +129,7 @@ ruff check toolpath web/backend deploy
 
 [tasks.test]
 description = "Every suite"
-depends = ["test-firmware", "test-carve", "test-toolpath", "test-backend", "test-frontend", "test-layout", "test-sim"]
+depends = ["test-firmware", "test-carve", "test-toolpath", "test-backend", "test-frontend", "test-layout", "test-render", "test-sim"]
 
 [tasks.uf2]
 description = "Build the board firmware as a uf2: firmware/rp2040/target/thumbv6m-none-eabi/release/spinny-fw.uf2"

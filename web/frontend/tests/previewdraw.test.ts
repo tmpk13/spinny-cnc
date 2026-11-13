@@ -6,7 +6,8 @@
 import { describe, expect, test } from "bun:test";
 
 import { type Camera, Projector, frameOf, project } from "../src/camera.ts";
-import { BATCH_POINTS, COARSE_POINTS, DETAIL_PX, Pen, Preview, SETTLE_MS } from "../src/preview.ts";
+import { COARSE_POINTS, Preview, SETTLE_MS } from "../src/preview.ts";
+import { BATCH_POINTS, DETAIL_PX, Pen } from "../src/render/canvas2d.ts";
 import type { Job, Path } from "../src/types.ts";
 
 const W = 400;
@@ -148,28 +149,45 @@ describe("the pen", () => {
     });
 });
 
-/** A preview on a canvas whose layers and page context record what is drawn. */
-function recordedPreview(): { preview: Preview; page: Call[]; layers: Call[][]; layerSets: Call[][]; canvas: HTMLCanvasElement; restore: () => void } {
-    const layers: Call[][] = [];
-    const layerSets: Call[][] = [];
+/**
+ * A preview drawn in 2D on a canvas whose context records what is drawn
+ * on it, as do the overlay laid over it and the 2D painter's layers (made
+ * as they are needed, in the order under, over, scratch).
+ */
+function recordedPreview(): { preview: Preview; page: Call[]; overlay: Call[]; layers: Call[][]; layerSets: Call[][]; canvas: HTMLCanvasElement; restore: () => void } {
+    const made: { calls: Call[]; sets: Call[] }[] = [];
     const create = document.createElement.bind(document);
     document.createElement = ((tag: string, options?: ElementCreationOptions) => {
         const node = create(tag, options);
         if (tag === "canvas") {
             const { ctx, calls, sets } = recordingContext();
-            layers.push(calls);
-            layerSets.push(sets);
-            (node as HTMLCanvasElement).getContext = (() => ctx) as unknown as HTMLCanvasElement["getContext"];
+            made.push({ calls, sets });
+            (node as HTMLCanvasElement).getContext = ((type: string) => (type === "2d" ? ctx : null)) as unknown as HTMLCanvasElement["getContext"];
         }
         return node;
     }) as typeof document.createElement;
     const canvas = create("canvas");
     canvas.getBoundingClientRect = (() => ({ width: W, height: H, x: 0, y: 0, top: 0, left: 0, right: W, bottom: H, toJSON: () => ({}) })) as typeof canvas.getBoundingClientRect;
     const { ctx, calls } = recordingContext();
-    canvas.getContext = (() => ctx) as unknown as typeof canvas.getContext;
+    canvas.getContext = ((type: string) => (type === "2d" ? ctx : null)) as unknown as typeof canvas.getContext;
     document.body.appendChild(canvas);
     const preview = new Preview(canvas);
-    return { preview, page: calls, layers, layerSets, canvas, restore: () => (document.createElement = create) };
+    // The preview makes its overlay first; the layers follow as they are drawn.
+    const [overlay] = made.splice(0, 1);
+    const layers: Call[][] = [];
+    const layerSets: Call[][] = [];
+    const follow = (): void => {
+        for (const { calls: layerCalls, sets } of made.splice(0)) {
+            layers.push(layerCalls);
+            layerSets.push(sets);
+        }
+    };
+    const draw = preview.draw.bind(preview);
+    preview.draw = () => {
+        draw();
+        follow();
+    };
+    return { preview, page: calls, overlay: overlay!.calls, layers, layerSets, canvas, restore: () => (document.createElement = create) };
 }
 
 describe("a large job", () => {

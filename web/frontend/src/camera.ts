@@ -37,8 +37,8 @@ export const OVERVIEW_YAW = 0;
 export const FIT_MARGIN = 1.1;
 /** Degrees of orbit per CSS px dragged. */
 export const DEG_PER_PX = 0.4;
-/** Nothing closer to the eye than this along the view is drawn, mm. */
-const NEAR = 0.05;
+/** Nothing closer to the eye than this along the view is drawn, mm; the WebGL painter's shaders hold the same value. */
+export const NEAR = 0.05;
 
 export function clampPitch(pitch: number): number {
     return Math.min(MAX_PITCH, Math.max(MIN_PITCH, pitch));

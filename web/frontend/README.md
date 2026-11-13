@@ -22,11 +22,18 @@ that page's origin allowed: `spinny-web --cors-origin http://localhost:3000`
 for the dev server. Without it the browser refuses every call.
 
 Board coordinates are mm with the rotation axis at the origin: `x = r cos a`,
-`y = r sin a`. The preview is a 3D view of the working area drawn on a
-plain canvas (`camera.ts` projects, no WebGL): the rings and the rail
+`y = r sin a`. The preview is a 3D view of the working area (`camera.ts`
+projects): the rings and the rail
 floating at the head's height, the soft limits, copper, outline and the
 job's paths on the board, the probe grid with its heights raised and
 stretched to be seen, and the head over its board point with the beam.
+`src/render/` draws it, the scene with WebGL2 where a graphics card runs
+it and with the 2D canvas where only software would, the head and the text
+on a canvas laid over it, in a worker the page hands both canvases to, so
+drawing never holds the page up; `?preview=gl` or `?preview=2d` draws in
+the page with that painter, and the dev server always draws in the page.
+`mise run test-render` compares the painters' pictures in Chromium
+(`layout/render.ts`), and `mise run bench-preview` times them.
 Drag orbits, or pans with *Lock rotation* pressed (kept between visits);
 shift or right drag pans, the wheel zooms about the cursor, *Reset view*
 and a double click return to the overview, tilted with the axis in the
@@ -257,8 +264,17 @@ classDiagram
         parseToml(text) tables, arrays of tables, dotted names, inline tables, scalars, arrays
     }
     class preview {
-        Preview  3D scene on the 2D canvas: rings or a grid, rail, limits, markers, job, probe heights, head
+        Preview  the canvas, pointer, camera, picking and choices; sends the renderer what changed
         dragMode(locked, pointer) orbit or pan
+    }
+    class render {
+        host  the renderer in a worker on the handed over canvases, or in the page
+        renderer  draws the scene when it changed and the overlay every frame
+        scene  what is drawn, in order: rings or a grid, rail, limits, job, probe heights, markers
+        webgl  the scene by the graphics card: points in textures, translucent sets through a layer, copper by stencil
+        canvas2d  the scene with the 2D context, still layers kept
+        overlay  the head, trail, labels, notes and selection box
+        pack  a job's points flat in typed arrays for the worker
     }
     class camera {
         Camera target, distance, yaw, pitch
@@ -364,6 +380,8 @@ classDiagram
     main --> views
     views --> preview
     preview --> camera
+    preview --> render
+    render --> camera
     views --> profile
     views --> controls
     views --> highlight

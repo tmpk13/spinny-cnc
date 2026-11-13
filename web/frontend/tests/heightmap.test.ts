@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { Api } from "../src/api.ts";
 import { createContext } from "../src/main.ts";
-import { gridPoints, sameGrid } from "../src/preview.ts";
+import { gridPoints, sameGrid } from "../src/render/scene.ts";
 import { initialState, Store, type AppState } from "../src/state.ts";
 import type { Grid, HeightMap, HeightMapState, Job, Machine, ProbeSettings, Profile, Progress, Snapshot } from "../src/types.ts";
 import { droText, mountDro } from "../src/views/dro.ts";

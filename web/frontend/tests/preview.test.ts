@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import {
     FIT_MARGIN,
@@ -20,12 +20,9 @@ import {
     unproject,
     zoomAt,
 } from "../src/camera.ts";
+import { HEIGHTS_KEY, LOCK_KEY, Preview, dragMode } from "../src/preview.ts";
 import {
-    HEIGHTS_KEY,
     LABEL_GAP_PX,
-    LOCK_KEY,
-    Preview,
-    dragMode,
     heightExaggeration,
     heightSpread,
     jobReach,
@@ -42,7 +39,7 @@ import {
     majorEvery,
     ringsIn,
     visibleBox,
-} from "../src/preview.ts";
+} from "../src/render/scene.ts";
 import type { HeightMap, Job } from "../src/types.ts";
 
 const job: Job = {
@@ -62,11 +59,19 @@ const H = 300;
 const topDown: Camera = { target: [0, 0, 0], distance: 100, yaw: 0, pitch: 90 };
 const tilted: Camera = { target: [2, -3, 0], distance: 80, yaw: 30, pitch: 55 };
 
-/** A 2D context that takes every call and counts the strokes, fills and texts, and keeps the texts. */
-function fakeContext(): { ctx: CanvasRenderingContext2D; counts: Record<string, number>; texts: string[] } {
-    const counts: Record<string, number> = {};
-    const texts: string[] = [];
-    const ctx = new Proxy({}, {
+/** What a 2D context was asked to do: its calls counted by name, and the texts it filled. */
+interface Drawn {
+    counts: Record<string, number>;
+    texts: string[];
+}
+
+function drawn(): Drawn {
+    return { counts: {}, texts: [] };
+}
+
+/** A 2D context that takes every call and records it into each of `into`. */
+function fakeContext(into: Drawn[]): CanvasRenderingContext2D {
+    return new Proxy({}, {
         get(_target, name) {
             if (typeof name !== "string") {
                 return undefined;
@@ -75,9 +80,11 @@ function fakeContext(): { ctx: CanvasRenderingContext2D; counts: Record<string, 
                 return () => ({ width: 10 });
             }
             return (...args: unknown[]): void => {
-                counts[name] = (counts[name] ?? 0) + 1;
-                if (name === "fillText") {
-                    texts.push(String(args[0]));
+                for (const record of into) {
+                    record.counts[name] = (record.counts[name] ?? 0) + 1;
+                    if (name === "fillText") {
+                        record.texts.push(String(args[0]));
+                    }
                 }
             };
         },
@@ -85,16 +92,55 @@ function fakeContext(): { ctx: CanvasRenderingContext2D; counts: Record<string, 
             return true;
         },
     }) as unknown as CanvasRenderingContext2D;
-    return { ctx, counts, texts };
+}
+
+// While a test runs, every canvas made gets a recording 2D context (and no
+// other kind): what it draws is kept as its own, and added to what the
+// last sized canvas drew, so the overlay a preview lays over its canvas and
+// the 2D painter's layers count with the canvas the preview was made on.
+const create = document.createElement.bind(document);
+const own = new Map<HTMLCanvasElement, Drawn>();
+let current: Drawn | null = null;
+
+beforeEach(() => {
+    document.createElement = ((tag: string, options?: ElementCreationOptions) => {
+        const node = create(tag, options);
+        if (tag === "canvas") {
+            const mine = drawn();
+            own.set(node as HTMLCanvasElement, mine);
+            const ctx = fakeContext(current ? [mine, current] : [mine]);
+            (node as HTMLCanvasElement).getContext = ((type: string) => (type === "2d" ? ctx : null)) as unknown as HTMLCanvasElement["getContext"];
+        }
+        return node;
+    }) as typeof document.createElement;
+});
+
+afterEach(() => {
+    document.createElement = create;
+    own.clear();
+    current = null;
+});
+
+/** A canvas in the page measuring `size()`, its drawing and that of the canvases made after it in `counts` and `texts`. */
+function measuredCanvas(size: () => { width: number; height: number }): { canvas: HTMLCanvasElement; counts: Record<string, number>; texts: string[] } {
+    current = drawn();
+    const { counts, texts } = current;
+    const canvas = document.createElement("canvas");
+    canvas.getBoundingClientRect = (() => {
+        const { width, height } = size();
+        return { width, height, x: 0, y: 0, top: 0, left: 0, right: width, bottom: height, toJSON: () => ({}) };
+    }) as typeof canvas.getBoundingClientRect;
+    document.body.appendChild(canvas);
+    return { canvas, counts, texts };
 }
 
 function sizedCanvas(width: number, height: number): { canvas: HTMLCanvasElement; counts: Record<string, number>; texts: string[] } {
-    const canvas = document.createElement("canvas");
-    canvas.getBoundingClientRect = (() => ({ width, height, x: 0, y: 0, top: 0, left: 0, right: width, bottom: height, toJSON: () => ({}) })) as typeof canvas.getBoundingClientRect;
-    const { ctx, counts, texts } = fakeContext();
-    canvas.getContext = (() => ctx) as unknown as typeof canvas.getContext;
-    document.body.appendChild(canvas);
-    return { canvas, counts, texts };
+    return measuredCanvas(() => ({ width, height }));
+}
+
+/** What one canvas drew by itself. */
+function ownDrawing(canvas: Element | null): Record<string, number> {
+    return own.get(canvas as HTMLCanvasElement)?.counts ?? {};
 }
 
 describe("camera", () => {
@@ -276,9 +322,11 @@ describe("Preview", () => {
         preview.draw();
         expect(texts.some((text) => /^speed \d+ to 400 mm\/min$/.test(text))).toBe(true);
         expect(texts.some((text) => text.startsWith("capped (red) on"))).toBe(true);
-        expect(preview.speeds()!.segments.length).toBeGreaterThan(1);
+        // Drawn in the page here, so the renderer is at hand.
+        const renderer = preview.renderer!;
+        expect(renderer.speeds()!.segments.length).toBeGreaterThan(1);
         // Worked out once for a job and its rates.
-        expect(preview.speeds()).toBe(preview.speeds());
+        expect(renderer.speeds()).toBe(renderer.speeds());
         preview.dispose();
     });
 
@@ -441,12 +489,8 @@ describe("Preview", () => {
     });
 
     test("nothing is drawn into a canvas hidden with its page, and one draw follows its return", () => {
-        const canvas = document.createElement("canvas");
         let rect = { width: W, height: H };
-        canvas.getBoundingClientRect = (() => ({ ...rect, x: 0, y: 0, top: 0, left: 0, right: rect.width, bottom: rect.height, toJSON: () => ({}) })) as typeof canvas.getBoundingClientRect;
-        const { ctx, counts } = fakeContext();
-        canvas.getContext = (() => ctx) as unknown as typeof canvas.getContext;
-        document.body.appendChild(canvas);
+        const { canvas, counts } = measuredCanvas(() => rect);
         const preview = new Preview(canvas);
         preview.setJob(job);
         preview.draw();
@@ -456,6 +500,8 @@ describe("Preview", () => {
         }
         rect = { width: 0, height: 0 };
         preview.resize();
+        // The head goes on moving while the page is away.
+        preview.setHead({ r: 5, a: 30 });
         preview.draw();
         expect(counts).toEqual({});
         let asked = 0;
@@ -465,72 +511,60 @@ describe("Preview", () => {
         rect = { width: W, height: H };
         preview.resize();
         expect(asked).toBe(1);
+        const blits = ownDrawing(canvas)["drawImage"];
         preview.draw();
-        expect(counts["stroke"]).toBeGreaterThan(0);
+        // The overlay brings the head up to date; the scene, unchanged, stands.
+        const overlay = canvas.nextElementSibling;
+        expect(overlay?.classList.contains("preview-overlay")).toBe(true);
+        expect(ownDrawing(overlay)["arc"]).toBe(3);
+        expect(ownDrawing(canvas)["drawImage"]).toBe(blits);
         preview.dispose();
         canvas.remove();
     });
 
-    test("the still layers are drawn once and copied under a moving head, and again when the view changes", () => {
-        // Offscreen canvases get a context of their own here, so the layers
-        // can be told from the canvas on the page.
-        const offscreen: Record<string, number> = {};
-        const create = document.createElement.bind(document);
-        document.createElement = ((tag: string, options?: ElementCreationOptions) => {
-            const node = create(tag, options);
-            if (tag === "canvas") {
-                (node as HTMLCanvasElement).getContext = (() => new Proxy({}, {
-                    get(_target, name) {
-                        return typeof name === "string"
-                            ? (): void => {
-                                offscreen[name] = (offscreen[name] ?? 0) + 1;
-                            }
-                            : undefined;
-                    },
-                    set() {
-                        return true;
-                    },
-                })) as unknown as HTMLCanvasElement["getContext"];
-            }
-            return node;
-        }) as typeof document.createElement;
-        try {
-            const { canvas, counts } = sizedCanvas(W, H);
-            const preview = new Preview(canvas);
-            preview.setJob(job);
-            preview.setLimits({ kinematics: "polar", r_max: 40, z_max: 0 });
-            preview.setHead({ r: 5, a: 90 });
-            preview.draw();
-            const built = offscreen["stroke"] ?? 0;
-            expect(built).toBeGreaterThan(0);
-            expect(offscreen["fill"]).toBe(1);
-            expect(counts["drawImage"]).toBe(2);
-            // The job's copper is filled in a layer, not on the page.
-            expect(counts["fill"]).toBe(2);
-            // The head moving copies the layers as they are.
-            preview.setHead({ r: 6, a: 95 });
-            preview.draw();
-            expect(offscreen["stroke"]).toBe(built);
-            expect(counts["drawImage"]).toBe(4);
-            // A change of view draws them again, as does a change of what is on the board.
-            preview.setCamera({ target: [0, 0, 0], distance: 50, yaw: 10, pitch: 70 });
-            preview.draw();
-            expect(offscreen["stroke"]).toBeGreaterThan(built);
-            const turned = offscreen["stroke"] ?? 0;
-            preview.setShowHeights(false);
-            preview.draw();
-            expect(offscreen["stroke"]).toBeGreaterThan(turned);
-            const toggled = offscreen["stroke"] ?? 0;
-            preview.refreshColors();
-            preview.draw();
-            // The same palette read again keeps the layers.
-            expect(offscreen["stroke"]).toBe(toggled);
-            preview.setShowHeights(true);
-            preview.dispose();
-            canvas.remove();
-        } finally {
-            document.createElement = create;
-        }
+    test("the still layers are drawn once, the scene left as it is under a moving head, and drawn again when the view changes", () => {
+        const { canvas } = sizedCanvas(W, H);
+        const preview = new Preview(canvas);
+        preview.setJob(job);
+        preview.setLimits({ kinematics: "polar", r_max: 40, z_max: 0 });
+        preview.setHead({ r: 5, a: 90 });
+        preview.draw();
+        const page = ownDrawing(canvas);
+        const overlay = ownDrawing(canvas.nextElementSibling);
+        // The 2D painter's layers: every canvas made but the two in the page.
+        const layers = (name: string): number => Array.from(own.entries())
+            .filter(([node]) => node !== canvas && node !== canvas.nextElementSibling)
+            .reduce((sum, [, record]) => sum + (record.counts[name] ?? 0), 0);
+        const built = layers("stroke");
+        expect(built).toBeGreaterThan(0);
+        // The job's copper is filled in a layer, the head on the overlay.
+        expect(layers("fill")).toBe(1);
+        expect(page["drawImage"]).toBe(2);
+        expect(page["fill"] ?? 0).toBe(0);
+        expect(overlay["fill"]).toBe(2);
+        // The head moving draws the overlay again and leaves the scene as it is.
+        preview.setHead({ r: 6, a: 95 });
+        preview.draw();
+        expect(layers("stroke")).toBe(built);
+        expect(page["drawImage"]).toBe(2);
+        expect(overlay["fill"]).toBe(4);
+        // A change of view draws them again, as does a change of what is on the board.
+        preview.setCamera({ target: [0, 0, 0], distance: 50, yaw: 10, pitch: 70 });
+        preview.draw();
+        expect(layers("stroke")).toBeGreaterThan(built);
+        expect(page["drawImage"]).toBe(4);
+        const turned = layers("stroke");
+        preview.setShowHeights(false);
+        preview.draw();
+        expect(layers("stroke")).toBeGreaterThan(turned);
+        const toggled = layers("stroke");
+        preview.refreshColors();
+        preview.draw();
+        // The same palette read again keeps the layers.
+        expect(layers("stroke")).toBe(toggled);
+        preview.setShowHeights(true);
+        preview.dispose();
+        canvas.remove();
     });
 
     test("what a pointer does: shift or a second button pans, else the lock decides", () => {

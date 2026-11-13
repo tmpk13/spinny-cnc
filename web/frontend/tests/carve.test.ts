@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import modelText from "../../../cam/mill-3d.toml" with { type: "text" };
 import { MockBackend } from "../src/mock/backend.ts";
 import { buildModelJob, camGcode, chipLoad, parseProfile, stlBounds, summaryOf } from "../src/mock/cam.ts";
-import { cutRuns } from "../src/preview.ts";
+import { cutRuns } from "../src/render/scene.ts";
 import type { Job, Move } from "../src/types.ts";
 
 /** A box's twelve triangles, x by y by z from the origin, as a binary STL. */

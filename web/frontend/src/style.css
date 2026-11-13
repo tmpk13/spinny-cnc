@@ -1991,6 +1991,21 @@ canvas.preview:active {
     cursor: grabbing;
 }
 
+/* The head and the text, drawn over the preview's scene on a canvas of
+   their own: laid exactly over the scene canvas (a transparent border as
+   wide as its border keeps their pixels in step), pointers passing through
+   to it. */
+canvas.preview-overlay {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: var(--radius);
+    border: thin solid transparent;
+    pointer-events: none;
+}
+
 /* The cut order slider under the preview: back a path, the slider, on a
    path, and what it shows. */
 .scrub-row {

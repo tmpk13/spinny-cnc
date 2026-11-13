@@ -1,6 +1,5 @@
 Downward closure
 Copy center lock button
-How to make preview faster?
 
 
 # Don't do yet

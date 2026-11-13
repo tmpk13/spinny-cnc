@@ -755,3 +755,7 @@
   installs GitHub releases (Config page, `spinny-web --update`).
 - Home by fiducial (2026-11-12): the head's homing fiducial read from
   OpenPnP, found by the top camera after a home to correct the place.
+- Faster preview (2026-11-12): the scene drawn by WebGL2 (the 2D canvas
+  where WebGL would be software) in a worker the page hands its canvases
+  to, the head and text on a canvas over it; a 400,000 point job drags at
+  60 frames a second on an Iris Xe and costs the page 0.1 ms a frame.

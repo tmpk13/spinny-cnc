@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Preview render check</title>
+    <link rel="stylesheet" href="../src/style.css">
+    <style>
+        body { margin: 0; padding: 1rem; background: #ffffff; }
+        .render-box { position: relative; width: 50rem; height: 35rem; margin-bottom: 1rem; }
+    </style>
+</head>
+<body>
+    <div class="render-box"><canvas class="preview" data-mode="2d"></canvas></div>
+    <div class="render-box"><canvas class="preview" data-mode="gl"></canvas></div>
+    <div class="render-box"><canvas class="preview" data-mode="worker"></canvas></div>
+    <div class="render-box"><canvas class="preview" data-mode="worker2d"></canvas></div>
+    <script type="module" src="./renderpage.ts"></script>
+</body>
+</html>

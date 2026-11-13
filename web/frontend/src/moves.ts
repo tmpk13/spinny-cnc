@@ -55,7 +55,7 @@ function perPass<T>(paths: T[], passes: number): T[] {
  * out as written, with whole turns added so its start is the nearest one.
  * The group runs once per pass, each pass from where the last one ended.
  */
-export function groupMoves(group: Group, from: Joint, tolerance: number): PlannedMove[] {
+export function groupMoves(group: Pick<Group, "joints" | "passes" | "paths">, from: Joint, tolerance: number): PlannedMove[] {
     const out: PlannedMove[] = [];
     let joint = from;
     if (group.joints && group.joints.length > 0) {

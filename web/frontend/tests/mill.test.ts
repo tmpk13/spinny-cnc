@@ -9,7 +9,8 @@ import fixture from "../../backend/tests/data/mill-samples.json" with { type: "j
 import { parseEvent } from "../src/ws.ts";
 import { buildMill, buildMillJob, labelStem, passesOf } from "../src/mock/mill.ts";
 import { defaultOperation, recipeOps } from "../src/sketch.ts";
-import { GRID_KEY, Preview, formatTick, gridLinesIn } from "../src/preview.ts";
+import { GRID_KEY, Preview } from "../src/preview.ts";
+import { formatTick, gridLinesIn } from "../src/render/scene.ts";
 import type { HolePoint, Job, MillOperation, MillResponse, Path } from "../src/types.ts";
 import { PAGES } from "../src/views/tabs.ts";
 import { headPosition, mountMarkers, nextMarkerName, withMarker } from "../src/views/markers.ts";

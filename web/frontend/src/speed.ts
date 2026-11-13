@@ -10,7 +10,7 @@
 
 import { boardOfJoint, moveMinutes, surfaceLength } from "./kinematics.ts";
 import { groupMoves, jointPreview } from "./moves.ts";
-import type { Job, Joint, Kinematics, Point } from "./types.ts";
+import type { Group, Joint, Kinematics, Point } from "./types.ts";
 
 /** The rates a machine moves at, mm/min (degrees a minute for the table), and the chord tolerance the moves are planned to. */
 export interface SpeedLimits {
@@ -64,8 +64,11 @@ function cartesianSpeed(dx: number, dy: number, wanted: number, limits: SpeedLim
     return speed;
 }
 
+/** What the speed map reads of a group. */
+export type SpeedGroup = Pick<Group, "enabled" | "moves" | "speed" | "joints" | "passes" | "paths">;
+
 /** Every cut move of the job's groups that are on, with its speed; a model's moves and dots are left out. */
-export function speedMap(job: Job, limits: SpeedLimits): SpeedMap {
+export function speedMap(job: { groups: readonly SpeedGroup[] }, limits: SpeedLimits): SpeedMap {
     const segments: SpeedSegment[] = [];
     let length = 0;
     let cappedLength = 0;
