@@ -37,6 +37,7 @@ import { mountStatusBar } from "./views/statusbar.ts";
 import { mountSteps } from "./views/steps.ts";
 import { mountTests } from "./views/tests.ts";
 import { mountTabs } from "./views/tabs.ts";
+import { mountTodo } from "./views/todo.ts";
 import { mountToasts } from "./views/toasts.ts";
 import { mountVision } from "./views/vision.ts";
 
@@ -291,6 +292,7 @@ function main(): void {
     mountStatusBar(panel("status"), ctx);
     mountConnection(panel("connection"), ctx);
     mountFocusBanner(panel("status"), ctx);
+    mountTodo(panel("status"), ctx);
     const tabTools = mountTabs(panel("tabs"), store);
     mountOverview(panel("overview"), ctx);
     mountSteps(panel("steps"), ctx);

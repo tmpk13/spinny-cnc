@@ -130,6 +130,7 @@ from .jobs import (
 from . import markers as marker_list
 from . import mill
 from . import thumbs
+from . import todo
 from .machines import MachineStore
 from .kinematics import (
     DEFAULT_TOLERANCE,
@@ -4481,6 +4482,9 @@ def create_app(
     @app.put("/api/markers")
     def put_markers(body: marker_list.MarkerList):
         return guarded(lambda: backend.set_markers(body.markers))
+
+    # The top bar's to-do list, kept beside the config.
+    app.include_router(todo.router(todo.TodoStore(backend.config_path.parent / "todo.json")))
 
     @app.delete("/api/jobs/{job_id}")
     def delete_job(job_id: str):

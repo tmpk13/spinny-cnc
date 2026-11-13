@@ -399,6 +399,13 @@ order ("hmprb" finds the Height map's Probe), among every page, panel and
 button: Enter or a press shows its page and panel, unfolded and pulsing,
 and gives a button the focus without pressing it.
 
+*To-do* in the top bar, beside Stop, opens a list from the right edge:
+type a line and press Enter to add it, check it off when done, *Delete*
+takes one out and *Clear done* the ones checked off. The button, Escape
+or a press anywhere else closes it, and the button counts what is left.
+The backend keeps the list (`var/todo.json`), so every browser shows the
+same one.
+
 ### The travel height
 
 *Travel H* in the Jog panel (on a machine with a focus axis) is an H the

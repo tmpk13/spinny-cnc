@@ -87,6 +87,7 @@ import type {
     UpdateState,
     UploadOptions,
 } from "./types.ts";
+import type { TodoItem, TodoList } from "./todo.ts";
 
 export class ApiError extends Error {
     readonly status: number;
@@ -107,6 +108,10 @@ export interface Api {
     markers(): Promise<Marker[]>;
     /** Puts the whole list of markers in place of the one kept; answers it as kept. */
     setMarkers(markers: Marker[]): Promise<Marker[]>;
+    /** The top bar's to-do list, as the backend keeps it for every browser. */
+    todo(): Promise<TodoList>;
+    /** Puts the whole to-do list in place of the one kept, made on `revision` (409 when the list moved on since; null puts it anyway); answers it as kept. */
+    setTodo(items: TodoItem[], revision: number | null): Promise<TodoList>;
     ports(): Promise<Port[]>;
     /** Opens the machine on a port: a G-code machine when `machine` names its file or a G-code machine file claims the port, else this project's firmware. */
     connect(url: string, machine?: string | null): Promise<Snapshot>;
@@ -762,6 +767,14 @@ export class HttpApi implements Api {
     async setMarkers(markers: Marker[]): Promise<Marker[]> {
         const response = await this.request<MarkersResponse>("PUT", "/api/markers", { markers });
         return response.markers ?? [];
+    }
+
+    todo(): Promise<TodoList> {
+        return this.request<TodoList>("GET", "/api/todo");
+    }
+
+    setTodo(items: TodoItem[], revision: number | null): Promise<TodoList> {
+        return this.request<TodoList>("PUT", "/api/todo", revision === null ? { items } : { items, revision });
     }
 
     async deleteAllJobs(): Promise<string[]> {

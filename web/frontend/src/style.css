@@ -3958,6 +3958,86 @@ a.btn.disabled {
     font-weight: 600;
 }
 
+/* The to-do list: its button in the top bar, with the count of what is
+   left to do, and the drawer it opens from the right edge, under the bar
+   (the script sets its top). Closed, the drawer waits past the edge,
+   hidden once it has slid out. */
+.todo-toggle[data-count]::after {
+    content: attr(data-count);
+    min-width: 1.4em;
+    padding: 0.05em 0.4em;
+    border-radius: 1em;
+    font-size: 0.75em;
+    font-weight: 700;
+    text-align: center;
+    background: var(--accent-fill);
+    color: var(--on-fill);
+}
+
+.todo-drawer.panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 6;
+    width: min(24rem, 100vw);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    transform: translateX(105%);
+    visibility: hidden;
+    transition: transform 0.2s ease, visibility 0s linear 0.2s;
+}
+
+.todo-drawer.panel[data-open] {
+    transform: none;
+    visibility: visible;
+    transition: transform 0.2s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .todo-drawer.panel,
+    .todo-drawer.panel[data-open] {
+        transition: none;
+    }
+}
+
+.todo-input.field {
+    width: 100%;
+}
+
+.todo-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.todo-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.todo-item .check {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 0.95rem;
+    color: var(--text);
+}
+
+.todo-text {
+    overflow-wrap: anywhere;
+}
+
+.todo-item[data-done] .todo-text {
+    color: var(--muted);
+    text-decoration: line-through;
+}
+
 /* The Auto page: the provider row, the conversation and the box to write
    in. The operator's lines sit to the right, the model's to the left, a
    tool call is a folded line in the mono face with a stripe that says

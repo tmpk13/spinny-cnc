@@ -558,6 +558,16 @@ Named positions on the board, kept in the backend's config for every page.
 | `GET /api/markers` | `{"markers": [{"name": "corner", "x": 1.5, "y": -2}]}` |
 | `PUT /api/markers` | the whole list, in place of the one kept: names 1 to 40 characters once each (trimmed), at most 200, coordinates within 1e6 mm; answers the list as kept, 400 with the reason |
 
+## To-do
+
+The top bar's to-do list, kept in `var/todo.json` (written whole) for
+every browser.
+
+| Method and path | Body |
+| --- | --- |
+| `GET /api/todo` | `{"revision": 3, "items": [{"id": "lw2k9a1b", "text": "clean the lens", "done": false}]}`; `revision` counts the puts |
+| `PUT /api/todo` | `{"items": [...], "revision": 3}`: the whole list in place of the one kept, made on the revision given; 409 when the list has moved on since (another window changed it: read it again and make the change on that), and with `revision` left out it is put whatever the kept one is. Ids are 1 to 40 letters, digits, `_` or `-`, once each; a text is trimmed, runs of spaces and line breaks made one space, 1 to 500 characters; at most 500 items. Answers the list as kept, its revision one on; 400 with the reason |
+
 ## Height map
 
 The touch probe on the focus axis measures the board over a grid, and a
