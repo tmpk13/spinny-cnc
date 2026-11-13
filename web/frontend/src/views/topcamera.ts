@@ -10,7 +10,7 @@ import { button, el, labeled, lockFor, numberField, setLocked, Tracked, type Tra
 import { parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { CameraFinish, CameraSide, SpotPolarity, TopSettings } from "../types.ts";
-import { mountCameraControls } from "./cameracontrols.ts";
+import { mountCameraControls, placeFolds, type CameraFolds } from "./cameracontrols.ts";
 import { mountCameraSight } from "./camerasight.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
@@ -19,7 +19,7 @@ import { topCameraText, topRoutineText } from "./placing.ts";
 import { infoTip } from "./infotip.ts";
 import { lookOnceText, polaritySelect } from "./pnp.ts";
 
-export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boolean): void {
+export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boolean, folds?: CameraFolds): void {
     const badge = el("span", { class: "badge" }, "stopped");
     const start = button("Start", () => startTop(), "btn btn-primary");
     start.title = "start the top camera with these settings";
@@ -84,8 +84,7 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
             ),
             el("div", { class: "button-row" }, apply, lookOnce),
             lookLine,
-            controls.root,
-            sight.root,
+            ...placeFolds(folds, "top", controls.root, sight.root),
             el("div", { class: "button-row" }, offsetLine, infoTip("offset")),
             el("div", { class: "button-row" }, markHere, labeled("Step mm", step, "labeled inline"), measure, homeFiducial, abort),
             routineLine,

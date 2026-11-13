@@ -489,7 +489,9 @@ fiducial *Home by fiducial* finds; the bottom camera's rings the nozzle
 where the head's place puts it. A ring keeps one size at any zoom; its
 label shows only where it has room.
 
-*Picture controls*, folded under each camera's settings, lists what the
+*Picture controls*, a panel stacked with each camera's panel (a tab
+beside it; *Bottom picture controls* and *Top picture controls* on the
+PNP page), lists what the
 camera lets be set (exposure, gain, focus, white balance, brightness and
 the like, as v4l2-ctl lists them): a slider, a box or a list each. A value
 set goes to the camera at once and is kept, so it is set again whenever
@@ -498,7 +500,7 @@ Automatic exposure is set before a manual exposure time; a control greyed
 out does nothing while an automatic one is on. A camera on a bridge Pi
 (an HTTP snapshot URL) has none here: they are set on the Pi.
 
-While the fold is open, *Live picture* at its head measures the camera's
+While the panel shows (in front of its stack and unfolded), *Live picture* at its head measures the camera's
 picture as its view shows it (the zoomed part when zoomed), a few times a
 second, to turn the controls by: *Sharpness*, how crisp the edges are in
 levels a pixel, with the best since the fold opened so the focus can be
@@ -627,7 +629,7 @@ than from the camera's roll over one picture's few millimeters. A round
 feature must look round and of its size: a ring, a square pad or a spot
 of the wrong size stops it with why.
 
-*Lens and colors*, folded under each camera's settings: *Measure lens*,
+*Lens and colors*, the other panel stacked with each camera's: *Measure lens*,
 with the calibration test's camera pattern (dark dots printed, or bright
 ones a laser marked) filling the picture, measures how the lens bends it
 and corrects every point pcbv reports from then on (kept, sent at every

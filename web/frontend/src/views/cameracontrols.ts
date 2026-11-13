@@ -1,5 +1,6 @@
 // A camera's V4L2 controls (exposure, gain, focus, white balance,
-// brightness and the like) in its settings panel, folded until opened: the
+// brightness and the like), a panel of its own stacked with its camera's
+// panel (or a fold inside it where no panel is given): the
 // list v4l2-ctl gives of the camera's device on the backend's computer, as
 // sliders for numbers, boxes for switches and lists for menus. A value set
 // is sent at once and kept by the backend, which sets it again whenever the
@@ -9,7 +10,7 @@
 // (sharpness, noise, brightness, clipping) head the fold while it is open
 // (camerastats.ts), to turn the controls by.
 
-import { button, el, replace } from "../dom.ts";
+import { button, el, foldAsPanel, replace } from "../dom.ts";
 import type { CameraControl, CameraControls, ControlledCamera } from "../types.ts";
 import { mountCameraStats } from "./camerastats.ts";
 import type { Ctx } from "./context.ts";
@@ -17,6 +18,31 @@ import type { Ctx } from "./context.ts";
 /** A control's name as words: v4l2-ctl's underscores as spaces. */
 export function controlLabel(name: string): string {
     return name.replace(/_/g, " ");
+}
+
+/** The panels a camera's two folds go into: its picture controls, and its lens and colors. */
+export interface CameraFolds {
+    controls: HTMLElement;
+    sight: HTMLElement;
+}
+
+/**
+ * Puts a camera's two folds where they go: each into its panel of its own,
+ * open or folded as last left there (per camera); with no panels given,
+ * back as the nodes the camera's own panel holds.
+ */
+export function placeFolds(folds: CameraFolds | undefined, camera: ControlledCamera, controls: HTMLDetailsElement, sight: HTMLDetailsElement): HTMLElement[] {
+    if (!folds) {
+        return [controls, sight];
+    }
+    foldAsPanel(folds.controls, controls, `spinny.camera-controls.${camera}.open`);
+    foldAsPanel(folds.sight, sight, `spinny.camera-sight.${camera}.open`);
+    return [];
+}
+
+/** Whether a node shows now (not under anything display: none); a browser that cannot tell counts it as shown. */
+function visibleNow(node: Element): boolean {
+    return typeof node.checkVisibility === "function" ? node.checkVisibility() : true;
 }
 
 /** The value a control shows: the kept one when there is, else the camera's own. */
@@ -48,14 +74,40 @@ export function mountCameraControls(ctx: Ctx, camera: ControlledCamera, label: s
     ) as HTMLDetailsElement;
     let shown: CameraControls | null = null;
 
-    root.addEventListener("toggle", () => {
-        if (root.open) {
-            void reload();
+    // At work while open and on the screen: as a panel of its own the fold
+    // starts behind its camera's panel in their stack, and an open fold
+    // there must neither ask the camera for its controls nor measure its
+    // frames. The list is read once each time the fold opens, when it
+    // first shows.
+    let working = false;
+    let onScreen = true;
+    let listed = false;
+    const follow = (): void => {
+        const want = root.open && onScreen && visibleNow(root);
+        if (want && !working) {
+            working = true;
+            if (!listed) {
+                listed = true;
+                void reload();
+            }
             stats.start();
-        } else {
+        } else if (!want && working) {
+            working = false;
             stats.stop();
         }
+    };
+    root.addEventListener("toggle", () => {
+        if (!root.open) {
+            listed = false;
+        }
+        follow();
     });
+    if (typeof IntersectionObserver === "function") {
+        new IntersectionObserver((entries) => {
+            onScreen = entries[entries.length - 1]?.isIntersecting ?? onScreen;
+            follow();
+        }).observe(root);
+    }
 
     async function reload(): Promise<void> {
         const answer = await ctx.call(ctx.api.cameraControls(camera));

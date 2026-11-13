@@ -148,7 +148,7 @@ with a 10 mm bar to check the printer's scale against.
 
 To measure the lens, put the camera over the pattern so the dots fill
 its picture and press *Measure lens* in the camera's *Lens and colors*
-fold (dark dots for the printed sheet, bright for the laser's): pcbv finds
+panel, a tab beside the camera's own (dark dots for the printed sheet, bright for the laser's): pcbv finds
 the dots, indexes them into the grid, and fits two radial terms (k1, k2)
 that straighten it; the message gives how far the dots lie from a
 straight grid with and without them. The terms are kept per camera and

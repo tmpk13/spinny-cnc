@@ -12,7 +12,7 @@ import { formatFixed, formatPercent, parseNumber } from "../format.ts";
 import { isCartesian } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
 import type { BoardLook, Component, Job, PnpSettings, PnpState, SpotPolarity } from "../types.ts";
-import { mountCameraControls } from "./cameracontrols.ts";
+import { mountCameraControls, placeFolds, type CameraFolds } from "./cameracontrols.ts";
 import { mountCameraSight } from "./camerasight.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
@@ -492,6 +492,10 @@ export interface PnpRoots {
     run: HTMLElement;
     /** The look for the board with a camera picked. */
     find: HTMLElement;
+    /** The bottom camera's picture controls and its lens and colors, panels of their own; without them they fold inside its panel. */
+    cameraFolds?: CameraFolds;
+    /** The top camera's, the same; shown with the top camera's panel. */
+    topFolds?: CameraFolds;
 }
 
 export interface PnpPanels {
@@ -516,7 +520,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     mountPnpFeeders(roots.feeders, ctx);
     mountPnpRun(roots.run, ctx);
     const views = mountCameraViews({ bottom: roots.view, top: roots.topView }, ctx);
-    mountTopCamera(roots.top, ctx, () => visible() && gcodePlacing(ctx.store.get()));
+    mountTopCamera(roots.top, ctx, () => visible() && gcodePlacing(ctx.store.get()), roots.topFolds);
     // The board drawing shows the look of the camera this panel picks.
     const find = mountFindBoard(roots.find, ctx, {
         page: "pnp",
@@ -690,8 +694,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
             el("div", { class: "button-row" }, cameraApply, cameraChip),
             el("div", { class: "button-row" }, labeled("Look for", lookSpot, "labeled inline"), lookOnce),
             lookLine,
-            upControls.root,
-            upSight.root,
+            ...placeFolds(roots.cameraFolds, "up", upControls.root, upSight.root),
             el("p", { class: "muted hint" }, "A fixed camera looking up at the nozzle. Set Nozzle spot and Part spot to how the bore and a held part look against their background."),
             deviceCalibration,
             upLog,
@@ -1324,7 +1327,10 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         shownGcode = onDevice;
         // The up camera serves either machine; the nozzle panel is this project's machine's.
         roots.nozzle.classList.toggle("hidden", onDevice);
-        for (const root of [roots.head, roots.refs, roots.feeders, roots.run, roots.top]) {
+        for (const root of [roots.head, roots.refs, roots.feeders, roots.run, roots.top, roots.topFolds?.controls, roots.topFolds?.sight]) {
+            if (!root) {
+                continue;
+            }
             root.classList.toggle("hidden", !onDevice);
         }
         deviceCalibration.classList.toggle("hidden", !onDevice);

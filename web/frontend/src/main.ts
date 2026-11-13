@@ -302,7 +302,7 @@ function main(): void {
     mountHeightMap(panel("heightmap"), ctx);
     mountPreviewPanel(panel("preview"), ctx);
     mountJobJson(panel("jobjson"), ctx);
-    const vision = mountVision(panel("camera"), ctx, panel("camera-view"));
+    const vision = mountVision(panel("camera"), ctx, panel("camera-view"), { controls: panel("camera-controls"), sight: panel("camera-sight") });
     mountAlign(panel("align"), ctx);
     mountTests(panel("tests"), ctx);
     mountConsole(panel("console"), ctx);
@@ -335,6 +335,8 @@ function main(): void {
         feeders: panel("pnp-feeders"),
         run: panel("pnp-run"),
         find: panel("pnp-find"),
+        cameraFolds: { controls: panel("pnp-camera-controls"), sight: panel("pnp-camera-sight") },
+        topFolds: { controls: panel("pnp-top-controls"), sight: panel("pnp-top-sight") },
     }, ctx, () => vision.view.box());
     // The look for a board on the Jobs page too, its camera picked apart
     // from the PNP page's.

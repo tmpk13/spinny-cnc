@@ -16,7 +16,7 @@ import { formatFixed, formatPercent, parseNumber } from "../format.ts";
 import { isMilling } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
 import type { BoardLook, CameraFinish, CameraSettings, CameraSide, CameraState } from "../types.ts";
-import { mountCameraControls } from "./cameracontrols.ts";
+import { mountCameraControls, placeFolds, type CameraFolds } from "./cameracontrols.ts";
 import { mountCameraSight } from "./camerasight.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
@@ -201,9 +201,11 @@ export interface VisionPanel {
 /**
  * The Camera panel in `root`, and its picture in `viewRoot` (the Camera
  * view panel); without one the picture goes in a box of its own appended
- * to `root`.
+ * to `root`. The picture controls and the lens and colors folds are panels
+ * of their own in `folds` (stacked with this one by the markup); without
+ * them they fold inside this panel.
  */
-export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement): VisionPanel {
+export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement, folds?: CameraFolds): VisionPanel {
     const badge = el("span", { class: "badge vision-badge" }, "stopped");
     const pictureRoot = viewRoot ?? el("div", { class: "stack" });
     // The fold, once made: the picture asks whether it is open.
@@ -282,8 +284,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement)
             labeled("Finish", finish),
         ),
         el("div", { class: "button-row" }, applySettings, pendingChips[0]),
-        controls.root,
-        sight.root,
+        ...placeFolds(folds, "head", controls.root, sight.root),
         el("div", { class: "field-grid" },
             labeled("Offset x mm", offsetX),
             labeled("Offset y mm", offsetY),

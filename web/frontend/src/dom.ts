@@ -478,6 +478,28 @@ export function foldPanel(key: string, head: HTMLElement, body: HTMLElement, onT
 }
 
 /**
+ * Makes a fold that used to sit in a panel (a details whose summary names
+ * it) a panel of its own in `section`: the summary becomes the panel's
+ * head with its words as the title, and the layout layer folds the panel
+ * by it, as it does foldPanel's. Open or folded is kept in this browser
+ * under `key`, open at first. Nothing else about the fold changes, so its
+ * view works the same either way.
+ */
+export function foldAsPanel(section: HTMLElement, fold: HTMLDetailsElement, key: string): void {
+    const summary = Array.from(fold.children).find((child): child is HTMLElement => child.tagName === "SUMMARY");
+    if (summary) {
+        summary.classList.add("panel-head");
+        if (!Array.from(summary.children).some((child) => child.tagName === "H2")) {
+            summary.replaceChildren(el("h2", {}, ...Array.from(summary.childNodes)));
+        }
+    }
+    fold.classList.add("panel-fold");
+    fold.open = readStored(key) !== "0";
+    fold.addEventListener("toggle", () => writeStored(key, fold.open ? "1" : "0"));
+    section.append(fold);
+}
+
+/**
  * Lets the operator drag the bottom right corner of `box` to set its
  * height (CSS resize), kept in this browser under `key` in rem. The
  * height is read back from what the browser writes while a drag goes on
