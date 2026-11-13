@@ -26,7 +26,7 @@ Answer:
 Why it matters: a plugin runs with the page's full power, the machine's moves included.
 - A. No (recommended): Auto writes plugins off; only the operator's press in the Plugins tab, after a warning, turns one on, and a rewrite turns it off again.
 - B. Auto may turn on its own plugins: one step less, and the model then reaches every route the page does.
-Applied: A, in 7dc2471.
+Applied: A, in e1944d5.
 Answer:
 
 ## Q5. "Draw circle around know point on" what?
