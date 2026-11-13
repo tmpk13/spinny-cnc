@@ -2,6 +2,7 @@
 
 import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
+import { popUp } from "../dismiss.ts";
 import { button, downloadText, el, fileDrop, labeled, numberField, onEnter, relabel, replace, setLocked, setUnlessFocused } from "../dom.ts";
 import { countText, formatDuration, formatFixed, formatLength, formatMm, formatOptional, formatPercent, parseNumber } from "../format.ts";
 import { type BoardLayer, boardLayers, isDrawingLayer, layerChoiceText } from "../kicad.ts";
@@ -457,9 +458,14 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
     ctx.store.subscribe((state) => renderList(state), ["jobs", "job"]);
     ctx.store.subscribe((state) => renderDetails(state), ["job", "progress", "snapshot", "heightMap"]);
 
+    // While the icon picker is open it is a pop-up: a press elsewhere only shuts it.
+    let releaseIcon: (() => void) | null = null;
+
     /** Shuts the icon picker where it stands, the rows left as they are: a row made again under a press would take no click. */
     function closeIcon(): void {
         iconFor = null;
+        releaseIcon?.();
+        releaseIcon = null;
         list.querySelector(".job-icon-row")?.remove();
         list.querySelector('.job-thumb-button[aria-expanded="true"]')?.setAttribute("aria-expanded", "false");
     }
@@ -475,7 +481,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
         const selected = state.job?.id ?? null;
         combining = combining.filter((id) => state.jobs.some((job) => job.id === id));
         if (iconFor !== null && !state.jobs.some((job) => job.id === iconFor)) {
-            iconFor = null;
+            closeIcon();
         }
         replace(list, ...state.jobs.flatMap((job) => {
             const item = el("li", { class: job.id === selected ? "selected" : "" });
@@ -495,6 +501,10 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
                     closeIcon();
                 } else {
                     iconFor = job.id;
+                    releaseIcon ??= popUp({
+                        nodes: () => [list.querySelector(".job-icon-row"), list.querySelector('.job-thumb-button[aria-expanded="true"]')],
+                        close: closeIcon,
+                    });
                     renderList(ctx.store.get());
                     // The list scrolls within its own height: the picker is brought into it.
                     list.querySelector(".job-icon-row")?.scrollIntoView?.({ block: "nearest" });

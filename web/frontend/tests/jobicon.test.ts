@@ -74,6 +74,8 @@ describe("the job list's icons", () => {
         const picker = (): HTMLElement | null => root.querySelector(".job-icon-picker");
         expect(picker()).not.toBeNull();
         expect(thumb().getAttribute("aria-expanded")).toBe("true");
+        // Open, it is a pop-up: the pointer elsewhere says a press only shuts it.
+        expect(document.documentElement.hasAttribute("data-dismiss")).toBe(true);
         expect(picker()!.querySelectorAll(".job-icon-choice").length).toBe(12);
         expect(picker()!.querySelectorAll(".job-icon-swatch").length).toBe(8);
         // The color first, then the glyph.
@@ -101,6 +103,7 @@ describe("the job list's icons", () => {
         expect(picker()).toBeNull();
         expect(thumb().closest("li")).toBe(row);
         expect(thumb().getAttribute("aria-expanded")).toBe("false");
+        expect(document.documentElement.hasAttribute("data-dismiss")).toBe(false);
         root.remove();
     });
 });
