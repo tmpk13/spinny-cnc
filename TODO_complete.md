@@ -782,3 +782,21 @@
 - pcbv reports each lock's rival; the page says when a board is ambiguous.
 - Round and size checks for fiducials (roundness, fill, square), and pcbv's sub-pixel spot center.
 - Color picker: a color picked from a camera's picture for spots, board pads or edges.
+- Feature search (2026-11-13): hovering a match shows its whole path, page, panel and button, and the button's own tooltip.
+- Folder stacks (2026-11-13): a stack drawn as a folder with sheets behind; a tab dragged off its row takes its panel out to where it is let go; a button and a menu item take a stack apart; the markup can stack panels from the start (data-stack).
+- Side by side, a folded panel stands on its side as a narrow strip and gives its width to the others.
+- Fonts: Inter and JetBrains Mono served with the page (offline), the system's fonts a page setting away.
+- Animations: pages fading in, panels unfolding, a stack's panel sliding forward, menus and sheets opening; opacity and transform only; a still page setting and the system's reduced motion stop them.
+- Pop-ups: the pointer outside an open menu, sheet, drawing, drawer or picker is a circle with an x, and a press there only closes it; buttons that stop something still take the press.
+- Overview tab: a card per page with a small drawing and what the page holds now.
+- Info drawings: overlapping labels moved; mise run test-layout fails on words over words, shapes or lines.
+- Default panels: each camera's picture controls and lens and colors, and the centering and calibration tests, are panels of their own stacked by default.
+- Camera pictures: rings around the points whose place is known, a zoom field to type into, live sharpness, noise and SNR, brightness and clipping while the picture controls show.
+- Board search: starts at the place known (corners, a find before, Align or references, the job's own place) and tells pcbv to try it first; pcbv weighs larger spots against specks (0 to 12 of 12 locked under 3000 specks).
+- PNP parts: search the board drawing by reference or value; test points and other parts KiCad keeps out of the position files listed, placed only when picked; a regular expression leaves parts out of the list and the run.
+- Job icons: a glyph or one or two letters on a color, from the job list.
+- Updates from GitHub pre-releases when asked (Version panel, --pre).
+- To-do drawer from the top bar, kept by the backend.
+- Bug reports: a screenshot and the recent actions, saved by the backend, handed to a GitHub issue page or posted to a link set on the Config page (none by default).
+- Plugins: a Plugins tab of page modules with a switch each; Auto can write them but never turn one on.
+- mise run shots: screenshots of the page over its mock from a list of shots.
