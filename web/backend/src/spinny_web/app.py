@@ -47,8 +47,10 @@ from .boardlook import (
     CORNERS,
     BoardLook,
     BoardMover,
+    Estimate,
     PictureFrame,
     RestTracker,
+    check_places,
     corner_of,
     found_text,
     rough_box,
@@ -143,7 +145,7 @@ from .prober import Prober, ProberError
 from .resume import PositionStore, ResumeStore
 from .runner import DONE, HOLD, RUNNING, Runner, RunnerError, halt
 from .tools import ToolBox
-from .vision import VisionError
+from .vision import VisionError, board_record_fields
 
 # The runtime files (jobs, config, height map) and the machine and CAM
 # files: the repository's var/, machines/ and cam/ in a checkout, else the
@@ -660,6 +662,9 @@ class TopSettingsBody(Finite):
     mirror: bool | None = None
     look_threshold: float | None = None
     corner_mm: float | None = None
+    side: str | None = None
+    finish: str | None = None
+    paste: bool | None = None
     # The settings to take back to none: mark_at, offset.
     clear: list[str] = Field(default_factory=list)
 
@@ -804,6 +809,10 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         )
         self._head_rest = RestTracker()
         self._top_rest = RestTracker()
+        # The parts a placing run has put on the board now on the G-code
+        # machine, by job: a run begins with a bare board and adds each
+        # part it places; the top camera's pcbv is told them.
+        self._board_placed: dict[str, list[str]] = {}
         # The pictures the cameras' routines looked at, kept while logging
         # is on, and photos taken by hand.
         self.camlog = CameraLog(
@@ -3016,6 +3025,15 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         x0, y0, x1, y1 = box
         return ((x0 + x1) / 2.0, (y0 + y1) / 2.0), max(math.hypot(x1 - x0, y1 - y0), 1.0)
 
+    def _check_places(self, job, view: tuple[float, float]) -> Callable[[Estimate], list[tuple[float, float]]]:
+        """Where a search checks the job's board once found: its middle, or
+        the part of it with the most pads and holes in a picture `view` mm
+        (boardlook.check_places)."""
+        middle, _ = self._board_size(job)
+        outline = self._board_box(job)
+        features = [(float(p[0]), float(p[1])) for p in job.pads] + [(float(h[0]), float(h[1])) for h in job.holes]
+        return lambda found: check_places(found, middle, outline, features, view)
+
     def _corners_box(self, look: BoardLook, job, corner_mm: float) -> tuple[float, float, float, float] | None:
         """The box a search covers by default once corners of the job's
         board were taken: where they put its outline, grown by their
@@ -3058,12 +3076,13 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         self.head_look.clear_corners()
         return self.publish_camera()
 
-    def _board_record(self, kind: str, camera: str, job, client, side: str, finish: str, picture: dict, extra: dict | None = None) -> SearchRecord | None:
+    def _board_record(self, kind: str, camera: str, job, client, board: dict, picture: dict, extra: dict | None = None) -> SearchRecord | None:
         """A search record begun (searchlog.py) of `camera`'s look for a
         job's board (`look`) or its search over a box (`search`): what was
-        looked for and how, `picture` the camera's place and scale and
-        `extra` the search's box and stops; None when none could be begun,
-        which nothing stops for."""
+        looked for and how (`board`, the fields pcbv was given besides the
+        file: side, finish, scale, paste, placed), `picture` the camera's
+        place and scale and `extra` the search's box and stops; None when
+        none could be begun, which nothing stops for."""
         try:
             middle, _ = self._board_size(job)
             box = self._board_box(job)
@@ -3073,7 +3092,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
                 hello = None
             header = {
                 "job": {"id": job.id, "name": job.name},
-                "board": {"file": job.recipe.file if job.recipe is not None else None, "side": side, "finish": finish},
+                "board": {"file": job.recipe.file if job.recipe is not None else None, **board_record_fields(board)},
                 "board_to_job": affine_of(job.design.board_to_job),
                 "middle": [middle[0], middle[1]],
                 "outline_box": list(box) if box is not None else None,
@@ -3193,18 +3212,17 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             self.camera.load_board(job_id, str(path))
             middle, _ = self._board_size(job)
             self.head_look.stop()
-            record = self._board_record("look", "head", job, self.camera.client, *self._head_board_settings())
+            record = self._board_record("look", "head", job, self.camera.client, self.camera.board_settings(), self._head_picture())
             self.head_look.start(job_id, job.design.board_to_job, middle, self._head_look_place, record)
         return self.publish_camera()
 
-    def _head_board_settings(self) -> tuple[str, str, dict]:
-        """The head camera's side, finish and picture, for a search record."""
+    def _head_picture(self) -> dict:
+        """The head camera's place and scale, for a search record."""
         settings = self.camera.settings()
-        picture = {
+        return {
             "offset": list(settings.offset), "roll": settings.roll, "mirror": False,
             "mm_per_px": settings.mm_per_px, "device": settings.device, "pcbv": settings.pcbv,
         }
-        return settings.side, settings.finish, picture
 
     def camera_search(self, body: BoardSearchBody) -> dict:
         """Moves the head camera over a box until enough looks agree on the
@@ -3244,13 +3262,15 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
                     progress.done = index + 1
                     self.publish_camera()
 
-                side, finish, picture = self._head_board_settings()
                 record = self._board_record(
-                    "search", "head", job, self.camera.client, side, finish,
-                    {**picture, "width": width, "height": height, "mm_per_px_used": scale},
+                    "search", "head", job, self.camera.client, self.camera.board_settings(),
+                    {**self._head_picture(), "width": width, "height": height, "mm_per_px_used": scale},
                     search_extra(box, here, stops, width * scale, height * scale),
                 )
-                found = search(look, mover, stops, offset, lambda point: PictureFrame(point, settings.roll, False), mover.stopped, on_stop, CameraError, record)
+                found = search(
+                    look, mover, stops, offset, lambda point: PictureFrame(point, settings.roll, False), mover.stopped, on_stop, CameraError, record,
+                    checks=self._check_places(job, (width * scale, height * scale)),
+                )
                 self.publish_message("info", found_text(found, look.consensus))
 
             self.camera.run_routine("search", len(stops) + 1, "looking for the board", link, run)

@@ -652,8 +652,9 @@ class BoardStandIn:
         self.frames = 0
         self.asked: list[str] = []
 
-    def board(self, path, side="front", finish="masked"):
+    def board(self, path, side="front", finish="masked", **fields):
         self.loaded = path
+        self.board_fields = {"side": side, "finish": finish, **fields}
         return {"features": 40}
 
     def request(self, cmd, timeout=None, **fields):
@@ -693,6 +694,8 @@ def test_the_head_camera_searches_for_the_board_and_a_capture_takes_the_agreed_p
     response = client.post("/api/camera/board", json={"job": job.id})
     assert response.status_code == 200, response.text
     assert response.json()["board_look"]["job"] == job.id
+    # The search keeps within a fifth of the scale measured.
+    assert stand_in.board_fields["scale"] == pytest.approx((0.016, 0.024)) and stand_in.board_fields["side"] == "front"
     response = client.post("/api/camera/search", json={"box": [45.0, 35.0, 75.0, 60.0]})
     assert response.status_code == 200, response.text
     state = wait_routine(client)
@@ -700,6 +703,7 @@ def test_the_head_camera_searches_for_the_board_and_a_capture_takes_the_agreed_p
     middle = (40.0 + 20.0 * math.cos(math.radians(1.0)) - 15.0 * math.sin(math.radians(1.0)), 30.0 + 20.0 * math.sin(math.radians(1.0)) + 15.0 * math.cos(math.radians(1.0)))
     look = state["board_look"]
     assert look["found"] is True and look["estimate"]["center"] == pytest.approx(list(middle), abs=0.01)
+    assert look["sessions"] >= boardlook.SESSIONS and look["rechecking"] is False
     assert (fake.joint[0] + 12.5, fake.z - 3.25) == pytest.approx(middle, abs=0.01)
     # The search was recorded, and the look begun by loading the board
     # ended as the search began.

@@ -205,8 +205,11 @@ def _estimate(data) -> Estimate | None:
     center, shift, rotation = _point(data.get("center")), _point(data.get("shift")), data.get("rotation")
     if center is None or shift is None or not _number(rotation):
         return None
-    rms, match = data.get("rms"), data.get("match")
-    return Estimate(float(rotation), shift, center, float(rms) if _number(rms) else 0.0, [], _point(data.get("seen")), 0.0, float(match) if _number(match) else 1.0)
+    rms, match, session, rival = data.get("rms"), data.get("match"), data.get("session"), data.get("rival")
+    return Estimate(
+        float(rotation), shift, center, float(rms) if _number(rms) else 0.0, [], _point(data.get("seen")), 0.0,
+        float(match) if _number(match) else 1.0, int(session) if _number(session) else 0, float(rival) if _number(rival) else 0.0,
+    )
 
 
 # --- geometry: how much of a picture the board covers --------------------------------------
@@ -389,7 +392,10 @@ def summarize(record: Record, truth: Place | None = None) -> dict:
         "camera": header.get("camera"),
         "started": header.get("started"),
         "job": job.get("name") or job.get("id"),
-        "board": {"file": board.get("file"), "side": board.get("side"), "finish": board.get("finish")},
+        "board": {
+            "file": board.get("file"), "side": board.get("side"), "finish": board.get("finish"),
+            **{key: board[key] for key in ("scale", "paste", "placed") if key in board},
+        },
         "result": outcome.get("result") or "unfinished",
         "message": outcome.get("message"),
         "seconds": outcome.get("seconds"),
@@ -438,6 +444,9 @@ def what_ifs(record: Record, truth: Place | None = None, needs=NEEDS, agrees=AGR
             consensus = Consensus(
                 record.middle, need=int(need), agree_mm=float(agree), agree_deg=settings.get("agree_deg"), history=settings.get("history"),
                 threshold=settings.get("threshold"), corner_mm=settings.get("corner_mm"), corners=corners_from(settings.get("corners")),
+                # A record from before locks were counted called the board
+                # found from one.
+                sessions=settings.get("sessions") or 1,
             )
             row: dict = {
                 "need": int(need), "agree_mm": float(agree), "found": False,
@@ -494,6 +503,14 @@ def rerun_pcbv(record: Record, program: str, truth: Place | None = None, timeout
         raise ValueError(f"{board} is missing: the record kept no board file")
     kept = record.header.get("board") or {}
     side, finish = str(kept.get("side") or "front"), str(kept.get("finish") or "masked")
+    # The scale range and the paste and parts pcbv was told, when it was.
+    assembly_flags: list[str] = []
+    if isinstance(kept.get("scale"), str):
+        assembly_flags += ["--scale", kept["scale"]]
+    if kept.get("paste") is True:
+        assembly_flags.append("--paste")
+    if isinstance(kept.get("placed"), list) and kept["placed"]:
+        assembly_flags += ["--placed", ",".join(str(ref) for ref in kept["placed"])]
     stops = {row["index"]: row for row in _stops(record, None, None)}
     rows = []
     for picture in record.of("picture"):
@@ -504,7 +521,7 @@ def rerun_pcbv(record: Record, program: str, truth: Place | None = None, timeout
         row: dict = {"file": file, "stop": index}
         if index in stops:
             row["recorded"] = f"{stops[index]['used']}/{stops[index]['poses']}"
-        command = [program, "locate", str(board), str(record.folder / file), "--side", side, "--finish", finish, "--json"]
+        command = [program, "locate", str(board), str(record.folder / file), "--side", side, "--finish", finish, *assembly_flags, "--json"]
         try:
             done = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
         except (OSError, subprocess.TimeoutExpired) as exc:

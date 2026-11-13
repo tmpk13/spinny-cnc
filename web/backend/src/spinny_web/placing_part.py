@@ -31,7 +31,9 @@ from .kinematics import num
 from .openpnp import GcodeMachine, Plan, board_fit, goto_lines, move_line, plan, safe_line
 from .placer import Placement, PlaceSetup, fiducial_fit
 from .pnp import CameraPlace, PnpError
+from .log import log
 from .topcam import Found
+from .vision import scale_range
 
 if TYPE_CHECKING:
     from .app import (
@@ -219,14 +221,24 @@ class PlacingPart:
 
     def top_settings(self, body: TopSettingsBody) -> dict:
         self.placing_machine()
+        before = self.top.settings()
         try:
-            self.top.update(body.model_dump(exclude={"clear"}, exclude_none=True), tuple(body.clear))
+            after = self.top.update(body.model_dump(exclude={"clear"}, exclude_none=True), tuple(body.clear))
         finally:
             # A camera started again on other settings has no board loaded.
             if self.top_look.job is not None and not self._top_board_loaded():
                 self.top_look.stop()
             self.top_look.retune()
             state = self.publish_placing()
+        job = self.top_look.job
+        if job is not None and not self.top.routine_active:
+            if (after.side, after.finish) != (before.side, before.finish):
+                # Another side or finish is another model: the board is
+                # loaded again, the look begun afresh.
+                state = self.top_board(job)
+            elif after.paste != before.paste:
+                self._tell_assembly(job)
+                state = self.publish_placing()
         return state
 
     def top_start(self) -> dict:
@@ -267,14 +279,38 @@ class PlacingPart:
         if job.design is None or not job.design.board or path is None:
             raise ValueError("the job was not imported from a KiCad board file kept here: the camera has nothing to look for")
         self.top_look.stop()
-        self.top.client.board(str(path), "front", "masked")
+        board = self._top_board_settings(job_id)
+        self.top.client.board(str(path), **board)
         middle, _ = self._board_size(job)
         # A place the head is seen at that changed is a move at about half
         # the file's feed, its acceleration allowed for.
         self._top_rest.speed = max(machine.feed_xy / 120.0, 1.0)
-        record = self._board_record("look", "top", job, self.top.client, "front", "masked", self._top_picture(machine))
+        record = self._board_record("look", "top", job, self.top.client, board, self._top_picture(machine))
         self.top_look.start(job_id, job.design.board_to_job, middle, self._top_look_place, record)
         return self.publish_placing()
+
+    def _top_board_settings(self, job_id: str) -> dict:
+        """What the job's board is loaded into the top camera's pcbv with
+        besides its file: the camera's side, finish and paste, the scale
+        range its search keeps to once the scale is measured, and the parts
+        placed on the board now on the machine."""
+        settings = self.top.settings()
+        return {
+            "side": settings.side, "finish": settings.finish, "scale": scale_range(settings.mm_per_px),
+            "paste": settings.paste, "placed": list(self._board_placed.get(job_id, [])),
+        }
+
+    def _tell_assembly(self, job_id: str) -> None:
+        """The top camera's pcbv, looking for the job's board, told the
+        paste and parts on it now, so its model shows the placed parts'
+        bodies and goes on tracking. A failure is logged: the look goes on
+        with the model it has."""
+        if self.top_look.job != job_id or not self.top.client.running:
+            return
+        try:
+            self.top.client.assembly(paste=self.top.settings().paste, placed=list(self._board_placed.get(job_id, [])))
+        except Exception as exc:  # never stops a run
+            log.warning("top camera: the parts placed were not told to pcbv: %s", exc)
 
     def _top_picture(self, machine: GcodeMachine) -> dict:
         """The top camera's place and scale, for a search record; its
@@ -337,13 +373,14 @@ class PlacingPart:
             if z is not None:
                 mover.lower(z)
             record = self._board_record(
-                "search", "top", job, self.top.client, "front", "masked",
+                "search", "top", job, self.top.client, self._top_board_settings(job.id),
                 {**self._top_picture(machine), "width": width, "height": height, "mm_per_px_used": scale, "z": z},
                 search_extra(box, center, stops, width * scale, height * scale),
             )
             found = search(
                 look, mover, stops, offset, lambda point: PictureFrame(point, settings.roll, settings.mirror),
                 mover.stopped, lambda index, count: self.top._step(progress, f"stop {index + 1}"), PnpError, record,
+                checks=self._check_places(job, (width * scale, height * scale)),
             )
             self.top._message("info", found_text(found, look.consensus))
 
@@ -645,6 +682,10 @@ class PlacingPart:
                 counts[feeder] = max(int(counts.get(feeder, 0)), count)
             self._save_config()
 
+        def on_placed(ref: str) -> None:
+            self._board_placed.setdefault(body.job, []).append(ref)
+            self._tell_assembly(body.job)
+
         setup = PlaceSetup(
             up=self.pnp,
             up_place=self._up_place(machine),
@@ -653,6 +694,7 @@ class PlacingPart:
             on_fiducials=lambda found, fit: self._keep_fiducials(body.job, found, fit),
             message=self.publish_message,
             publish_up=self.publish_pnp,
+            on_placed=on_placed,
         )
         placement = Placement(
             machine, self.gcode, parts, self._board_fit(body.job, parts), taken, body.refs, title, setup,
@@ -679,6 +721,9 @@ class PlacingPart:
             self.publish_message(level, f"placing on {machine.name} {progress.state}: {len(progress.placed)} parts placed{failed}{why}")
             self.broadcast.publish_threadsafe({"type": "state", **self.snapshot()})
 
+        # A run places on the next board, bare of parts.
+        self._board_placed[body.job] = []
+        self._tell_assembly(body.job)
         self.gcode.run_job(placement, placement.total(), machine.timeout, ended, job_id=body.job)
         return {**program.summary(), **self.placing_state()}
 

@@ -31,7 +31,7 @@ from .cameras import apply_kept, check_controls
 from .kinematics import FOCUS_DECIMALS, coord
 from .link import Link, LinkError, idle_status, settle
 from .log import log
-from .vision import VisionClient, VisionError
+from .vision import VisionClient, VisionError, scale_range
 
 Point = tuple[float, float]
 RUNNING, DONE, STOPPED, ERROR = "running", "done", "stopped", "error"
@@ -385,10 +385,16 @@ class Camera:
             self.board_job = None
             self._board_path = None
             return
-        settings = self.settings()
-        self.client.board(path, settings.side, settings.finish)
+        self.client.board(path, **self.board_settings())
         self.board_job = job_id
         self._board_path = path
+
+    def board_settings(self) -> dict:
+        """What a board is loaded into pcbv with besides its file: the
+        camera's side and finish, and the scale range its search keeps to
+        once the scale is measured."""
+        settings = self.settings()
+        return {"side": settings.side, "finish": settings.finish, "scale": scale_range(settings.mm_per_px)}
 
     def frame(self, width: int, overlay: bool) -> bytes:
         if not self.client.running:

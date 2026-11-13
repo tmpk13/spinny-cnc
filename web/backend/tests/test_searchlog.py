@@ -32,10 +32,12 @@ class ScriptedCamera:
     which see nothing; the `pitch_off`-th locked pose is put one pitch
     (2.54 mm) along the board's X, as a repeated pattern matched wrong."""
 
-    def __init__(self, seen: SeenBoard, blind=(), pitch_off: int | None = None) -> None:
+    def __init__(self, seen: SeenBoard, blind=(), pitch_off: int | None = None, off_places=()) -> None:
         self.seen = seen
         self.blind = [tuple(point) for point in blind]
         self.pitch_off = pitch_off
+        # Places where every lock is a pitch off.
+        self.off_places = [tuple(point) for point in off_places]
         self.center = (0.0, 0.0)
         self.frames = 0
         self.locked = 0
@@ -49,7 +51,7 @@ class ScriptedCamera:
             return {key: value for key, value in raw.items() if key in ("frame", "age_ms", "width", "height", "fps", "spots")} | {"state": "lost"}
         if raw["state"] == "locked":
             self.locked += 1
-            if self.locked == self.pitch_off:
+            if self.locked == self.pitch_off or any(math.dist(self.center, point) < 1e-6 for point in self.off_places):
                 raw["center"] = [raw["center"][0] + 2.54, raw["center"][1]]
                 raw["corners"] = [[x + 2.54, y] for x, y in raw["corners"]]
         return raw
@@ -101,7 +103,7 @@ def header(stops, box, start) -> dict:
     }
 
 
-def run_search(tmp_path, seen: SeenBoard, box, blind_first_over_board: bool = False, pitch_off: int | None = None):
+def run_search(tmp_path, seen: SeenBoard, box, blind_first_over_board: bool = False, pitch_off: int | None = None, off_first_over_board: bool = False):
     """A search over `box` from the machine's origin, recorded: the record's
     folder, the log, the camera and the outcome (an estimate or the error)."""
     start = (0.0 + OFFSET[0], 0.0 + OFFSET[1])
@@ -109,7 +111,10 @@ def run_search(tmp_path, seen: SeenBoard, box, blind_first_over_board: bool = Fa
     blind = []
     if blind_first_over_board:
         blind = [next(stop for stop in stops if seen.pose(stop, 0.0, False, SCALE, 1280, 720, 0)["state"] == "locked")]
-    camera = ScriptedCamera(seen, blind, pitch_off)
+    off = []
+    if off_first_over_board:
+        off = [next(stop for stop in stops if seen.pose(stop, 0.0, False, SCALE, 1280, 720, 0)["state"] == "locked")]
+    camera = ScriptedCamera(seen, blind, pitch_off, off)
     look = BoardLook(lambda: camera, publish=lambda: None, paused=lambda: True)
     look.start("j1", DESIGN.board_to_job, MIDDLE, lambda captured: "the watcher is held off")
     board = tmp_path / "upload.kicad_pcb"
@@ -187,6 +192,24 @@ def test_the_report_finds_the_missed_stop_the_pitch_off_pose_and_what_fewer_look
     page = searchreport.html(record, ifs=ifs)
     page.encode("ascii")
     assert "<svg" in page and f'src="stop-{blind:03d}.jpg"' in page and "as recorded" in page
+
+
+def test_a_place_found_must_be_agreed_by_the_looks_at_the_check_else_the_search_goes_on(tmp_path, quick):
+    # Every lock at the first stop over the board is a pitch off: it is
+    # found there from two locks, but the check over the board's middle
+    # sees the truth, so the search goes on until the truth is found and
+    # the check agrees.
+    seen = SeenBoard(BOX, 2.0, (150.0, 80.0), design_shift=DESIGN.shift)
+    folder, _, camera, found, _ = run_search(tmp_path, seen, (140.0, 70.0, 200.0, 125.0), off_first_over_board=True)
+    assert not isinstance(found, Exception), found
+    assert math.dist(found.center, _middle(seen)) < 0.05
+    events = [json.loads(line) for line in (folder / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    checks = [event["result"] for event in events if event["event"] == "check"]
+    assert checks[0] == "disagreed" and checks[-1] == "agreed" and len(checks) <= boardlook.MAX_CHECKS
+    # A guess from one lock had pcbv look afresh before it was found.
+    assert any(event["event"] == "recheck" for event in events)
+    used = [event for event in events if event["event"] == "pose" and event.get("estimate")]
+    assert len({event["estimate"]["session"] for event in used}) >= 3
 
 
 def test_the_cover_is_the_share_of_the_picture_the_board_takes():

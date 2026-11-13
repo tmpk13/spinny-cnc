@@ -80,10 +80,20 @@ class TopCameraSettings(BaseModel):
     # the corners' tolerance (mm).
     look_threshold: float = LOOK_THRESHOLD
     corner_mm: float = CORNER_MM
+    # The board as the camera sees it: the side looked at, whether solder
+    # mask hides its copper, and whether it carries solder paste (the parts
+    # placed on it are told to pcbv as a run places them).
+    side: str = "front"
+    finish: str = "masked"
+    paste: bool = False
 
     def check(self) -> None:
         if not self.device.strip():
             raise ValueError("the top camera device must be named")
+        if self.side not in machine_files.CAMERA_SIDES:
+            raise ValueError("the top camera side must be front or back")
+        if self.finish not in machine_files.CAMERA_FINISHES:
+            raise ValueError("the top camera finish must be masked or bare")
         check_controls(self.controls)
         check_look(self.look_threshold, self.corner_mm)
         if not machine_files._CAMERA_SIZE.match(self.size):

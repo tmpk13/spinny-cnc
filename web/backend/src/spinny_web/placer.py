@@ -107,6 +107,8 @@ class PlaceSetup:
     on_fiducials: Callable[[list[Found], Fit], None]
     message: Callable[[str, str], None]
     publish_up: Callable[[], None]
+    # Called with a part's reference once it is placed.
+    on_placed: Callable[[str], None] = lambda ref: None
 
 
 class Placement:
@@ -256,6 +258,7 @@ class Placement:
                 ctx.send(line)
             self._check_released(ctx, f"{block.ref} was placed")
             ctx.progress.placed.append(block.ref)
+            self.setup.on_placed(block.ref)
             ctx.progress.note(f"placed at X {num(block.target[0])} Y {num(block.target[1])}, {num(block.angle, 1)} deg", block.ref)
             self._failed_in_a_row = 0
             self._doing(ctx, None)

@@ -44,6 +44,49 @@ WORK_WIDTH = 1024
 PCBV_SIBLING = Path(__file__).resolve().parents[5] / "pcb-vision" / "target"
 
 
+# A camera whose scale is measured has pcbv's search keep within this
+# share of it either way: the board's height differs from the mark's a
+# little, a wrong lock at another scale is ruled out.
+SCALE_SPREAD = 0.2
+
+
+def scale_range(mm_per_px: float) -> tuple[float, float] | None:
+    """The scale range a board's search keeps to for a camera of a
+    measured scale (mm per pixel of the full size picture); None when it
+    is not measured."""
+    if not (isinstance(mm_per_px, (int, float)) and mm_per_px > 0.0):
+        return None
+    return (mm_per_px * (1.0 - SCALE_SPREAD), mm_per_px * (1.0 + SCALE_SPREAD))
+
+
+def board_fields(
+    path: str,
+    side: str = "front",
+    finish: str = "masked",
+    scale: tuple[float, float] | None = None,
+    paste: bool = False,
+    placed: list[str] | None = None,
+) -> dict:
+    """The fields of a board request, as a search record keeps them too."""
+    fields: dict = {"path": path, "side": side, "finish": finish}
+    if scale is not None:
+        fields["scale"] = f"{scale[0]:.6g}:{scale[1]:.6g}"
+    if paste:
+        fields["paste"] = True
+    if placed:
+        fields["placed"] = list(placed)
+    return fields
+
+
+def board_record_fields(board: dict) -> dict:
+    """The fields a board was loaded with besides its file (`side`,
+    `finish`, `scale`, `paste`, `placed`, as `VisionClient.board` takes
+    them), as pcbv was sent them: what a search record keeps."""
+    fields = board_fields("", **board)
+    fields.pop("path")
+    return fields
+
+
 class VisionError(Exception):
     """pcbv could not be started, went away, or refused a request."""
 
@@ -280,10 +323,32 @@ class VisionClient:
 
     # --- the requests ---------------------------------------------------------
 
-    def board(self, path: str | None, side: str = "front", finish: str = "masked") -> dict:
+    def board(
+        self,
+        path: str | None,
+        side: str = "front",
+        finish: str = "masked",
+        scale: tuple[float, float] | None = None,
+        paste: bool = False,
+        placed: list[str] | None = None,
+    ) -> dict:
+        """Loads a board for pcbv to look for in every picture: its side
+        and finish, the scale range (mm per pixel of the full size picture,
+        low and high) the search keeps to when known, and the paste and
+        parts on it; None unloads it."""
         if path is None:
             return self.request("board", path=None)
-        return self.request("board", timeout=LOAD_SECONDS, path=path, side=side, finish=finish)
+        return self.request("board", timeout=LOAD_SECONDS, **board_fields(path, side, finish, scale, paste, placed))
+
+    def assembly(self, paste: bool | None = None, placed: list[str] | None = None) -> dict:
+        """The paste or parts on the board loaded changed (None keeps
+        each): pcbv builds its model again and goes on tracking."""
+        fields: dict = {}
+        if paste is not None:
+            fields["paste"] = bool(paste)
+        if placed is not None:
+            fields["placed"] = list(placed)
+        return self.request("assembly", timeout=LOAD_SECONDS, **fields)
 
     def pose(self) -> dict:
         return self.request("pose")

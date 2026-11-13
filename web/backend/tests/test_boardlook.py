@@ -4,6 +4,7 @@ search takes, and when the head is taken to be at rest."""
 
 from __future__ import annotations
 
+import itertools
 import math
 
 import pytest
@@ -63,8 +64,36 @@ def test_a_picture_mirrored_against_the_board_is_refused_and_a_lost_pose_gives_n
     assert lost["state"] == "lost" and pose_estimate(lost, PictureFrame((900.0, 900.0), 0.0), DESIGN.board_to_job, MIDDLE) == (None, None)
 
 
-def estimate(x: float, y: float = 0.0, rotation: float = 0.0, match: float = 1.0) -> Estimate:
-    return Estimate(rotation=rotation, shift=(x, y), center=(x, y), rms=0.01, match=match)
+_sessions = itertools.count(1)
+
+
+def estimate(x: float, y: float = 0.0, rotation: float = 0.0, match: float = 1.0, session: int | None = None, rival: float = 0.0) -> Estimate:
+    """An estimate putting the board's middle at (x, y); from a lock of its
+    own unless `session` names one."""
+    return Estimate(rotation=rotation, shift=(x, y), center=(x, y), rms=0.01, match=match, session=next(_sessions) if session is None else session, rival=rival)
+
+
+def test_a_guess_needs_looks_from_two_locks_and_asks_for_another_until_it_has_them():
+    consensus = Consensus()
+    # Five looks tracked from one lock: likely, but one look at the picture.
+    for x in (10.0, 10.02, 9.98, 10.01, 10.0):
+        consensus.see("locked", estimate(x, session=7), None)
+    assert not consensus.found and consensus.wants_another_lock
+    state = consensus.to_dict()
+    assert state["sessions"] == 1 and state["sessions_needed"] == boardlook.SESSIONS and state["rechecking"] is True
+    # A look from another search agreeing: found.
+    consensus.see("locked", estimate(10.03, session=8, rival=0.86), None)
+    assert consensus.found and not consensus.wants_another_lock
+    state = consensus.to_dict()
+    assert state["sessions"] == 2 and state["rechecking"] is False
+    # A rival near the lock's evidence makes the guess ambiguous.
+    assert state["rival"] == pytest.approx(0.86) and state["ambiguous"] is True and state["guesses"][0]["sessions"] == 2
+    # One lock is enough when a consensus is told so (a record from before
+    # locks were counted).
+    single = Consensus(sessions=1)
+    for x in (10.0, 10.02, 9.98, 10.01, 10.0):
+        single.see("locked", estimate(x, session=3), None)
+    assert single.found and not single.wants_another_lock
 
 
 def test_looks_make_guesses_and_the_most_likely_is_found_once_it_has_enough_looks_and_share():
@@ -137,7 +166,8 @@ def test_corners_rule_out_the_guesses_that_put_them_elsewhere_and_give_a_rough_p
     corners = [Corner("bottom left", (0.0, 0.0), truth.apply((0.0, 0.0))), Corner("top right", (40.0, 30.0), truth.apply((40.0, 30.0)))]
     off = Estimate(2.0, (152.54, 80.0), (0.0, 0.0), 0.0)
     off.center = off.apply(MIDDLE)
-    consensus = Consensus(MIDDLE)
+    # Looks of one lock each guess: the corners are the question here.
+    consensus = Consensus(MIDDLE, sessions=1)
     for _ in range(6):
         consensus.see("locked", off, None)
     for _ in range(4):
@@ -257,3 +287,29 @@ def test_a_frame_shows_the_head_at_rest_only_after_its_move_and_the_settle_time(
     assert tracker.see((100.0, 0.0), now=102.0) == pytest.approx(104.25)
     # A machine that says it moves: no frame is trusted.
     assert tracker.see((100.0, 0.0), moving=True, now=103.0) is None
+
+
+def test_a_board_found_is_checked_where_the_picture_holds_the_most_pads():
+    found = Estimate(0.0, (100.0, 50.0), (120.0, 65.0), 0.0)
+    outline = (0.0, 0.0, 40.0, 30.0)
+    view = (25.6, 14.4)
+    # Pads all in the bottom left: the middle holds none of them.
+    pads = [(4.0 + i, 4.0 + j) for i in range(5) for j in range(4)]
+    places = boardlook.check_places(found, MIDDLE, outline, pads, view)
+    assert len(places) == boardlook.MAX_CHECKS
+    assert places[0] == pytest.approx((100.0 + 40.0 / 6.0, 50.0 + 5.0))
+    # Pads spread evenly: the middle first.
+    spread = [(x * 2.0, y * 2.0) for x in range(21) for y in range(16)]
+    assert boardlook.check_places(found, MIDDLE, outline, spread, view)[0] == pytest.approx((120.0, 65.0))
+    # No pads at all: the middle.
+    assert boardlook.check_places(found, MIDDLE, None, [], view) == [pytest.approx((120.0, 65.0))]
+
+
+def test_a_measured_scale_keeps_the_board_search_within_a_fifth_of_it():
+    from spinny_web.vision import board_fields, board_record_fields, scale_range
+
+    assert scale_range(0.0) is None and scale_range(0.02) == pytest.approx((0.016, 0.024))
+    fields = board_fields("b.kicad_pcb", "back", "bare", (0.016, 0.024), True, ["R1", "C2"])
+    assert fields == {"path": "b.kicad_pcb", "side": "back", "finish": "bare", "scale": "0.016:0.024", "paste": True, "placed": ["R1", "C2"]}
+    assert board_record_fields({"side": "front", "finish": "masked", "scale": None}) == {"side": "front", "finish": "masked"}
+

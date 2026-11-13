@@ -275,6 +275,24 @@ def test_a_pick_the_vacuum_finds_empty_is_let_go_at_the_discard_place_and_the_ne
     assert state["progress"]["sent"] == state["progress"]["total"]
 
 
+def test_the_parts_a_run_places_are_told_to_the_top_cameras_look_for_that_board(client):
+    job_id = rig(client, profile(rest=VACUUM))
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    client.fake.readings = [80.0, 5.0]
+    told = BoardTopCamera(client.fake, (34.0, -9.0), SeenBoard((0.0, 0.0, 40.0, 30.0), 0.0, (150.0, 80.0)))
+    backend = client.backend
+    backend.top.client = told
+    # The top camera looks for this job's board (as Look for board leaves it).
+    backend.top_look.job = job_id
+    backend._board_placed[job_id] = ["R9"]
+    state = run(client, {"job": job_id, "refs": ["R1"]})
+    assert state["progress"]["placed"] == ["R1"]
+    # The run's board starts bare, then has each part placed.
+    assert told.assemblies == [{"paste": False, "placed": []}, {"paste": False, "placed": ["R1"]}]
+    assert backend._board_placed[job_id] == ["R1"]
+    backend.top_look.job = None
+
+
 def test_a_part_that_stays_on_the_nozzle_stops_the_run(client):
     job_id = rig(client, profile(rest=VACUUM))
     client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
@@ -610,6 +628,11 @@ def test_the_top_camera_searches_a_box_for_the_board_and_keeps_its_place(client,
     response = client.post("/api/pnp/top/board", json={"job": job_id})
     assert response.status_code == 200, response.text
     assert camera.loaded is not None and response.json()["top"]["board_look"]["job"] == job_id
+    # Loaded with the camera's side and finish, its search kept within a
+    # fifth of the scale measured, no paste and no part on the board.
+    fields = camera.board_fields
+    assert (fields["side"], fields["finish"], fields["paste"], fields["placed"]) == ("front", "masked", False, [])
+    assert fields["scale"] == pytest.approx((0.016, 0.024))
     # The head far from the board: a box drawn over where it lies.
     response = client.post("/api/pnp/top/search", json={"box": [140.0, 70.0, 200.0, 125.0]})
     assert response.status_code == 200, response.text
@@ -633,6 +656,13 @@ def test_the_top_camera_searches_a_box_for_the_board_and_keeps_its_place(client,
         part = parts[entry["ref"]]
         x, y = turn((part["x"], part["y"]), 2.0)
         assert entry["at"] == pytest.approx([x + 150.0, y + 80.0], abs=0.01)
+    # Paste put on the board is told to pcbv as the board's assembly;
+    # another side or finish is another model, loaded afresh.
+    assert client.put("/api/pnp/top", json={"paste": True}).status_code == 200
+    assert camera.assemblies[-1] == {"paste": True, "placed": []}
+    assert client.put("/api/pnp/top", json={"side": "back", "finish": "bare"}).status_code == 200
+    assert (camera.board_fields["side"], camera.board_fields["finish"], camera.board_fields["paste"]) == ("back", "bare", True)
+    assert client.put("/api/pnp/top", json={"side": "top"}).status_code == 400
     # Unloaded, the look is forgotten; its settings stay.
     unloaded = client.post("/api/pnp/top/board", json={"job": None}).json()["top"]["board_look"]
     assert unloaded == {"job": None, "threshold": boardlook.THRESHOLD, "corner_mm": boardlook.CORNER_MM, "corners": None}

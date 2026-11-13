@@ -20,8 +20,13 @@ another and whose turns within AGREE_DEG making one guess, its place and
 turn their medians. A guess's probability is its share of the evidence:
 its looks, each weighed by how well pcbv matched it (the features it
 paired of those it expected), over every guess's. The board is called
-found when the most likely guess has NEED looks or more, at least the
-camera's threshold of the evidence, and more of it than the next guess.
+found when the most likely guess has NEED looks or more from SESSIONS
+independent locks or more, at least the camera's threshold of the
+evidence, and more of it than the next guess. Poses pcbv tracks from one
+lock are one look at the picture, however many: a lock found by another
+search (pcbv numbers them), after the pose was cleared or at another
+stop, is another. A guess that has all but a second lock has pcbv clear
+its pose and search the same picture again.
 Corners of the board taken by hand (the picture's center put on each)
 rule out every guess that puts one further than the camera's corner_mm
 from where it was taken, and make a rough place of their own. A pose is
@@ -31,7 +36,11 @@ taken.
 The search moves the head so the picture's center visits a grid of stops
 over a box, a picture's size apart less an overlap, nearest the start
 first, and looks at each until the board is found, no lock comes, or the
-stop's time is up. It always ends: found, the box covered, or stopped.
+stop's time is up. A board found is checked: the picture's center goes
+over the board's middle (or the part of the board with the most pads and
+holes in view) and the looks there must agree with the place found; a
+check that disagrees or sees nothing sends the search on. It always ends:
+found and checked, the box covered, or stopped.
 """
 
 from __future__ import annotations
@@ -64,6 +73,15 @@ AGREE_MM = 0.5
 AGREE_DEG = 1.0
 NEED = 5
 HISTORY = 40
+# The independent locks (pcbv searches) a guess's looks must come from, and
+# how long after clearing pcbv's pose to look again from scratch it may be
+# cleared once more, s.
+SESSIONS = 2
+RECHECK_SECONDS = 2.0
+# A lock whose rival (the strongest other pose pcbv's search passed) holds
+# at least this share of its evidence is ambiguous: the picture fits
+# another place about as well.
+AMBIGUOUS = 0.8
 # The most guesses told to the page, the most likely first.
 GUESSES = 8
 # The least share of the evidence the most likely guess must hold, and how
@@ -87,6 +105,11 @@ OVERLAP = 0.3
 MAX_STOPS = 400
 STOP_SECONDS = 5.0
 LOCK_SECONDS = 2.5
+# The check of a board found: the looks at the check's place that must
+# agree with it (or disagree, to call it wrong), and the most checks a
+# search makes before it gives up.
+CHECK_LOOKS = 3
+MAX_CHECKS = 3
 # The speed a G-code machine's head is taken to move at when a place it is
 # seen at changed, mm/s, for when the move ends: lower than any feed, so the
 # wait is long enough.
@@ -109,8 +132,9 @@ class Estimate:
     """Where one pose puts the board: the turn (degrees counterclockwise)
     and shift that take the job's frame onto the machine's, the board's
     middle on the machine, the fit's rms (mm), the picture's corners and
-    center in the job's frame, when the frame was taken, and how well pcbv
-    matched the pose (match_of)."""
+    center in the job's frame, when the frame was taken, how well pcbv
+    matched the pose (match_of), the lock it came from and how near its
+    rival came."""
 
     rotation: float
     shift: Point
@@ -120,6 +144,10 @@ class Estimate:
     seen: Point | None = None
     captured: float = 0.0
     match: float = 1.0
+    # The lock the pose came from (pcbv's number of the search that found
+    # it), and its rival's share of its evidence (0 with none).
+    session: int = 0
+    rival: float = 0.0
 
     def apply(self, point: Point) -> Point:
         x, y = turn(point, self.rotation)
@@ -136,6 +164,8 @@ class Estimate:
             "center": [round(self.center[0], 4), round(self.center[1], 4)],
             "rms": round(self.rms, 4),
             "match": round(self.match, 4),
+            "session": self.session,
+            "rival": round(self.rival, 4),
         }
 
 
@@ -147,7 +177,8 @@ class Guess:
     they lie from the median, the history's index of the newest, and the
     share of the evidence the guess holds; with corners taken by hand, the
     furthest it puts one from where it was taken, and whether that rules
-    it out (its probability then nothing)."""
+    it out (its probability then nothing); the locks its looks came from,
+    and how near the strongest rival among them came."""
 
     estimate: Estimate
     looks: int
@@ -158,6 +189,10 @@ class Guess:
     probability: float = 0.0
     corner_mm: float | None = None
     ruled_out: bool = False
+    # The independent locks its looks came from, and the strongest rival
+    # any of them had (its share of that look's evidence).
+    sessions: int = 1
+    rival: float = 0.0
 
 
 @dataclass
@@ -211,6 +246,14 @@ def rough_box(place: Estimate, outline: Box, margin: float) -> Box:
     points = [place.apply(point) for point in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
     xs, ys = [p[0] for p in points], [p[1] for p in points]
     return (min(xs) - margin, min(ys) - margin, max(xs) + margin, max(ys) + margin)
+
+
+def rival_of(raw: dict) -> float:
+    """How near the strongest other pose pcbv's search passed came to a
+    lock: its share of the lock's evidence, 0 with none."""
+    rival = raw.get("rival")
+    ratio = rival.get("ratio") if isinstance(rival, dict) else None
+    return max(float(ratio), 0.0) if _number(ratio) else 0.0
 
 
 def match_of(raw: dict) -> float:
@@ -309,9 +352,12 @@ class Consensus:
         threshold: float | None = None,
         corner_mm: float | None = None,
         corners: list[Corner] | None = None,
+        sessions: int | None = None,
     ) -> None:
         self.middle = middle
         self.need = NEED if need is None else need
+        # Never more locks than looks: one look comes from one lock.
+        self.sessions = min(max(1, SESSIONS if sessions is None else int(sessions)), max(self.need, 1))
         self.agree_mm = AGREE_MM if agree_mm is None else agree_mm
         self.agree_deg = AGREE_DEG if agree_deg is None else agree_deg
         # The history holds at least the looks that call the board found.
@@ -366,8 +412,7 @@ class Consensus:
         lead = self.lead
         return lead.spread_deg if lead is not None else None
 
-    @property
-    def found(self) -> bool:
+    def _likely(self) -> bool:
         """The most likely guess has enough looks, at least the threshold's
         share of the evidence, and more of it than the next guess."""
         guesses = self.guesses
@@ -375,6 +420,20 @@ class Consensus:
         if lead is None or lead.looks < self.need or lead.probability < self.threshold - 1e-9:
             return False
         return len(guesses) < 2 or lead.probability > guesses[1].probability + 1e-9
+
+    @property
+    def found(self) -> bool:
+        """The most likely guess is likely enough, from enough independent
+        locks."""
+        lead = self.lead
+        return self._likely() and lead is not None and lead.sessions >= self.sessions
+
+    @property
+    def wants_another_lock(self) -> bool:
+        """The most likely guess is likely enough but its looks came from
+        too few independent locks: pcbv should search the picture afresh."""
+        lead = self.lead
+        return self._likely() and lead is not None and lead.sessions < self.sessions
 
     def see(self, state: str | None, estimate: Estimate | None, problem: str | None) -> None:
         """One pose read: its state, the estimate it gave (None when it gave
@@ -406,6 +465,11 @@ class Consensus:
 
     def _near(self, a: Estimate, b: Estimate) -> bool:
         return math.dist(a.center, b.center) <= self.agree_mm and abs(_wrap(a.rotation - b.rotation)) <= self.agree_deg
+
+    def agrees(self, a: Estimate, b: Estimate) -> bool:
+        """Whether two estimates put the board in one place, within the
+        agreement looks of one guess have."""
+        return self._near(a, b)
 
     def _settle(self) -> None:
         """Sorts the estimates into guesses: the estimate with the most
@@ -443,13 +507,15 @@ class Consensus:
         weight = sum(e.match for e in group)
         estimate = Estimate(
             _wrap(rotation), (cx - tx, cy - ty), (cx, cy), statistics.median(e.rms for e in group),
-            newest.corners, newest.seen, newest.captured, weight / len(group),
+            newest.corners, newest.seen, newest.captured, weight / len(group), newest.session, newest.rival,
         )
         return Guess(
             estimate, len(group), weight,
             max(math.dist(e.center, (cx, cy)) for e in group),
             max(abs(r - rotation) for r in turns),
             members[-1],
+            sessions=len({e.session for e in group}),
+            rival=max(e.rival for e in group),
         )
 
     def _weigh(self, guesses: list[Guess]) -> None:
@@ -496,6 +562,8 @@ class Consensus:
             "spread_deg": round(guess.spread_deg, 4),
             "ruled_out": guess.ruled_out,
             "corner_mm": round(guess.corner_mm, 4) if guess.corner_mm is not None else None,
+            "sessions": guess.sessions,
+            "rival": round(guess.rival, 4),
             "view": None,
             "seen": None,
         }
@@ -517,6 +585,15 @@ class Consensus:
                 "agree": self.agree,
                 "need": self.need,
                 "found": self.found,
+                # The independent locks the most likely guess has and needs,
+                # whether it waits for another, and how near a rival came to
+                # it (its share of a look's evidence) and to the newest pose.
+                "sessions": self.lead.sessions if self.lead is not None else 0,
+                "sessions_needed": self.sessions,
+                "rechecking": self.wants_another_lock,
+                "rival": round(self.lead.rival, 4) if self.lead is not None else None,
+                "ambiguous": self.lead is not None and self.lead.rival >= AMBIGUOUS,
+                "view_rival": round(view.rival, 4) if view is not None else None,
                 "spread_mm": round(self.spread_mm, 4) if self.spread_mm is not None else None,
                 "spread_deg": round(self.spread_deg, 4) if self.spread_deg is not None else None,
                 "estimate": best.to_dict() if best is not None else None,
@@ -608,6 +685,11 @@ class BoardLook:
         self._record_lock = threading.Lock()
         self._last_error: str | None = None
         self._first_picture = False
+        # How often pcbv's pose was cleared (every search stop, every look
+        # afresh): the lock a pose came from when pcbv does not number its
+        # locks. And when it was last cleared for another lock.
+        self.resets = 0
+        self._recheck_at: float | None = None
 
     @property
     def client(self) -> VisionClient:
@@ -671,6 +753,7 @@ class BoardLook:
         with self._lock:
             self.consensus = self._consensus(self.consensus.middle, self.job)
             self._frame = None
+            self._recheck_at = None
 
     def _consensus(self, middle: Point, job_id: str | None) -> Consensus:
         threshold, corner_mm = self.tuning()
@@ -767,6 +850,12 @@ class BoardLook:
                 problem = where
             else:
                 estimate, problem = pose_estimate(raw, where, to_job, self.consensus.middle, captured)
+        if estimate is not None:
+            # pcbv numbers its locks by the search that found them; one that
+            # does not, its pose cleared, has a lock of another search.
+            acquisition = raw.get("acquisition")
+            estimate.session = int(acquisition) if _number(acquisition) else self.resets
+            estimate.rival = rival_of(raw)
         width, height = raw.get("width"), raw.get("height")
         if isinstance(where, PictureFrame) and self._scale is not None and _number(width) and _number(height) and width > 0 and height > 0:
             self.consensus.picture = (where, float(width), float(height), self._scale)
@@ -780,7 +869,21 @@ class BoardLook:
             record.event("pose", **pose_fields(record, raw, received, captured, kept, estimate, problem, seen, self.consensus))
             if record.kind == "look":
                 self._look_record(record)
+        if self.consensus.wants_another_lock:
+            self._recheck(record)
         return seen
+
+    def _recheck(self, record) -> None:
+        """The most likely guess waits for another independent lock: pcbv
+        clears its pose and searches the same picture afresh, at most every
+        RECHECK_SECONDS (a search and a few looks take a while)."""
+        now = time.monotonic()
+        if self._recheck_at is not None and now - self._recheck_at < RECHECK_SECONDS:
+            return
+        self._recheck_at = now
+        if record is not None:
+            record.event("recheck", resets=self.resets + 1)
+        _reset(self)
 
     def _look_record(self, record) -> None:
         """A look's own record keeps a picture at its first pose and when
@@ -854,14 +957,20 @@ def search_stops(box: Box, view: tuple[float, float], start: Point) -> list[Poin
     return stops
 
 
-def look_at_stop(look: BoardLook, frame: PictureFrame, stopped: Callable[[], bool], error: type[Exception]) -> str:
+def look_at_stop(
+    look: BoardLook, frame: PictureFrame, stopped: Callable[[], bool], error: type[Exception], check: Estimate | None = None,
+) -> str:
     """Reads poses with the head at rest at one stop: `found` once the
     board is found; `no lock` when no lock came within LOCK_SECONDS,
     `time up` when the stop's time ran out. Only frames taken the camera's
-    settle time after the stop began are used."""
+    settle time after the stop began are used. With `check` (a place found
+    elsewhere) the stop checks it instead: `agreed` once CHECK_LOOKS looks
+    here put the board within the agreement of it, `disagreed` once as many
+    put it elsewhere."""
     began = time.monotonic()
     trusted = began + camera_module.SETTLE_SECONDS
     locked = False
+    agreed = disagreed = 0
 
     def place(captured: float) -> PictureFrame | str:
         return frame if captured >= trusted else "the head is coming to rest"
@@ -871,16 +980,62 @@ def look_at_stop(look: BoardLook, frame: PictureFrame, stopped: Callable[[], boo
             raise error("stopped")
         seen = look.sample(place)
         look.publish()
-        if look.consensus.found:
+        if check is None and look.consensus.found:
             return "found"
         if seen == "used":
             locked = True
+            view = look.consensus.view
+            if check is not None and view is not None:
+                if look.consensus.agrees(view, check):
+                    agreed += 1
+                else:
+                    disagreed += 1
+                if agreed >= CHECK_LOOKS:
+                    return "agreed"
+                if disagreed >= CHECK_LOOKS:
+                    return "disagreed"
         elapsed = time.monotonic() - began
         if elapsed >= STOP_SECONDS + camera_module.SETTLE_SECONDS:
             return "time up"
         if not locked and elapsed >= LOCK_SECONDS + camera_module.SETTLE_SECONDS:
             return "no lock"
         time.sleep(SAMPLE_SECONDS / 2.0)
+
+
+def check_places(
+    found: Estimate, middle: Point, outline: Box | None, features: list[Point], view: tuple[float, float], count: int = MAX_CHECKS,
+) -> list[Point]:
+    """Where to check a board found (`found` puts the job's frame on the
+    machine), machine points for the picture's center, the best first: the
+    board's middle when the picture there holds at least half the pads and
+    holes (`features`, the job's frame) the best place does, else the
+    places over the board (its middle and the middles of a 3 by 3 grid over
+    its outline box, `outline`) whose picture (`view`, mm) holds the most,
+    the nearer the middle first among equals; `count` of them at most. A
+    board without features is checked at its middle."""
+    candidates = [middle]
+    if outline is not None:
+        x0, y0, x1, y1 = outline
+        candidates += [(x0 + (x1 - x0) * (i + 0.5) / 3.0, y0 + (y1 - y0) * (j + 0.5) / 3.0) for j in range(3) for i in range(3)]
+    reach = 0.45 * min(view)
+
+    def held(point: Point) -> int:
+        return sum(1 for f in features if math.dist(f, point) <= reach)
+
+    counts = [held(point) for point in candidates]
+    best = max(counts) if counts else 0
+    order = sorted(range(len(candidates)), key=lambda i: (-counts[i], math.dist(candidates[i], middle)))
+    if counts[0] * 2 >= best:
+        order = [0] + [i for i in order if i != 0]
+    places: list[Point] = []
+    for index in order:
+        point = candidates[index]
+        if any(math.dist(point, kept) < 1e-6 for kept in places):
+            continue
+        places.append(point)
+        if len(places) >= count:
+            break
+    return [found.apply(point) for point in places]
 
 
 def search(
@@ -893,22 +1048,28 @@ def search(
     on_stop: Callable[[int, int], None],
     error: type[Exception],
     record=None,
+    checks: Callable[[Estimate], list[Point]] | None = None,
 ) -> Estimate:
     """Moves the head (`mover`, already begun and at its looking height) so
     the picture's center visits each stop (the head at the stop less the
-    camera's `offset`), looks at each, and ends found, with the picture's
-    center over the board's middle and the estimate; or raises `error`
-    once every stop was looked at. `frame_at` is the picture's place with
-    its center at a point. `record` (searchlog.py) gets every pose, each
-    stop's move, end and picture, and how the search ended."""
+    camera's `offset`), looks at each, and ends found and checked, with the
+    picture's center over the place checked and the estimate; or raises
+    `error` once every stop was looked at, or MAX_CHECKS checks failed.
+    `frame_at` is the picture's place with its center at a point; `checks`
+    gives the places to check a board found at, the best first (the
+    board's middle by default). `record` (searchlog.py) gets every pose,
+    each stop's move, end and picture, each check, and how the search
+    ended."""
     # The look's own record ends with the consensus it had, then the
     # search starts one afresh.
     look.begin_record(record)
     look.restart()
     visited = 0
     covered = False
+    made = 0
+    places_of = checks or (lambda found: [found.center])
 
-    def visit(index: int, target: Point, middle: bool = False) -> str:
+    def visit(index: int, target: Point, middle: bool = False, check: Estimate | None = None) -> str:
         """The picture's center to `target`, the stop looked at: its result."""
         head = (target[0] - offset[0], target[1] - offset[1])
         if record is not None:
@@ -919,7 +1080,7 @@ def search(
         if record is not None:
             record.event("arrived", index=index)
         began = time.monotonic()
-        result = look_at_stop(look, frame_at(target), stopped, error)
+        result = look_at_stop(look, frame_at(target), stopped, error, check)
         if record is not None:
             record.event("stop_end", index=index, result=result, seconds=round(time.monotonic() - began, 3))
             record.picture(look.client, f"stop-{index:03d}", index=index)
@@ -929,22 +1090,38 @@ def search(
         for index, stop in enumerate(stops):
             on_stop(index, len(stops))
             visited = index + 1
-            if visit(index, stop) == "found":
+            result = visit(index, stop)
+            # Found: checked from elsewhere on the board, the place found
+            # kept only once the looks there agree with it. A check that
+            # saw nothing or disagreed leaves the evidence in the consensus:
+            # while it still calls the board found, the next place is
+            # checked; else the search goes on.
+            while result == "found":
+                if made >= MAX_CHECKS:
+                    raise error(
+                        f"the board was found {made} times but no check agreed: the looks at another place on it put it elsewhere"
+                        " or saw nothing there; check the board's side and finish, or take its corners"
+                    )
                 best = look.consensus.best
                 assert best is not None
-                # The picture's center over the board's middle, looked at again
-                # from there: the board fills the picture, the estimate holds.
-                visit(len(stops), best.center, middle=True)
-                final = look.consensus.best or best
-                look.publish(force=True)
-                look.end_record("found", only=record, estimate=final.to_dict(), visited=visited, found_at=index)
-                return final
+                places = places_of(best) or [best.center]
+                place = places[min(made, len(places) - 1)]
+                made += 1
+                outcome = visit(len(stops) + made - 1, place, middle=True, check=best)
+                if record is not None:
+                    record.event("check", result=outcome, estimate=best.to_dict(), place=_rounded(place))
+                if outcome == "agreed":
+                    final = look.consensus.best or best
+                    look.publish(force=True)
+                    look.end_record("found", only=record, estimate=final.to_dict(), visited=visited, found_at=index, checks=made)
+                    return final
+                result = "found" if look.consensus.found else outcome
         look.publish(force=True)
         covered = True
         raise error(
-            f"no board found: {len(stops)} stops of the camera's picture looked at without a guess of {NEED} looks holding"
-            f" {look.consensus.threshold * 100.0:.0f}% of the evidence; a box over where the board lies, the board's side and finish,"
-            " or a lower threshold"
+            f"no board found: {len(stops)} stops of the camera's picture looked at without a guess of {NEED} looks from"
+            f" {look.consensus.sessions} locks holding {look.consensus.threshold * 100.0:.0f}% of the evidence and a check"
+            " agreeing; a box over where the board lies, the board's side and finish, or a lower threshold"
         )
     except BaseException as exc:
         result = "not found" if covered else "stopped" if stopped() else "error"
@@ -986,6 +1163,7 @@ def settings_now(look: BoardLook | None = None, job_id: str | None = None) -> di
         "agree_mm": AGREE_MM,
         "agree_deg": AGREE_DEG,
         "need": NEED,
+        "sessions": SESSIONS,
         "history": HISTORY,
         "threshold": threshold,
         "corner_mm": corner_mm,
@@ -1048,7 +1226,9 @@ def found_text(found: Estimate, consensus: Consensus) -> str:
 
 def _reset(look: BoardLook) -> None:
     """pcbv forgets the pose it tracked: the head moved, so it searches the
-    new picture afresh rather than coasting on the old one."""
+    new picture afresh rather than coasting on the old one, or a guess
+    wants a lock of another search."""
+    look.resets += 1
     try:
         look.client.request("reset")
     except VisionError as exc:

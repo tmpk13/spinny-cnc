@@ -220,12 +220,19 @@ class BoardTopCamera(DeviceTopCamera):
         super().__init__(fake, offset, [], roll, mirror, scale)
         self.seen = seen
         self.loaded = None
+        self.board_fields: dict = {}
+        self.assemblies: list[dict] = []
         self.frames = 0
         self.asked: list[str] = []
 
-    def board(self, path, side="front", finish="masked"):
+    def board(self, path, side="front", finish="masked", **fields):
         self.loaded = path
+        self.board_fields = {"side": side, "finish": finish, **fields}
         return {"features": 40} if path is not None else {"ok": True}
+
+    def assembly(self, paste=None, placed=None):
+        self.assemblies.append({"paste": paste, "placed": placed})
+        return {"features": 40}
 
     def request(self, cmd, timeout=None, **fields):
         self.asked.append(cmd)
