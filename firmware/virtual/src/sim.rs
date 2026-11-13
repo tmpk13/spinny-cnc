@@ -14,7 +14,7 @@ use spinny_core::parser::{Error, Realtime};
 use spinny_core::report;
 use spinny_core::settings::Settings;
 use spinny_core::stepper::{self, Isr, Shared};
-use spinny_core::{AXES, Z};
+use spinny_core::{AXES, SERVOS, Z};
 
 use crate::clock::Clock;
 use crate::inbox::{Inbound, Inbox};
@@ -51,6 +51,9 @@ pub struct Sim {
     surface: Option<Surface>,
     /// The endstops.
     stops: Stops,
+    /// Each servo's pulse as the board would drive it, microseconds;
+    /// `None` for no pulse.
+    servos: [Option<u16>; SERVOS],
 }
 
 /// Start values for a simulated board.
@@ -83,12 +86,16 @@ impl Sim {
             report_at: (!setup.quiet).then(|| Instant::now() + REPORT_EVERY),
             surface: setup.surface,
             stops: setup.stops,
+            servos: [None; SERVOS],
         };
         // Stored settings win over the ones given on the command line, as
         // they do on the board, where flash is read at boot.
         if sim.machine.load_settings(&mut sim.store) && !setup.quiet {
             eprintln!("settings read from the store: they stand over --machine and --settings, as flash does on the board");
         }
+        // The servos go to their start angles once the settings are read,
+        // as on the board.
+        sim.machine.start_servos();
         sim.out.take();
         sim
     }
@@ -103,6 +110,11 @@ impl Sim {
 
     pub fn laser_duty(&self) -> u16 {
         self.laser.duty
+    }
+
+    /// Each servo's pulse as the board would drive it.
+    pub fn servo_pulses(&self) -> [Option<u16>; SERVOS] {
+        self.servos
     }
 
     pub fn trace_mut(&mut self) -> &mut Trace {
@@ -263,9 +275,14 @@ impl Sim {
             self.next_tick = Some(now);
         }
         // The driver events are the board's; `diag` is answered here with
-        // what a simulation can say, so a host asking gets its lines.
-        if self.machine.take_events().diag {
+        // what a simulation can say, so a host asking gets its lines. The
+        // servos' pulses are kept as the board would drive them.
+        let events = self.machine.take_events();
+        if events.diag {
             report::message("diag virtual firmware: no board, no reset record", &mut self.out);
+        }
+        if events.servos {
+            self.servos = core::array::from_fn(|i| self.machine.servo_pulse(i));
         }
         self.trace.sample(now, self.machine.joint(), self.beam_duty());
         if let Some(due) = self.report_at {
@@ -410,8 +427,8 @@ mod tests {
     use spinny_fw_logic::line::{Event, Line};
     use std::time::Instant;
 
-    fn sim() -> Sim {
-        Sim::new(Setup {
+    fn setup() -> Setup {
+        Setup {
             settings: Settings::default(),
             store: FileStore::default(),
             clock: Clock::fast(),
@@ -419,7 +436,11 @@ mod tests {
             quiet: true,
             surface: None,
             stops: Stops::default(),
-        })
+        }
+    }
+
+    fn sim() -> Sim {
+        Sim::new(setup())
     }
 
     fn line(text: &str) -> Event {
@@ -499,6 +520,29 @@ mod tests {
         // client finds the alarm and has to unlock before it can move.
         assert_eq!(sim.state(), report::State::Alarm(1), "the machine kept running");
         assert_eq!(sim.laser_duty(), 0, "the beam was left on");
+    }
+
+    #[test]
+    fn the_servos_start_at_boot_and_follow_their_lines() {
+        let mut settings = Settings::default();
+        settings.servo_out[0] = spinny_core::settings::SERVO_PIN;
+        settings.servo_out[2] = spinny_core::settings::SERVO_PCA;
+        settings.servo_start[0] = 90.0;
+        let mut sim = Sim::new(Setup { settings, ..setup() });
+        sim.poll();
+        assert_eq!(sim.servo_pulses(), [Some(1500), None, None, None], "the start, and none for no start");
+        let inbox = Inbox::new();
+        let mut out = Vec::new();
+        inbox.try_push(line("servo N3 A180 T400")).unwrap();
+        inbox.try_push(line("servo N1 off")).unwrap();
+        let at = sim.clock.now();
+        run_until(&mut sim, &inbox, &mut out, |sim| sim.servo_pulses()[0].is_none());
+        assert_eq!(sim.servo_pulses(), [None, None, Some(2000), None]);
+        assert!(sim.clock.now() - at >= 400_000, "the second line ran before the wait was over");
+        assert_eq!(String::from_utf8(out).unwrap().matches("ok\n").count(), 2);
+        sim.machine.realtime(Realtime::Status, &mut sim.laser, &mut sim.out);
+        let status = String::from_utf8(sim.out.take()).unwrap();
+        assert!(status.ends_with("|S:,,180,>\n"), "{status}");
     }
 
     #[test]

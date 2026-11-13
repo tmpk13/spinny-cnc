@@ -11,7 +11,8 @@ slide from the step timer as a fourth joint, so the rail is X and the
 slide Y of an X/Y machine. `$spindle=1` makes the FAN3 output a spindle's
 speed signal and the focus axis its depth axis. `$dispenser=1`, with
 `$cartesian=1`, makes the table's driver socket a dispenser's plunger
-in mm; no pin changes.
+in mm; no pin changes. Up to four servos run beside any of them, on the board's
+pins or on a PCA9685 on its I2C bus ([Servos](#servos)).
 
 ## Pins
 
@@ -26,6 +27,8 @@ in mm; no pin changes.
 | TMC2209 UART | GP8 TX, GP9 RX | one wire, 115200 baud, addresses X=0 Y=2 Z=1 E=3, 110 mOhm sense |
 | Laser | GP20 | FAN3 header, a low side MOSFET switching the fan rail; `$laser_pin` moves it |
 | Tool output | none | `$tool_out=1` drives `$tool_pin` (GP17, FAN1, by default) while a job runs, a beam is lit, a dwell burns or the spindle turns; `$tool_invert=1` makes it active low |
+| Servos | none | `$servoN_out=1` gives servo N a 50 Hz pulse on `$servoN_pin` (GP29, the SERVOS header, by default) from that pin's PWM slice; `$servoN_out=2` puts it on channel `$servoN_chan` of a PCA9685 |
+| PCA9685 I2C | GP0 SDA, GP1 SCL | the UART header's TX and RX as I2C0, 100 kHz, internal pull-ups as well as the module's; `$i2c_sda` and `$i2c_scl` move it, `$pca_addr` (0x40) is the chip's address; claimed only when a servo is on the PCA9685 |
 
 The pin settings are read from flash at boot, so a change takes effect
 after `$save` and a restart; the `$` listing shows the stored value
@@ -41,6 +44,29 @@ pin, so any of them carries the PWM. A pin named twice is the machine
 file's to refuse ([docs/MACHINES.md](../../docs/MACHINES.md#pins)); the
 board itself keeps the laser on its pin and drops the probe or the tool
 output from a pin the laser has.
+
+### Servos
+
+A servo's three wires are its signal, its supply (red) and ground. The
+signal is a 3.3 V pulse every 20 ms, 1000 to 2000 us wide by default
+(`$servoN_min_us`, `$servoN_max_us` over `$servoN_range` degrees), which
+hobby servos take. A servo on the board takes its pin's own PWM slice at
+50 Hz, so it may not share the laser's slice (GP20 and GP21 with the laser
+on FAN3); the SERVOS header (GP29), the RGB header (GP24) and the UART
+header's GP0 and GP1 reach the chip directly. The FAN, HE and BED headers
+are MOSFET outputs switching their supply's ground and carry no signal,
+and the STOP headers are inputs behind a buffer, which the servo and I2C
+settings refuse.
+
+Power the servos from a supply of their own, 5 to 6 V, its ground tied to
+the board's: a servo starting or stalling draws an ampere or more, which
+the board's 5 V header is not built for. A PCA9685 module takes the same
+supply on its V+ terminal for the servos, while its VCC, which powers the
+chip and its pull-ups on SDA and SCL, must be 3.3 V from the board: at 5 V
+those pull-ups would hold GP0 and GP1 above what the RP2040 takes. Its
+address pins A0 to A5 set `$pca_addr` from 0x40 up. The firmware sets it to
+50 Hz at boot, and again whenever it finds the chip without that setup,
+and says on the console whether it answers.
 
 The cross slide goes in the **Z** socket and the focus axis in the **E**
 socket. The four enable pins are driven together, so an empty E socket

@@ -11,7 +11,9 @@ Three settings change what the machine is, and all are off by default:
 slide Y of an X/Y machine (see [Cartesian](#cartesian)), `spindle`
 turns the laser output into a spindle's (see [Spindle](#spindle)), and
 `dispenser`, with `cartesian`, makes the table's driver a dispenser's
-plunger (see [Dispenser](#dispenser)).
+plunger (see [Dispenser](#dispenser)). Up to four servos, on pins of the
+board or a PCA9685 on its I2C bus, are outputs beside all of it (see
+[Servos](#servos)).
 
 ## Transport
 
@@ -88,9 +90,9 @@ Which commands each state takes:
 | State | Accepted |
 | --- | --- |
 | `Idle` | everything but `unlock` |
-| `Run` | `go`, `cut`, `dwell`, `probe`, `spindle S` |
+| `Run` | `go`, `cut`, `dwell`, `probe`, `spindle S`, `servo` |
 | `Jog` | jogs, `probe` |
-| `Hold` | `go`, `cut`, `dwell` and `spindle S` in a hold of a run, `probe` in any hold: they are taken in and wait for the resume |
+| `Hold` | `go`, `cut`, `dwell`, `spindle S` and `servo` in a hold of a run, `probe` in any hold: they are taken in and wait for the resume |
 | `Home` | nothing: the `home` line is pending until it ends |
 | `Alarm` | `unlock` |
 
@@ -347,6 +349,58 @@ machine (`$cartesian=0`) the flag means nothing: `A` is the table.
 Changing `dispenser` stops whatever runs on the output, as changing
 `spindle` does.
 
+## Servos
+
+Up to four servos, numbered 1 to 4, each either on a GPIO of the board,
+whose PWM slice gives it a pulse every 20 ms, or on a channel of a PCA9685
+PWM driver on the board's I2C bus, run at the same 50 Hz. `servoN_out`
+says which: 0 no servo, 1 the board's pin `servoN_pin`, 2 the PCA9685's
+channel `servoN_chan`. The pulse is `servoN_min_us` at 0 degrees and
+`servoN_max_us` at `servoN_range` degrees, a straight line between; the
+first may be the longer, for a servo that turns the other way.
+
+| Command | Effect |
+| --- | --- |
+| `servo N<n> A<deg> [T<ms>]` | servo `n` to `A` degrees, 0 to its `servoN_range`, once queued motion is done; then a wait of `T` ms (at most 600000) before the line is answered, so the servo gets there before what follows runs. Taken in `Idle` and `Run`, and during a hold of a run, where it waits for the resume |
+| `servo N<n> off` | servo `n` without a pulse, so it stops holding its angle; once queued motion is done, in the same states |
+
+- A servo whose `servoN_out` is 0 is `error:2`, as is an `N` that is not a
+  whole number; `N` outside 1 to 4 and an angle outside the servo's range
+  are `error:4`.
+- The wait is a dwell without a beam: it holds up the lines behind it, a
+  hold pauses it and the resume carries it on, and a reset ends it. The
+  state is `Run` meanwhile, so the tool output follows it as it does a
+  dwell.
+- A servo stays where it is through holds, resets, alarms, a lost motor
+  supply and a USB disconnect: it is no hazard the way a beam is, and one
+  holding a tool clear of the work should not let go of it. `servo N<n>
+  off` lets go.
+- At boot each servo goes to `servoN_start` degrees, or gets no pulse at
+  all when that is below 0, the default, until a `servo` line moves it.
+  `$load` moves none.
+- The status line's `S` field has each servo's angle.
+
+The board claims a servo's pin, and starts the I2C bus for the PCA9685
+(data on `i2c_sda`, clock on `i2c_scl`, the chip at `pca_addr`), at boot
+from the stored settings. It leaves out a servo pin on the laser's PWM
+slice (GP20 and GP21 for the laser on FAN3), whose rate is the laser's,
+and one the tool output, the probe or an earlier servo's PWM channel has
+(GPIO n and n + 16 share a channel); and a bus whose two pins are not one
+I2C block's data and clock lines, or are another output's or the probe's.
+Each is said once at boot as `[MSG:servo ...]`; a machine file refuses
+them all. The PCA9685 is set up at 50 Hz with every channel off and the
+servos' channels written after it; a chip that does not answer is said to
+once (`[MSG:servo pca9685 0x40 on GP0 GP1 not answering, retrying]`) and
+tried again every half second, so a module powered after the board comes
+up, and one found without its setup (its supply dropped and came back) is
+set up again. `[MSG:servo pca9685 0x40 on GP0 GP1 ready]` says it is
+driving the servos.
+
+A change of `servoN_min_us`, `servoN_max_us` or `servoN_range` applies at
+once to the angle held. A change of a servo's output, pin or channel
+leaves it without a pulse until a `servo` line moves it, and gives it none
+at all until `$save` and a restart, which claim the new output.
+
 ## Laser
 
 | Command | Effect |
@@ -379,7 +433,7 @@ turns off a floor below it.
 | `set [R<mm>] [A<deg>] [H<mm>] [Z<mm>]` | declare the current position (`Idle` only); `set R0` after driving the beam over the axis; `Z` alone on a polar machine |
 | `enable` / `disable` | motor enable pins; any motion enables them; `disable` loses the microstep position |
 | `unlock` | clear an alarm |
-| `mode`, `laser`, `spindle`, `set`, `enable`, `disable` | sync commands: they wait until queued motion is done |
+| `mode`, `laser`, `spindle`, `servo`, `set`, `enable`, `disable` | sync commands: they wait until queued motion is done |
 | `version` | `[spinny v<version> ...]` |
 | `status` | same as `?` |
 | `help` | short command list |
@@ -448,7 +502,7 @@ connect and logs the answer.
 | `$<name>=<value>` | set in RAM (`Idle` only) |
 | `$save` | write to flash (`Idle` only) |
 | `$load` | reload from flash (`Idle` only) |
-| `$defaults` | factory values in RAM (`Idle` only), except the wiring: `laser_invert`, `en_invert`, `probe_invert`, `dir_invert`, `sockets`, `laser_pin`, `probe_pin`, `tool_out`, `tool_pin`, `tool_invert`, the four `<axis>_stop` and `<axis>_stop_pin`, `stop_invert` and `limits` keep their values, so an active-low laser or tool output is not driven by it, the next move steps the motors it means, and an endstop that halts a move goes on doing so |
+| `$defaults` | factory values in RAM (`Idle` only), except the wiring: `laser_invert`, `en_invert`, `probe_invert`, `dir_invert`, `sockets`, `laser_pin`, `probe_pin`, `tool_out`, `tool_pin`, `tool_invert`, the four `<axis>_stop` and `<axis>_stop_pin`, `stop_invert`, `limits`, the I2C bus and every servo setting keep their values, so an active-low laser or tool output is not driven by it, the next move steps the motors it means, an endstop that halts a move goes on doing so, and a servo is not driven past the span its mechanism was set up for |
 | `$tmc` | `ok` at once, then, as the drivers answer over their UART, one line per driver, all four: `[MSG:tmc <axis> addr<n> ifcnt=<n> micro=<n> status=0x........]`, or `[MSG:tmc <axis> addr<n> no reply, is motor power on]`; a driver no axis uses (the focus axis's without `h_axis`) says `unused, ` after its address, and not answering is no fault for it. `micro` is the resolution the driver steps at, from the MS1/MS2 pins until the configuration selects the register; `ifcnt` counts the writes it took, 6 for each configuration (the flags, GCONF, IHOLD_IRUN, CHOPCONF, TPOWERDOWN and TPWMTHRS). A host reads the report after the `ok`, not before it; `[MSG:tmc configured]` and `[MSG:tmc <axis> addr<n> refused config, retrying]` arrive unasked, and so does `[MSG:tmc <axis> addr<n> lost motor power, position may be off]`, after which the board resets itself as `0x18` does, raises `ALARM:3` even from `Idle` (the motors held nothing meanwhile), and configures the drivers again; the loss is seen at the next driver poll, about every quarter second, so a supply back sooner than that drives the beam or spindle at the job's duty until then |
 
 A value outside its bounds is `error:7`; an integer setting refuses
@@ -458,7 +512,9 @@ be above 0; `r_max` at least 0; `dir_invert` 0..15; `step_us` 1..20;
 0..`s_max`; `tmc_*_ma` at most 2000; `tmc_hold_pct` at most 100; the
 microsteps a power of two up to 256; `tmc_toff` 1..15; `tmc_tbl` 0..3;
 `tmc_hstrt` 0..7; `tmc_hend` and `tmc_hold_delay` 0..15; `tmc_tpowerdown`
-0..255; `tmc_tpwmthrs` 0..1048575.
+0..255; `tmc_tpwmthrs` 0..1048575; `servoN_out` 0..2; `servoN_chan`
+0..15; `servoN_min_us` and `servoN_max_us` 200..3000; `servoN_range` above
+0 and at most 360; `servoN_start` -1..360; `pca_addr` 64..127.
 
 | Name | Unit | Default | Meaning |
 | --- | --- | --- | --- |
@@ -530,6 +586,16 @@ microsteps a power of two up to 256; `tmc_toff` 1..15; `tmc_tbl` 0..3;
 | `tmc_hold_delay` | 2^18 clocks | 10 | IHOLD_IRUN IHOLDDELAY, 0..15: each step of the fall from the run current to the hold current takes this long, 21.8 ms a unit; 0 drops at once |
 | `tmc_tpowerdown` | 2^18 clocks | 20 | TPOWERDOWN, 0..255: how long a motor at rest keeps its run current before that fall, 21.8 ms a unit (20 is 0.44 s), counted from when the driver finds it at rest, 2^20 clocks (87 ms) after its last step |
 | `tmc_tpwmthrs` | TSTEP | 0 | TPWMTHRS, 0..1048575: with `tmc_stealth`, a driver runs stealthChop while TSTEP is at least this and spreadCycle when it is less (faster); TSTEP is the time between two 1/256 microsteps in clocks, whatever the microsteps, 46875 / full steps per second; 0 keeps stealthChop at every speed |
+| `i2c_sda` | GPIO | 0 | the PCA9685's I2C data line, an even pin: 0 (TX on the UART header), 20 or 24 for I2C0, 18, 22 or 26 for I2C1; read at boot, and claimed only when a servo is on the PCA9685 |
+| `i2c_scl` | GPIO | 1 | its clock line, an odd pin of the same I2C block: 1 (RX), 17, 21 or 29 for I2C0, 23 or 27 for I2C1; read at boot |
+| `pca_addr` | | 64 | the PCA9685's 7-bit address, 64 to 127 (0x40 to 0x7F) as its A5 to A0 pins set it; read at boot |
+| `servo1_out` .. `servo4_out` | 0..2 | 0 | where the servo's pulse goes: 0 no servo, 1 `servoN_pin`, 2 the PCA9685's channel `servoN_chan`; read at boot, and 0 stops the pulse at once |
+| `servo1_pin` .. `servo4_pin` | GPIO | 29 | a servo on the board: 29 SERVOS, 24 RGB, 0 TX, 1 RX, or any other free GPIO off the laser's PWM slice; read at boot |
+| `servo1_chan` .. `servo4_chan` | 0..15 | 0, 1, 2, 3 | a servo on the PCA9685: its channel, LED0 to LED15; read at boot |
+| `servo1_min_us` .. `servo4_min_us` | us | 1000 | the pulse at 0 degrees, 200..3000 |
+| `servo1_max_us` .. `servo4_max_us` | us | 2000 | the pulse at `servoN_range` degrees, 200..3000; the shorter of the two for a servo turned the other way |
+| `servo1_range` .. `servo4_range` | deg | 180 | the angle from `servoN_min_us` to `servoN_max_us`, above 0 and at most 360; a `servo` line takes 0 to this |
+| `servo1_start` .. `servo4_start` | deg | -1 | the angle at boot; below 0, the default, no pulse until a `servo` line; one past the range is held to it |
 
 Changing a `tmc_*` setting, `h_axis` or `sockets` re-sends the driver
 configuration; a `tmc_*` value and `dir_invert` follow the axis to its
@@ -551,7 +617,13 @@ Z-STOP header instead). `laser_pin`, `probe_pin` and `tool_pin` are read from fl
 at boot: `$save` and restart for a change to take effect. The tool pin is
 claimed at boot only when `tool_out` is set then, so `tool_out` turned on
 needs the same; on a board that claimed it, `tool_out` and `tool_invert`
-apply at once.
+apply at once. The servos' pins and channels and the I2C bus are read at
+boot the same way. A servo's pin and the bus's two are held to more: not a
+STOP header's (3, 4, 16, 25), whose signal reaches the chip through an
+input buffer that would drive against the pin, and the bus's data line on
+an even pin and its clock on an odd one; not to one I2C block, which a
+machine file checks and the board starts no bus without. See
+[Servos](#servos).
 
 Settings stored by a firmware from before `probe_ms` (the stored layout
 changed, and the first focus axis firmware is one of them) are thrown away
@@ -562,7 +634,9 @@ read, with those four at their defaults, settings stored before
 `sockets` with it at 1234, and settings stored before the pins with those
 at their defaults, settings stored before `dispenser` with it 0, and
 settings stored before the drivers' tuning (`tmc_intpol` on) with those
-at their defaults.
+at their defaults, and settings stored before the servos (`i2c_sda` on,
+in a stored copy twice as long) with no servo fitted and the bus at its
+defaults.
 
 ## Status line
 
@@ -570,10 +644,12 @@ at their defaults.
 <Idle|J:12.345,90.1234|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000>
 <Idle|J:12.345,90.1234|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000|H:-1.250|P:0>
 <Idle|J:12.345,90.1234|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000|D:RA>
+<Idle|J:12.345,90.1234|V:0|L:0|Q:32,16|M:dyn|E:1|Z:0.000|S:90,,12.5,>
 ```
 
 The second form is with `h_axis` set, the third with an endstop on any
-axis (and both fields with both).
+axis, the fourth with a servo fitted (each field with what it needs, in
+this order).
 
 | Field | Meaning |
 | --- | --- |
@@ -588,6 +664,7 @@ axis (and both fields with both).
 | `H` | focus axis position, mm; only with `h_axis` |
 | `P` | 1 while the probe input is active; only with `h_axis` |
 | `D` | the joints homed since the position was last lost, as letters in the order R A H Z, empty for none; only with an endstop on some axis |
+| `S` | each servo's angle in degrees, servo 1 to 4, comma separated, empty for a servo without a pulse or without an output; only with a servo fitted (`servoN_out` above 0) |
 
 ## Errors and alarms
 

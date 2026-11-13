@@ -9,6 +9,7 @@ pub mod laser;
 pub mod line;
 pub mod out;
 pub mod pins;
+pub mod servo;
 pub mod step;
 pub mod tmc;
 pub mod usb_guard;

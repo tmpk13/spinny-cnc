@@ -1,9 +1,9 @@
 //! SKR Pico pin assignment and the ports the core drives.
 //!
 //! Pins are configured once at boot and then left alone. The driver
-//! sockets' pins are the board's; the laser output, the probe input and
-//! the tool output are wherever the stored settings put them, read from
-//! flash before this runs. The ports are zero-sized and write the SIO and
+//! sockets' pins are the board's; the laser output, the probe input, the
+//! tool output and the servos are wherever the stored settings put them,
+//! read from flash before this runs. The ports are zero-sized and write the SIO and
 //! PWM registers directly, so the step interrupt and the main loop use the
 //! same types without sharing any state but a few atomics.
 
@@ -17,9 +17,10 @@ use embassy_rp::peripherals::{PIN_10, PIN_11, PIN_12, PIN_13, PIN_14, PIN_15, PI
 use embassy_rp::Peri;
 use spinny_core::hal::{LaserPort, SlidePort, StepPort};
 use spinny_core::settings::{Settings, LASER_PIN_DEFAULT, PROBE_PIN_DEFAULT, RESERVED_PINS, SOCKETS, STOP_PIN_DEFAULTS};
-use spinny_core::{AXES, Z};
+use spinny_core::{AXES, SERVOS, Z};
 use spinny_fw_logic::laser::{compare, compare_before_top, pwm_is_channel_a, pwm_params, pwm_slice, resting_duty};
 use spinny_fw_logic::pins::{level_masks, mask_of};
+use spinny_fw_logic::servo::{plan as servo_plan, Claimed, ServoPlan, ServoWiring};
 use spinny_fw_logic::step::pulse_loops;
 
 /// STEP and DIR pins of the X, Y, Z and E driver sockets. Which joint
@@ -141,6 +142,10 @@ pub struct IoPins {
     /// The endstop input of each joint, claimed whether or not the joint
     /// has a switch yet, so `<axis>_stop` can be set without a restart.
     pub stop_pins: [u8; AXES],
+    /// The servos' outputs and the PCA9685's bus.
+    pub servos: ServoWiring,
+    /// Each servo's output as `Settings::servo_wiring` gives it.
+    pub servo_wiring: [(u8, u32); SERVOS],
 }
 
 impl IoPins {
@@ -156,6 +161,8 @@ impl IoPins {
             tool_pin: tool.then_some(settings.tool_pin as u8),
             tool_invert: settings.tool_invert,
             stop_pins: core::array::from_fn(|joint| settings.stop_pin[joint] as u8),
+            servos: ServoWiring::of(settings),
+            servo_wiring: core::array::from_fn(|i| settings.servo_wiring(i)),
         }
     }
 }
@@ -167,15 +174,15 @@ fn free(pin: u8) -> bool {
 }
 
 /// Claims the pins in a safe order: the laser output at its off level,
-/// the tool output at rest, the probe input, the drivers disabled, then
-/// step and direction low. `io.laser_invert` is the stored polarity, read
+/// the tool output at rest, the probe input, the servos' pins without a
+/// pulse, the drivers disabled, then step and direction low. `io.laser_invert` is the stored polarity, read
 /// from flash before this runs: the laser pin is driven at its off level
 /// from the first instant it is an output (compare 0, always low,
 /// normally; `top + 1`, always high, when inverted), so an inverted module
 /// never sees the lit level while the rest boots. Until then the pad's
 /// reset pull-down holds the line low. The drivers are forgotten on
 /// purpose so they never release the pins.
-pub fn init(pins: Pins, io: IoPins) -> (StepPins, LaserPwm, SlidePins) {
+pub fn init(pins: Pins, io: IoPins) -> (StepPins, LaserPwm, SlidePins, ServoPlan) {
     SYSCLK_HZ.store(clk_sys_freq(), Ordering::Relaxed);
 
     // The laser's slice is programmed in full before its pin is handed
@@ -224,14 +231,25 @@ pub fn init(pins: Pins, io: IoPins) -> (StepPins, LaserPwm, SlidePins) {
         forget(Input::new(unsafe { AnyPin::steal(probe_pin) }, Pull::Up));
     }
     PROBE_PIN.store(probe_pin, Ordering::Relaxed);
+    // The servos: each pin of the board on its slice at 50 Hz, low until
+    // the main loop drives a pulse; the PCA9685's bus is the task's to
+    // claim, `servo::start`. Neither takes a pin claimed above.
+    let tool = TOOL_PIN.load(Ordering::Relaxed);
+    let claimed = Claimed { laser: laser_pin, tool: (tool != NO_PIN).then_some(tool), probe: probe_pin };
+    let plan = servo_plan(&io.servos, &claimed);
+    crate::servo::claim(&plan, &io.servo_wiring, sysclk());
+    let servo_output = |pin: u8| {
+        plan.pins.contains(&Some(pin)) || plan.pca.is_some_and(|pca| pca.sda == pin || pca.scl == pin)
+    };
     // The endstops: inputs like the probe, and two joints may share one
-    // (or the probe's), which is then claimed once. One on the laser's or
-    // the tool's pin is left out and reads open.
+    // (or the probe's), which is then claimed once. One on the laser's,
+    // the tool's, a servo's or the PCA9685's bus's pin is left out and
+    // reads open.
     let mut inputs: [u8; AXES + 1] = [NO_PIN; AXES + 1];
     inputs[0] = probe_pin;
     for joint in 0..AXES {
         let pin = io.stop_pins[joint];
-        let output = pin == laser_pin || TOOL_PIN.load(Ordering::Relaxed) == pin;
+        let output = pin == laser_pin || TOOL_PIN.load(Ordering::Relaxed) == pin || servo_output(pin);
         if !free(pin) || output {
             STOP_PINS[joint].store(NO_PIN, Ordering::Relaxed);
             continue;
@@ -264,7 +282,7 @@ pub fn init(pins: Pins, io: IoPins) -> (StepPins, LaserPwm, SlidePins) {
     assert!(step == SOCKET_STEP_PINS && dir == SOCKET_DIR_PINS && en == EN_PINS);
 
     set_step_width(Settings::default().step_us);
-    (StepPins, LaserPwm, SlidePins)
+    (StepPins, LaserPwm, SlidePins, plan)
 }
 
 fn sysclk() -> u32 {

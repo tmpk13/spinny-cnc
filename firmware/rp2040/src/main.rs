@@ -16,12 +16,17 @@
 //! With `$spindle=1` the laser PWM (FAN3 unless `$laser_pin` moves it)
 //! drives a spindle's speed input; the core then keeps the step timer off
 //! it. `$tool_out=1` adds an output that follows the tool.
+//!
+//! Servos are driven from the main loop when the core says a pulse may
+//! have changed: a servo on the board through a PWM slice of its own, one
+//! on a PCA9685 through `servo`'s task on the I2C bus.
 #![no_std]
 #![no_main]
 
 mod board;
 mod diag;
 mod flash;
+mod servo;
 mod step_timer;
 mod tmc;
 mod usb;
@@ -29,7 +34,8 @@ mod usb;
 use embassy_executor::Spawner;
 use embassy_rp::bind_interrupts;
 use embassy_rp::interrupt::{self, InterruptExt, Priority};
-use embassy_rp::peripherals::{UART1, USB};
+use embassy_rp::i2c;
+use embassy_rp::peripherals::{I2C0, I2C1, UART1, USB};
 use embassy_rp::uart::BufferedInterruptHandler;
 use embassy_rp::usb::InterruptHandler;
 use embassy_rp::watchdog::Watchdog;
@@ -45,6 +51,8 @@ use static_cell::StaticCell;
 bind_interrupts!(pub struct Irqs {
     USBCTRL_IRQ => InterruptHandler<USB>;
     UART1_IRQ => BufferedInterruptHandler<UART1>;
+    I2C0_IRQ => i2c::InterruptHandler<I2C0>;
+    I2C1_IRQ => i2c::InterruptHandler<I2C1>;
 });
 
 /// Main loop period; the core wants to be polled about every millisecond.
@@ -69,7 +77,7 @@ async fn main(spawner: Spawner) {
     };
 
     // Laser output at its off level and motors disabled before anything else runs.
-    let (mut port, mut laser, mut slide) = board::init(board::Pins {
+    let (mut port, mut laser, mut slide, servos) = board::init(board::Pins {
         x_step: p.PIN_11,
         x_dir: p.PIN_10,
         x_en: p.PIN_12,
@@ -87,6 +95,8 @@ async fn main(spawner: Spawner) {
     // Every other interrupt below the step timer, which `step_timer::start` puts at P0.
     interrupt::USBCTRL_IRQ.set_priority(Priority::P2);
     interrupt::UART1_IRQ.set_priority(Priority::P2);
+    interrupt::I2C0_IRQ.set_priority(Priority::P2);
+    interrupt::I2C1_IRQ.set_priority(Priority::P2);
     interrupt::TIMER_IRQ_0.set_priority(Priority::P1);
 
     let serial = store.serial_number();
@@ -105,9 +115,14 @@ async fn main(spawner: Spawner) {
     board::set_sockets(machine.settings());
     laser.set_frequency(machine.settings().laser_hz);
     machine.drive_laser(&mut laser);
+    // The servos to their start angles, the ones on the PCA9685 once its
+    // task has the chip set up.
+    machine.start_servos();
+    servo::drive(&machine);
 
     usb::start(&spawner, p.USB, serial);
     tmc::start(&spawner, p.UART1, p.PIN_8, p.PIN_9);
+    servo::start(&spawner, &servos, p.I2C0, p.I2C1);
     tmc::configure_from(machine.settings());
     let _ = machine.take_events();
 
@@ -198,6 +213,9 @@ async fn main(spawner: Spawner) {
         }
         if events.diag {
             diag::report(&mut sink);
+        }
+        if events.servos {
+            servo::drive(&machine);
         }
         // A driver that lost its motor supply forgot its configuration and
         // its motor its holding torque. Whatever runs stops as a reset

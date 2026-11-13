@@ -8,7 +8,7 @@
 use crate::hal::Sink;
 use crate::parser::number;
 use crate::report;
-use crate::{A, AXES, H, R, SEGMENTS, SEGMENT_MS, Z};
+use crate::{A, AXES, H, R, SEGMENTS, SEGMENT_MS, SERVOS, Z};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
@@ -154,6 +154,35 @@ pub struct Settings {
     /// clocks between two 1/256 microsteps whatever the microsteps; 0 keeps
     /// stealthChop at every speed.
     pub tmc_tpwmthrs: u32,
+    /// GPIOs of the I2C bus the PCA9685 is on, its data and its clock line:
+    /// an even pin for the data and an odd one for the clock, of the same
+    /// I2C block (`i2c_block`). Read at boot, and claimed only when a servo
+    /// is on the PCA9685.
+    pub i2c_sda: u32,
+    pub i2c_scl: u32,
+    /// The PCA9685's 7-bit address, `PCA_ADDR_MIN` to `PCA_ADDR_MAX` as its
+    /// six address pins set it. Read at boot.
+    pub pca_addr: u32,
+    /// Where each servo's pulse comes from: `SERVO_NONE`, `SERVO_PIN` on
+    /// its `servo_pin`, or `SERVO_PCA` on channel `servo_chan` of the
+    /// PCA9685. Read at boot: the board claims a pin, or starts the bus,
+    /// only for what was fitted then. A servo taken off stops its pulse at
+    /// once.
+    pub servo_out: [u8; SERVOS],
+    /// GPIO of a servo on the board itself. Read at boot.
+    pub servo_pin: [u32; SERVOS],
+    /// Channel of a servo on the PCA9685, 0 to 15. Read at boot.
+    pub servo_chan: [u8; SERVOS],
+    /// The pulse at angle 0 and at the end of the range, microseconds. The
+    /// first may be the longer, for a servo that turns the other way.
+    pub servo_min_us: [u32; SERVOS],
+    pub servo_max_us: [u32; SERVOS],
+    /// Degrees from the angle at `servo_min_us` to the one at
+    /// `servo_max_us`; a `servo` line takes 0 to this.
+    pub servo_range: [f32; SERVOS],
+    /// The angle a servo is driven to at boot, held to its range; below 0
+    /// it gets no pulse until a `servo` line moves it.
+    pub servo_start: [f32; SERVOS],
 }
 
 /// An endstop at the negative end of its axis, and one at the positive
@@ -189,9 +218,66 @@ pub const STOP_PIN_DEFAULTS: [u32; AXES] = [4, 3, 16, 22];
 /// Rev 1.09, TPWMTHRS).
 pub const TPWMTHRS_MAX: u32 = (1 << 20) - 1;
 
+/// A servo's output: none, a GPIO of the board, or a PCA9685 channel.
+pub const SERVO_NONE: u8 = 0;
+pub const SERVO_PIN: u8 = 1;
+pub const SERVO_PCA: u8 = 2;
+/// The SERVOS header, a BLTouch's control line on other firmware.
+pub const SERVO_PIN_DEFAULT: u32 = 29;
+/// Channels of a PCA9685, LED0 to LED15.
+pub const PCA_CHANNELS: u8 = 16;
+/// The PCA9685's addresses: a fixed 1 and six address pins A5 to A0
+/// (PCA9685 datasheet Rev. 4, 7.1 Device addresses); all pins low is the
+/// first, and the default.
+pub const PCA_ADDR_MIN: u32 = 0x40;
+pub const PCA_ADDR_MAX: u32 = 0x7F;
+pub const PCA_ADDR_DEFAULT: u32 = PCA_ADDR_MIN;
+/// The I2C bus on the UART header's TX and RX pins, GP0 and GP1, which are
+/// I2C0's data and clock lines.
+pub const I2C_SDA_DEFAULT: u32 = 0;
+pub const I2C_SCL_DEFAULT: u32 = 1;
+/// The shortest and longest servo pulse a setting may name, microseconds.
+/// Hobby servos take 1000 to 2000, many 500 to 2500; the bounds only keep
+/// a typo from driving one hard into its stop.
+pub const SERVO_US_MIN: u32 = 200;
+pub const SERVO_US_MAX: u32 = 3000;
+/// The widest servo range, degrees.
+pub const SERVO_RANGE_MAX: f32 = 360.0;
+/// The start angle that leaves a servo without a pulse at boot; any
+/// value below 0 does.
+pub const SERVO_START_NONE: f32 = -1.0;
+
 /// A pin setting names a GPIO the board has and nothing else owns.
 pub fn pin_valid(pin: u32) -> bool {
     pin <= PIN_MAX && !RESERVED_PINS.contains(&pin)
+}
+
+/// The STOP headers' GPIOs: Y-STOP, X-STOP, E-STOP and Z-STOP. Each signal
+/// reaches the RP2040 through a 74LVC2G34 buffer (SKR Pico V1.0
+/// schematic), an input only, whose output would fight anything the chip
+/// drove on the pin.
+pub const BUFFERED_INPUTS: [u32; 4] = [3, 4, 16, 25];
+
+/// A pin a servo's pulse or the I2C bus may drive: a free GPIO not behind
+/// a STOP header's buffer.
+pub fn output_pin_valid(pin: u32) -> bool {
+    pin_valid(pin) && !BUFFERED_INPUTS.contains(&pin)
+}
+
+/// The RP2040 wires an I2C block's data line to every fourth GPIO from 0
+/// (I2C0) or 2 (I2C1) and its clock line to the GPIO after each (RP2040
+/// datasheet, 1.4.3 GPIO Functions): data on even pins, clock on odd ones.
+pub fn i2c_sda_capable(pin: u32) -> bool {
+    pin.is_multiple_of(2)
+}
+
+pub fn i2c_scl_capable(pin: u32) -> bool {
+    !pin.is_multiple_of(2)
+}
+
+/// The I2C block a data or clock GPIO belongs to: 0 or 1.
+pub fn i2c_block(pin: u32) -> u32 {
+    (pin / 2) % 2
 }
 
 /// `sockets` names each socket exactly once.
@@ -278,12 +364,26 @@ impl Default for Settings {
             tmc_hold_delay: 10,
             tmc_tpowerdown: 20,
             tmc_tpwmthrs: 0,
+            i2c_sda: I2C_SDA_DEFAULT,
+            i2c_scl: I2C_SCL_DEFAULT,
+            pca_addr: PCA_ADDR_DEFAULT,
+            // No servo fitted. One fitted on the board is on the SERVOS
+            // header, and one on the PCA9685 on the channel of its number,
+            // until set otherwise; the pulse span is the one every hobby
+            // servo takes, and none moves at boot.
+            servo_out: [SERVO_NONE; SERVOS],
+            servo_pin: [SERVO_PIN_DEFAULT; SERVOS],
+            servo_chan: core::array::from_fn(|i| i as u8),
+            servo_min_us: [1000; SERVOS],
+            servo_max_us: [2000; SERVOS],
+            servo_range: [180.0; SERVOS],
+            servo_start: [SERVO_START_NONE; SERVOS],
         }
     }
 }
 
 /// Every setting name, in the order `$` lists them.
-pub const NAMES: [&str; 83] = [
+pub const NAMES: [&str; 114] = [
     "r_steps", "a_steps", "r_rate", "a_rate", "r_accel", "a_accel", "r_jerk", "a_jerk",
     "r_max", "z_steps", "z_rate", "z_accel", "jog_z", "jog_r", "jog_a",
     "dir_invert", "en_invert", "idle_ms", "step_us",
@@ -301,6 +401,11 @@ pub const NAMES: [&str; 83] = [
     "stop_invert", "limits",
     "dispenser",
     "tmc_intpol", "tmc_toff", "tmc_tbl", "tmc_hstrt", "tmc_hend", "tmc_hold_delay", "tmc_tpowerdown", "tmc_tpwmthrs",
+    "i2c_sda", "i2c_scl", "pca_addr",
+    "servo1_out", "servo1_pin", "servo1_chan", "servo1_min_us", "servo1_max_us", "servo1_range", "servo1_start",
+    "servo2_out", "servo2_pin", "servo2_chan", "servo2_min_us", "servo2_max_us", "servo2_range", "servo2_start",
+    "servo3_out", "servo3_pin", "servo3_chan", "servo3_min_us", "servo3_max_us", "servo3_range", "servo3_start",
+    "servo4_out", "servo4_pin", "servo4_chan", "servo4_min_us", "servo4_max_us", "servo4_range", "servo4_start",
 ];
 
 /// First of the endstop settings in `NAMES`: five per joint in the
@@ -308,8 +413,16 @@ pub const NAMES: [&str; 83] = [
 /// drivers' tuning follow them.
 const STOP_NAMES_AT: usize = 52;
 const STOP_NAMES_PER_JOINT: usize = 5;
-/// First of the drivers' tuning settings in `NAMES`, which run to its end.
+/// First of the drivers' tuning settings in `NAMES`.
 const TUNING_NAMES_AT: usize = 75;
+/// First of the I2C bus's settings in `NAMES`: its two pins and the
+/// PCA9685's address.
+const BUS_NAMES_AT: usize = 83;
+/// First of the servos' settings in `NAMES`, seven per servo from servo 1,
+/// which run to its end.
+const SERVO_NAMES_AT: usize = 86;
+const SERVO_NAMES_PER_SERVO: usize = 7;
+const _: () = assert!(SERVO_NAMES_AT + SERVOS * SERVO_NAMES_PER_SERVO == NAMES.len());
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SetError {
@@ -329,11 +442,16 @@ pub enum Changed {
     /// `spindle` and `dispenser`: the output changes meaning, so whatever
     /// runs on it stops.
     Tool,
+    /// A servo's settings: its pulse is worked out again.
+    Servo,
     Other,
 }
 
-/// Size of the persisted blob: magic, version, the fields, a CRC-32.
-pub const BLOB_LEN: usize = 256;
+/// Size of the persisted blob: magic, version, the fields, a CRC-32 in the
+/// last four bytes. Version 11 doubled it for the servos; the versions
+/// before it are `OLD_BLOB_LEN` long, their CRC in their own last four.
+pub const BLOB_LEN: usize = 512;
+const OLD_BLOB_LEN: usize = 256;
 
 /// Largest value any float setting may take; keeps the step arithmetic
 /// far from f32 and u32 limits.
@@ -342,11 +460,22 @@ pub const FLOAT_MAX: f32 = 1.0e7;
 const MAGIC: [u8; 4] = *b"SPNY";
 /// Bumped whenever the field layout changes, so a blob written by an
 /// older firmware is thrown away rather than read as this layout. Versions
-/// 5 to 10 are version 4 with fields appended, so a blob from version 4 on
+/// 5 to 11 are version 4 with fields appended, so a blob from version 4 on
 /// is still read, with the fields added after it at their defaults.
-const BLOB_VERSION: u8 = 10;
+const BLOB_VERSION: u8 = 11;
 /// Oldest version whose fields are a prefix of this layout.
 const BLOB_VERSION_PREFIX: u8 = 4;
+/// The first version written in the longer blob.
+const LONG_BLOB_VERSION: u8 = 11;
+
+/// The length of a blob of `version`, whose CRC is in its last four bytes.
+const fn blob_len(version: u8) -> usize {
+    if version >= LONG_BLOB_VERSION {
+        BLOB_LEN
+    } else {
+        OLD_BLOB_LEN
+    }
+}
 /// Bytes before the first field: magic and version.
 const HEADER_LEN: usize = MAGIC.len() + 1;
 /// Joints stored per array in the version 4 part of the blob, in this
@@ -361,8 +490,17 @@ const PREFIX_LEN: usize = 4 * (3 + 3 + 3 + 3 + 1 + 4 + 3)
 /// then `z_jerk`, `z_max`, `cartesian` and `spindle` (version 5), then
 /// `sockets` (version 6), then the pins and the tool output (version 7),
 /// then the endstops and homing (version 8), then `dispenser` (version 9),
-/// then the drivers' tuning (version 10).
-const FIELDS_LEN: usize = PREFIX_LEN + 4 + 4 + 1 + 1 + 4 + PINS_LEN + STOPS_LEN + 1 + TUNING_LEN;
+/// then the drivers' tuning (version 10), then the I2C bus and the servos
+/// (version 11).
+const FIELDS_LEN: usize = OLD_FIELDS_LEN + SERVO_FIELDS_LEN;
+/// Serialized size of the fields up to version 10, which fill the old blob
+/// up to its CRC.
+const OLD_FIELDS_LEN: usize = PREFIX_LEN + 4 + 4 + 1 + 1 + 4 + PINS_LEN + STOPS_LEN + 1 + TUNING_LEN;
+/// Serialized size of the version 11 fields: the bus's two pins and the
+/// PCA9685's address a byte each, then per servo its output, pin and
+/// channel a byte each, its two pulses in two bytes each, its range and
+/// its start.
+const SERVO_FIELDS_LEN: usize = 3 + SERVOS * (3 + 2 + 2 + 4 + 4);
 /// Serialized size of the version 7 fields.
 const PINS_LEN: usize = 4 + 4 + 1 + 4 + 1;
 /// Serialized size of the version 8 fields: per joint the ends, the pin
@@ -370,12 +508,14 @@ const PINS_LEN: usize = 4 + 4 + 1 + 4 + 1;
 const STOPS_LEN: usize = AXES * (1 + 1 + 4 + 4 + 4) + 1 + 1;
 /// Serialized size of the version 10 fields: the interpolation flag, a
 /// byte for each of the six small fields, and `tmc_tpwmthrs` in the three
-/// bytes its 20 bits need. They fill the blob up to its CRC, so a field
-/// added after them needs a longer blob, with the CRC's place read from
-/// the version.
+/// bytes its 20 bits need. They fill the old blob up to its CRC, which is
+/// why version 11 is a longer blob, with the CRC's place read from the
+/// version.
 const TUNING_LEN: usize = 1 + 6 + 3;
 /// The CRC covers everything before it.
 const CRC_OFFSET: usize = BLOB_LEN - 4;
+const OLD_CRC_OFFSET: usize = OLD_BLOB_LEN - 4;
+const _: () = assert!(HEADER_LEN + OLD_FIELDS_LEN == OLD_CRC_OFFSET);
 const _: () = assert!(HEADER_LEN + FIELDS_LEN <= CRC_OFFSET);
 
 /// One field of `Settings` by reference, so parsing and printing are
@@ -410,6 +550,10 @@ fn group(index: usize) -> Changed {
         // the next poll.
         47 | 48 | 50 => Changed::Other,
         49 | 51 => Changed::Laser,
+        // A servo's pulse is worked out from its settings each time; the
+        // bus is started at boot.
+        SERVO_NAMES_AT.. => Changed::Servo,
+        BUS_NAMES_AT.. => Changed::Other,
         // The drivers' tuning is written to them like their currents.
         TUNING_NAMES_AT.. => Changed::Driver,
         // The endstops are read fresh by the stepper at every fill, and
@@ -466,6 +610,12 @@ impl Writer<'_> {
         self.bytes(&[value]);
     }
 
+    /// The low two bytes of `value`, which must fit in them.
+    fn u16(&mut self, value: u32) {
+        debug_assert!(value <= u16::MAX as u32);
+        self.bytes(&value.to_le_bytes()[..2]);
+    }
+
     fn u32(&mut self, value: u32) {
         self.bytes(&value.to_le_bytes());
     }
@@ -500,6 +650,10 @@ impl Reader<'_> {
 
     fn u8(&mut self) -> u8 {
         self.take::<1>()[0]
+    }
+
+    fn u16(&mut self) -> u32 {
+        u16::from_le_bytes(self.take()) as u32
     }
 
     fn u32(&mut self) -> u32 {
@@ -591,6 +745,22 @@ impl Settings {
             80 => Slot::Byte(&mut self.tmc_hold_delay),
             81 => Slot::Byte(&mut self.tmc_tpowerdown),
             82 => Slot::Int(&mut self.tmc_tpwmthrs),
+            83 => Slot::Int(&mut self.i2c_sda),
+            84 => Slot::Int(&mut self.i2c_scl),
+            85 => Slot::Int(&mut self.pca_addr),
+            SERVO_NAMES_AT.. => {
+                let at = index - SERVO_NAMES_AT;
+                let servo = at / SERVO_NAMES_PER_SERVO;
+                match at % SERVO_NAMES_PER_SERVO {
+                    0 => Slot::Byte(&mut self.servo_out[servo]),
+                    1 => Slot::Int(&mut self.servo_pin[servo]),
+                    2 => Slot::Byte(&mut self.servo_chan[servo]),
+                    3 => Slot::Int(&mut self.servo_min_us[servo]),
+                    4 => Slot::Int(&mut self.servo_max_us[servo]),
+                    5 => Slot::Float(&mut self.servo_range[servo]),
+                    _ => Slot::Float(&mut self.servo_start[servo]),
+                }
+            }
             _ => {
                 let at = index - STOP_NAMES_AT;
                 let joint = [R, A, H, Z][at / STOP_NAMES_PER_JOINT];
@@ -609,6 +779,46 @@ impl Settings {
     /// only on a cartesian machine.
     pub fn dispensing(&self) -> bool {
         self.cartesian && self.dispenser
+    }
+
+    /// Servo `i` (from 0) has an output.
+    pub fn servo_fitted(&self, i: usize) -> bool {
+        self.servo_out[i] != SERVO_NONE
+    }
+
+    /// Some servo has an output.
+    pub fn any_servo(&self) -> bool {
+        (0..SERVOS).any(|i| self.servo_fitted(i))
+    }
+
+    /// Where servo `i`'s pulse comes from: its output and the pin or the
+    /// channel that output takes. A change of it is a servo wired anew.
+    pub fn servo_wiring(&self, i: usize) -> (u8, u32) {
+        match self.servo_out[i] {
+            SERVO_PIN => (SERVO_PIN, self.servo_pin[i]),
+            SERVO_PCA => (SERVO_PCA, self.servo_chan[i] as u32),
+            out => (out, 0),
+        }
+    }
+
+    /// Servo `i`'s pulse for `angle` degrees, in whole microseconds, the
+    /// angle held to the servo's range: a straight line from `servo_min_us`
+    /// at 0 to `servo_max_us` at the end of the range.
+    pub fn servo_pulse_us(&self, i: usize, angle: f32) -> u16 {
+        let range = self.servo_range[i];
+        let angle = angle.clamp(0.0, range);
+        let min = self.servo_min_us[i] as f32;
+        let max = self.servo_max_us[i] as f32;
+        // Both ends are within the setting bounds, so the sum is positive
+        // and fits a u16.
+        (min + (max - min) * angle / range + 0.5) as u16
+    }
+
+    /// The angle servo `i` is driven to at boot, held to its range; `None`
+    /// leaves it without a pulse.
+    pub fn servo_start_angle(&self, i: usize) -> Option<f32> {
+        let start = self.servo_start[i];
+        (start >= 0.0).then(|| start.min(self.servo_range[i]))
     }
 
     /// Joints with an endstop, bit i = joint i.
@@ -711,6 +921,29 @@ impl Settings {
             && self.tmc_hend <= 15
             && self.tmc_hold_delay <= 15
             && self.tmc_tpwmthrs <= TPWMTHRS_MAX
+            // The bus: each pin able to carry its line. Whether the two are
+            // of one I2C block joins two settings, which is the machine
+            // file's to judge, and the board's at boot.
+            && output_pin_valid(self.i2c_sda)
+            && i2c_sda_capable(self.i2c_sda)
+            && output_pin_valid(self.i2c_scl)
+            && i2c_scl_capable(self.i2c_scl)
+            && (PCA_ADDR_MIN..=PCA_ADDR_MAX).contains(&self.pca_addr)
+            && (0..SERVOS).all(|i| self.servo_valid(i))
+    }
+
+    /// Servo `i`'s settings each within their own bounds. A start past the
+    /// range is held to it when used: the two are set one at a time.
+    fn servo_valid(&self, i: usize) -> bool {
+        let pulse = |us: u32| (SERVO_US_MIN..=SERVO_US_MAX).contains(&us);
+        self.servo_out[i] <= SERVO_PCA
+            && output_pin_valid(self.servo_pin[i])
+            && self.servo_chan[i] < PCA_CHANNELS
+            && pulse(self.servo_min_us[i])
+            && pulse(self.servo_max_us[i])
+            && self.servo_range[i] > 0.0
+            && self.servo_range[i] <= SERVO_RANGE_MAX
+            && (SERVO_START_NONE..=SERVO_RANGE_MAX).contains(&self.servo_start[i])
     }
 
     /// Writes `name=value\n` for one setting; false for an unknown name.
@@ -836,23 +1069,40 @@ impl Settings {
             w.u8(field);
         }
         w.u24(self.tmc_tpwmthrs);
+        debug_assert_eq!(w.at, HEADER_LEN + OLD_FIELDS_LEN);
+        // Pins are below 30 and the address below 128, so a byte each.
+        w.u8(self.i2c_sda as u8);
+        w.u8(self.i2c_scl as u8);
+        w.u8(self.pca_addr as u8);
+        for i in 0..SERVOS {
+            w.u8(self.servo_out[i]);
+            w.u8(self.servo_pin[i] as u8);
+            w.u8(self.servo_chan[i]);
+            w.u16(self.servo_min_us[i]);
+            w.u16(self.servo_max_us[i]);
+            w.f32(self.servo_range[i]);
+            w.f32(self.servo_start[i]);
+        }
         debug_assert_eq!(w.at, HEADER_LEN + FIELDS_LEN);
         let crc = crc32(&buf[..CRC_OFFSET]);
         buf[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
     }
 
     /// `None` when the blob is short, or the magic, version or CRC do not
-    /// match, or a stored field is out of range. Bytes past `BLOB_LEN`
-    /// are ignored. A blob older than this version keeps the defaults of
-    /// the fields added after it.
+    /// match, or a stored field is out of range. Bytes past the version's
+    /// length (`BLOB_LEN`, or the old blob's before version 11) are
+    /// ignored, so an old blob read as long as a new one still reads. A
+    /// blob older than this version keeps the defaults of the fields added
+    /// after it.
     pub fn from_blob(buf: &[u8]) -> Option<Settings> {
-        let buf = buf.get(..BLOB_LEN)?;
-        let version = buf[MAGIC.len()];
+        let version = *buf.get(MAGIC.len())?;
         if buf[..MAGIC.len()] != MAGIC || !(BLOB_VERSION_PREFIX..=BLOB_VERSION).contains(&version) {
             return None;
         }
-        let stored = u32::from_le_bytes(buf[CRC_OFFSET..].try_into().ok()?);
-        if crc32(&buf[..CRC_OFFSET]) != stored {
+        let buf = buf.get(..blob_len(version))?;
+        let crc_at = buf.len() - 4;
+        let stored = u32::from_le_bytes(buf[crc_at..].try_into().ok()?);
+        if crc32(&buf[..crc_at]) != stored {
             return None;
         }
         let mut r = Reader { buf, at: HEADER_LEN };
@@ -932,6 +1182,20 @@ impl Settings {
             s.tmc_tpowerdown = r.u8();
             s.tmc_tpwmthrs = r.u24();
         }
+        if version >= 11 {
+            s.i2c_sda = r.u8() as u32;
+            s.i2c_scl = r.u8() as u32;
+            s.pca_addr = r.u8() as u32;
+            for i in 0..SERVOS {
+                s.servo_out[i] = r.u8();
+                s.servo_pin[i] = r.u8() as u32;
+                s.servo_chan[i] = r.u8();
+                s.servo_min_us[i] = r.u16();
+                s.servo_max_us[i] = r.u16();
+                s.servo_range[i] = r.f32();
+                s.servo_start[i] = r.f32();
+            }
+        }
         if !s.is_valid() {
             return None;
         }
@@ -943,7 +1207,7 @@ impl Settings {
 mod tests {
     use super::*;
 
-    struct Out(heapless::Vec<u8, 2048>);
+    struct Out(heapless::Vec<u8, 4096>);
 
     impl Out {
         fn new() -> Self {
@@ -1049,7 +1313,38 @@ mod tests {
         tmc_hend=0\n\
         tmc_hold_delay=10\n\
         tmc_tpowerdown=20\n\
-        tmc_tpwmthrs=0\n";
+        tmc_tpwmthrs=0\n\
+        i2c_sda=0\n\
+        i2c_scl=1\n\
+        pca_addr=64\n\
+        servo1_out=0\n\
+        servo1_pin=29\n\
+        servo1_chan=0\n\
+        servo1_min_us=1000\n\
+        servo1_max_us=2000\n\
+        servo1_range=180\n\
+        servo1_start=-1\n\
+        servo2_out=0\n\
+        servo2_pin=29\n\
+        servo2_chan=1\n\
+        servo2_min_us=1000\n\
+        servo2_max_us=2000\n\
+        servo2_range=180\n\
+        servo2_start=-1\n\
+        servo3_out=0\n\
+        servo3_pin=29\n\
+        servo3_chan=2\n\
+        servo3_min_us=1000\n\
+        servo3_max_us=2000\n\
+        servo3_range=180\n\
+        servo3_start=-1\n\
+        servo4_out=0\n\
+        servo4_pin=29\n\
+        servo4_chan=3\n\
+        servo4_min_us=1000\n\
+        servo4_max_us=2000\n\
+        servo4_range=180\n\
+        servo4_start=-1\n";
 
     #[test]
     fn defaults_are_valid_and_listed_in_names_order() {
@@ -1058,7 +1353,7 @@ mod tests {
         let mut out = Out::new();
         settings.format_all(&mut out);
         assert_eq!(out.as_str(), DEFAULT_LISTING);
-        let names: heapless::Vec<&str, 83> = out.as_str().lines().map(|l| l.split('=').next().unwrap()).collect();
+        let names: heapless::Vec<&str, 114> = out.as_str().lines().map(|l| l.split('=').next().unwrap()).collect();
         assert_eq!(names.as_slice(), &NAMES[..]);
     }
 
@@ -1077,7 +1372,7 @@ mod tests {
     #[test]
     fn every_name_is_settable_with_its_group() {
         // name, value to set, listed value, group
-        let table: [(&str, &str, &str, Changed); 83] = [
+        let table: [(&str, &str, &str, Changed); 114] = [
             ("r_steps", "200.5", "200.5", Changed::Motion),
             ("a_steps", "888.8889", "888.889", Changed::Motion),
             ("r_rate", "1500", "1500", Changed::Motion),
@@ -1161,6 +1456,37 @@ mod tests {
             ("tmc_hold_delay", "6", "6", Changed::Driver),
             ("tmc_tpowerdown", "128", "128", Changed::Driver),
             ("tmc_tpwmthrs", "234", "234", Changed::Driver),
+            ("i2c_sda", "20", "20", Changed::Other),
+            ("i2c_scl", "21", "21", Changed::Other),
+            ("pca_addr", "65", "65", Changed::Other),
+            ("servo1_out", "1", "1", Changed::Servo),
+            ("servo1_pin", "24", "24", Changed::Servo),
+            ("servo1_chan", "15", "15", Changed::Servo),
+            ("servo1_min_us", "500", "500", Changed::Servo),
+            ("servo1_max_us", "2500", "2500", Changed::Servo),
+            ("servo1_range", "270", "270", Changed::Servo),
+            ("servo1_start", "90.5", "90.5", Changed::Servo),
+            ("servo2_out", "2", "2", Changed::Servo),
+            ("servo2_pin", "0", "0", Changed::Servo),
+            ("servo2_chan", "3", "3", Changed::Servo),
+            ("servo2_min_us", "2000", "2000", Changed::Servo),
+            ("servo2_max_us", "1000", "1000", Changed::Servo),
+            ("servo2_range", "90", "90", Changed::Servo),
+            ("servo2_start", "45", "45", Changed::Servo),
+            ("servo3_out", "0", "0", Changed::Servo),
+            ("servo3_pin", "26", "26", Changed::Servo),
+            ("servo3_chan", "7", "7", Changed::Servo),
+            ("servo3_min_us", "1100", "1100", Changed::Servo),
+            ("servo3_max_us", "1900", "1900", Changed::Servo),
+            ("servo3_range", "120.25", "120.25", Changed::Servo),
+            ("servo3_start", "-1", "-1", Changed::Servo),
+            ("servo4_out", "1", "1", Changed::Servo),
+            ("servo4_pin", "1", "1", Changed::Servo),
+            ("servo4_chan", "9", "9", Changed::Servo),
+            ("servo4_min_us", "600", "600", Changed::Servo),
+            ("servo4_max_us", "2400", "2400", Changed::Servo),
+            ("servo4_range", "180", "180", Changed::Servo),
+            ("servo4_start", "0", "0", Changed::Servo),
         ];
         let mut settings = Settings::default();
         for (i, (name, value, shown, group)) in table.iter().enumerate() {
@@ -1192,6 +1518,14 @@ mod tests {
             [5, 1, 4, 2, 6, 128]
         );
         assert_eq!(settings.tmc_tpwmthrs, 234);
+        assert_eq!((settings.i2c_sda, settings.i2c_scl, settings.pca_addr), (20, 21, 65));
+        assert_eq!(settings.servo_out, [SERVO_PIN, SERVO_PCA, SERVO_NONE, SERVO_PIN]);
+        assert_eq!(settings.servo_pin, [24, 0, 26, 1]);
+        assert_eq!(settings.servo_chan, [15, 3, 7, 9]);
+        assert_eq!(settings.servo_min_us, [500, 2000, 1100, 600]);
+        assert_eq!(settings.servo_max_us, [2500, 1000, 1900, 2400]);
+        assert_eq!(settings.servo_range, [270.0, 90.0, 120.25, 180.0]);
+        assert_eq!(settings.servo_start, [90.5, 45.0, -1.0, 0.0]);
     }
 
     #[test]
@@ -1449,6 +1783,23 @@ mod tests {
         assert_eq!(Settings::from_blob(&blob), None);
     }
 
+    /// `stored` as the firmware of an older `version` wrote it, in the old,
+    /// shorter blob: this layout's bytes up to `keep`, zeros after them, and
+    /// the CRC in the old blob's last four bytes. The fields of every
+    /// version are a prefix of this layout, so up to that version's own
+    /// fields the bytes are the ones it wrote.
+    fn old_blob(stored: &Settings, version: u8, keep: usize) -> [u8; OLD_BLOB_LEN] {
+        assert!(version < LONG_BLOB_VERSION && keep <= OLD_CRC_OFFSET);
+        let mut long = [0u8; BLOB_LEN];
+        stored.to_blob(&mut long);
+        let mut blob = [0u8; OLD_BLOB_LEN];
+        blob[..keep].copy_from_slice(&long[..keep]);
+        blob[MAGIC.len()] = version;
+        let crc = crc32(&blob[..OLD_CRC_OFFSET]);
+        blob[OLD_CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
+        blob
+    }
+
     #[test]
     fn a_version_4_blob_is_read_with_the_new_fields_at_their_defaults() {
         // Version 4 is this layout without the fields appended since.
@@ -1458,12 +1809,7 @@ mod tests {
         stored.set("probe_ms", "40").unwrap();
         stored.set("z_jerk", "0.5").unwrap();
         stored.set("cartesian", "1").unwrap();
-        let mut blob = [0u8; BLOB_LEN];
-        stored.to_blob(&mut blob);
-        blob[MAGIC.len()] = 4;
-        blob[HEADER_LEN + PREFIX_LEN..CRC_OFFSET].fill(0);
-        let crc = crc32(&blob[..CRC_OFFSET]);
-        blob[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
+        let blob = old_blob(&stored, 4, HEADER_LEN + PREFIX_LEN);
         let read = Settings::from_blob(&blob).expect("a version 4 blob is read");
         assert_eq!(read.steps[Z], 1280.0);
         assert_eq!(read.tmc_micro[Z], 64);
@@ -1476,12 +1822,7 @@ mod tests {
     #[test]
     fn a_version_5_blob_is_read_with_the_sockets_as_labeled() {
         let stored = Settings { z_max: 4.0, cartesian: true, sockets: 4321, ..Settings::default() };
-        let mut blob = [0u8; BLOB_LEN];
-        stored.to_blob(&mut blob);
-        blob[MAGIC.len()] = 5;
-        blob[HEADER_LEN + FIELDS_LEN - 4..CRC_OFFSET].fill(0);
-        let crc = crc32(&blob[..CRC_OFFSET]);
-        blob[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
+        let blob = old_blob(&stored, 5, OLD_CRC_OFFSET);
         let read = Settings::from_blob(&blob).expect("a version 5 blob is read");
         assert_eq!(read, Settings { sockets: SOCKETS_DEFAULT, ..stored });
     }
@@ -1532,7 +1873,7 @@ mod tests {
 
     /// A version 4 blob as the firmware before the cross slide joint and
     /// the spindle wrote it, with a distinct value in every field.
-    const VERSION_4_BLOB: [u8; BLOB_LEN] = [
+    const VERSION_4_BLOB: [u8; OLD_BLOB_LEN] = [
             0x53, 0x50, 0x4e, 0x59, 0x04, 0x00, 0x00, 0xa0, 0x45, 0x00, 0x3c, 0xde, 0x45, 0x00, 0x00, 0x48,
             0x45, 0x00, 0x00, 0x61, 0x44, 0x00, 0x00, 0x7a, 0x44, 0x00, 0x00, 0x96, 0x43, 0x00, 0x00, 0x20,
             0x42, 0x00, 0x00, 0x34, 0x42, 0x00, 0x00, 0xf0, 0x41, 0x00, 0x00, 0x20, 0x40, 0x00, 0x00, 0xf0,
@@ -1612,7 +1953,7 @@ mod tests {
         };
         modes.to_blob(&mut blob);
         let tail = HEADER_LEN + FIELDS_LEN;
-        let pins = tail - TUNING_LEN - 1 - STOPS_LEN - PINS_LEN;
+        let pins = HEADER_LEN + OLD_FIELDS_LEN - TUNING_LEN - 1 - STOPS_LEN - PINS_LEN;
         assert_eq!(blob[end..end + 4], 3.0f32.to_le_bytes());
         assert_eq!(blob[end + 4..end + 8], 9.5f32.to_le_bytes());
         assert_eq!(blob[pins - 6..pins - 4], [1, 1]);
@@ -1661,24 +2002,26 @@ mod tests {
         assert_eq!(Settings::from_blob(&blob), Some(settings));
         // A version 7 blob reads with the endstops at their defaults.
         let older = Settings::default();
-        older.to_blob(&mut blob);
-        blob[4] = 7;
-        let crc = crc32(&blob[..CRC_OFFSET]);
-        blob[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
-        assert_eq!(Settings::from_blob(&blob), Some(older));
+        assert_eq!(Settings::from_blob(&old_blob(&older, 7, OLD_CRC_OFFSET)), Some(older));
+        assert_eq!(Settings::from_blob(&old_blob(&settings, 7, OLD_CRC_OFFSET)), Some(older));
     }
 
     #[test]
-    fn the_dispenser_flag_and_the_drivers_tuning_are_listed_last() {
+    fn the_dispenser_flag_the_drivers_tuning_the_bus_and_the_servos_are_listed_last() {
         let mut out = Out::new();
         Settings::default().format_all(&mut out);
-        let lines: heapless::Vec<&str, 83> = out.as_str().lines().collect();
+        let lines: heapless::Vec<&str, 114> = out.as_str().lines().collect();
         assert_eq!(lines.len(), NAMES.len());
-        assert_eq!(NAMES.len(), 83);
+        assert_eq!(NAMES.len(), 114);
         assert_eq!(lines[TUNING_NAMES_AT - 1], "dispenser=0");
         assert_eq!(
-            lines[TUNING_NAMES_AT..],
+            lines[TUNING_NAMES_AT..BUS_NAMES_AT],
             ["tmc_intpol=1", "tmc_toff=3", "tmc_tbl=2", "tmc_hstrt=5", "tmc_hend=0", "tmc_hold_delay=10", "tmc_tpowerdown=20", "tmc_tpwmthrs=0"]
+        );
+        assert_eq!(lines[BUS_NAMES_AT..SERVO_NAMES_AT], ["i2c_sda=0", "i2c_scl=1", "pca_addr=64"]);
+        assert_eq!(
+            lines[SERVO_NAMES_AT + 2 * SERVO_NAMES_PER_SERVO..SERVO_NAMES_AT + 3 * SERVO_NAMES_PER_SERVO],
+            ["servo3_out=0", "servo3_pin=29", "servo3_chan=2", "servo3_min_us=1000", "servo3_max_us=2000", "servo3_range=180", "servo3_start=-1"]
         );
     }
 
@@ -1691,7 +2034,7 @@ mod tests {
         assert!(settings.dispensing());
         let mut blob = [0u8; BLOB_LEN];
         settings.to_blob(&mut blob);
-        assert_eq!(blob[HEADER_LEN + FIELDS_LEN - TUNING_LEN - 1], 1, "just before the drivers' tuning");
+        assert_eq!(blob[HEADER_LEN + OLD_FIELDS_LEN - TUNING_LEN - 1], 1, "just before the drivers' tuning");
         assert_eq!(Settings::from_blob(&blob), Some(settings));
     }
 
@@ -1746,20 +2089,20 @@ mod tests {
     }
 
     #[test]
-    fn the_drivers_tuning_fills_the_blob_up_to_its_crc() {
+    fn the_drivers_tuning_fills_the_old_blob_up_to_its_crc() {
         let settings = tuned();
         let mut blob = [0u8; BLOB_LEN];
         settings.to_blob(&mut blob);
-        assert_eq!(HEADER_LEN + FIELDS_LEN, CRC_OFFSET, "no padding is left");
-        let at = CRC_OFFSET - TUNING_LEN;
-        assert_eq!(blob[at..CRC_OFFSET], [0, 15, 1, 7, 11, 0, 255, 0xff, 0xff, 0x0f]);
+        assert_eq!(HEADER_LEN + OLD_FIELDS_LEN, OLD_CRC_OFFSET, "no padding was left");
+        let at = OLD_CRC_OFFSET - TUNING_LEN;
+        assert_eq!(blob[at..OLD_CRC_OFFSET], [0, 15, 1, 7, 11, 0, 255, 0xff, 0xff, 0x0f]);
         assert_eq!(Settings::from_blob(&blob), Some(settings));
         let defaults = Settings::default();
         defaults.to_blob(&mut blob);
-        assert_eq!(blob[at..CRC_OFFSET], [1, 3, 2, 5, 0, 10, 20, 0, 0, 0]);
+        assert_eq!(blob[at..OLD_CRC_OFFSET], [1, 3, 2, 5, 0, 10, 20, 0, 0, 0]);
         let middling = Settings { tmc_tpwmthrs: 0x0001_0203, ..Settings::default() };
         middling.to_blob(&mut blob);
-        assert_eq!(blob[CRC_OFFSET - 3..CRC_OFFSET], [0x03, 0x02, 0x01], "little-endian");
+        assert_eq!(blob[OLD_CRC_OFFSET - 3..OLD_CRC_OFFSET], [0x03, 0x02, 0x01], "little-endian");
         assert_eq!(Settings::from_blob(&blob), Some(middling));
     }
 
@@ -1777,7 +2120,7 @@ mod tests {
         }
         // The interpolation flag is a flag byte like the others.
         Settings::default().to_blob(&mut blob);
-        blob[CRC_OFFSET - TUNING_LEN] = 2;
+        blob[OLD_CRC_OFFSET - TUNING_LEN] = 2;
         let crc = crc32(&blob[..CRC_OFFSET]);
         blob[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
         assert_eq!(Settings::from_blob(&blob), None);
@@ -1792,14 +2135,8 @@ mod tests {
         let stored = Settings { cartesian: true, dispenser: true, laser_invert: true, ..tuned() };
         let kept = Settings { cartesian: true, dispenser: true, laser_invert: true, ..Settings::default() };
         for padding in [false, true] {
-            let mut blob = [0u8; BLOB_LEN];
-            stored.to_blob(&mut blob);
-            blob[MAGIC.len()] = 9;
-            if padding {
-                blob[CRC_OFFSET - TUNING_LEN..CRC_OFFSET].fill(0);
-            }
-            let crc = crc32(&blob[..CRC_OFFSET]);
-            blob[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
+            let keep = if padding { OLD_CRC_OFFSET - TUNING_LEN } else { OLD_CRC_OFFSET };
+            let blob = old_blob(&stored, 9, keep);
             assert_eq!(Settings::from_blob(&blob), Some(kept), "zero padding: {padding}");
         }
     }
@@ -1809,11 +2146,7 @@ mod tests {
         // Version 8 is this layout without the flag appended after the
         // endstops: a stale byte there is not read as the flag.
         let stored = Settings { cartesian: true, dispenser: true, ..Settings::default() };
-        let mut blob = [0u8; BLOB_LEN];
-        stored.to_blob(&mut blob);
-        blob[MAGIC.len()] = 8;
-        let crc = crc32(&blob[..CRC_OFFSET]);
-        blob[CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
+        let blob = old_blob(&stored, 8, OLD_CRC_OFFSET);
         let read = Settings::from_blob(&blob).expect("a version 8 blob is read");
         assert!(read.cartesian && !read.dispenser);
         assert_eq!(read, Settings { cartesian: true, ..Settings::default() });
@@ -1829,5 +2162,157 @@ mod tests {
         assert_eq!(settings.joint_dir_invert(), 1 << H);
         settings.dir_invert = 0b1111;
         assert_eq!(settings.joint_dir_invert(), 0b1111);
+    }
+
+    /// Every servo and bus setting away from its default.
+    fn servos() -> Settings {
+        Settings {
+            i2c_sda: 20,
+            i2c_scl: 21,
+            pca_addr: 0x7F,
+            servo_out: [SERVO_PIN, SERVO_PCA, SERVO_NONE, SERVO_PCA],
+            servo_pin: [24, 0, 27, 1],
+            servo_chan: [15, 4, 9, 0],
+            servo_min_us: [500, 2400, 200, 3000],
+            servo_max_us: [2500, 600, 3000, 1000],
+            servo_range: [270.0, 90.0, 0.5, 360.0],
+            servo_start: [135.5, -1.0, 0.0, 360.0],
+            ..Settings::default()
+        }
+    }
+
+    #[test]
+    fn the_servo_and_bus_settings_take_their_bounds() {
+        for (name, low, high, outside) in [
+            ("servo1_out", "0", "2", ["3", "-1", "1.5"]),
+            ("servo2_chan", "0", "15", ["16", "-1", "2.5"]),
+            ("servo3_min_us", "200", "3000", ["199", "3001", "1500.5"]),
+            ("servo4_max_us", "200", "3000", ["0", "65536", "x"]),
+            ("servo1_range", "0.001", "360", ["0", "360.01", "-90"]),
+            ("servo2_start", "-1", "360", ["-1.01", "360.5", "nan"]),
+            ("pca_addr", "64", "127", ["63", "128", "0"]),
+        ] {
+            accepts(name, low);
+            accepts(name, high);
+            for value in outside {
+                rejects(name, value);
+            }
+        }
+        // A servo's pin is any free GPIO but a STOP header's, which a
+        // buffer drives.
+        for bad in ["30", "2", "19", "28", "-1", "3", "4", "16", "25"] {
+            rejects("servo1_pin", bad);
+        }
+        for good in ["29", "24", "0", "17", "22"] {
+            accepts("servo4_pin", good);
+        }
+        // The bus's data line is on an even pin and its clock on an odd
+        // one; whether the two are of one block is the file's to judge.
+        for (name, good, bad) in [
+            ("i2c_sda", ["0", "20", "24", "26"], ["1", "17", "8", "30", "16", "4"]),
+            ("i2c_scl", ["1", "17", "21", "27"], ["0", "20", "9", "29.5", "25", "3"]),
+        ] {
+            for value in good {
+                accepts(name, value);
+            }
+            for value in bad {
+                rejects(name, value);
+            }
+        }
+        let mut settings = Settings::default();
+        assert_eq!(settings.set("i2c_sda", "18"), Ok(Changed::Other));
+        assert_eq!(i2c_block(settings.i2c_sda), 1);
+        assert_eq!(i2c_block(settings.i2c_scl), 0, "one block's data with the other's clock is taken");
+        // A start past the range is held to it when used: the range may
+        // come second in a file that widens both.
+        assert_eq!(settings.set("servo1_start", "270"), Ok(Changed::Servo));
+        assert_eq!(settings.servo_start_angle(0), Some(180.0));
+        assert_eq!(settings.set("servo1_range", "270"), Ok(Changed::Servo));
+        assert_eq!(settings.servo_start_angle(0), Some(270.0));
+    }
+
+    #[test]
+    fn a_servos_pulse_is_a_line_from_its_shortest_to_its_longest() {
+        let settings = Settings::default();
+        assert_eq!(settings.servo_pulse_us(0, 0.0), 1000);
+        assert_eq!(settings.servo_pulse_us(0, 90.0), 1500);
+        assert_eq!(settings.servo_pulse_us(0, 180.0), 2000);
+        assert_eq!(settings.servo_pulse_us(0, 45.5), 1253, "rounded to the microsecond");
+        // Held to the range.
+        assert_eq!(settings.servo_pulse_us(0, 200.0), 2000);
+        assert_eq!(settings.servo_pulse_us(0, -5.0), 1000);
+        let s = servos();
+        assert_eq!(s.servo_pulse_us(0, 135.0), 1500);
+        assert_eq!(s.servo_pulse_us(0, 270.0), 2500);
+        // Turning the other way: the longer pulse at 0.
+        assert_eq!(s.servo_pulse_us(1, 0.0), 2400);
+        assert_eq!(s.servo_pulse_us(1, 90.0), 600);
+        assert_eq!(s.servo_pulse_us(1, 30.0), 1800);
+        assert_eq!(s.servo_pulse_us(3, 360.0), 1000);
+        assert_eq!(s.servo_pulse_us(2, 0.25), 1600);
+        // Started at boot where the setting says, or not at all.
+        assert_eq!([0, 1, 2, 3].map(|i| s.servo_start_angle(i)), [Some(135.5), None, Some(0.0), Some(360.0)]);
+        assert_eq!(Settings::default().servo_start_angle(0), None);
+        assert!(s.any_servo() && !Settings::default().any_servo());
+        assert!(s.servo_fitted(0) && s.servo_fitted(1) && !s.servo_fitted(2));
+        // The wiring is what a pulse goes out on: the pin of a servo on the
+        // board, the channel of one on the PCA9685, nothing for none.
+        assert_eq!([0, 1, 2, 3].map(|i| s.servo_wiring(i)), [(SERVO_PIN, 24), (SERVO_PCA, 4), (SERVO_NONE, 0), (SERVO_PCA, 0)]);
+    }
+
+    #[test]
+    fn the_servos_round_trip_the_blob_after_the_old_fields() {
+        let stored = servos();
+        assert!(stored.is_valid());
+        let mut blob = [0u8; BLOB_LEN];
+        stored.to_blob(&mut blob);
+        assert_eq!(blob[MAGIC.len()], 11);
+        assert_eq!(Settings::from_blob(&blob), Some(stored));
+        // Laid out after the version 10 fields, which end where the old
+        // blob's CRC was: the bus, then each servo in turn.
+        let at = OLD_CRC_OFFSET;
+        assert_eq!(blob[at..at + 3], [20, 21, 0x7F]);
+        let servo = at + 3;
+        assert_eq!(blob[servo..servo + 7], [SERVO_PIN, 24, 15, 0xF4, 0x01, 0xC4, 0x09], "500 and 2500 little-endian");
+        assert_eq!(blob[servo + 7..servo + 11], 270.0f32.to_le_bytes());
+        assert_eq!(blob[servo + 11..servo + 15], 135.5f32.to_le_bytes());
+        let last = servo + 3 * 15;
+        assert_eq!(blob[last..last + 7], [SERVO_PCA, 1, 0, 0xB8, 0x0B, 0xE8, 0x03]);
+        assert_eq!(last + 15, HEADER_LEN + FIELDS_LEN);
+        assert!(blob[HEADER_LEN + FIELDS_LEN..CRC_OFFSET].iter().all(|&b| b == 0));
+        // A stored servo out of its bounds throws the blob away, as any
+        // field does.
+        for bad in [
+            Settings { servo_out: [3, 0, 0, 0], ..Settings::default() },
+            Settings { servo_chan: [0, 16, 0, 0], ..Settings::default() },
+            Settings { servo_min_us: [1000, 1000, 100, 1000], ..Settings::default() },
+            Settings { servo_range: [180.0, 180.0, 180.0, 0.0], ..Settings::default() },
+            Settings { i2c_sda: 1, ..Settings::default() },
+            Settings { pca_addr: 0x3F, ..Settings::default() },
+        ] {
+            bad.to_blob(&mut blob);
+            assert_eq!(Settings::from_blob(&blob), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_version_10_blob_is_read_with_no_servo() {
+        // Version 10 is this layout without the bus and the servos, in the
+        // shorter blob; its firmware wrote nothing past the tuning.
+        let stored = Settings { laser_invert: true, sockets: 1423, ..servos() };
+        let blob = old_blob(&stored, 10, OLD_CRC_OFFSET);
+        let read = Settings::from_blob(&blob).expect("a version 10 blob is read");
+        assert_eq!(read, Settings { laser_invert: true, sockets: 1423, ..Settings::default() });
+        // The flash is read as long as this version's blob: an old blob
+        // comes with the erased sector behind it, which is not read.
+        let mut sector = [0xFFu8; BLOB_LEN];
+        sector[..OLD_BLOB_LEN].copy_from_slice(&blob);
+        assert_eq!(Settings::from_blob(&sector), Some(read));
+        // Too short for its own version, or a version 11 cut to the old
+        // length, is nothing.
+        assert_eq!(Settings::from_blob(&blob[..OLD_BLOB_LEN - 1]), None);
+        let mut long = [0u8; BLOB_LEN];
+        stored.to_blob(&mut long);
+        assert_eq!(Settings::from_blob(&long[..OLD_BLOB_LEN]), None);
     }
 }

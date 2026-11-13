@@ -28,6 +28,10 @@
 //! without it never steps it. A touch probe on it measures the board: a
 //! probe block samples the probe input every tick and latches the
 //! position at contact (`stepper`), and the machine brakes and reports it.
+//!
+//! Servos are outputs beside all of that: `servo` sets one's angle once
+//! queued motion is done, and the port drives the pulse, from a PWM slice
+//! of the board or through a PCA9685 on its I2C bus.
 #![cfg_attr(not(feature = "std"), no_std)]
 
 pub mod hal;
@@ -51,6 +55,12 @@ pub const R: usize = 0;
 pub const A: usize = 1;
 pub const H: usize = 2;
 pub const Z: usize = 3;
+
+/// Servo outputs, numbered 1 to `SERVOS` on the wire. Each is a GPIO of
+/// the board carrying a 50 Hz pulse, or a channel of a PCA9685 PWM driver
+/// on the board's I2C bus; the machine only keeps each one's angle, and
+/// the port turns it into a pulse (`machine::Machine::servo_pulse`).
+pub const SERVOS: usize = 4;
 
 /// Longest accepted line, newline included.
 pub const LINE_MAX: usize = 96;

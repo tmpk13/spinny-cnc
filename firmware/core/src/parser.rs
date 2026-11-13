@@ -4,7 +4,7 @@
 //! check (`F` not above zero, `S` negative). State-dependent checks are
 //! the machine's job.
 
-use crate::{A, AXES, H, LINE_MAX, R, Z};
+use crate::{A, AXES, H, LINE_MAX, R, SERVOS, Z};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PowerMode {
@@ -58,6 +58,10 @@ pub enum Command<'a> {
     /// Runs a spindle on the laser output at `S`, until `spindle off`.
     SpindleOn { power: f32 },
     SpindleOff,
+    /// Servo `index` (from 0) to `angle` degrees, or without a pulse for
+    /// `None`; then a wait of `ms` before the line is answered, for the
+    /// servo to get there before what follows runs.
+    Servo { index: usize, angle: Option<f32>, ms: u32 },
     SetPosition { value: [Option<f32>; AXES] },
     Enable(bool),
     Unlock,
@@ -188,6 +192,7 @@ struct Words {
     s: Option<f32>,
     m: Option<f32>,
     t: Option<f32>,
+    n: Option<f32>,
 }
 
 impl Words {
@@ -214,6 +219,7 @@ impl Words {
                 b'S' => &mut words.s,
                 b'M' => &mut words.m,
                 b'T' => &mut words.t,
+                b'N' => &mut words.n,
                 _ => return Err(Error::BadWord),
             };
             if slot.is_some() {
@@ -293,6 +299,39 @@ fn home<'a>(tokens: impl Iterator<Item = &'a str>) -> Result<Command<'a>, Error>
         }
     }
     Ok(Command::Home { axes, positive, negative })
+}
+
+/// `servo N<n> A<deg> [T<ms>]`, or `servo N<n> off`. The servo is
+/// numbered from 1 on the wire; its range and whether it is fitted are the
+/// machine's to check.
+fn servo<'a>(tokens: impl Iterator<Item = &'a str> + Clone) -> Result<Command<'a>, Error> {
+    let offs = tokens.clone().filter(|token| token.eq_ignore_ascii_case("off")).count();
+    if offs > 1 {
+        return Err(Error::BadWord);
+    }
+    let off = offs == 1;
+    let letters: &[u8] = if off { b"N" } else { b"NAT" };
+    let words = Words::read(tokens.filter(|token| !token.eq_ignore_ascii_case("off")), letters)?;
+    let n = words.n.ok_or(Error::MissingWord)?;
+    if n != libm::truncf(n) {
+        return Err(Error::BadWord);
+    }
+    if !(1.0..=SERVOS as f32).contains(&n) {
+        return Err(Error::OutOfRange);
+    }
+    let index = n as usize - 1;
+    if off {
+        return Ok(Command::Servo { index, angle: None, ms: 0 });
+    }
+    let angle = words.a.ok_or(Error::MissingWord)?;
+    if angle < 0.0 {
+        return Err(Error::OutOfRange);
+    }
+    let ms = match words.t {
+        Some(t) => millis(t, DWELL_MAX_MS)?,
+        None => 0,
+    };
+    Ok(Command::Servo { index, angle: Some(angle), ms })
 }
 
 /// A command that takes no words.
@@ -437,6 +476,7 @@ pub fn parse(line: &str) -> Result<Command<'_>, Error> {
             words.check_power()?;
             Ok(Command::SpindleOn { power })
         }
+        b"servo" => servo(tokens),
         b"set" => {
             let words = Words::read(tokens, b"RAHZ")?;
             words.need_axis()?;
@@ -888,5 +928,37 @@ mod tests {
         assert_eq!(parse("home R+-"), Err(Error::BadWord));
         assert_eq!(Error::ProbeActive.code(), 10);
         assert_eq!(Error::ProbeMissed.code(), 11);
+    }
+
+    #[test]
+    fn servo_forms() {
+        assert_eq!(parse("servo N1 A90"), Ok(Command::Servo { index: 0, angle: Some(90.0), ms: 0 }));
+        assert_eq!(parse("SERVO a12.5 n4 t300"), Ok(Command::Servo { index: 3, angle: Some(12.5), ms: 300 }));
+        assert_eq!(parse("servo N2 A0 T0.6"), Ok(Command::Servo { index: 1, angle: Some(0.0), ms: 1 }));
+        assert_eq!(parse("servo N3 off"), Ok(Command::Servo { index: 2, angle: None, ms: 0 }));
+        assert_eq!(parse("servo OFF n1 ; let it go"), Ok(Command::Servo { index: 0, angle: None, ms: 0 }));
+        assert_eq!(parse("servo N1.0 A5"), Ok(Command::Servo { index: 0, angle: Some(5.0), ms: 0 }));
+        // The number is a whole servo of the four; the angle is not below 0,
+        // and its top is the servo's range, which the machine checks.
+        assert_eq!(parse("servo N0 A5"), Err(Error::OutOfRange));
+        assert_eq!(parse("servo N5 A5"), Err(Error::OutOfRange));
+        assert_eq!(parse("servo N-1 A5"), Err(Error::OutOfRange));
+        assert_eq!(parse("servo N1.5 A5"), Err(Error::BadWord));
+        assert_eq!(parse("servo N1 A-0.5"), Err(Error::OutOfRange));
+        assert_eq!(parse("servo N1 A400"), Ok(Command::Servo { index: 0, angle: Some(400.0), ms: 0 }));
+        assert_eq!(parse("servo N1 A5 T600001"), Err(Error::OutOfRange));
+        // Both words are needed to move one, the number alone to stop it.
+        assert_eq!(parse("servo"), Err(Error::MissingWord));
+        assert_eq!(parse("servo A90"), Err(Error::MissingWord));
+        assert_eq!(parse("servo N1"), Err(Error::MissingWord));
+        assert_eq!(parse("servo off"), Err(Error::MissingWord));
+        assert_eq!(parse("servo N1 off A90"), Err(Error::BadWord));
+        assert_eq!(parse("servo N1 off T100"), Err(Error::BadWord));
+        assert_eq!(parse("servo N1 off off"), Err(Error::BadWord));
+        assert_eq!(parse("servo N1 A90 S5"), Err(Error::BadWord));
+        assert_eq!(parse("servo N1 N2 A90"), Err(Error::BadWord));
+        assert_eq!(parse("servo N1 A90 on"), Err(Error::BadWord));
+        // N is a word of this command only.
+        assert_eq!(parse("go N1"), Err(Error::BadWord));
     }
 }

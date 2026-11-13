@@ -6,7 +6,7 @@
 
 use crate::hal::Sink;
 use crate::parser::PowerMode;
-use crate::{A, AXES, BLOCKS, H, LINE_SLOTS, R, VERSION, Z};
+use crate::{A, AXES, BLOCKS, H, LINE_SLOTS, R, SERVOS, VERSION, Z};
 
 /// One state for the status line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,6 +41,9 @@ pub struct Status {
     /// With an endstop on any axis: the joints homed since the last loss
     /// of position, bit i = joint i. Left off the line without one.
     pub homed: Option<u8>,
+    /// With a servo fitted: each servo's angle, `None` for one without a
+    /// pulse or not fitted. Left off the line without one.
+    pub servos: Option<[Option<f32>; SERVOS]>,
 }
 
 /// Most decimal places `float` renders.
@@ -59,7 +62,9 @@ pub fn alarm_text(code: u8) -> &'static str {
 }
 
 /// `<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0|Z:0.000>` plus newline;
-/// with a focus axis, `|H:0.000|P:0` before the `>`.
+/// with a focus axis, `|H:0.000|P:0` before the `>`, with an endstop
+/// `|D:` and the joints homed, with a servo `|S:` and each servo's angle,
+/// empty for one without a pulse: `|S:90,,,`.
 pub fn status(status: &Status, out: &mut impl Sink) {
     out.write(b"<");
     match status.state {
@@ -103,6 +108,17 @@ pub fn status(status: &Status, out: &mut impl Sink) {
     if let Some(homed) = status.homed {
         out.write(b"|D:");
         joints(homed, out);
+    }
+    if let Some(servos) = status.servos {
+        out.write(b"|S:");
+        for (i, angle) in servos.iter().enumerate() {
+            if i > 0 {
+                out.write(b",");
+            }
+            if let Some(angle) = angle {
+                float_trimmed(*angle, 2, out);
+            }
+        }
     }
     out.write(b">\n");
 }
@@ -323,6 +339,7 @@ mod tests {
             enabled: false,
             probe: None,
             homed: None,
+            servos: None,
         }
     }
 
@@ -350,8 +367,22 @@ mod tests {
             enabled: true,
             probe: None,
             homed: None,
+            servos: None,
         };
         assert_eq!(status_text(&status).as_str(), "<Run|J:7.512,135.0000|V:300|L:400|Q:30,16|M:dyn|E:1|Z:-1.250>\n");
+    }
+
+    #[test]
+    fn status_servos_follow_the_other_fields() {
+        let mut status = sample();
+        status.servos = Some([Some(90.0), None, Some(12.345), None]);
+        assert_eq!(status_text(&status).as_str(), "<Idle|J:0.000,0.0000|V:0|L:0|Q:32,16|M:dyn|E:0|Z:0.000|S:90,,12.35,>\n");
+        status.servos = Some([None; SERVOS]);
+        assert!(status_text(&status).as_str().ends_with("|Z:0.000|S:,,,>\n"));
+        // After the homed joints, the last of the optional fields.
+        status.homed = Some(1 << R);
+        status.servos = Some([Some(0.0), Some(180.0), Some(0.5), Some(359.999)]);
+        assert!(status_text(&status).as_str().ends_with("|D:R|S:0,180,0.5,360>\n"));
     }
 
     #[test]

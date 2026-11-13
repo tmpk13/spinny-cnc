@@ -91,7 +91,7 @@ use crate::report::{self, State, Status};
 use crate::settings::{Changed, SetError, Settings, BLOB_LEN};
 use crate::slide::Slide;
 use crate::stepper::{self, Front};
-use crate::{A, AXES, H, LINE_MAX, LINE_SLOTS, R, Z};
+use crate::{A, AXES, H, LINE_MAX, LINE_SLOTS, R, SERVOS, Z};
 
 /// Things the port loop must act on after a `poll`. Taken with `take_events`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -102,6 +102,8 @@ pub struct Events {
     pub driver_report: bool,
     /// `diag` was asked for: print the port's diagnostics.
     pub diag: bool,
+    /// A servo's pulse may have changed: drive each one's `servo_pulse`.
+    pub servos: bool,
 }
 
 /// The line whose answer comes from a later `poll`.
@@ -131,6 +133,8 @@ enum Pending {
     LaserOff,
     /// The spindle at `S`, or stopped.
     Spindle(Option<f32>),
+    /// A servo to an angle, or without a pulse, then a wait of `ms`.
+    Servo { index: usize, angle: Option<f32>, ms: u32 },
     SetPosition([Option<f32>; AXES]),
     SetSlide(f32),
     Enable(bool),
@@ -225,6 +229,8 @@ pub struct Machine<'a> {
     beam_until: u64,
     /// `S` of the spindle while it runs, under the `spindle` setting.
     spindle: Option<f32>,
+    /// Each servo's angle as driven; `None` for no pulse.
+    servo_angle: [Option<f32>; SERVOS],
     /// A jog cancel is waiting for the stepper to stop.
     jog_cancel: bool,
     /// A probe met contact and is braking.
@@ -287,6 +293,7 @@ impl<'a> Machine<'a> {
             beam: None,
             beam_until: 0,
             spindle: None,
+            servo_angle: [None; SERVOS],
             jog_cancel: false,
             probe_braking: false,
             probe_halting: false,
@@ -577,6 +584,21 @@ impl<'a> Machine<'a> {
                 self.pending = Pending::Spindle(None);
                 Ok(false)
             }
+            Command::Servo { index, angle, ms } => {
+                // A servo the settings do not fit has nowhere for its pulse
+                // to go, as a focus axis that is not fitted has no driver.
+                if !self.settings.servo_fitted(index) {
+                    return Err(Error::BadWord);
+                }
+                if angle.is_some_and(|angle| angle > self.settings.servo_range[index]) {
+                    return Err(Error::OutOfRange);
+                }
+                // In line with the motion around it: from rest or in a run,
+                // and taken in during a hold of a run to move after it.
+                self.check_motion_state(false)?;
+                self.pending = Pending::Servo { index, angle, ms };
+                Ok(false)
+            }
             Command::SetPosition { value } => {
                 self.require_idle()?;
                 if value[H].is_some() && !self.settings.h_axis {
@@ -637,6 +659,7 @@ impl<'a> Machine<'a> {
                 self.require_idle()?;
                 let was_cartesian = self.settings.cartesian;
                 let was_tool = self.tool_flags();
+                let was_servos = self.servo_wirings();
                 let slide_at = self.joint()[Z];
                 let changed = self.settings.set(name, value).map_err(|error| match error {
                     SetError::Unknown => Error::UnknownSetting,
@@ -649,6 +672,7 @@ impl<'a> Machine<'a> {
                     Changed::Kinematics => self.hand_over_cross_slide(was_cartesian, slide_at),
                     Changed::Tool if was_tool != self.tool_flags() => self.stop_output(),
                     Changed::Tool => {}
+                    Changed::Servo => self.servos_changed(was_servos),
                     Changed::Other => {}
                 }
                 Ok(true)
@@ -689,6 +713,20 @@ impl<'a> Machine<'a> {
                     stop_pin: self.settings.stop_pin,
                     stop_invert: self.settings.stop_invert,
                     limits: self.settings.limits,
+                    // The servos and their bus: where each pulse goes, and
+                    // the span its mechanism was set up to stay within,
+                    // which the defaults could drive it past, at once, for
+                    // a servo holding an angle.
+                    i2c_sda: self.settings.i2c_sda,
+                    i2c_scl: self.settings.i2c_scl,
+                    pca_addr: self.settings.pca_addr,
+                    servo_out: self.settings.servo_out,
+                    servo_pin: self.settings.servo_pin,
+                    servo_chan: self.settings.servo_chan,
+                    servo_min_us: self.settings.servo_min_us,
+                    servo_max_us: self.settings.servo_max_us,
+                    servo_range: self.settings.servo_range,
+                    servo_start: self.settings.servo_start,
                     ..Settings::default()
                 };
                 self.adopt(defaults);
@@ -884,6 +922,7 @@ impl<'a> Machine<'a> {
             enabled: self.enabled,
             probe: self.settings.h_axis.then_some(self.probe_active),
             homed: (self.settings.stop_mask() != 0).then_some(self.homed),
+            servos: self.settings.any_servo().then(|| core::array::from_fn(|i| self.servo_angle(i))),
         }
     }
 
@@ -925,6 +964,7 @@ impl<'a> Machine<'a> {
                             | Pending::Probe { .. }
                             | Pending::Home { .. }
                             | Pending::Spindle(Some(_))
+                            | Pending::Servo { .. }
                             | Pending::SlideMove { .. }
                     ) || self.lines_waiting > 0;
                     if self.state == State::Idle && waiting {
@@ -1300,6 +1340,29 @@ impl<'a> Machine<'a> {
                 }
                 self.spindle = power;
                 self.drive_beam(laser);
+            }
+            Pending::Servo { index, angle, ms } => {
+                // Moved where a move would run: a hold kept for the line
+                // is applied first, and it waits in the hold for the
+                // resume, as a spindle start does.
+                if self.hold_latched {
+                    self.enter_hold(laser);
+                }
+                if self.state == State::Hold {
+                    return false;
+                }
+                self.servo_angle[index] = angle;
+                self.events.servos = true;
+                if ms > 0 {
+                    // The wait is a dwell without a beam, so it holds up
+                    // what follows, pauses with a hold and ends with a
+                    // reset, as a dwell's time does.
+                    self.pending = Pending::Dwelling;
+                    self.state = State::Run;
+                    self.dwell_power = None;
+                    self.dwell_until = Some(self.now + ms as u64 * 1000);
+                    return false;
+                }
             }
             Pending::SetPosition(value) => {
                 let mut steps = self.planner.position();
@@ -1792,12 +1855,14 @@ impl<'a> Machine<'a> {
     fn adopt(&mut self, settings: Settings) {
         let was_cartesian = self.settings.cartesian;
         let was_tool = self.tool_flags();
+        let was_servos = self.servo_wirings();
         let slide_at = self.joint()[Z];
         self.settings = settings;
         self.hand_over_cross_slide(was_cartesian, slide_at);
         if was_tool != self.tool_flags() {
             self.stop_output();
         }
+        self.servos_changed(was_servos);
         self.events.driver_config = true;
         self.apply_laser = true;
         self.apply_enable = true;
@@ -1907,6 +1972,46 @@ impl<'a> Machine<'a> {
     pub fn take_events(&mut self) -> Events {
         core::mem::take(&mut self.events)
     }
+
+    /// Drives every fitted servo to its start angle, or leaves it without
+    /// a pulse when it has none. Called once at boot, after the stored
+    /// settings are read; a `$load` later moves no servo.
+    pub fn start_servos(&mut self) {
+        for i in 0..SERVOS {
+            self.servo_angle[i] = if self.settings.servo_fitted(i) { self.settings.servo_start_angle(i) } else { None };
+        }
+        self.events.servos = true;
+    }
+
+    /// Servo `i`'s angle as driven, `None` when it has no pulse or no
+    /// output.
+    pub fn servo_angle(&self, i: usize) -> Option<f32> {
+        self.servo_angle[i].filter(|_| self.settings.servo_fitted(i))
+    }
+
+    /// Servo `i`'s pulse, in microseconds, for the port to drive on its
+    /// output; `None` for no pulse.
+    pub fn servo_pulse(&self, i: usize) -> Option<u16> {
+        self.servo_angle(i).map(|angle| self.settings.servo_pulse_us(i, angle))
+    }
+
+    /// Each servo's output and its pin or channel.
+    fn servo_wirings(&self) -> [(u8, u32); SERVOS] {
+        core::array::from_fn(|i| self.settings.servo_wiring(i))
+    }
+
+    /// The servo settings changed: one wired anew (its output, pin or
+    /// channel) goes without a pulse until a `servo` line moves it, rather
+    /// than jump to the angle the old wiring held; every other pulse is
+    /// worked out again from the new span and range.
+    fn servos_changed(&mut self, was: [(u8, u32); SERVOS]) {
+        for (i, wiring) in was.iter().enumerate() {
+            if *wiring != self.settings.servo_wiring(i) {
+                self.servo_angle[i] = None;
+            }
+        }
+        self.events.servos = true;
+    }
 }
 
 const HELP: &str = "go [R] [A] [H] | cut [R] [A] [H] [F] [S] [M] | jog [R] [A] [H] [F] | jogto [R] [A] [H] [F]\n\
@@ -1916,6 +2021,7 @@ focus axis probe (h_axis=1): probe H [F]\n\
 home [R] [A] [H] [Z]: a - or + after a letter picks the end; alone, every axis with an endstop\n\
 dwell T [S] | mode dyn|const | laser S [T] | laser off | set [R] [A] [H]\n\
 spindle=1: spindle S | spindle off; no S or M on cut and dwell, no laser S\n\
+servo N A [T] | servo N off: servo N (1 to 4, servoN_out set) to A degrees, then a wait of T ms\n\
 dispenser=1 (with cartesian): A is the plunger in mm, on go and cut too; no S or M on cut and dwell, no laser S\n\
 enable | disable | unlock | version | status | help | diag\n\
 $ | $name | $name=value | $save | $load | $defaults | $tmc\n\
@@ -1931,7 +2037,7 @@ mod tests {
     use std::vec::Vec;
 
     use super::*;
-    use crate::settings::{STOP_MAX, STOP_MIN};
+    use crate::settings::{SERVO_NONE, SERVO_PCA, SERVO_PIN, STOP_MAX, STOP_MIN};
     use crate::stepper::{self, Isr, Shared};
     use crate::{A, BLOCKS};
 
@@ -3094,15 +3200,16 @@ mod tests {
         rig.advance(POLL_US);
         assert_eq!(rig.laser.hz, 20000);
         assert_eq!(rig.line("$tmc"), "ok\n");
-        assert_eq!(rig.machine.take_events(), Events { driver_config: false, driver_report: true, diag: false });
+        assert_eq!(rig.machine.take_events(), Events { driver_config: false, driver_report: true, diag: false, servos: false });
         assert_eq!(rig.line("diag"), "ok\n");
         assert_eq!(rig.machine.take_events(), Events { diag: true, ..Events::default() });
         assert_eq!(rig.line("diag now"), "error:2 bad word\n");
         let listing = rig.line("$");
         assert!(listing.starts_with("r_steps=256\n"));
-        assert!(listing.ends_with(
-            "limits=0\ndispenser=0\ntmc_intpol=1\ntmc_toff=3\ntmc_tbl=2\ntmc_hstrt=5\ntmc_hend=0\ntmc_hold_delay=10\ntmc_tpowerdown=20\ntmc_tpwmthrs=0\nok\n"
+        assert!(listing.contains(
+            "tmc_tpowerdown=20\ntmc_tpwmthrs=0\ni2c_sda=0\ni2c_scl=1\npca_addr=64\nservo1_out=0\nservo1_pin=29\nservo1_chan=0\n"
         ));
+        assert!(listing.ends_with("servo4_range=180\nservo4_start=-1\nok\n"));
         assert_eq!(listing.lines().count(), crate::settings::NAMES.len() + 1);
     }
 
@@ -4197,6 +4304,214 @@ mod tests {
         ] {
             assert!(listed.contains(line), "{line} in {listed}");
         }
+    }
+
+    /// The bench with servo 1 on the SERVOS header and servo 2 on the
+    /// PCA9685's channel 5, the second turning the other way over 90
+    /// degrees; servos 3 and 4 not fitted.
+    fn servo_settings() -> Settings {
+        let mut settings = bench_settings();
+        settings.servo_out = [SERVO_PIN, SERVO_PCA, SERVO_NONE, SERVO_NONE];
+        settings.servo_chan[1] = 5;
+        settings.servo_min_us[1] = 2000;
+        settings.servo_max_us[1] = 1000;
+        settings.servo_range[1] = 90.0;
+        settings.servo_start = [45.0, -1.0, 10.0, -1.0];
+        settings
+    }
+
+    #[test]
+    fn a_servo_line_moves_a_fitted_servo_to_its_angle() {
+        let mut rig = Rig::with(servo_settings());
+        rig.take_out();
+        // Nothing moves before the boot starts the servos.
+        assert_eq!(rig.machine.servo_pulse(0), None);
+        rig.machine.start_servos();
+        assert!(rig.machine.take_events().servos);
+        assert_eq!([0, 1, 2, 3].map(|i| rig.machine.servo_pulse(i)), [Some(1250), None, None, None], "a start, none, not fitted");
+        assert_eq!(field(&rig.status_line(), "S:"), "45,,,");
+        assert_eq!(rig.line("servo N1 A90"), "ok\n");
+        assert!(rig.machine.take_events().servos);
+        assert_eq!(rig.machine.servo_pulse(0), Some(1500));
+        assert_eq!(rig.line("servo N2 A30"), "ok\n");
+        assert_eq!(rig.machine.servo_pulse(1), Some(1667));
+        assert_eq!(field(&rig.status_line(), "S:"), "90,30,,");
+        assert_eq!(rig.line("servo N2 off"), "ok\n");
+        assert_eq!(rig.machine.servo_pulse(1), None);
+        assert_eq!(field(&rig.status_line(), "S:"), "90,,,");
+        // The angle is within the servo's own range; a servo the settings
+        // do not fit is a word that means nothing here.
+        assert_eq!(rig.line("servo N2 A90.5"), "error:4 out of range\n");
+        assert_eq!(rig.line("servo N1 A180"), "ok\n");
+        assert_eq!(rig.line("servo N3 A10"), "error:2 bad word\n");
+        assert_eq!(rig.line("servo N4 off"), "error:2 bad word\n");
+        assert_eq!(rig.machine.servo_pulse(0), Some(2000));
+        assert_eq!(rig.state(), State::Idle);
+        // A machine without a servo has no field for them.
+        let mut plain = Rig::new();
+        plain.take_out();
+        plain.machine.start_servos();
+        assert!(!plain.status_line().contains("|S:"));
+        assert_eq!(plain.line("servo N1 A90"), "error:2 bad word\n");
+    }
+
+    #[test]
+    fn a_servo_moves_once_the_motion_before_it_is_done() {
+        let mut rig = Rig::with(servo_settings());
+        rig.take_out();
+        rig.machine.start_servos();
+        assert_eq!(rig.line("go R20"), "ok\n");
+        rig.submit("servo N1 A0");
+        rig.machine.take_events();
+        // Taken in, and waiting for the rapid.
+        rig.advance(200_000);
+        assert_eq!(rig.state(), State::Run);
+        assert_eq!(rig.machine.servo_pulse(0), Some(1250), "moved under the rapid");
+        assert!(!rig.machine.take_events().servos);
+        rig.run();
+        assert_eq!(rig.take_out(), "ok\n");
+        assert_eq!(rig.machine.servo_pulse(0), Some(1000));
+        assert!(rig.machine.take_events().servos);
+        // A wait holds up what follows by its time, as a dwell does.
+        rig.submit("servo N1 A180 T300");
+        rig.advance(POLL_US);
+        assert_eq!(rig.machine.servo_pulse(0), Some(2000), "moved at once");
+        assert_eq!(rig.state(), State::Run);
+        assert_eq!(rig.take_out(), "");
+        assert!(!rig.machine.ready_for_line());
+        let started = rig.now;
+        let mut waited = 0;
+        while rig.take_out().is_empty() {
+            rig.advance(POLL_US);
+            waited += 1;
+            assert!(waited < 10_000, "the wait never ended");
+        }
+        let took = rig.now - started;
+        assert!((300_000..=301_000).contains(&took), "waited {took} us");
+        assert_eq!(rig.laser.duty, 0, "the wait burns nothing");
+        rig.run();
+        assert_eq!(rig.state(), State::Idle);
+        // In a run, a hold keeps the servo for the resume, behind the cut.
+        assert_eq!(rig.line("cut R10 F300 S100"), "ok\n");
+        rig.submit("servo N1 A90");
+        rig.advance(300_000);
+        rig.realtime(Realtime::Hold);
+        rig.advance(1_000_000);
+        assert_eq!(rig.state(), State::Hold);
+        assert_eq!(rig.machine.servo_pulse(0), Some(2000), "moved during the hold");
+        rig.realtime(Realtime::Resume);
+        rig.run();
+        assert_eq!(rig.take_out(), "ok\n");
+        assert_eq!(rig.machine.servo_pulse(0), Some(1500));
+    }
+
+    #[test]
+    fn a_servo_line_is_refused_and_kept_as_a_move_would_be() {
+        let mut rig = Rig::with(servo_settings());
+        rig.take_out();
+        rig.machine.start_servos();
+        // A hold that finds the line waiting holds it until the resume.
+        let mut queue = vec!["servo N1 A120"];
+        rig.pass(&mut queue, &[Realtime::Hold]);
+        rig.advance(100_000);
+        assert_eq!(rig.take_out(), "", "answered before the resume");
+        assert_eq!(rig.machine.servo_pulse(0), Some(1250));
+        assert!(rig.status_line().starts_with("<Hold|"));
+        rig.realtime(Realtime::Resume);
+        rig.advance(POLL_US);
+        assert_eq!(rig.take_out(), "ok\n");
+        assert_eq!(rig.machine.servo_pulse(0), Some(1667));
+        assert_eq!(rig.state(), State::Idle);
+        // A jog runs alone, and an alarm takes nothing that moves.
+        assert_eq!(rig.line("jog R20"), "ok\n");
+        assert_eq!(rig.line("servo N1 A0"), "error:5 not now\n");
+        rig.realtime(Realtime::Reset);
+        rig.take_out();
+        assert!(matches!(rig.state(), State::Alarm(1)));
+        assert_eq!(rig.line("servo N1 A0"), "error:5 not now\n");
+        assert_eq!(rig.line("unlock"), "ok\n");
+        // A reset drops a line still waiting, and leaves the servos where
+        // they are.
+        assert_eq!(rig.line("go R30"), "ok\n");
+        rig.submit("servo N1 A10");
+        rig.advance(POLL_US);
+        assert_eq!(rig.state(), State::Run);
+        rig.realtime(Realtime::Reset);
+        rig.run();
+        assert!(!rig.take_out().contains("ok"));
+        assert_eq!(rig.line("unlock"), "ok\n");
+        assert_eq!(rig.machine.servo_pulse(0), Some(1667), "a reset moved a servo");
+        rig.submit("servo N1 A10 T5000");
+        rig.advance(10_000);
+        assert_eq!(rig.machine.servo_pulse(0), Some(1056));
+        rig.realtime(Realtime::Reset);
+        assert!(rig.machine.ready_for_line(), "a reset ends the wait");
+        assert_eq!(rig.state(), State::Idle);
+    }
+
+    #[test]
+    fn servo_settings_apply_at_once_and_a_servo_wired_anew_waits() {
+        let mut rig = Rig::with(servo_settings());
+        rig.take_out();
+        rig.machine.start_servos();
+        assert_eq!(rig.line("servo N2 A45"), "ok\n");
+        rig.machine.take_events();
+        // A new span or range drives the angle held with the new pulse.
+        assert_eq!(rig.line("$servo1_min_us=1200"), "ok\n");
+        assert!(rig.machine.take_events().servos);
+        assert_eq!(rig.machine.servo_pulse(0), Some(1400));
+        assert_eq!(rig.line("$servo1_range=90"), "ok\n");
+        assert_eq!(rig.machine.servo_pulse(0), Some(1600), "45 of 90 degrees is the middle");
+        // Wired anew, a servo goes without a pulse until it is moved.
+        assert_eq!(rig.line("$servo2_chan=6"), "ok\n");
+        assert_eq!(rig.machine.servo_pulse(1), None);
+        assert_eq!(rig.line("$servo1_out=0"), "ok\n");
+        assert_eq!(rig.machine.servo_pulse(0), None);
+        assert_eq!(rig.line("$servo1_out=1"), "ok\n");
+        assert_eq!(rig.machine.servo_pulse(0), None, "back on, it waits for a line");
+        assert_eq!(rig.line("servo N1 A0"), "ok\n");
+        assert_eq!(rig.machine.servo_pulse(0), Some(1200));
+        // A start changes nothing until the next boot.
+        assert_eq!(rig.line("$servo1_start=90"), "ok\n");
+        assert_eq!(rig.machine.servo_pulse(0), Some(1200));
+        // Settings change at rest only, as any do.
+        assert_eq!(rig.line("go R5"), "ok\n");
+        assert_eq!(rig.line("$servo1_min_us=1000"), "error:5 not now\n");
+        rig.run();
+        // With none fitted, the status line has no servo field.
+        assert_eq!(rig.line("$servo1_out=0"), "ok\n");
+        assert_eq!(rig.line("$servo2_out=0"), "ok\n");
+        assert!(!rig.status_line().contains("|S:"));
+    }
+
+    #[test]
+    fn defaults_and_a_load_keep_the_servos() {
+        let mut settings = servo_settings();
+        settings.i2c_sda = 20;
+        settings.i2c_scl = 21;
+        settings.pca_addr = 0x41;
+        settings.servo_pin[0] = 24;
+        settings.servo_min_us[0] = 1100;
+        settings.servo_range[0] = 120.0;
+        let mut rig = Rig::with(settings);
+        rig.take_out();
+        rig.machine.start_servos();
+        assert_eq!(rig.machine.servo_pulse(0), Some(1438));
+        assert_eq!(rig.line("$save"), "ok\n");
+        assert_eq!(rig.line("$defaults"), "ok\n");
+        let listed = rig.line("$");
+        for line in [
+            "i2c_sda=20\n", "i2c_scl=21\n", "pca_addr=65\n", "servo1_out=1\n", "servo1_pin=24\n", "servo1_min_us=1100\n",
+            "servo1_range=120\n", "servo1_start=45\n", "servo2_out=2\n", "servo2_chan=5\n", "servo2_min_us=2000\n",
+        ] {
+            assert!(listed.contains(line), "{line} in {listed}");
+        }
+        assert_eq!(rig.machine.servo_pulse(0), Some(1438), "the defaults moved a servo");
+        // A load of the same wiring moves nothing, and starts nothing.
+        assert_eq!(rig.line("servo N1 A0"), "ok\n");
+        assert_eq!(rig.line("$load"), "ok\n");
+        assert_eq!(rig.machine.servo_pulse(0), Some(1100));
+        assert_eq!(rig.machine.servo_pulse(1), None);
     }
 
     /// The bench with a switch at the rail's negative end, which reads
