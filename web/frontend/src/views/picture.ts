@@ -4,13 +4,15 @@
 // operator can make taller or shorter by its grip (kept per camera), and
 // the page's own marks drawn over it as SVG in the picture's own pixels
 // (the crosshair, the circles looked within, the spots found, the box a
-// search covers, the board where the looks put it), so their lines stay
-// thin and sharp at any zoom. Ctrl and the wheel zoom on the picture's
-// center (the plain wheel scrolls the page), as do the buttons under it and
-// a zoom typed in between them; a drag moves the head so what
-// the camera sees follows the pointer, a line showing the move; a
-// double-click brings a point to the crosshair; Shift and a drag draw the
-// box a search keeps to, in the machine's frame.
+// search covers, the board where the looks put it, the points whose place
+// is known), so their lines stay thin and sharp at any zoom. Each frame
+// shown is handed to whoever watches the picture's key (a camera's live
+// numbers). Ctrl and the wheel zoom on the picture's center (the plain
+// wheel scrolls the page), as do the buttons under it and a zoom typed in
+// between them; a drag moves the head so what the camera sees follows the
+// pointer, a line showing the move; a double-click brings a point to the
+// crosshair; Shift and a drag draw the box a search keeps to, in the
+// machine's frame.
 
 import { button, el, numberField, readStored, writeStored } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
