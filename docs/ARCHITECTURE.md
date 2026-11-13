@@ -80,7 +80,8 @@ flowchart LR
         EXT[Claude Code or another MCP client] <-->|stdio, MCP| MCP
         MCP --> TOOLS2[tools, over HTTP]
         TOOLS2 -->|HTTP| BE
-        BE --> PNP[pick and place: a board's parts and fiducials from its KiCad file, the nozzle centered over the bottom camera, its runout, a part's offset, size and angle on it]
+        BE --> PNP[pick and place: a board's parts and fiducials from its KiCad file, those kept out of the position files marked, the nozzle centered over the bottom camera, its runout, a part's offset, size and angle on it]
+        PF[parts: the parts filter, a regular expression over the reference, value or footprint, kept in config.json] --> PNP
         PNP --> OPNP[openpnp: a G-code machine file's own tables read, the board fitted from references, the program as planned, a goto's lines]
         OPI[page openpnp.ts: OpenPnP's machine.xml and a job read into a G-code machine file and references] -->|the file saved, references taken| BE
         OPNP --> PLC[placer: a run part by part, from the cameras' looks and the vacuum's reads, failed picks retried]
@@ -104,7 +105,7 @@ flowchart LR
         UST --> VIDPI[/dev/v4l/by-id camera on the Pi]
         PV2 --> VID2[/dev/videoM fixed to the machine, looking up]
         BE --> FIND[cameras: the ones attached for the device lists, from pcbv cameras and from asking the forwarded ports for ustreamer state]
-        BE --> LOOK[boardlook: the head and top cameras' poses read into guesses of where the board lies, the most likely found at the camera's threshold; corners taken by hand; the search over a box]
+        BE --> LOOK[boardlook: the head and top cameras' poses read into guesses of where the board lies, the most likely found at the camera's threshold; corners taken by hand; the search over a box, started at the place known from corners, a find before, Align or references, or the job's own place, which pcbv is told to try first]
         LOOK --> PV
         LOOK --> PV3
         LOOK --> SLOG[searchlog: every look and search recorded in var/searchlog: poses, stops, a picture at each, the board file, the outcome; searchreport and spinny-search read them back]
