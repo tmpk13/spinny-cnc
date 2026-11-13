@@ -4102,6 +4102,96 @@ dialog.bug-dialog::backdrop {
     flex: 1 1 16rem;
 }
 
+/* The Plugins page, one column: each plugin a box with its switch, its
+   name, who made it, its id and Delete on one line, then what it does,
+   its state and its source in a fold; one turned on is marked down its
+   side. */
+#app[data-page="plugins"] > #page-jobs {
+    display: none;
+}
+
+#app:not([data-page="plugins"]) > #page-plugins {
+    display: none;
+}
+
+@media (min-width: 64rem) {
+    .plugins-grid {
+        grid-template-columns: minmax(0, 48rem);
+    }
+}
+
+.plugin-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--flow);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.plugin-item {
+    padding: 0.75rem;
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+    background: var(--panel-2);
+}
+
+.plugin-item[data-on] {
+    border-left: 0.3rem solid var(--accent);
+}
+
+.plugin-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+}
+
+.plugin-top .btn {
+    margin-left: auto;
+}
+
+.plugin-switch.check {
+    font-size: 0.9rem;
+    color: var(--text);
+}
+
+.plugin-name {
+    color: var(--strong);
+}
+
+.plugin-id {
+    font-size: 0.8rem;
+}
+
+.badge.plugin-by {
+    --tone: var(--muted);
+}
+
+.badge.plugin-by[data-by="auto"] {
+    --tone: var(--violet);
+}
+
+.plugin-state.plugin-failed {
+    color: var(--danger);
+}
+
+.plugin-source > summary {
+    color: var(--muted);
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.plugin-code {
+    max-height: 24rem;
+    overflow: auto;
+    padding: 0.5rem;
+    border-radius: var(--radius);
+    background: var(--field);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+}
+
 /* The Auto page: the provider row, the conversation and the box to write
    in. The operator's lines sit to the right, the model's to the left, a
    tool call is a folded line in the mono face with a stripe that says

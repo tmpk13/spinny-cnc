@@ -150,6 +150,8 @@ export function mountBugReport(tools: HTMLElement, ctx: Ctx, options: BugReportO
 
         function showOutcome(answer: ReportAnswer): void {
             const said: Node[] = [el("p", {}, `Saved in ${answer.folder}.`)];
+            const close = button("Close", () => dialog.close(), "btn btn-primary", "close the report");
+            const row = el("div", { class: "button-row" }, close);
             const link = answer.link;
             if (link?.kind === "github") {
                 const opened = openTab(link.url);
@@ -157,16 +159,13 @@ export function mountBugReport(tools: HTMLElement, ctx: Ctx, options: BugReportO
                 if (answer.files.includes("screenshot.png")) {
                     said.push(el("p", { class: "hint" }, `Attach ${answer.folder}/screenshot.png to it: a picture cannot ride in the address.`));
                 }
-                said.push(el("div", { class: "button-row" },
-                    el("a", { class: "btn", href: link.url, target: "_blank", rel: "noopener", title: "the new issue on GitHub, filled in" }, "Open the issue on GitHub"),
-                ));
+                row.prepend(el("a", { class: "btn", href: link.url, target: "_blank", rel: "noopener", title: "the new issue on GitHub, filled in" }, "Open the issue on GitHub"));
             } else if (link?.kind === "post") {
                 said.push(el("p", { class: link.taken ? "" : "bug-problem" }, link.taken
                     ? `Sent to ${link.url}: taken (${link.status}).`
                     : `Not taken by ${link.url}: ${link.detail || (link.status === null ? "no answer" : `status ${link.status}`)}.`));
             }
-            const close = button("Close", () => dialog.close(), "btn btn-primary", "close the report");
-            said.push(el("div", { class: "button-row" }, close));
+            said.push(row);
             replace(outcome, ...said);
             form.hidden = true;
             outcome.hidden = false;

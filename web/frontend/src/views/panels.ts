@@ -104,6 +104,16 @@ export interface PanelsController {
      * collection, holding its callback only weakly.
      */
     refresh(): void;
+    /**
+     * Takes in a panel put in a page's column after the layer mounted (a
+     * plugin's), as if the markup had it there: it gets the
+     * heads' controls, and the place the operator last left it in, when
+     * the layout kept still names it. False when it is in no page's column
+     * or has no id of its own.
+     */
+    adopt(root: HTMLElement): boolean;
+    /** Lets go of a panel taken in by `adopt`, which its owner then takes out of the page. */
+    drop(id: string): void;
 }
 
 interface PageView {
@@ -153,6 +163,16 @@ let controller: (PanelsController & { reveal(id: string): void }) | null = null;
  */
 export function revealPanel(id: string): void {
     controller?.reveal(id);
+}
+
+/** Takes a panel added to a page's column into the layout (PanelsController.adopt); nothing where the layer is not mounted. */
+export function adoptPanel(root: HTMLElement): void {
+    controller?.adopt(root);
+}
+
+/** Lets go of a panel taken in by adoptPanel; nothing where the layer is not mounted. */
+export function dropPanel(id: string): void {
+    controller?.drop(id);
 }
 
 /** The children of `parent` that match `selector` (`:scope >` without the selector support it needs). */
@@ -1096,6 +1116,8 @@ export function mountPanels(app: HTMLElement): PanelsController {
         save();
     }
 
+    // Watches the panels' sizes for the handles; made once the panels are.
+    let sizes: ResizeObserver | null = null;
     const presets = (): Record<string, Record<string, unknown>> => readPresets(readStored(PRESETS_KEY));
     const notify = (): void => {
         for (const listener of listeners) {
@@ -1173,6 +1195,46 @@ export function mountPanels(app: HTMLElement): PanelsController {
                 render(page);
             }
         },
+        adopt(root) {
+            const main = root.closest("main.page");
+            const page = main ? pages.get(main.id.replace(/^page-/, "")) : undefined;
+            const column = root.parentElement;
+            const index = page && column ? page.columns.indexOf(column) : -1;
+            if (!page || index < 0 || root.id === "" || panels.has(root.id)) {
+                return false;
+            }
+            // Where it was put: before the next panel the column holds.
+            const ids = page.defaults[index]!;
+            let next = root.nextElementSibling;
+            while (next && !ids.includes(next.id)) {
+                next = next.nextElementSibling;
+            }
+            ids.splice(next ? ids.indexOf(next.id) : ids.length, 0, root.id);
+            // The working layout as kept: the place the operator left this
+            // panel in last time, which the one in use dropped at mount.
+            const kept = readObject(readStored(LAYOUT_KEY))[page.id];
+            page.layout = normalizeLayout(kept ?? page.layout, page.defaults);
+            const panel = decorate(root, page);
+            panels.set(root.id, panel);
+            sizes?.observe(root);
+            render(page);
+            notify();
+            return true;
+        },
+        drop(id) {
+            const panel = panels.get(id);
+            if (!panel) {
+                return;
+            }
+            panels.delete(id);
+            sizes?.unobserve(panel.root);
+            panel.resize.remove();
+            const page = panel.page;
+            page.defaults = page.defaults.map((ids) => ids.filter((other) => other !== id));
+            page.layout = normalizeLayout(page.layout, page.defaults);
+            render(page);
+            notify();
+        },
         reveal,
     };
 
@@ -1202,6 +1264,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
         for (const panel of panels.values()) {
             observer.observe(panel.root);
         }
+        sizes = observer;
     }
     controller = api;
     return api;

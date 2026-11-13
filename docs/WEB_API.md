@@ -597,6 +597,34 @@ null), "saved"}` as JSON, waiting up to 10 s, following no redirect, and
 `status` null and `detail` "could not reach it: ..." when nothing
 answered. The report is kept whatever the link does.
 
+## Plugins
+
+JavaScript modules for the page, one file each, `var/plugins/<id>.js`
+([PLUGINS.md](PLUGINS.md)). Which are on is kept in
+`var/plugins/plugins.json` as the SHA-256 of the text turned on, beside
+the one last written through `PUT`: a file whose text is neither was put
+there by hand. An id is 1 to 64 lower-case letters, digits, `_` or `-`,
+starting with a letter or a digit.
+
+| Method and path | Body |
+| --- | --- |
+| `GET /api/plugins` | `{"plugins": [plugin, ...]}`, by id |
+| `GET /api/plugins/{id}` | the plugin with `"source"`, its text; 404 for none |
+| `PUT /api/plugins/{id}` | `{"source": "..."}`: writes the plugin whole (at most 256 KB, not empty), switched off; answers the plugin. The Auto tools write through this |
+| `DELETE /api/plugins/{id}` | the file and whether it was on: `{"deleted": "<id>"}`; 404 for none |
+| `PUT /api/plugins/{id}/enabled` | `{"enabled": true, "hash": "<sha256>"}` turns it on as that text, 409 when the file is not that text (it changed since it was shown); `{"enabled": false}` turns it off. No tool may call it |
+| `GET /api/plugins/{id}/module.js?v=<sha256>` | the module's text as `text/javascript`, `Cache-Control: no-store`, only while it is on as that text; 409 otherwise, so a page never imports a text that was not turned on |
+
+Plugin: `{"id": "big-position", "name": "Big position", "description":
+"...", "made_by": "auto" | "file", "enabled": true, "changed": false,
+"hash": "<sha256 of the text>", "size": 912, "modified":
+"2026-11-13T12:00:00+00:00"}`. `name` and `description` are the module's
+`export const name = "..."` and `export const description = "..."`
+string literals, read without running it (the id when there is no
+name); `changed` is true once a plugin that was on has had its file
+written again or edited, which leaves it off, until it is turned on or
+off again.
+
 ## Height map
 
 The touch probe on the focus axis measures the board over a grid, and a
@@ -1198,8 +1226,8 @@ where the last fit puts it.
 The Auto tab's conversation with a language model that works through the
 backend's tools (`web/backend/src/spinny_web/tools.py`): it makes and
 changes jobs, Plot jobs, markers, the pick and place device's references
-and plans, and CAM jobs, and reads the state, the machine files and the
-CAM profiles. No tool moves the machine; the list and the boundary are in
+and plans, CAM jobs and plugins for the page (always written switched
+off), and reads the state, the machine files and the CAM profiles. No tool moves the machine; the list and the boundary are in
 [OPERATING.md](OPERATING.md). One conversation per backend, kept in
 memory, and one turn at a time, which streams as `auto` events and makes
 at most 25 tool calls. A tool calls the backend's own routes in-process,
@@ -1234,7 +1262,7 @@ comes under its id; `done` is false while an answer is written or a call
 runs. `result` is what the model read: the route's answer as JSON (a job
 counted and boxed rather than listed), cut at 20000 characters, or the
 refusal. `changed` names what the call changed that a page shows: `jobs`,
-`markers` or `placement`.
+`markers`, `placement` or `plugins`.
 
 ## Events
 

@@ -63,13 +63,16 @@ the console events include the status polls and reports.
 Runtime files go to `var/` at the repository root, or wherever `--data`
 points; none of them is tracked.
 
-- `config.json`: the host values (the chord tolerance, the milling clearance and spin-up, speed control, the travel height, the dispensing values), the last url and machine file, the probe settings, the markers, the head camera's and the bottom camera's settings, the G-code device's (its profile, references, feeder counts and cameras), whether the camera log is on, and the Auto tab's provider, models and base URL (no key: those stay in the environment).
+- `config.json`: the host values (the chord tolerance, the milling clearance and spin-up, speed control, the travel height, the dispensing values), the last url and machine file, the probe settings, the markers, the head camera's and the bottom camera's settings, the G-code device's (its profile, references, feeder counts and cameras), whether the camera log is on, the Auto tab's provider, models and base URL (no key: those stay in the environment), and the bug report link.
 - `auto/claude-code/`: the empty directory the Auto tab's Claude Code provider runs `claude` in; Claude Code keeps the sessions under its name.
 - `heightmap.json`: the last probed height map and its focus offset. The offset is taken back (the heights kept) on a connect, a restart, a position set, a setting that rescales or turns the axes and a map put back, since the focus axis has no home: focus here again before a compensated run.
 - `jobs/*.json`: one file per imported job.
 - `resume.json`: how far the last run got and the plan it was made from, for picking it up again.
 - `position.json`: the machine's last reported position, kept across sessions.
 - `camlog/`: the camera log while logging is on: each look's picture, the same with what it found drawn over it, and an index.
+- `todo.json`: the top bar's to-do list and its revision.
+- `reports/<time>/`: a bug report each: `report.txt` (what happened and the facts), `screenshot.png`, `actions.json` (what was done lately).
+- `plugins/`: the page's plugins, `<id>.js` each, and `plugins.json`: the SHA-256 each was turned on as and last written as (docs/PLUGINS.md).
 - `spinny.log`: the backend's log, rotated at 1 MB (`--log-level debug` for more): the link's opening and closing with what it last sent and heard, runs, probing, settings written, messages shown on the page and the machine's own messages, its boot reason and `diag` answer among them.
 - `wire.log`: every line sent and received with the time to the millisecond, the link's own status polls marked, rotated at 8 MB with four kept; the last lines before a machine went quiet.
 

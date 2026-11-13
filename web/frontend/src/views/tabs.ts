@@ -20,7 +20,7 @@ import { popUp } from "../dismiss.ts";
 import { closeMenu, openMenu } from "../menu.ts";
 import type { AppState, Store } from "../state.ts";
 
-export type PageId = "overview" | "jobs" | "plot" | "cam" | "pnp" | "auto" | "config" | "connection";
+export type PageId = "overview" | "jobs" | "plot" | "cam" | "pnp" | "auto" | "config" | "connection" | "plugins";
 
 export const PAGES: { id: PageId; label: string; tip: string }[] = [
     { id: "overview", label: "Overview", tip: "every page at a glance" },
@@ -31,6 +31,7 @@ export const PAGES: { id: PageId; label: string; tip: string }[] = [
     { id: "auto", label: "Auto", tip: "a model that makes jobs" },
     { id: "config", label: "Config", tip: "machine files and settings" },
     { id: "connection", label: "Connection", tip: "the port and the machine connected" },
+    { id: "plugins", label: "Plugins", tip: "page plugins and their switches" },
 ];
 
 const PAGE_KEY = "spinny.page";

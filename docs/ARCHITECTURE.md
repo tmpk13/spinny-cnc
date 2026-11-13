@@ -65,6 +65,11 @@ flowchart LR
         BE --> MILL[mill: the Plot page's jobs of operations, drill, holes, line, face, pocket, profile with square or rounded corners, applied in place, and a job made again for another width]
         BE --> TH[thumbs: a job drawn small as SVG for the job list]
         BE --> MK[markers: named board positions in config.json]
+        BE --> TODO[todo: the top bar's to-do list in var/todo.json, put whole on the revision it was changed from]
+        BE --> REP[reports: bug reports from the page kept in var/reports, handed on as a GitHub new-issue page or a post]
+        REP -->|HTTP POST, JSON| HOOK[the report link: any address that takes reports]
+        BE --> PLUG[plugins: page modules in var/plugins, on only as the text the operator turned on]
+        FE -->|imports the modules turned on| PLUG
         BE --> AUTO[auto: the Auto tab's agent, one conversation, a turn at a time, at most 25 tool calls]
         AUTO --> TOOLS[tools: what a model may call, thin calls on the API, only routes that move nothing]
         TOOLS -->|in-process ASGI, no port| BE

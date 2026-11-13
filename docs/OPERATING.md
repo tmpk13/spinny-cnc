@@ -421,6 +421,17 @@ in an address); or any other address, which gets the report posted as
 JSON, the dialog saying whether it was taken. Closed without saving, the
 words typed wait for the next report.
 
+The *Plugins* tab lists the page's plugins: JavaScript modules in
+`var/plugins` that add a panel, a readout or a button to the page,
+written by the Auto tab or put there by hand ([PLUGINS.md](PLUGINS.md)
+says how one is made). Each has a switch, what it does, who made it,
+its source in a fold, and *Delete*. A plugin runs with the page's whole
+power, moving the machine and firing the laser included, so each is off
+until turned on here, which asks first, and goes off again when its file
+changes. On or off applies at once, and every browser starts the ones
+on when it loads; turned off, a plugin's panels go at once, and anything
+else it left goes with a reload.
+
 ### The travel height
 
 *Travel H* in the Jog panel (on a machine with a focus axis) is an H the
@@ -987,7 +998,9 @@ place machine's references and plans, and CAM jobs are made and changed;
 operator asks to delete or one the model made by mistake; the state, the machine
 files (G-code machines' among them), the CAM profiles and the cameras'
 recorded board searches are read, so a model can say where a search went
-wrong. No tool
+wrong. Plugins for the page are listed, read, written and deleted, and a
+plugin written is always off: no tool turns one on, which only the
+Plugins tab does. No tool
 connects or disconnects the machine, jogs it or sends it anywhere, homes
 it, runs, holds, resumes or stops a job, lights the laser, starts the
 spindle, probes, starts a camera routine, moves the pick and place

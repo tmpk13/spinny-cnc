@@ -256,7 +256,7 @@ function wallFindings(): Finding[] {
     return findings;
 }
 
-const PAGES = ["overview", "jobs", "plot", "cam", "pnp", "auto", "config", "connection"];
+const PAGES = ["overview", "jobs", "plot", "cam", "pnp", "auto", "config", "connection", "plugins"];
 
 async function openDetails(page: Page): Promise<void> {
     await page.evaluate(() => document.querySelectorAll("details").forEach((d) => d.setAttribute("open", "")));
@@ -393,6 +393,41 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
             await page.waitForTimeout(300);
         },
     })),
+    {
+        // The drawer stays open across the tab switches the check makes by script.
+        name: "the to-do drawer open with items, one done", pages: ["jobs"], enter: async (page) => {
+            await tab(page, "jobs");
+            await page.click(".todo-toggle");
+            for (const text of ["clean the lens", "check the belt tension on the cross slide"]) {
+                await page.fill(".todo-input", text);
+                await page.press(".todo-input", "Enter");
+                await page.waitForTimeout(100);
+            }
+            await page.click(".todo-item input[type=checkbox]");
+            await page.waitForTimeout(400);
+        },
+    },
+    {
+        // The bar is folded by now: the bug is pressed by script.
+        name: "the bug report dialog", pages: ["jobs"], enter: async (page) => {
+            await page.keyboard.press("Escape");
+            await page.evaluate(() => document.querySelector<HTMLElement>(".tabs-bug")?.click());
+            await page.waitForTimeout(3000);
+            await page.evaluate(() => document.querySelector<HTMLDetailsElement>(".bug-actions")?.setAttribute("open", ""));
+            await page.waitForTimeout(150);
+        },
+    },
+    {
+        // The example plugin turned on: its panel on the Jobs page.
+        name: "a plugin turned on", pages: ["plugins", "jobs"], enter: async (page) => {
+            await page.keyboard.press("Escape");
+            await tab(page, "plugins");
+            await page.evaluate(() => document.querySelector<HTMLInputElement>("#plugins input[role=switch]")?.click());
+            await page.waitForTimeout(400);
+            await page.click("dialog.confirm button:has-text('Turn on')");
+            await page.waitForTimeout(800);
+        },
+    },
 ];
 
 const server = Bun.serve({ port: 0, routes: { "/": index, "/tips": tips } });

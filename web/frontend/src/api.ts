@@ -87,6 +87,7 @@ import type {
     UpdateState,
     UploadOptions,
 } from "./types.ts";
+import type { PluginInfo, PluginWithSource } from "./plugins.ts";
 import type { BugReport, ReportAnswer, ReportSettings } from "./reports.ts";
 import type { TodoItem, TodoList } from "./todo.ts";
 
@@ -119,6 +120,15 @@ export interface Api {
     reportSettings(): Promise<ReportSettings>;
     /** Keeps the report link (empty for none); answers the settings as kept. */
     setReportLink(link: string): Promise<ReportSettings>;
+    /** The page's plugins, as the backend keeps them (var/plugins). */
+    plugins(): Promise<PluginInfo[]>;
+    /** A plugin with its source. */
+    plugin(id: string): Promise<PluginWithSource>;
+    /** Turns a plugin on as the text whose hash is `hash` (409 when it changed since it was shown), or off. */
+    setPluginEnabled(id: string, enabled: boolean, hash: string | null): Promise<PluginInfo>;
+    deletePlugin(id: string): Promise<void>;
+    /** Where the module of a plugin turned on is imported from: served only while it is on as `info.hash`. */
+    pluginModuleUrl(info: PluginInfo): string;
     ports(): Promise<Port[]>;
     /** Opens the machine on a port: a G-code machine when `machine` names its file or a G-code machine file claims the port, else this project's firmware. */
     connect(url: string, machine?: string | null): Promise<Snapshot>;
@@ -806,6 +816,34 @@ export class HttpApi implements Api {
 
     setReportLink(link: string): Promise<ReportSettings> {
         return this.request<ReportSettings>("PUT", "/api/reports/settings", { link });
+    }
+
+    async plugins(): Promise<PluginInfo[]> {
+        const response = await this.request<{ plugins: PluginInfo[] }>("GET", "/api/plugins");
+        return response.plugins ?? [];
+    }
+
+    plugin(id: string): Promise<PluginWithSource> {
+        return this.request<PluginWithSource>("GET", `/api/plugins/${encodeURIComponent(id)}`);
+    }
+
+    setPluginEnabled(id: string, enabled: boolean, hash: string | null): Promise<PluginInfo> {
+        return this.request<PluginInfo>("PUT", `/api/plugins/${encodeURIComponent(id)}/enabled`, hash === null ? { enabled } : { enabled, hash });
+    }
+
+    async deletePlugin(id: string): Promise<void> {
+        await this.request("DELETE", `/api/plugins/${encodeURIComponent(id)}`);
+    }
+
+    pluginModuleUrl(info: PluginInfo): string {
+        const path = `${this.base}/api/plugins/${encodeURIComponent(info.id)}/module.js?v=${encodeURIComponent(info.hash)}`;
+        // Made whole against the page's address: an import resolves a bare
+        // path against the script's own, which Bun's dev server makes a file path.
+        try {
+            return new URL(path, globalThis.location?.href).href;
+        } catch {
+            return path;
+        }
     }
 
     async deleteAllJobs(): Promise<string[]> {

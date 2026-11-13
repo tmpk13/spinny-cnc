@@ -4,8 +4,9 @@ client by `spinny-mcp` and to the Auto tab's agent inside the backend.
 A tool is a thin call on the backend's own HTTP API, so it can do nothing
 a page could not do, and the list holds only tools that make, change or
 read data: jobs, Plot page jobs, markers, the references and plans of a
-pick and place machine, CAM jobs, and the state, machine files and CAM
-profiles to read. No tool connects or disconnects the machine, jogs, goes
+pick and place machine, CAM jobs, plugins for the page (written turned
+off: only the operator turns one on), and the state, machine files and
+CAM profiles to read. No tool connects or disconnects the machine, jogs, goes
 to a point, homes, runs, holds or stops a job, lights the laser, starts
 the spindle, probes, starts a camera routine, moves a pick and place
 machine, or writes the firmware's settings or a machine or CAM file. Every
@@ -40,7 +41,10 @@ PROFILE_ID = r"^[a-z0-9][a-z0-9_-]{0,63}$"
 FILE_NAME = r"^[A-Za-z0-9][A-Za-z0-9 _.()-]{0,119}$"
 # What a tool may change that the page shows: a tool marked with `jobs`
 # has the page list the jobs again once it has run.
-JOBS, MARKERS, PLACEMENT = "jobs", "markers", "placement"
+JOBS, MARKERS, PLACEMENT, PLUGINS = "jobs", "markers", "placement", "plugins"
+# What a plugin's id may look like: it names the plugin's file.
+PLUGIN_ID = r"^[a-z0-9][a-z0-9_-]{0,63}$"
+MAX_PLUGIN = 256 * 1024
 
 # What a model is told about the machine and the tools, whichever front
 # end serves them: the Auto tab's agent puts it in its system prompt, the
@@ -51,16 +55,17 @@ table (polar), or an X/Y machine with a laser, a spindle or a solder paste
 dispenser; or, connected in its place, a pick and place machine on its own
 G-code controller (a machine file with controller = "gcode"). These tools
 make and change its data: jobs, Plot page jobs, markers, the references
-and plans of a pick and place machine, and CAM jobs; and they read its
-state, its machine files and its CAM profiles.
+and plans of a pick and place machine, CAM jobs and plugins for the page;
+and they read its state, its machine files and its CAM profiles.
 
 What they cannot do, by design: connect or disconnect the machine, move
 it, home it, run, hold or stop a job, light the laser, start the spindle,
-probe, start a camera routine, move a pick and place machine, or change the
-firmware's settings or a machine or CAM file. When one of these is wanted,
-make what it needs and tell the operator what to press on the page: a job
-runs from the Jobs tab (a Plot job from the Plot tab too), a placement
-from the PNP tab.
+probe, start a camera routine, move a pick and place machine, change the
+firmware's settings or a machine or CAM file, or turn a plugin on. When
+one of these is wanted, make what it needs and tell the operator what to
+press on the page: a job runs from the Jobs tab (a Plot job from the Plot
+tab too), a placement from the PNP tab, a plugin is turned on in the
+Plugins tab.
 
 Units: lengths in mm in the board frame (on the polar machine the origin
 is the table's rotation axis; on an X/Y machine it is where the operator
@@ -72,6 +77,13 @@ the enabled groups in order.
 Look before you make: get_state says which machine and tool the jobs are
 for, list_jobs what is there already. After making or changing a job,
 check it with get_job (its extent) and say what you made, with its id.
+
+Plugins: write_plugin keeps a JavaScript module that adds to the page (a
+panel, a readout, a button that calls the backend), as its description
+says. A plugin written, or written again, is switched off: it runs only
+once the operator has read it and turned it on in the Plugins tab, and
+then with the page's whole power, the machine's moves included. Write
+one only when asked, and say what it does and that it needs turning on.
 """
 
 
@@ -279,6 +291,7 @@ MACHINE = text("the machine file's id, as list_machine_files gives it", pattern=
 REF = text("a part's reference on the board, such as R1 or U3", minLength=1, maxLength=64)
 REFS = {"type": "array", "items": REF, "maxItems": 2000, "description": "the parts to place; left out, every part that can be"}
 NO_ARGUMENTS = obj({})
+PLUGIN = text("the plugin's id, as list_plugins gives it: lower-case letters, digits, _ and -", pattern=PLUGIN_ID)
 
 
 # --- reading ------------------------------------------------------------------
@@ -420,6 +433,26 @@ async def _delete_marker(api: ToolApi, args: dict) -> Any:
     if len(kept) == len(markers):
         raise ToolError(f"no marker is named {args['name']!r}")
     return await api.put("/api/markers", {"markers": kept})
+
+
+# --- plugins ------------------------------------------------------------------------
+
+
+async def _list_plugins(api: ToolApi, args: dict) -> Any:
+    return await api.get("/api/plugins")
+
+
+async def _read_plugin(api: ToolApi, args: dict) -> Any:
+    return await api.get(f"/api/plugins/{seg(args['plugin_id'])}")
+
+
+async def _write_plugin(api: ToolApi, args: dict) -> Any:
+    written = await api.put(f"/api/plugins/{seg(args['plugin_id'])}", {"source": args["source"]})
+    return {"plugin": written, "note": "written switched off: the operator reads it and turns it on in the Plugins tab"}
+
+
+async def _delete_plugin(api: ToolApi, args: dict) -> Any:
+    return await api.delete(f"/api/plugins/{seg(args['plugin_id'])}")
 
 
 # --- CAM ----------------------------------------------------------------------------
@@ -829,6 +862,63 @@ def _tools() -> tuple[Tool, ...]:
             _delete_marker,
             destructive=True,
             changes=(MARKERS,),
+        ),
+        Tool(
+            "list_plugins",
+            "The page's plugins: each one's id, name and description, who made it (auto: written by write_plugin;"
+            " file: put in var/plugins by hand), whether the operator has it turned on, and whether its file changed"
+            " since it was turned on (which turns it off).",
+            NO_ARGUMENTS,
+            (Route(get, "/api/plugins"),),
+            _list_plugins,
+            read_only=True,
+        ),
+        Tool(
+            "read_plugin",
+            "A plugin's source, with what list_plugins says of it.",
+            obj({"plugin_id": PLUGIN}, ("plugin_id",)),
+            (Route(get, "/api/plugins/{plugin_id}"),),
+            _read_plugin,
+            read_only=True,
+        ),
+        Tool(
+            "write_plugin",
+            "Write a plugin for the page, or write one again: a JavaScript ES module kept as"
+            " var/plugins/<plugin_id>.js, with no imports, using the page's DOM. It exports `name` and"
+            " `description` as plain string literals (export const name = \"Big position\";), which are read"
+            " without running it, and `activate(host)`, which may return a function that undoes what it did."
+            " host.panel({title, page}) adds a panel to a page (jobs, plot, cam, pnp, auto, config, connection"
+            " or plugins; jobs when left out) and returns its body element, taken away with the plugin;"
+            " host.api is the page's API object, the calls the page itself makes (host.api.state(),"
+            " host.api.jobs(), ...); host.state() is the page's state now (state.snapshot.machine is null"
+            " with no machine connected, else its board.x and board.y are the head's place in mm and its"
+            " state the machine's state); host.subscribe(listener, keys) calls listener(state) when one of"
+            " those keys of the state changes (any key with none given) and returns a function that stops it;"
+            " host.toast(level, text) shows a message (info or error); host.onPage(listener) hears each page"
+            " shown, host.page() names the one shown. Elements may take the page's classes: btn, field, hint,"
+            " muted, button-row. A plugin written, or written again, is switched off: it runs only once the"
+            " operator has read it and turned it on in the Plugins tab, with the page's whole power. Say what"
+            " it does and that it needs turning on.",
+            obj(
+                {
+                    "plugin_id": PLUGIN,
+                    "source": text("the module's whole text", minLength=1, maxLength=MAX_PLUGIN),
+                },
+                ("plugin_id", "source"),
+            ),
+            (Route(put, "/api/plugins/{plugin_id}"),),
+            _write_plugin,
+            changes=(PLUGINS,),
+        ),
+        Tool(
+            "delete_plugin",
+            "Delete a plugin, its file and whether it was turned on: when the operator asks for it, or to take"
+            " back one you wrote by mistake.",
+            obj({"plugin_id": PLUGIN}, ("plugin_id",)),
+            (Route(delete, "/api/plugins/{plugin_id}"),),
+            _delete_plugin,
+            destructive=True,
+            changes=(PLUGINS,),
         ),
         Tool(
             "make_cam_job",

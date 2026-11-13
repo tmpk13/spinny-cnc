@@ -32,6 +32,7 @@ import { mountConnection } from "./views/connection.ts";
 import { mountPageSettings } from "./views/pagesettings.ts";
 import { mountSearch } from "./views/search.ts";
 import { mountPanels } from "./views/panels.ts";
+import { mountPlugins } from "./views/plugins.ts";
 import { mountPnp } from "./views/pnp.ts";
 import { mountFindBoard } from "./views/findboard.ts";
 import { mountPreviewPanel } from "./views/previewpanel.ts";
@@ -359,6 +360,9 @@ function main(): void {
     mountVersion(panel("version"), ctx);
     mountReportLink(panel("reports"), ctx);
     mountToasts(panel("toasts"), ctx);
+    // The Plugins page, and the plugins turned on started: after the
+    // other views, so a plugin finds every page to put a panel on.
+    mountPlugins(panel("plugins"), ctx);
     // Last, once every view has drawn its panel's head: the layout layer
     // adds its controls to the heads and puts the panels where the
     // operator left them.

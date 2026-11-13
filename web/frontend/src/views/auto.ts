@@ -152,6 +152,8 @@ export function mountAuto(roots: { chat: HTMLElement; about: HTMLElement }, ctx:
         el("p", {}, el("strong", {}, "It never moves the machine."), " It cannot connect, home, run jobs, fire the laser, "
             + "start the spindle, probe, use cameras, move the pick and place device, "
             + "or edit settings, machine files or CAM profiles. You run what it made."),
+        el("p", {}, "It can write plugins for this page. Each stays off until you read it and turn it on in the Plugins tab; "
+            + "one turned on runs with the page's whole power."),
         el("p", { class: "muted" }, "A turn makes at most ", limit, " tool calls. "
             + "Keys are read where the backend runs; this page only learns whether each is set."),
     );

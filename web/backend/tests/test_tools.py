@@ -58,6 +58,11 @@ ALLOWED = {
     ("DELETE", "/api/pnp/references"),
     ("POST", "/api/pnp/plan"),
     ("GET", "/api/pnp/program.gcode"),
+    # A plugin is written switched off; only the operator turns it on.
+    ("GET", "/api/plugins"),
+    ("GET", "/api/plugins/{plugin_id}"),
+    ("PUT", "/api/plugins/{plugin_id}"),
+    ("DELETE", "/api/plugins/{plugin_id}"),
 }
 
 # Routes that move or light something, or write the machine's own setup:
@@ -127,6 +132,9 @@ FORBIDDEN = {
     # Nor send a bug report or change where reports are sent.
     ("POST", "/api/reports"),
     ("PUT", "/api/reports/settings"),
+    # Nor turn a plugin on (or off): a plugin runs with the page's whole
+    # power, so only the operator's press turns one on.
+    ("PUT", "/api/plugins/{plugin_id}/enabled"),
 }
 
 # Arguments every tool is walked with; a tool missing here fails the walk.
@@ -162,6 +170,10 @@ SAMPLES = {
     "drop_placement_references": {"job_id": "a1b2", "ref": "R1"},
     "plan_placement": {"job_id": "a1b2", "refs": ["R1"]},
     "get_placement_program": {"job_id": "a1b2", "refs": ["R1", "R2"]},
+    "list_plugins": {},
+    "read_plugin": {"plugin_id": "big-position"},
+    "write_plugin": {"plugin_id": "big-position", "source": 'export const name = "Big position";\nexport function activate(host) {}\n'},
+    "delete_plugin": {"plugin_id": "big-position"},
 }
 
 

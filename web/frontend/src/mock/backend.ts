@@ -111,6 +111,8 @@ import { CORNER_NAMES, cornerOf } from "../corners.ts";
 import { MockAuto } from "./auto.ts";
 import { MockTodo } from "./todo.ts";
 import { MockReports } from "./reports.ts";
+import { MockPlugins } from "./plugins.ts";
+import type { PluginInfo, PluginWithSource } from "../plugins.ts";
 import type { BugReport, ReportAnswer, ReportSettings } from "../reports.ts";
 import type { TodoItem, TodoList } from "../todo.ts";
 import { decodePacket, encodePacket, idBytes, slotPlace, type BusPacket } from "../feederbus.ts";
@@ -2031,6 +2033,8 @@ export class MockBackend implements Api, EventFeed {
     private readonly todoList = new MockTodo();
     /** Bug reports and the link they are handed on to. */
     private readonly reportDesk = new MockReports();
+    /** The page's plugins, the example of docs/PLUGINS.md among them. */
+    readonly pluginShelf = new MockPlugins();
     private cameraJob: string | null = null;
     private cameraMarkPoint: Board | null = null;
     /** Where the loaded board really lies: the job's design a little off, so alignment has something to find. */
@@ -4268,6 +4272,26 @@ export class MockBackend implements Api, EventFeed {
 
     async setReportLink(link: string): Promise<ReportSettings> {
         return this.reportDesk.setLink(link);
+    }
+
+    async plugins(): Promise<PluginInfo[]> {
+        return this.pluginShelf.list();
+    }
+
+    async plugin(id: string): Promise<PluginWithSource> {
+        return this.pluginShelf.read(id);
+    }
+
+    async setPluginEnabled(id: string, enabled: boolean, hash: string | null): Promise<PluginInfo> {
+        return this.pluginShelf.setEnabled(id, enabled, hash);
+    }
+
+    async deletePlugin(id: string): Promise<void> {
+        this.pluginShelf.delete(id);
+    }
+
+    pluginModuleUrl(info: PluginInfo): string {
+        return this.pluginShelf.moduleUrl(info);
     }
 
     async centerJob(request: CenterRequest): Promise<CenterResponse> {

@@ -130,6 +130,7 @@ from .jobs import (
 from . import markers as marker_list
 from . import mill
 from . import thumbs
+from . import plugins
 from . import reports
 from . import todo
 from .machines import MachineStore
@@ -4495,6 +4496,8 @@ def create_app(
         lambda: f"{backend.updater.version} ({backend.updater.state.get('kind', 'checkout')})",
     )
     reports.add_routes(app, app.state.reports)
+    # Plugins for the page, each off until the operator turns it on.
+    plugins.add_routes(app, plugins.PluginStore(backend.config_path.parent / "plugins"))
 
     @app.delete("/api/jobs/{job_id}")
     def delete_job(job_id: str):
