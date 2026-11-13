@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
+import { HttpApi } from "../src/api.ts";
 import { MockBackend } from "../src/mock/backend.ts";
 import { markFiltered } from "../src/mock/pnp.ts";
 import { filterLine, keptOut, pickedToPlace, placeRefs, setPickedToPlace, shownParts } from "../src/views/partsfilter.ts";
@@ -39,6 +40,17 @@ describe("parts kept out of the position files and the parts filter", () => {
         expect(filterLine(null, parts)).toBe("");
         expect(filterLine({ pattern: "^J", field: "ref", error: null }, parts)).toBe("1 part left out by the filter");
         expect(filterLine({ pattern: "[", field: "ref", error: "the parts filter is not a regular expression: x" }, parts)).toContain("not a regular expression");
+    });
+
+    test("the filter's routes are asked as the backend has them", async () => {
+        const calls: [string, string, unknown][] = [];
+        const api = new HttpApi("http://host", async (url: string, init?: RequestInit) => {
+            calls.push([init?.method ?? "GET", url.replace("http://host", ""), typeof init?.body === "string" ? JSON.parse(init.body) : null]);
+            return new Response("{}", { status: 200 });
+        });
+        await api.partsFilter();
+        await api.setPartsFilter({ pattern: "^TP", field: "any" });
+        expect(calls).toEqual([["GET", "/api/pnp/parts-filter", null], ["PUT", "/api/pnp/parts-filter", { pattern: "^TP", field: "any" }]]);
     });
 
     test("the picks are kept per job", () => {
