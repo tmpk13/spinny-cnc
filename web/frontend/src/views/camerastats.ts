@@ -127,10 +127,10 @@ export function mountCameraStats(camera: ControlledCamera, options: StatsOptions
         const value = el("span", { class: "mono camera-stat-value" });
         return { line: el("div", { class: "camera-stat", title: tip }, el("span", { class: "camera-stat-name" }, label), value), value };
     };
-    const sharpness = row("Sharpness", "how crisp the edges are, levels a pixel: turn the focus to the best; compares at one zoom and light");
-    const noise = row("Noise", "grain in the flat parts, levels: less is better; SNR, brightness over noise, more is better");
-    const brightness = row("Brightness", "mean level, 0 black to 255 white, and its spread: more spread sets the parts apart");
-    const clipped = row("Clipped", "pixels at pure black or white, whose detail is lost: keep both near 0%");
+    const sharpness = row("Sharpness", "how crisp the edges are, levels a pixel: focus for the most");
+    const noise = row("Noise", "grain in the flat parts, and brightness over it: less grain, more SNR is better");
+    const brightness = row("Brightness", "mean level, 0 black to 255 white, and its spread: more spread is better");
+    const clipped = row("Clipped", "pixels at pure black or white: keep both near 0%");
     const numbers = el("div", { class: "camera-stats-grid hidden" }, sharpness.line, noise.line, brightness.line, clipped.line);
     const bars = document.createElementNS(SVG_NS, "path");
     const histogram = document.createElementNS(SVG_NS, "svg");
@@ -140,14 +140,14 @@ export function mountCameraStats(camera: ControlledCamera, options: StatsOptions
     histogram.setAttribute("role", "img");
     histogram.setAttribute("aria-label", "histogram of the picture's levels, black at the left");
     const tip = document.createElementNS(SVG_NS, "title");
-    tip.textContent = "how many pixels at each level, black at the left";
+    tip.textContent = "pixels at each level, black at the left";
     histogram.append(tip, bars);
     // Hidden while empty: a grid item takes its gap even with nothing in it.
     const status = el("p", { class: "muted camera-stats-status hidden" });
     const reset = button("Reset best", () => {
         best = last?.sharpness ?? 0;
         show();
-    }, "btn btn-quiet btn-small", "start the best sharpness again from the picture now");
+    }, "btn btn-quiet btn-small", "start the best sharpness again from now");
     const root = el("div", { class: "camera-stats" },
         el("div", { class: "button-row" }, el("span", { class: "camera-stats-head" }, "Live picture"), reset),
         numbers,

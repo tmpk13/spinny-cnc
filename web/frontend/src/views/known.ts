@@ -11,7 +11,7 @@
 // drops words. Points come in order of weight: the first get the room.
 
 import type { AppState } from "../state.ts";
-import type { BoardEstimate, Component } from "../types.ts";
+import type { BoardCorners, BoardEstimate, BoardLook, Component } from "../types.ts";
 import { type Calibration, type Mark, machineToPicturePoints, type PictureShown } from "./picture.ts";
 
 /** A point whose place is known: where it is in the frame of the picture's center, mm, a short label, and words for its tooltip. */
@@ -97,12 +97,12 @@ function fiducialsOf(state: AppState, jobId: string): Component[] {
 }
 
 /** The estimate of a look that found this job's board; null otherwise. */
-function foundEstimate(look: { job: string | null; found?: boolean; estimate?: BoardEstimate | null } | null | undefined, jobId: string): BoardEstimate | null {
+function foundEstimate(look: BoardLook | null | undefined, jobId: string): BoardEstimate | null {
     return look && look.found === true && look.job === jobId ? look.estimate ?? null : null;
 }
 
 /** The corners of this job's board taken by hand, as points. */
-function cornerPoints(corners: { job: string; points: { corner: string; machine: [number, number]; by?: "hand" | "edges" }[] } | null | undefined, jobId: string): KnownPoint[] {
+function cornerPoints(corners: BoardCorners | null | undefined, jobId: string): KnownPoint[] {
     if (!corners || corners.job !== jobId) {
         return [];
     }
