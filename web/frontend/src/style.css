@@ -4038,6 +4038,70 @@ a.btn.disabled {
     text-decoration: line-through;
 }
 
+/* The bug report's dialog: what happened, the screenshot shown small,
+   what was done lately in a fold; and the Config page's report link. */
+dialog.bug-dialog.panel {
+    width: min(36rem, calc(100vw - 2 * var(--gap)));
+    max-height: min(46rem, 92vh);
+    overflow-y: auto;
+    font: inherit;
+    color: var(--text);
+    box-shadow: var(--shadow-lg);
+}
+
+dialog.bug-dialog::backdrop {
+    background: color-mix(in oklab, var(--base03) 55%, transparent);
+    backdrop-filter: blur(0.125rem);
+}
+
+.bug-dialog .check {
+    display: flex;
+    font-size: 0.9rem;
+    color: var(--text);
+}
+
+.bug-text.field {
+    width: 100%;
+    min-height: 6rem;
+    resize: vertical;
+}
+
+.bug-shot-img {
+    display: block;
+    max-width: 100%;
+    max-height: 12rem;
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+}
+
+.bug-actions > summary {
+    color: var(--muted);
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.bug-actions-list {
+    max-height: 12rem;
+    overflow: auto;
+    padding: 0.5rem;
+    border-radius: var(--radius);
+    background: var(--field);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+}
+
+.bug-problem {
+    color: var(--danger);
+}
+
+.bug-problem:empty {
+    display: none;
+}
+
+.report-link.field {
+    flex: 1 1 16rem;
+}
+
 /* The Auto page: the provider row, the conversation and the box to write
    in. The operator's lines sit to the right, the model's to the left, a
    tool call is a folded line in the mono face with a stripe that says

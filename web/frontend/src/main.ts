@@ -1,6 +1,7 @@
 // Entry point: picks the real backend or the in-page mock, wires the event
 // feed into the store, and mounts the views.
 
+import { recordActions, recordingFetch } from "./actions.ts";
 import { errorText, HttpApi, type Api } from "./api.ts";
 import { MockBackend } from "./mock/backend.ts";
 import { appendConsole, autoClears, initialState, mergeAuto, noteAutoCleared, pendingTotal, pushToast, Store, withEntry, type AppState } from "./state.ts";
@@ -10,6 +11,7 @@ import { mountTooltips } from "./tooltip.ts";
 import { EventSocket, wsUrl, type EventFeed } from "./ws.ts";
 import { mountAlign } from "./views/align.ts";
 import { mountAuto } from "./views/auto.ts";
+import { mountBugReport } from "./views/bugreport.ts";
 import { mountFocusBanner } from "./views/banner.ts";
 import { mountCam } from "./views/cam.ts";
 import { mountConfig } from "./views/config.ts";
@@ -33,6 +35,7 @@ import { mountPanels } from "./views/panels.ts";
 import { mountPnp } from "./views/pnp.ts";
 import { mountFindBoard } from "./views/findboard.ts";
 import { mountPreviewPanel } from "./views/previewpanel.ts";
+import { mountReportLink } from "./views/reportlink.ts";
 import { mountStatusBar } from "./views/statusbar.ts";
 import { mountSteps } from "./views/steps.ts";
 import { mountTests } from "./views/tests.ts";
@@ -259,6 +262,8 @@ function main(): void {
     const mock = params.get("mock") === "1";
     const apiBase = params.get("api") ?? "";
     const store = new Store<AppState>(initialState(mock));
+    // What the operator does from here on, for a bug report.
+    recordActions(store);
 
     let api: Api;
     let feed: EventFeed;
@@ -267,7 +272,7 @@ function main(): void {
         api = backend;
         feed = backend;
     } else {
-        api = new HttpApi(apiBase);
+        api = new HttpApi(apiBase, recordingFetch((input, init) => fetch(input, init)));
         feed = new EventSocket(wsUrl(apiBase, window.location));
     }
     const ctx = createContext(api, store);
@@ -352,12 +357,14 @@ function main(): void {
     mountOpenPnpImport(panel("openpnp-import"), ctx);
     // The release running and its update from GitHub.
     mountVersion(panel("version"), ctx);
+    mountReportLink(panel("reports"), ctx);
     mountToasts(panel("toasts"), ctx);
     // Last, once every view has drawn its panel's head: the layout layer
     // adds its controls to the heads and puts the panels where the
     // operator left them.
     mountPageSettings(tabTools, mountPanels(panel("app")));
     mountSearch(tabTools);
+    mountBugReport(tabTools, ctx);
     mountTooltips();
 
     // Leaving with edits not applied asks first; the browser words it.

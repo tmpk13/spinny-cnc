@@ -568,6 +568,35 @@ every browser.
 | `GET /api/todo` | `{"revision": 3, "items": [{"id": "lw2k9a1b", "text": "clean the lens", "done": false}]}`; `revision` counts the puts |
 | `PUT /api/todo` | `{"items": [...], "revision": 3}`: the whole list in place of the one kept, made on the revision given; 409 when the list has moved on since (another window changed it: read it again and make the change on that), and with `revision` left out it is put whatever the kept one is. Ids are 1 to 40 letters, digits, `_` or `-`, once each; a text is trimmed, runs of spaces and line breaks made one space, 1 to 500 characters; at most 500 items. Answers the list as kept, its revision one on; 400 with the reason |
 
+## Bug reports
+
+A report from the page's bug button, kept under `var/reports/<time>/`
+(`report.txt`: the text and the facts below it; `screenshot.png`;
+`actions.json`, what was done lately) and handed on as the report link
+says. The link is `reports.link` in `config.json`, empty by default:
+reports then go nowhere else.
+
+| Method and path | Body |
+| --- | --- |
+| `GET /api/reports/settings` | `{"link": "https://github.com/owner/repository", "kind": "github"}`: `kind` is `github` for a GitHub repository's address (with or without `.git`, `/issues` or `/issues/new`), `post` for any other address, null for none |
+| `PUT /api/reports/settings` | `{"link": "..."}`: an http or https address with a host, at most 500 characters, or empty for none; answers the settings, 400 with the reason |
+| `POST /api/reports` | multipart form: `text` (what happened, 1 to 20000 characters; its first line is the title), `page`, `address`, `browser`, `window` (each cut to 500 characters), `actions` (optional: a JSON list of objects, the newest 1000 kept), `screenshot` (optional: a PNG file, at most 16 MB). Answers `{"id": "20261113-120000-000", "folder": "/.../var/reports/20261113-120000-000", "files": ["report.txt", "screenshot.png", "actions.json"], "link": link}`; 400 with the reason, 413 for a larger picture |
+
+`link` is null with no report link set. For a GitHub repository it is
+`{"kind": "github", "url": "https://github.com/owner/repository/issues/new?title=...&body=..."}`,
+which the page opens: the body holds the text, the version, the page, the
+browser and the window size, where the screenshot is saved (to attach by
+hand: a picture cannot ride in an address), and the newest actions that
+keep the address under 6000 characters (a text too long for any is cut
+and says so); the page's address stays out of it. For any other address
+the backend posts `{"id", "title", "text", "time", "version", "page",
+"address", "browser", "window", "actions", "screenshot_png" (base64 or
+null), "saved"}` as JSON, waiting up to 10 s, following no redirect, and
+`link` is `{"kind": "post", "url": "...", "taken": true, "status": 201,
+"detail": "the answer, cut to 300 characters"}`: taken for any 2xx;
+`status` null and `detail` "could not reach it: ..." when nothing
+answered. The report is kept whatever the link does.
+
 ## Height map
 
 The touch probe on the focus axis measures the board over a grid, and a

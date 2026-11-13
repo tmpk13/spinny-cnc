@@ -130,6 +130,7 @@ from .jobs import (
 from . import markers as marker_list
 from . import mill
 from . import thumbs
+from . import reports
 from . import todo
 from .machines import MachineStore
 from .kinematics import (
@@ -4484,7 +4485,16 @@ def create_app(
         return guarded(lambda: backend.set_markers(body.markers))
 
     # The top bar's to-do list, kept beside the config.
-    app.include_router(todo.router(todo.TodoStore(backend.config_path.parent / "todo.json")))
+    todo.add_routes(app, todo.TodoStore(backend.config_path.parent / "todo.json"))
+    # Bug reports from the page, kept beside the config and handed on as
+    # its report link says.
+    app.state.reports = reports.ReportDesk(
+        backend.config_path.parent / "reports",
+        backend.config,
+        backend._save_config,
+        lambda: f"{backend.updater.version} ({backend.updater.state.get('kind', 'checkout')})",
+    )
+    reports.add_routes(app, app.state.reports)
 
     @app.delete("/api/jobs/{job_id}")
     def delete_job(job_id: str):

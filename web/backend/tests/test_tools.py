@@ -124,6 +124,9 @@ FORBIDDEN = {
     # A tool may not start or steer the Auto tab's own turns.
     ("POST", "/api/auto/messages"),
     ("PUT", "/api/auto/settings"),
+    # Nor send a bug report or change where reports are sent.
+    ("POST", "/api/reports"),
+    ("PUT", "/api/reports/settings"),
 }
 
 # Arguments every tool is walked with; a tool missing here fails the walk.

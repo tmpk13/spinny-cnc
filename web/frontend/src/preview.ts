@@ -35,6 +35,7 @@ import {
 } from "./camera.ts";
 import { cssVar, readStored, writeStored } from "./dom.ts";
 import type { JobPlace } from "./jsontext.ts";
+import { registerPicture } from "./pageshot.ts";
 import { boardOfJoint } from "./kinematics.ts";
 import type { PathRef } from "./regroup.ts";
 import { type Host, PageHost, WorkerHost, canDrawInWorker } from "./render/host.ts";
@@ -224,6 +225,8 @@ export class Preview {
         this.showDrawing();
         this.bind();
         this.resize();
+        // A screenshot cannot read a canvas a worker draws: it asks here.
+        registerPicture({ canvases: () => [this.canvas, this.overlay], read: () => this.snapshot() });
     }
 
     /** What draws the preview, the painter (null until a worker has drawn) and where; how many frames it drew and how long the last took, ms. */

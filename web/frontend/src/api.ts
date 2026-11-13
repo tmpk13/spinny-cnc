@@ -87,6 +87,7 @@ import type {
     UpdateState,
     UploadOptions,
 } from "./types.ts";
+import type { BugReport, ReportAnswer, ReportSettings } from "./reports.ts";
 import type { TodoItem, TodoList } from "./todo.ts";
 
 export class ApiError extends Error {
@@ -112,6 +113,12 @@ export interface Api {
     todo(): Promise<TodoList>;
     /** Puts the whole to-do list in place of the one kept, made on `revision` (409 when the list moved on since; null puts it anyway); answers it as kept. */
     setTodo(items: TodoItem[], revision: number | null): Promise<TodoList>;
+    /** Keeps a bug report on the backend (var/reports/<time>/) and hands it on as the report link says; answers where it went. */
+    saveReport(report: BugReport): Promise<ReportAnswer>;
+    /** Where bug reports are handed on: a GitHub repository, another address, or nowhere. */
+    reportSettings(): Promise<ReportSettings>;
+    /** Keeps the report link (empty for none); answers the settings as kept. */
+    setReportLink(link: string): Promise<ReportSettings>;
     ports(): Promise<Port[]>;
     /** Opens the machine on a port: a G-code machine when `machine` names its file or a G-code machine file claims the port, else this project's firmware. */
     connect(url: string, machine?: string | null): Promise<Snapshot>;
@@ -775,6 +782,30 @@ export class HttpApi implements Api {
 
     setTodo(items: TodoItem[], revision: number | null): Promise<TodoList> {
         return this.request<TodoList>("PUT", "/api/todo", revision === null ? { items } : { items, revision });
+    }
+
+    saveReport(report: BugReport): Promise<ReportAnswer> {
+        const form = new FormData();
+        form.append("text", report.text);
+        form.append("page", report.page);
+        form.append("address", report.address);
+        form.append("browser", report.browser);
+        form.append("window", report.window);
+        if (report.actions !== null) {
+            form.append("actions", JSON.stringify(report.actions));
+        }
+        if (report.screenshot !== null) {
+            form.append("screenshot", new File([report.screenshot], "screenshot.png", { type: "image/png" }));
+        }
+        return this.request<ReportAnswer>("POST", "/api/reports", form);
+    }
+
+    reportSettings(): Promise<ReportSettings> {
+        return this.request<ReportSettings>("GET", "/api/reports/settings");
+    }
+
+    setReportLink(link: string): Promise<ReportSettings> {
+        return this.request<ReportSettings>("PUT", "/api/reports/settings", { link });
     }
 
     async deleteAllJobs(): Promise<string[]> {

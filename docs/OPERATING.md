@@ -406,6 +406,21 @@ or a press anywhere else closes it, and the button counts what is left.
 The backend keeps the list (`var/todo.json`), so every browser shows the
 same one.
 
+The bug in the tab bar reports a bug. It takes a screenshot of the page
+as it is when pressed (made in the browser from the page itself; the
+preview is asked for its picture), shown small in the dialog, and lists
+what was done lately: the last 200 buttons pressed, pages shown,
+requests to the backend (method, path, status and time, never what they
+carried), toasts and errors. Say what happened (the first line is the
+title), untick either to leave it out, and *Save*: the backend keeps the
+report under `var/reports/<time>/`. The *Bug reports* panel on the Config
+tab sets where else it goes: nowhere (the default); a GitHub repository's
+address, whose new-issue page then opens filled in (attach the
+screenshot from the folder the dialog names, since a picture cannot ride
+in an address); or any other address, which gets the report posted as
+JSON, the dialog saying whether it was taken. Closed without saving, the
+words typed wait for the next report.
+
 ### The travel height
 
 *Travel H* in the Jog panel (on a machine with a focus axis) is an H the

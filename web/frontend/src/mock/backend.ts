@@ -110,6 +110,8 @@ import {
 import { CORNER_NAMES, cornerOf } from "../corners.ts";
 import { MockAuto } from "./auto.ts";
 import { MockTodo } from "./todo.ts";
+import { MockReports } from "./reports.ts";
+import type { BugReport, ReportAnswer, ReportSettings } from "../reports.ts";
 import type { TodoItem, TodoList } from "../todo.ts";
 import { decodePacket, encodePacket, idBytes, slotPlace, type BusPacket } from "../feederbus.ts";
 import {
@@ -2027,6 +2029,8 @@ export class MockBackend implements Api, EventFeed {
     private readonly auto = new MockAuto((data) => this.emit({ type: "auto", data }), () => this.jobSummaries());
     /** The top bar's to-do list. */
     private readonly todoList = new MockTodo();
+    /** Bug reports and the link they are handed on to. */
+    private readonly reportDesk = new MockReports();
     private cameraJob: string | null = null;
     private cameraMarkPoint: Board | null = null;
     /** Where the loaded board really lies: the job's design a little off, so alignment has something to find. */
@@ -4252,6 +4256,18 @@ export class MockBackend implements Api, EventFeed {
 
     async setTodo(items: TodoItem[], revision: number | null): Promise<TodoList> {
         return this.todoList.put(items, revision);
+    }
+
+    async saveReport(report: BugReport): Promise<ReportAnswer> {
+        return this.reportDesk.save(report);
+    }
+
+    async reportSettings(): Promise<ReportSettings> {
+        return this.reportDesk.settings();
+    }
+
+    async setReportLink(link: string): Promise<ReportSettings> {
+        return this.reportDesk.setLink(link);
     }
 
     async centerJob(request: CenterRequest): Promise<CenterResponse> {

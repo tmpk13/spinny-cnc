@@ -15,7 +15,7 @@ import re
 import threading
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from .files import write_whole
@@ -115,14 +115,16 @@ class TodoStore:
             return state
 
 
-def router(store: TodoStore) -> APIRouter:
-    routes = APIRouter()
+def add_routes(app: FastAPI, store: TodoStore) -> None:
+    """The list's routes, put on the app itself: FastAPI 0.142 keeps the routes
+    of an included router out of `app.routes`, where the check of the
+    routes the Auto tools may call looks for every route."""
 
-    @routes.get("/api/todo")
+    @app.get("/api/todo")
     def get_todo():
         return store.state()
 
-    @routes.put("/api/todo")
+    @app.put("/api/todo")
     def put_todo(body: TodoPut):
         try:
             return store.put(body.items, body.revision)
@@ -130,5 +132,3 @@ def router(store: TodoStore) -> APIRouter:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return routes

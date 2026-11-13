@@ -47,12 +47,15 @@ export function mountTodo(bar: HTMLElement, ctx: Ctx): TodoDrawer {
     const close = button("Close", () => hide(true), "btn btn-small btn-quiet", "close the list (Escape)");
     const clear = button("Clear done", () => change(clearDone), "btn btn-small", "take out the to-dos checked off");
     const foot = el("div", { class: "button-row" }, clear);
+    // The drawer runs the height of the screen; what it holds, only its own.
     const drawer = el("aside", { id: "todo-drawer", class: "panel todo-drawer", "aria-label": "To-do", inert: true },
-        el("div", { class: "panel-head" }, el("h2", {}, "To-do"), close),
-        input,
-        list,
-        empty,
-        foot,
+        el("div", { class: "stack" },
+            el("div", { class: "panel-head" }, el("h2", {}, "To-do"), close),
+            input,
+            list,
+            empty,
+            foot,
+        ),
     );
     const stop = bar.querySelector(".btn-stop");
     if (stop) {
