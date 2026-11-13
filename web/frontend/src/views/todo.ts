@@ -7,6 +7,7 @@
 // again each time the drawer opens.
 
 import { ApiError, errorText } from "../api.ts";
+import { popUp } from "../dismiss.ts";
 import { button, el } from "../dom.ts";
 import { addTodo, checkTodo, clearDone, newTodoId, openCount, removeTodo, type TodoChange, type TodoItem, type TodoList } from "../todo.ts";
 import type { Ctx } from "./context.ts";
@@ -166,10 +167,14 @@ export function mountTodo(bar: HTMLElement, ctx: Ctx): TodoDrawer {
         return drawer.hasAttribute("data-open");
     }
 
+    // Open, the drawer is a pop-up: a press elsewhere only closes it.
+    let release: (() => void) | null = null;
+
     function show(): void {
         place();
         drawer.removeAttribute("inert");
         drawer.setAttribute("data-open", "");
+        release ??= popUp({ nodes: () => [drawer, toggle], close: () => hide() });
         toggle.setAttribute("aria-expanded", "true");
         input.focus({ preventScroll: true });
         void load();
@@ -182,6 +187,8 @@ export function mountTodo(bar: HTMLElement, ctx: Ctx): TodoDrawer {
         drawer.removeAttribute("data-open");
         drawer.setAttribute("inert", "");
         toggle.setAttribute("aria-expanded", "false");
+        release?.();
+        release = null;
         if (restoreFocus) {
             toggle.focus({ preventScroll: true });
         }

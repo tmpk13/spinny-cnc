@@ -182,8 +182,11 @@ describe("the to-do drawer", () => {
         drawer.open();
         drawer.drawer.querySelector(".todo-input")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
         expect(drawer.isOpen()).toBe(true);
+        // Open, it is a pop-up: the pointer elsewhere says a press only closes it.
+        expect(document.documentElement.hasAttribute("data-dismiss")).toBe(true);
         document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
         expect(drawer.isOpen()).toBe(false);
+        expect(document.documentElement.hasAttribute("data-dismiss")).toBe(false);
     });
 
     test("arrow keys and space in it stop short of the jog keys", () => {

@@ -49,3 +49,10 @@ test("a run under way is named with how far it got", () => {
     expect(pageNote("jobs", { ...state, jobs, progress: { ...progress, state: "hold" } })).toBe("1 job; holding board, 25%");
     expect(pageNote("jobs", { ...state, jobs, progress: { ...progress, state: "done" } })).toBe("1 job");
 });
+
+test("the plugins card counts the plugins on", () => {
+    const { store } = setup();
+    const plugin = { id: "a", name: "a", description: "", made_by: "auto" as const, enabled: true, changed: false, hash: "", size: 1, modified: "" };
+    expect(pageNote("plugins", { ...store.get(), plugins: [] })).toBe("");
+    expect(pageNote("plugins", { ...store.get(), plugins: [plugin, { ...plugin, id: "b", enabled: false }] })).toBe("1 of 2 plugins on");
+});

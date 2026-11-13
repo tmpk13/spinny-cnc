@@ -1,8 +1,8 @@
 // The Overview page: a card for each of the other pages, with a small
 // drawing of what the page is for, its name, what it is for in words, and
 // a line on what it holds now (the jobs kept and a run under way, the
-// parts of the board picked, the conversation, the machine connected,
-// edits not applied); a press on a card shows its page. The drawings are
+// parts of the board picked, the conversation, the machine connected, the
+// plugins on, edits not applied); a press on a card shows its page. The drawings are
 // inline SVG drawn with the page's text color and one Solarized accent
 // each, so they follow the light and dark themes.
 
@@ -140,6 +140,13 @@ export function pageNote(page: PageId | string, state: AppState): string {
         case "connection":
             notes.push(state.snapshot.connected ? `connected: ${state.snapshot.url ?? "a machine"}` : "nothing connected");
             break;
+        case "plugins": {
+            const plugins = state.plugins ?? [];
+            if (plugins.length > 0) {
+                notes.push(`${plugins.filter((plugin) => plugin.enabled).length} of ${countText(plugins.length, "plugin", "plugins")} on`);
+            }
+            break;
+        }
         default:
             break;
     }
@@ -175,6 +182,6 @@ export function mountOverview(root: HTMLElement, ctx: Ctx): void {
             note.hidden = text === "";
         }
     };
-    ctx.store.subscribe(draw, ["jobs", "progress", "components", "auto", "snapshot", "pending"]);
+    ctx.store.subscribe(draw, ["jobs", "progress", "components", "auto", "snapshot", "pending", "plugins"]);
     draw(ctx.store.get());
 }
