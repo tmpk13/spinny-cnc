@@ -4,10 +4,15 @@
 // move up, down or to the next column, stack with the panel above or
 // below, stick to the panel above, lay a block side by side, fit the
 // panel to the screen, and reset. A stack shows one panel at a time under
-// a row of tabs, one per panel. Panels stuck together are drawn as one
+// a row of tabs, one per panel, drawn as a folder with the panels behind as
+// sheets under it; a tab dragged off the row takes its panel out of the
+// stack to where it is let go, and a button at the row's end takes the
+// whole stack apart. The markup stacks a panel with the one before it from
+// the start by `data-stack`. Panels stuck together are drawn as one
 // block with no gap and move together, or side by side in one row (a
 // wrapper around the block's stacks, which falls back to one column on a
-// narrow screen). A panel held at a height shows buttons in its head to
+// narrow screen); there a folded panel gives its width to the others,
+// standing on its side. A panel held at a height shows buttons in its head to
 // scroll to its top and its end. Hidden panels can be shown for a while
 // (peeking), marked as hidden, without being shown again for good. A handle under each panel
 // holds it at a height, its content scrolling within; a handle between two
@@ -24,7 +29,9 @@
 // page, and saved ones by name under PRESETS_KEY, each covering every
 // page. Panels that fold with a disclosure of their own (Setup, Align,
 // Camera, Job JSON) keep that fold their own way: the layer opens and
-// closes it, but a layout does not carry it.
+// closes it, but a layout does not carry it. A panel unfolding, or coming
+// to the front of its stack, is marked for the stylesheet to move it in
+// (data-unfold, data-arrive) while the page moves things (src/look.ts).
 
 import { el, readStored, svgIcon, writeStored } from "../dom.ts";
 import {
@@ -53,10 +60,14 @@ import {
     stackOnto,
     stick,
     unstack,
+    unstackAll,
     unstick,
+    withStacks,
+    type Defaults,
     type PageLayout,
     type Stack,
 } from "../layout.ts";
+import { moving } from "../look.ts";
 import { closeMenu, openMenu, type MenuEntry } from "../menu.ts";
 
 export const LAYOUT_KEY = "spinny.layout";
@@ -99,8 +110,8 @@ interface PageView {
     id: string;
     root: HTMLElement;
     columns: HTMLElement[];
-    /** The markup's panel ids per column: the default layout. */
-    defaults: string[][];
+    /** The markup's panel ids per column and the panels it stacks: the default layout. */
+    defaults: Defaults;
     layout: PageLayout;
     /** The tab rows over stacks, by the stack's ids. */
     strips: Map<string, HTMLElement>;
@@ -129,6 +140,8 @@ interface PanelView {
     /** In its head, shown while it is held at a height: to its top, to its end. */
     toTop: HTMLButtonElement;
     toEnd: HTMLButtonElement;
+    /** Whether it was folded when last drawn, so an unfolding can be told. */
+    wasCollapsed: boolean;
 }
 
 let controller: (PanelsController & { reveal(id: string): void }) | null = null;
@@ -151,6 +164,27 @@ function remPx(): number {
     return parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
 }
 
+/**
+ * The markup's layout of a page's columns: their panels in order, a panel
+ * marked `data-stack` joining the stack of the panel before it (the first
+ * of a run of them heads the stack).
+ */
+export function markupDefaults(columns: HTMLElement[]): Defaults {
+    const stacked: Record<string, string> = {};
+    const ids = columns.map((column) => {
+        let head: string | null = null;
+        return childrenOf(column, "section.panel[id]").map((panel) => {
+            if (panel.hasAttribute("data-stack") && head !== null) {
+                stacked[panel.id] = head;
+            } else {
+                head = panel.id;
+            }
+            return panel.id;
+        });
+    });
+    return withStacks(ids, stacked);
+}
+
 /** Whether the page is laid out in columns (the wide layout) rather than as one column. */
 function wide(): boolean {
     return typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 64rem)").matches;
@@ -160,11 +194,44 @@ function title(root: HTMLElement): string {
     return root.getAttribute("aria-label") ?? root.querySelector("h2")?.textContent ?? root.id;
 }
 
+/** The timers taking each marker off, by node and marker. */
+const markers = new WeakMap<Element, Map<string, ReturnType<typeof setTimeout>>>();
+
+/**
+ * Marks a node for the stylesheet to move it in (`data-unfold`,
+ * `data-arrive`) and takes the mark off once the movement is over; nothing
+ * while the page holds still.
+ */
+function moveIn(node: HTMLElement, name: string): void {
+    if (!moving()) {
+        return;
+    }
+    let timers = markers.get(node);
+    if (!timers) {
+        timers = new Map();
+        markers.set(node, timers);
+    }
+    clearTimeout(timers.get(name));
+    // Set again from scratch, so a movement under way starts over.
+    node.removeAttribute(name);
+    void node.offsetWidth;
+    node.setAttribute(name, "");
+    timers.set(name, setTimeout(() => {
+        node.removeAttribute(name);
+        timers.delete(name);
+    }, MOVE_MS));
+}
+
+/** How long a mark to move in stays: longer than the stylesheet's movements. */
+const MOVE_MS = 400;
+
 /** Three dots in a row. */
 const DOTS = "M2 8a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M6.5 8a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M11 8a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0";
 /** An arrow up to a bar, and down to one: to the top, to the end. */
 export const TO_TOP = "M3 2.5h10v1.5h-10zM8 5l4.5 4.5l-1.1 1.1l-2.65 -2.65v5.55h-1.5v-5.55l-2.65 2.65l-1.1 -1.1z";
 export const TO_END = "M3 13.5h10v-1.5h-10zM8 11l4.5 -4.5l-1.1 -1.1l-2.65 2.65v-5.55h-1.5v5.55l-2.65 -2.65l-1.1 1.1z";
+/** Two bars one above another, apart: a stack taken apart. */
+const APART = "M2.5 2h11v4.5h-11zM2.5 9.5h11v4.5h-11z";
 /** Two columns of three dots: a grip. */
 const GRIP = "M5 3.5a1.25 1.25 0 1 0 0.01 0M11 3.5a1.25 1.25 0 1 0 0.01 0M5 8a1.25 1.25 0 1 0 0.01 0M11 8a1.25 1.25 0 1 0 0.01 0M5 12.5a1.25 1.25 0 1 0 0.01 0M11 12.5a1.25 1.25 0 1 0 0.01 0";
 
@@ -181,7 +248,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
     for (const root of childrenOf(app, "main.page")) {
         const id = root.id.replace(/^page-/, "");
         const columns = childrenOf(root, ".column");
-        const defaults = columns.map((column) => childrenOf(column, "section.panel[id]").map((panel) => panel.id));
+        const defaults = markupDefaults(columns);
         const page: PageView = { id, root, columns, defaults, layout: normalizeLayout(stored[id] ?? null, defaults), strips: new Map(), handles: [], rows: new Map(), cells: new Map() };
         pages.set(id, page);
         for (const column of columns) {
@@ -200,7 +267,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
         }
     }
 
-    function defaultsByPage(): Record<string, string[][]> {
+    function defaultsByPage(): Record<string, Defaults> {
         return Object.fromEntries([...pages.values()].map((page) => [page.id, page.defaults]));
     }
 
@@ -266,7 +333,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
         toEnd.append(svgIcon(TO_END));
         toTop.hidden = true;
         toEnd.hidden = true;
-        const panel: PanelView = { id: root.id, page, root, head, fold, chevron, menuButton, grip, resize, viewHidden: root.classList.contains("hidden"), name, toTop, toEnd };
+        const panel: PanelView = { id: root.id, page, root, head, fold, chevron, menuButton, grip, resize, viewHidden: root.classList.contains("hidden"), name, toTop, toEnd, wasCollapsed: false };
         place(panel);
 
         // In a summary a press would also open or close the disclosure.
@@ -369,6 +436,11 @@ export function mountPanels(app: HTMLElement): PanelsController {
         const prefs = prefsOf(panel);
         const collapsed = collapsedOf(panel);
         const { root } = panel;
+        if (panel.wasCollapsed && !collapsed) {
+            moveIn(root, "data-unfold");
+        }
+        panel.wasCollapsed = collapsed;
+        markCell(panel);
         if (!panel.fold) {
             root.toggleAttribute("data-collapsed", collapsed);
             panel.chevron?.setAttribute("aria-expanded", String(!collapsed));
@@ -392,6 +464,14 @@ export function mountPanels(app: HTMLElement): PanelsController {
         // A panel held at a height scrolls within it: its ends are a press away.
         panel.toTop.hidden = height === null;
         panel.toEnd.hidden = height === null;
+    }
+
+    /** Side by side, a cell whose panel in front is folded stands on its side and gives its width to the others. */
+    function markCell(panel: PanelView): void {
+        const cell = panel.root.parentElement;
+        if (cell?.classList.contains("panel-row-cell") && !panel.root.hasAttribute("data-behind") && shown(panel.id)) {
+            cell.toggleAttribute("data-folded", collapsedOf(panel));
+        }
     }
 
     /**
@@ -424,6 +504,9 @@ export function mountPanels(app: HTMLElement): PanelsController {
         if (strip.dataset["shown"] !== shownKey) {
             strip.dataset["shown"] = shownKey;
             strip.setAttribute("aria-label", `Stack of ${visible.map((panel) => title(panel.root)).join(", ")}`);
+            const apart = el("button", { type: "button", class: "panel-tabs-apart", "aria-label": `Take apart the stack of ${visible.map((panel) => title(panel.root)).join(", ")}`, title: "take the stack apart: its panels one above another" });
+            apart.append(svgIcon(APART));
+            apart.addEventListener("click", () => update(page, unstackAll(page.layout, front.id)));
             strip.replaceChildren(...visible.map((panel) => {
                 const tab = el("button", {
                     type: "button",
@@ -431,15 +514,24 @@ export function mountPanels(app: HTMLElement): PanelsController {
                     role: "tab",
                     "aria-selected": String(panel === front),
                     "aria-controls": panel.id,
-                    title: `show ${title(panel.root)}`,
+                    title: `show ${title(panel.root)}; drag it off the row to take it out of the stack`,
                 }, title(panel.root));
-                tab.addEventListener("click", () => update(page, bringToFront(page.layout, panel.id)));
+                tab.addEventListener("click", (event) => {
+                    // The click a drag off the row ends with is no press.
+                    if (tab.hasAttribute("data-dragged-out")) {
+                        tab.removeAttribute("data-dragged-out");
+                        event.preventDefault();
+                        return;
+                    }
+                    update(page, bringToFront(page.layout, panel.id));
+                });
+                tab.addEventListener("pointerdown", (event) => dragTab(panel, tab, event));
                 tab.addEventListener("contextmenu", (event) => {
                     event.preventDefault();
                     openPanelMenu(panel, { x: event.clientX, y: event.clientY }, tab);
                 });
                 return tab;
-            }));
+            }), apart);
         }
         return strip;
     }
@@ -496,8 +588,18 @@ export function mountPanels(app: HTMLElement): PanelsController {
                     for (const panel of members) {
                         into.push(panel.root);
                         handles.push(panel.resize);
+                        const wasBehind = panel.root.hasAttribute("data-behind");
                         panel.root.toggleAttribute("data-behind", visible.includes(panel) && panel !== front);
                         panel.root.toggleAttribute("data-stacked", visible.length > 1 && panel === front);
+                        // The sheets drawn behind a stack's panel: one per panel behind, two at most.
+                        if (visible.length > 1 && panel === front) {
+                            panel.root.setAttribute("data-depth", String(Math.min(2, visible.length - 1)));
+                        } else {
+                            panel.root.removeAttribute("data-depth");
+                        }
+                        if (wasBehind && panel === front) {
+                            moveIn(panel.root, "data-arrive");
+                        }
                         applyPanel(panel);
                         if (panel === front && !row) {
                             drawn.push({ node: panel.root, block: blockIndex });
@@ -521,6 +623,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
                     usedCells.add(cell);
                     reorder(cell, into);
                     cell.hidden = visible.length === 0;
+                    cell.toggleAttribute("data-folded", front !== undefined && collapsedOf(front));
                     cells.push(cell);
                 }
                 if (row) {
@@ -633,7 +736,10 @@ export function mountPanels(app: HTMLElement): PanelsController {
             { label: "Stack with below", run: () => apply(stackOnto(layout, id, below!)), disabled: below ? undefined : "no panel below" },
         );
         if (stacked) {
-            entries.push({ label: "Unstack", run: () => apply(unstack(layout, id)) });
+            entries.push(
+                { label: "Unstack", run: () => apply(unstack(layout, id)) },
+                { label: "Take the stack apart", run: () => apply(unstackAll(layout, id)) },
+            );
         }
         entries.push(stuck
             ? { label: "Unstick", run: () => apply(unstick(layout, id)) }
@@ -754,8 +860,13 @@ export function mountPanels(app: HTMLElement): PanelsController {
 
     type Drop = { kind: "before"; column: number; before: string | null } | { kind: "stack"; target: string };
 
-    /** Where a panel dragged to (x, y) would go, and the box to mark for it; null for nowhere. */
-    function dropAt(page: PageView, dragged: string, x: number, y: number): { drop: Drop; mark: { left: number; top: number; width: number; height: number } } | null {
+    /**
+     * Where a panel dragged to (x, y) would go, and the box to mark for it;
+     * null for nowhere. A tab dragged off its stack's row (`alone`) moves
+     * only its panel: the block it leaves is a place to go before or after,
+     * and it may stack onto any other panel.
+     */
+    function dropAt(page: PageView, dragged: string, x: number, y: number, alone = false): { drop: Drop; mark: { left: number; top: number; width: number; height: number } } | null {
         const where = locate(page.layout, dragged);
         if (!where) {
             return null;
@@ -770,10 +881,11 @@ export function mountPanels(app: HTMLElement): PanelsController {
         const rect = rects[column]!;
         const rem = remPx();
         // Blocks drawn in the column, each the box around what it shows.
-        const boxes: { first: string; top: number; bottom: number; fronts: { id: string; rect: DOMRect }[] }[] = [];
+        const boxes: { first: string; top: number; bottom: number; own: boolean; fronts: { id: string; rect: DOMRect }[] }[] = [];
         for (const block of page.layout.columns[column]!) {
             const ids = block.flatMap((stack) => stack.ids);
-            if (ids.some((id) => ownIds.has(id))) {
+            const isOwn = ids.some((id) => ownIds.has(id));
+            if (isOwn && !alone) {
                 continue;
             }
             const fronts: { id: string; rect: DOMRect }[] = [];
@@ -792,12 +904,12 @@ export function mountPanels(app: HTMLElement): PanelsController {
                 bottom = Math.max(bottom, box.bottom);
             }
             if (fronts.length > 0) {
-                boxes.push({ first: ids[0]!, top, bottom, fronts });
+                boxes.push({ first: ids[0]!, top, bottom, own: isOwn, fronts });
             }
         }
         // Over the middle of a panel: stack onto it, when what is dragged is one stack.
-        if (own.length === 1) {
-            for (const box of boxes) {
+        if (own.length === 1 || alone) {
+            for (const box of boxes.filter((entry) => !entry.own)) {
                 for (const front of box.fronts) {
                     const band = Math.min(front.rect.height * 0.3, 4 * rem);
                     if (y > front.rect.top + band && y < front.rect.bottom - band) {
@@ -814,29 +926,18 @@ export function mountPanels(app: HTMLElement): PanelsController {
         };
     }
 
-    function dragPanel(panel: PanelView, event: PointerEvent): void {
-        if (event.button !== 0 || !editing || !wide()) {
-            return;
-        }
-        event.preventDefault();
-        closeMenu(false);
-        const page = panel.page;
-        const where = locate(page.layout, panel.id);
-        if (!where) {
-            return;
-        }
-        const block = page.layout.columns[where.column]![where.block]!;
-        const moving = block.flatMap((stack) => stack.ids).map((id) => panels.get(id)!.root);
-        for (const node of moving) {
-            node.setAttribute("data-dragged", "");
-        }
-        const ghost = el("div", { class: "drag-ghost" }, title(panel.root));
+    /**
+     * What a drag of a panel shows: its name following the pointer, the mark
+     * of where a drop goes, and the column under the pointer scrolling while
+     * it is held near the column's top or bottom.
+     */
+    function dropFollower(page: PageView, id: string, label: string, alone: boolean, at: { x: number; y: number }): { show(x: number, y: number): void; drop(): Drop | null; end(): void } {
+        const ghost = el("div", { class: "drag-ghost" }, label);
         const mark = el("div", { class: "drop-mark" });
         document.body.append(ghost, mark);
         let drop: Drop | null = null;
-        let pointer = { x: event.clientX, y: event.clientY };
+        let pointer = at;
         let frame = 0;
-        // The column under the pointer scrolls while it is held near its top or bottom.
         const scroll = (): void => {
             const rem = remPx();
             for (const column of page.columns) {
@@ -856,7 +957,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
             pointer = { x, y };
             ghost.style.left = `${x}px`;
             ghost.style.top = `${y}px`;
-            const found = dropAt(page, panel.id, x, y);
+            const found = dropAt(page, id, x, y, alone);
             drop = found?.drop ?? null;
             mark.hidden = found === null;
             if (found) {
@@ -867,12 +968,39 @@ export function mountPanels(app: HTMLElement): PanelsController {
                 mark.style.height = `${found.mark.height}px`;
             }
         };
-        show(event.clientX, event.clientY);
-        follow(event, (_dx, _dy, at) => show(at.clientX, at.clientY), (cancelled) => {
-            cancelAnimationFrame(frame);
-            ghost.remove();
-            mark.remove();
-            for (const node of moving) {
+        show(at.x, at.y);
+        return {
+            show,
+            drop: () => drop,
+            end: () => {
+                cancelAnimationFrame(frame);
+                ghost.remove();
+                mark.remove();
+            },
+        };
+    }
+
+    function dragPanel(panel: PanelView, event: PointerEvent): void {
+        if (event.button !== 0 || !editing || !wide()) {
+            return;
+        }
+        event.preventDefault();
+        closeMenu(false);
+        const page = panel.page;
+        const where = locate(page.layout, panel.id);
+        if (!where) {
+            return;
+        }
+        const block = page.layout.columns[where.column]![where.block]!;
+        const carried = block.flatMap((stack) => stack.ids).map((id) => panels.get(id)!.root);
+        for (const node of carried) {
+            node.setAttribute("data-dragged", "");
+        }
+        const drag = dropFollower(page, panel.id, title(panel.root), false, { x: event.clientX, y: event.clientY });
+        follow(event, (_dx, _dy, at) => drag.show(at.clientX, at.clientY), (cancelled) => {
+            const drop = drag.drop();
+            drag.end();
+            for (const node of carried) {
                 node.removeAttribute("data-dragged");
             }
             if (cancelled || drop === null) {
@@ -881,6 +1009,58 @@ export function mountPanels(app: HTMLElement): PanelsController {
             const next = drop.kind === "stack"
                 ? stackOnto(page.layout, panel.id, drop.target)
                 : placeBlock(page.layout, panel.id, drop.column, drop.before);
+            update(page, next);
+        });
+    }
+
+    /**
+     * A stack's tab pressed and dragged off its place by more than a little
+     * takes its panel out of the stack to where it is let go: before or
+     * after a block, the stack it left included, or onto another panel's
+     * stack. A press that stays put is the tab's click. Wide screens only,
+     * as the grip's drags; no edit mode needed, a tab being plainly a thing
+     * to pull.
+     */
+    function dragTab(panel: PanelView, tab: HTMLElement, event: PointerEvent): void {
+        if (event.button !== 0 || !wide()) {
+            return;
+        }
+        const page = panel.page;
+        const reach = 1.25 * remPx();
+        let drag: ReturnType<typeof dropFollower> | null = null;
+        follow(event, (dx, dy, at) => {
+            if (!drag) {
+                if (Math.hypot(dx, dy) < reach) {
+                    return;
+                }
+                closeMenu(false);
+                panel.root.setAttribute("data-dragged", "");
+                drag = dropFollower(page, panel.id, title(panel.root), true, { x: at.clientX, y: at.clientY });
+            }
+            drag.show(at.clientX, at.clientY);
+        }, (cancelled) => {
+            if (!drag) {
+                return;
+            }
+            const drop = drag.drop();
+            drag.end();
+            panel.root.removeAttribute("data-dragged");
+            // The click that ends the drag is no press of the tab.
+            tab.setAttribute("data-dragged-out", "");
+            setTimeout(() => tab.removeAttribute("data-dragged-out"), 0);
+            const where = locate(page.layout, panel.id);
+            if (cancelled || drop === null || !where) {
+                return;
+            }
+            // Out of the stack first, then where it was let go; "before the
+            // block it left" names that block by a panel still in it.
+            const left = page.layout.columns[where.column]![where.block]!.flatMap((stack) => stack.ids).filter((id) => id !== panel.id);
+            let next = unstack(page.layout, panel.id);
+            if (drop.kind === "stack") {
+                next = stackOnto(next, panel.id, drop.target);
+            } else {
+                next = placeBlock(next, panel.id, drop.column, drop.before === panel.id ? left[0] ?? null : drop.before);
+            }
             update(page, next);
         });
     }

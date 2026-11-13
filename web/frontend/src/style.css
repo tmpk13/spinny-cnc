@@ -1,10 +1,34 @@
 /* Spinny laser web interface. Sizes are rem, %, vh and clamp(); no pixels.
    Colors are the Solarized palette, light and dark. */
 
+/* The page's own fonts, served with it so it reads the same on every
+   computer and with no network: Inter for the text, JetBrains Mono for
+   numbers, code and the console. Both are variable in weight and hold the
+   latin letters only (the page's own text is ASCII; anything else falls
+   back to the system's fonts). Their licenses lie beside them in fonts/.
+   The page settings can put the system's fonts back (data-fonts). */
+@font-face {
+    font-family: "Inter";
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url("./fonts/inter.woff2") format("woff2");
+}
+
+@font-face {
+    font-family: "JetBrains Mono";
+    font-style: normal;
+    font-weight: 100 800;
+    font-display: swap;
+    src: url("./fonts/jetbrains-mono.woff2") format("woff2");
+}
+
 :root {
     color-scheme: light dark;
-    --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --system-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --system-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --font: "Inter", var(--system-font);
+    --mono: "JetBrains Mono", var(--system-mono);
 
     /* Solarized */
     --base03: #002b36;
@@ -131,6 +155,12 @@
         --gap: 1rem;
         --pad: 1rem;
     }
+}
+
+/* The system's fonts in place of the page's own, picked in the page settings. */
+:root[data-fonts="system"] {
+    --font: var(--system-font);
+    --mono: var(--system-mono);
 }
 
 * {
@@ -863,7 +893,7 @@ table.settings-list td {
     cursor: pointer;
     touch-action: manipulation;
     user-select: none;
-    transition: background-color 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
+    transition: background-color 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s, transform 0.08s;
 }
 
 .btn:hover:not(:disabled) {
@@ -2241,6 +2271,14 @@ dialog.confirm::backdrop {
         animation: none !important;
         transition: none !important;
     }
+}
+
+/* The page settings' still page: the same, whatever the system says. */
+:root[data-motion="off"] *,
+:root[data-motion="off"] *::before,
+:root[data-motion="off"] *::after {
+    animation: none !important;
+    transition: none !important;
 }
 
 /* CAM page */
@@ -3928,6 +3966,48 @@ a.btn.disabled {
     flex: 1 1 auto;
 }
 
+/* Side by side, a folded panel gives its width to the others: its cell
+   shrinks to its head, which stands on its side and reads from the top,
+   with only its name, fold button and menu; a stack's tabs wait until it
+   unfolds. */
+@media (min-width: 64rem) {
+    .panel-row-cell[data-folded] {
+        flex: 0 0 auto;
+    }
+
+    .panel-row-cell[data-folded] > .panel-tabs {
+        display: none;
+    }
+
+    .panel-row-cell[data-folded] > .panel:not([data-behind], [data-off]) {
+        padding: 0.6rem 0.35rem;
+    }
+
+    .panel-row-cell[data-folded] > .panel > .panel-head,
+    .panel-row-cell[data-folded] > .panel > details > summary {
+        writing-mode: vertical-rl;
+        flex-wrap: nowrap;
+        justify-content: flex-start;
+        min-height: 0;
+        padding: 0;
+        border: 0;
+    }
+
+    .panel-row-cell[data-folded] > .panel > .panel-head > :not(h2, .panel-chevron, .panel-menu-button, .panel-grip),
+    .panel-row-cell[data-folded] > .panel > details > summary > :not(h2, .panel-chevron, .panel-menu-button, .panel-grip) {
+        display: none;
+    }
+
+    .page .panel-row-cell[data-folded] > .panel[data-stacked] > .panel-head > h2,
+    .page .panel-row-cell[data-folded] > .panel[data-stacked] > details > summary > h2 {
+        position: static;
+        width: auto;
+        height: auto;
+        overflow: visible;
+        clip-path: none;
+    }
+}
+
 @media (max-width: 63.99rem) {
     .panel-row,
     .panel-row-cell {
@@ -3985,21 +4065,40 @@ a.btn.disabled {
     border-bottom-right-radius: 0;
 }
 
-/* A stack: a row of tabs, one per panel, over the panel shown, the tab of
-   that one open into it as a folder's is. */
+/* A stack, drawn as a folder: a row of tabs, one per panel, over the
+   panel shown, the tab of that one open into it, the others a little lower
+   and darker as tabs further back; under the panel shown, a sheet's edge
+   for each panel behind it (two at most, data-depth). The row's end holds
+   the button that takes the stack apart. */
 .panel-tabs {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
-    gap: 0.25rem;
-    padding-inline: 0.6rem;
+    padding-inline: 0.75rem 0.25rem;
 }
 
 .page .panel[data-stacked] {
     margin-top: calc(-1 * var(--gap));
 }
 
+.page .panel[data-depth="1"] {
+    box-shadow:
+        var(--shadow),
+        0.25rem 0.25rem 0 -0.0625rem var(--panel-2),
+        0.25rem 0.25rem 0 0 var(--border);
+}
+
+.page .panel[data-depth="2"] {
+    box-shadow:
+        var(--shadow),
+        0.25rem 0.25rem 0 -0.0625rem var(--panel-2),
+        0.25rem 0.25rem 0 0 var(--border),
+        0.45rem 0.45rem 0 -0.0625rem color-mix(in oklab, var(--panel-2) 70%, var(--bg)),
+        0.45rem 0.45rem 0 0 var(--border);
+}
+
 .panel-tab {
+    position: relative;
     font: inherit;
     font-size: 0.72rem;
     font-weight: 700;
@@ -4007,26 +4106,78 @@ a.btn.disabled {
     text-transform: uppercase;
     color: var(--muted);
     min-height: 2rem;
-    padding: 0.35rem 0.8rem;
-    background: var(--panel-2);
+    padding: 0.35rem 0.9rem;
+    background: color-mix(in oklab, var(--panel-2) 80%, var(--border));
     border: thin solid var(--border);
     border-bottom: 0;
-    border-radius: var(--radius) var(--radius) 0 0;
+    border-radius: 0.6rem 0.6rem 0 0;
+    box-shadow: inset 0 -0.4rem 0.4rem -0.35rem color-mix(in oklab, var(--base01) 25%, transparent);
     cursor: pointer;
+    transform: translateY(0.125rem);
+    transition: transform 0.12s ease-out, color 0.12s, background-color 0.12s;
+}
+
+/* Tabs further back tuck under the one before, as a folder's do. */
+.panel-tab + .panel-tab {
+    margin-left: -0.3rem;
 }
 
 .panel-tab:hover {
     color: var(--strong);
+    transform: translateY(0);
 }
 
 .panel-tab[aria-selected="true"] {
-    position: relative;
     z-index: 1;
     margin-bottom: -0.0625rem;
     padding-bottom: calc(0.35rem + 0.0625rem);
     color: var(--strong);
     background: var(--panel);
     border-color: var(--border);
+    box-shadow: 0 -0.0625rem 0.25rem color-mix(in oklab, var(--base01) 15%, transparent);
+    transform: none;
+}
+
+/* Being dragged off its row: lifted, so it reads as coming loose. */
+.panel-tab:active:not([aria-selected="true"]) {
+    transform: translateY(-0.0625rem);
+}
+
+.panel-tabs-apart {
+    display: inline-grid;
+    place-items: center;
+    align-self: center;
+    margin-left: auto;
+    width: 1.75rem;
+    height: 1.75rem;
+    padding: 0;
+    color: var(--muted);
+    background: none;
+    border: 0;
+    border-radius: var(--radius);
+    cursor: pointer;
+}
+
+.panel-tabs-apart:hover {
+    color: var(--strong);
+    background: var(--btn-hover);
+}
+
+.panel-tabs-apart .icon {
+    width: 0.95rem;
+    height: 0.95rem;
+}
+
+/* Its tab names the panel shown, so the head's own title steps aside
+   (still read out to a screen reader). */
+.page .panel[data-stacked] > .panel-head > h2,
+.page .panel[data-stacked] > details > summary > h2 {
+    position: absolute;
+    width: 0.0625rem;
+    height: 0.0625rem;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
 }
 
 /* Held at a height: the panel scrolls within it under its head, which
@@ -4225,6 +4376,15 @@ a.btn.disabled {
     border-top: thin solid var(--border);
 }
 
+/* A pop-up up (src/dismiss.ts): everywhere else the pointer is a circle
+   with an x, since a press there only takes the pop-up away. The pop-up
+   and what opened it (data-popup) keep their own pointers, and so do the
+   stop buttons, which a press always reaches. */
+:root[data-dismiss] body,
+:root[data-dismiss] body *:not([data-popup], [data-popup] *, .btn-stop, .btn-danger, .btn-danger *) {
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9.5' fill='%23fdf6e3' fill-opacity='0.9' stroke='%23002b36' stroke-width='1.6'/%3E%3Cpath d='M8.6 8.6l6.8 6.8M15.4 8.6l-6.8 6.8' stroke='%23002b36' stroke-width='1.9' stroke-linecap='round'/%3E%3C/svg%3E") 12 12, pointer !important;
+}
+
 /* --- tooltips (src/tooltip.ts) ------------------------------------------ */
 
 /* A disabled button lets the pointer through to what holds it, where the
@@ -4386,6 +4546,53 @@ table.find-guesses tr.ruled-out td {
 
 table.find-guesses tr.found td {
     font-weight: 600;
+}
+
+/* --- movement (src/look.ts) -------------------------------------------- */
+
+/* Things move into place, briefly, by opacity and transform alone, so the
+   compositor does the work and nothing is laid out again on the way: a
+   page coming up fades in, a panel unfolding has its body rise into place,
+   a panel brought to the front of its stack slides in from its tab's side,
+   and menus, sheets and drawings open from where they hang. The layout
+   layer marks the panels (data-unfold, data-arrive) only while the page
+   moves; the page settings' still page and the system's reduced motion
+   stop all of it (the rules after the height map). */
+@keyframes page-in {
+    from { opacity: 0.35; }
+}
+
+@keyframes rise-in {
+    from { opacity: 0; transform: translateY(0.375rem); }
+}
+
+@keyframes arrive-in {
+    from { opacity: 0.25; transform: translateX(0.5rem); }
+}
+
+@keyframes pop-in {
+    from { opacity: 0; transform: translateY(-0.25rem) scale(0.98); }
+}
+
+#app > .page {
+    animation: page-in 0.2s ease-out;
+}
+
+.panel[data-unfold] > :not(.panel-head),
+.panel[data-unfold] > details > :not(summary) {
+    animation: rise-in 0.2s ease-out;
+}
+
+.panel[data-arrive]:not(.flash, .pulse) {
+    animation: arrive-in 0.18s ease-out;
+}
+
+.menu,
+.search-sheet.panel,
+.page-settings.panel,
+.info-tip[data-open] .info-tip-pop {
+    animation: pop-in 0.14s ease-out;
+    transform-origin: top right;
 }
 
 /* Flow: the space between blocks stacked in a box belongs to the box, not

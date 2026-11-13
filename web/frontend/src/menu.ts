@@ -6,6 +6,7 @@
 // jog keys listen on the document and skip a key whose default is
 // prevented, so a key meant for the menu never moves the machine.
 
+import { popUp } from "./dismiss.ts";
 import { el } from "./dom.ts";
 
 export interface MenuItem {
@@ -127,6 +128,7 @@ export function openMenu(entries: MenuEntry[], at: HTMLElement | { x: number; y:
         }
     };
     const resize = (): void => closeMenu(false);
+    const release = popUp({ nodes: () => [menu, opener], close: () => closeMenu(false) });
     menu.addEventListener("keydown", keys);
     document.addEventListener("pointerdown", outside, true);
     document.addEventListener("scroll", away, true);
@@ -135,6 +137,7 @@ export function openMenu(entries: MenuEntry[], at: HTMLElement | { x: number; y:
         menu,
         opener,
         cleanup: () => {
+            release();
             document.removeEventListener("pointerdown", outside, true);
             document.removeEventListener("scroll", away, true);
             window.removeEventListener("resize", resize);

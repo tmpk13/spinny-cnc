@@ -5,6 +5,7 @@ import { errorText, HttpApi, type Api } from "./api.ts";
 import { MockBackend } from "./mock/backend.ts";
 import { appendConsole, autoClears, initialState, mergeAuto, noteAutoCleared, pendingTotal, pushToast, Store, withEntry, type AppState } from "./state.ts";
 import type { MessageLevel, Profile, Snapshot, WsEvent } from "./types.ts";
+import { applyLook, readLook } from "./look.ts";
 import { mountTooltips } from "./tooltip.ts";
 import { EventSocket, wsUrl, type EventFeed } from "./ws.ts";
 import { mountAlign } from "./views/align.ts";
@@ -249,6 +250,8 @@ async function refreshAll(ctx: Ctx): Promise<void> {
 }
 
 function main(): void {
+    // The fonts and the movement picked in this browser, before anything draws.
+    applyLook(readLook());
     const params = new URLSearchParams(window.location.search);
     const mock = params.get("mock") === "1";
     const apiBase = params.get("api") ?? "";

@@ -30,7 +30,9 @@ import {
     stackOnto,
     stick,
     unstack,
+    unstackAll,
     unstick,
+    withStacks,
     type PageLayout,
 } from "../src/layout.ts";
 
@@ -220,6 +222,58 @@ describe("stacks", () => {
         expect(out.columns[1]![0]![0]!.front).toBe("steps");
         // A panel alone has no stack to leave.
         expect(unstack(fresh(), "dro")).toEqual(fresh());
+    });
+});
+
+describe("taking a stack apart", () => {
+    test("every panel but the first goes to a block of its own, in the stack's order, after the stack", () => {
+        const stacked = stackOnto(stackOnto(fresh(), "console", "preview"), "steps", "preview");
+        const apart = unstackAll(stacked, "console");
+        expect(blocks(apart, 1)).toEqual([[["preview"]], [["console"]], [["steps"]]]);
+        // The same from any panel of the stack; a panel alone has nothing to take apart.
+        expect(blocks(unstackAll(stacked, "preview"), 1)).toEqual(blocks(apart, 1));
+        expect(unstackAll(fresh(), "dro")).toEqual(fresh());
+        expect(blocks(stacked, 1)).toEqual([[["preview", "console", "steps"]]]);
+    });
+});
+
+describe("stacks the markup makes", () => {
+    const MARKED = withStacks(MARKUP, { laser: "jog", markers: "jog" });
+
+    test("a marked panel starts in the stack of the panel it names, its first panel in front", () => {
+        const layout = defaultLayout(MARKED);
+        expect(blocks(layout, 0)).toEqual([[["dro"]], [["jog", "laser", "markers"]]]);
+        expect(layout.columns[0]![1]![0]!.front).toBe("jog");
+        expect(isDefault(layout, MARKED)).toBe(true);
+        expect(canonicalLayout(layout, MARKED)).toBeNull();
+        expect(isDefault(normalizeLayout(null, MARKED), MARKED)).toBe(true);
+    });
+
+    test("another panel in front, or the stack taken apart, is a layout of its own to keep", () => {
+        const front = bringToFront(defaultLayout(MARKED), "laser");
+        expect(sameArrangement(front, MARKED)).toBe(true);
+        expect(isDefault(front, MARKED)).toBe(false);
+        expect(canonicalLayout(front, MARKED)?.columns[0]![1]![0]!.front).toBe("laser");
+        const apart = unstackAll(defaultLayout(MARKED), "jog");
+        expect(sameArrangement(apart, MARKED)).toBe(false);
+        // Kept apart: read back, the stored layout keeps the panels apart.
+        expect(blocks(normalizeLayout(JSON.parse(JSON.stringify(apart)), MARKED), 0)).toEqual([[["dro"]], [["jog"]], [["laser"]], [["markers"]]]);
+    });
+
+    test("a marked panel new to a stored layout joins its partner's stack wherever that is now", () => {
+        const stored = moveToColumn(defaultLayout(MARKUP), "jog", 1);
+        const raw = JSON.parse(JSON.stringify(stored));
+        // The stored layout predates the laser panel's stacking: it lacks it.
+        raw.columns = raw.columns.map((column: { ids: string[] }[][]) => column.map((block) => block.map((stack) => ({ ...stack, ids: stack.ids.filter((id) => id !== "laser") }))).filter((block) => block.some((stack) => stack.ids.length > 0)));
+        const read = normalizeLayout(raw, withStacks(MARKUP, { laser: "jog" }));
+        const place = locate(read, "laser")!;
+        expect(place.column).toBe(locate(read, "jog")!.column);
+        expect(read.columns[place.column]![place.block]![place.stack]!.ids).toEqual(["jog", "laser"]);
+    });
+
+    test("a marked panel put back goes back into its stack", () => {
+        const out = unstack(defaultLayout(MARKED), "laser");
+        expect(blocks(resetPanel(out, "laser", MARKED), 0)).toEqual([[["dro"]], [["jog", "markers", "laser"]]]);
     });
 });
 

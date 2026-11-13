@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { closeMenu } from "../src/menu.ts";
 import { initialState, Store, type AppState } from "../src/state.ts";
 import { mountPageSettings } from "../src/views/pagesettings.ts";
-import { LAYOUT_KEY, mountPanels, PRESETS_KEY, revealPanel } from "../src/views/panels.ts";
+import { LAYOUT_KEY, markupDefaults, mountPanels, PRESETS_KEY, revealPanel } from "../src/views/panels.ts";
 import { mountTabs, parseTabPrefs, readPage, TABS_KEY, writeTabPrefs } from "../src/views/tabs.ts";
 
 /** A page like index.html's: two columns of panels with heads of each kind. */
@@ -194,6 +194,59 @@ describe("the panel menu", () => {
         expect(app.querySelector(".panel-row")).toBeNull();
         expect(ids(app.querySelector(".column")!)).toEqual(["p-dro", "p-laser", "p-steps"]);
         expect(app.querySelector("#p-laser")!.hasAttribute("data-join-up")).toBe(true);
+    });
+
+    test("a stack is a folder: sheets behind for the panels behind, and a button that takes it apart", () => {
+        const app = makeApp();
+        mountPanels(app);
+        openMenuOf("p-console");
+        pick("Stack with above");
+        const console = app.querySelector("#p-console")!;
+        expect(console.getAttribute("data-depth")).toBe("1");
+        expect(app.querySelector("#p-preview")!.hasAttribute("data-depth")).toBe(false);
+        const apart = app.querySelector<HTMLButtonElement>(".panel-tabs .panel-tabs-apart")!;
+        expect(apart.title).not.toBe("");
+        apart.click();
+        expect(app.querySelector(".panel-tabs")).toBeNull();
+        expect(console.hasAttribute("data-depth")).toBe(false);
+        expect(ids(app.querySelectorAll(".column")[1]!)).toEqual(["p-preview", "p-console", "p-device"]);
+        // The menu takes a stack apart too.
+        openMenuOf("p-console");
+        pick("Stack with above");
+        openMenuOf("p-console");
+        pick("Take the stack apart");
+        expect(app.querySelector(".panel-tabs")).toBeNull();
+    });
+
+    test("side by side, a folded panel's cell is marked to give its width away", () => {
+        const app = makeApp();
+        mountPanels(app);
+        openMenuOf("p-laser");
+        pick("Stick to above");
+        openMenuOf("p-laser");
+        pick("Side by side");
+        const cell = app.querySelector("#p-laser")!.parentElement!;
+        expect(cell.classList.contains("panel-row-cell")).toBe(true);
+        expect(cell.hasAttribute("data-folded")).toBe(false);
+        app.querySelector<HTMLButtonElement>("#p-laser .panel-chevron")!.click();
+        expect(app.querySelector("#p-laser")!.parentElement!.hasAttribute("data-folded")).toBe(true);
+        app.querySelector<HTMLButtonElement>("#p-laser .panel-chevron")!.click();
+        expect(app.querySelector("#p-laser")!.parentElement!.hasAttribute("data-folded")).toBe(false);
+    });
+
+    test("the markup stacks a panel marked data-stack with the one before it", () => {
+        const app = makeApp();
+        const console = app.querySelector("#p-console")!;
+        console.setAttribute("data-stack", "");
+        app.querySelector("#p-device")!.setAttribute("data-stack", "");
+        const defaults = markupDefaults(Array.from(app.querySelectorAll<HTMLElement>("#page-jobs > .column")));
+        expect(defaults.stacked).toEqual({ "p-console": "p-preview", "p-device": "p-preview" });
+        mountPanels(app);
+        // The device panel is hidden by its view: the stack shows two tabs.
+        expect(Array.from(app.querySelectorAll(".panel-tab")).map((tab) => tab.textContent)).toEqual(["Preview", "Console"]);
+        expect(app.querySelector("#p-console")!.hasAttribute("data-behind")).toBe(true);
+        // As the markup has it, nothing is stored.
+        expect(localStorage.getItem(LAYOUT_KEY)).toBeNull();
     });
 
     test("hidden panels show for a while, marked, and hide again", () => {

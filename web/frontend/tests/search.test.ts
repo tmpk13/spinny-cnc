@@ -76,4 +76,5 @@ test("a match's tooltip gives its whole path and what its button's tooltip says"
     expect(featurePath(features.find((feature) => feature.label === "Save map")!)).toBe("Jobs > Height map > Save map");
     expect(featurePath(features.find((feature) => feature.kind === "panel" && feature.label === "Machine file")!)).toBe("Config > Machine file");
     expect(featurePath(features.find((feature) => feature.kind === "page" && feature.label === "Jobs")!)).toBe("Jobs tab: jobs, the preview and runs");
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
 });

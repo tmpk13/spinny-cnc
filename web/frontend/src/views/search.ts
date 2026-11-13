@@ -6,6 +6,7 @@
 // panel (unhidden, unfolded, in front of its stack, pulsing); a button is
 // given the focus, not pressed, so a search never moves the machine.
 
+import { popUp } from "../dismiss.ts";
 import { el, replace, svgIcon } from "../dom.ts";
 import { closeInfoTip } from "./infotip.ts";
 import { goToPanel } from "./steps.ts";
@@ -151,6 +152,7 @@ export function mountSearch(tools: HTMLElement): void {
     let features: Feature[] = [];
     let matches: Feature[] = [];
     let active = 0;
+    let release: (() => void) | null = null;
 
     function draw(): void {
         matches = input.value.trim() === "" ? [] : rankFeatures(features, input.value);
@@ -176,6 +178,7 @@ export function mountSearch(tools: HTMLElement): void {
         features = collectFeatures();
         sheet.hidden = false;
         lens.setAttribute("aria-expanded", "true");
+        release ??= popUp({ nodes: () => [sheet, lens], close });
         input.value = "";
         active = 0;
         draw();
@@ -185,6 +188,8 @@ export function mountSearch(tools: HTMLElement): void {
     function close(): void {
         sheet.hidden = true;
         lens.setAttribute("aria-expanded", "false");
+        release?.();
+        release = null;
     }
 
     function pick(feature: Feature): void {

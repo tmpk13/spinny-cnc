@@ -334,9 +334,16 @@ menu (the dots after it, or a right click on the head): fold, hide, move
 up, down or to the next column, stack with the panel above or below,
 stick to the panel above, lay stuck panels *Side by side* (and back *One
 above another*), *Fit to screen*, and reset. A stack shows one of its
-panels at a time under a row of tabs; panels stuck together are drawn as
+panels at a time under a row of tabs, drawn as a folder with an edge
+under it for each panel behind; drag a tab off the row to take its panel
+out of the stack to where it is let go (another place, or onto another
+panel to stack it there), or press the button at the row's end (or
+*Take the stack apart* in the menu) to lay all of them out one above
+another. Some panels start stacked. Panels stuck together are drawn as
 one block and move together, one above another or side by side (a phone
-shows them in one column either way). The Run panel stays at the foot of
+shows them in one column either way); side by side, a folded panel
+stands on its side as a narrow strip and gives its width to the others.
+The Run panel stays at the foot of
 its column unless it is stuck or stacked. On the wide layout a handle
 under each panel holds it at a height (it then scrolls inside, with
 buttons in its head to its top and its end), and a handle between two
@@ -348,7 +355,11 @@ The gear at the right end of the tab bar opens the page settings: the
 tab the page opens on, the tab bar folded to a thin strip that opens on
 hover or a press, tabs kept out of the bar (they open from *More* at its
 end), the panel layouts kept by name, *Edit panels*, a reset of the page
-shown, and the hidden panels to show again. *Edit panels* puts a grip in
+shown, the hidden panels to show again, and the look: the page's own
+fonts (Inter and JetBrains Mono, served with the page, so it reads the
+same with no network) or the system's, and *Animate the page* (panels
+unfolding, a stack's panel coming forward, menus and pages opening; off,
+or with the system's reduced motion, everything simply appears). *Edit panels* puts a grip in
 every head: drag a panel to another place, or onto another panel to
 stack them, then press *Done editing* in the tab bar. While a panel is
 hidden an eye shows beside the gear: pressed, the hidden panels show for
@@ -361,6 +372,11 @@ step. The Setup, Align, Camera and Job JSON panels keep their own fold,
 which a layout does not carry. All of this is kept in the browser, not
 on the machine; a phone keeps the one-column order until its panels are
 moved, and has no size handles.
+
+While a menu, a drawing, the page settings or another pop-up is open,
+the pointer outside it is a circle with an x: a press there only closes
+the pop-up and presses nothing under it. Stop and the other red buttons
+are the exception: they always take the press.
 
 Every button shows on hover what it does, a disabled one also why it is
 off ("connect first"), and a key in the Config tab's machine file shows

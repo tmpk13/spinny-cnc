@@ -5,6 +5,7 @@
 // The drawings are inline SVG colored by the stylesheet, so they follow
 // the page's light and dark themes.
 
+import { popUp } from "../dismiss.ts";
 import { el } from "../dom.ts";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -148,7 +149,10 @@ export function infoTip(topic: InfoTopic): HTMLSpanElement {
         mark,
         pop,
     ) as HTMLSpanElement;
+    let release: (() => void) | null = null;
     const close = (): void => {
+        release?.();
+        release = null;
         tip.removeAttribute("data-open");
         tip.setAttribute("aria-expanded", "false");
         document.removeEventListener("pointerdown", outside, true);
@@ -175,6 +179,7 @@ export function infoTip(topic: InfoTopic): HTMLSpanElement {
         tip.setAttribute("aria-expanded", "true");
         placePop(pop, mark);
         openTip = { tip, close };
+        release = popUp({ nodes: () => [tip], close });
         document.addEventListener("pointerdown", outside, true);
         document.addEventListener("keydown", escape, true);
         // A scroll moves the mark away from the pop, which is fixed.

@@ -7,11 +7,14 @@
 // step, and in edit mode a Done editing button ends it. An eye beside the
 // gear, while any panel is hidden, shows the hidden panels for a while
 // (marked as hidden) and hides them again; two arrows scroll the column
-// last pointed at to its top or its end. Everything here is kept in this
-// browser; the peek is not.
+// last pointed at to its top or its end. The look: the page's own fonts or
+// the system's, and whether changes move into place. Everything here is
+// kept in this browser; the peek is not.
 
+import { popUp } from "../dismiss.ts";
 import { el, labeled, replace, svgIcon } from "../dom.ts";
 import { DEFAULT_PRESET } from "../layout.ts";
+import { readLook, writeLook, type Look } from "../look.ts";
 import { closeMenu } from "../menu.ts";
 import { TO_END, TO_TOP, type PanelsController } from "./panels.ts";
 import { onPage, PAGES, readTabPrefs, writeTabPrefs, type PageId, type TabPrefs } from "./tabs.ts";
@@ -199,6 +202,22 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
                 return el("li", {}, el("span", {}, `${panel.title} `, el("span", { class: "muted" }, `(${where})`)), show);
             }));
 
+        const look = readLook();
+        const setLook = (change: Partial<Look>): void => {
+            writeLook({ ...readLook(), ...change });
+            drawSheet();
+        };
+        const fonts = el("select", { class: "field", title: "the page's own fonts, served with it, or the ones this computer has" }) as HTMLSelectElement;
+        replace(fonts,
+            el("option", { value: "page" }, "Inter and JetBrains Mono"),
+            el("option", { value: "system" }, "the system's"),
+        );
+        fonts.value = look.fonts;
+        fonts.addEventListener("change", () => setLook({ fonts: fonts.value === "system" ? "system" : "page" }));
+        const motion = el("input", { type: "checkbox" }) as HTMLInputElement;
+        motion.checked = look.motion === "on";
+        motion.addEventListener("change", () => setLook({ motion: motion.checked ? "on" : "off" }));
+
         replace(sheet,
             el("div", { class: "panel-head" }, el("h2", {}, "Page settings")),
             el("div", { class: "stack" },
@@ -213,14 +232,20 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
                 el("div", { class: "button-row" }, edit, reset),
                 el("h3", {}, "Hidden panels"),
                 hiddenList,
+                el("h3", {}, "Look"),
+                labeled("Fonts", fonts, "labeled inline"),
+                el("label", { class: "check", title: "panels unfolding, a stack's panel coming forward, menus and pages opening, the turning marks; off, everything simply appears, as with the system's reduced motion" }, motion, " Animate the page"),
             ),
         );
     }
+
+    let release: (() => void) | null = null;
 
     function open(): void {
         closeMenu(false);
         sheet.hidden = false;
         gear.setAttribute("aria-expanded", "true");
+        release ??= popUp({ nodes: () => [sheet, gear], close: () => close(false) });
         tools.closest(".tabs")?.setAttribute("data-open", "");
         drawSheet();
         sheet.querySelector<HTMLElement>("select, input, button")?.focus({ preventScroll: true });
@@ -232,6 +257,8 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
         }
         sheet.hidden = true;
         gear.setAttribute("aria-expanded", "false");
+        release?.();
+        release = null;
         if (restoreFocus) {
             gear.focus({ preventScroll: true });
         }

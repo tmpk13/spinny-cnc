@@ -15,6 +15,7 @@
 import { el, readStored, writeStored } from "../dom.ts";
 import { countText } from "../format.ts";
 import { readObject } from "../layout.ts";
+import { popUp } from "../dismiss.ts";
 import { closeMenu, openMenu } from "../menu.ts";
 import type { AppState, Store } from "../state.ts";
 
@@ -219,6 +220,19 @@ export function mountTabs(root: HTMLElement, store: Store<AppState>): HTMLElemen
             root.removeAttribute("data-open");
         }
     }, true);
+    // Opened from its strip, the bar is a pop-up: a press elsewhere only folds it.
+    let release: (() => void) | null = null;
+    const followOpen = (): void => {
+        if (root.hasAttribute("data-open") && release === null) {
+            release = popUp({ nodes: () => [root], close: () => root.removeAttribute("data-open") });
+        } else if (!root.hasAttribute("data-open") && release !== null) {
+            release();
+            release = null;
+        }
+    };
+    if (typeof MutationObserver === "function") {
+        new MutationObserver(followOpen).observe(root, { attributes: true, attributeFilter: ["data-open"] });
+    }
     root.addEventListener("keydown", (event) => {
         if (event.key === "Escape" && root.hasAttribute("data-open")) {
             root.removeAttribute("data-open");

@@ -10,7 +10,8 @@
 //
 // A column is a list of blocks, a block a list of stacks stuck together,
 // and a stack a list of panel ids. A panel alone is a stack of one in a
-// block of one. Every function returns a new layout and leaves the one it
+// block of one. The markup may stack panels from the start (Defaults'
+// `stacked`). Every function returns a new layout and leaves the one it
 // was given alone.
 
 export interface Stack {
@@ -52,6 +53,19 @@ export interface Place {
     index: number;
 }
 
+/**
+ * The markup's layout of a page: each column's panel ids in order, and the
+ * panels it stacks from the start (`stacked`: a panel's id to the id of the
+ * panel whose stack it joins, which the markup puts before it). Plain
+ * columns of ids stack nothing.
+ */
+export type Defaults = string[][] & { stacked?: Record<string, string> };
+
+/** Columns of ids with the panels the markup stacks. */
+export function withStacks(columns: string[][], stacked: Record<string, string>): Defaults {
+    return Object.assign(columns.map((ids) => [...ids]), { stacked: { ...stacked } });
+}
+
 /** Whether a panel shows on the page; a move steps over panels that do not. */
 export type Shown = (id: string) => boolean;
 
@@ -79,9 +93,15 @@ function copy(layout: PageLayout): PageLayout {
     };
 }
 
-/** The markup's layout: every panel alone, in the markup's columns and order. */
-export function defaultLayout(columns: string[][]): PageLayout {
-    return { columns: columns.map((ids) => ids.map(single)), widths: null, panels: {} };
+/** The markup's layout: every panel alone, in the markup's columns and order, but for the ones it stacks. */
+export function defaultLayout(columns: Defaults): PageLayout {
+    const blocks: Block[][] = columns.map(() => []);
+    for (const ids of columns) {
+        for (const id of ids) {
+            insertDefault(blocks, id, columns);
+        }
+    }
+    return { columns: blocks, widths: null, panels: {} };
 }
 
 /** The panels of each column in the order they are drawn, stacks and blocks flattened. */
@@ -109,10 +129,24 @@ function blockShown(block: Block, shown: Shown): boolean {
 }
 
 /**
- * Puts a panel the layout does not hold where the markup has it: in its
- * column, before the first block holding a panel the markup puts after it.
+ * Puts a panel the layout does not hold where the markup has it: into the
+ * stack of the panel the markup stacks it with, wherever that one is now,
+ * at its end; else in its column, before the first block holding a panel
+ * the markup puts after it.
  */
-function insertDefault(columns: Block[][], id: string, defaults: string[][]): void {
+function insertDefault(columns: Block[][], id: string, defaults: Defaults): void {
+    const partner = defaults.stacked?.[id];
+    if (partner !== undefined) {
+        for (const blocks of columns) {
+            for (const block of blocks) {
+                const stack = block.find((entry) => entry.ids.includes(partner));
+                if (stack) {
+                    stack.ids.push(id);
+                    return;
+                }
+            }
+        }
+    }
     const column = defaults.findIndex((ids) => ids.includes(id));
     if (column < 0 || column >= columns.length) {
         return;
@@ -174,7 +208,7 @@ export function cleanWidths(raw: unknown, count: number): number[] | null {
  * into it, and anything malformed left out. Nothing stored (null, or not a
  * layout) gives the markup's layout.
  */
-export function normalizeLayout(raw: unknown, defaults: string[][]): PageLayout {
+export function normalizeLayout(raw: unknown, defaults: Defaults): PageLayout {
     const known = new Set(defaults.flat());
     const seen = new Set<string>();
     const columns: Block[][] = defaults.map(() => []);
@@ -228,20 +262,22 @@ export function normalizeLayout(raw: unknown, defaults: string[][]): PageLayout 
     return { columns, widths, panels };
 }
 
-/** Whether the panels sit as the markup has them: every one alone, in its column and order. */
-export function sameArrangement(layout: PageLayout, defaults: string[][]): boolean {
-    if (layout.columns.length !== defaults.length) {
-        return false;
-    }
-    return layout.columns.every((blocks, column) => {
-        const ids = defaults[column]!;
-        return blocks.length === ids.length && blocks.every((block, index) => block.length === 1 && block[0]!.ids.length === 1 && block[0]!.ids[0] === ids[index]);
-    });
+/** The panels' places, without which panel of a stack is in front. */
+function shape(columns: Block[][]): string {
+    return JSON.stringify(columns.map((blocks) => blocks.map((block) => block.map((stack) => stack.ids))));
 }
 
-/** Whether a layout is the markup's in every respect. */
-export function isDefault(layout: PageLayout, defaults: string[][]): boolean {
-    return sameArrangement(layout, defaults) && layout.widths === null && Object.keys(layout.panels).length === 0;
+/** Whether the panels sit as the markup has them: in its columns and order, alone but for the stacks it makes. */
+export function sameArrangement(layout: PageLayout, defaults: Defaults): boolean {
+    return shape(layout.columns) === shape(defaultLayout(defaults).columns);
+}
+
+/** Whether a layout is the markup's in every respect, each stack showing its first panel. */
+export function isDefault(layout: PageLayout, defaults: Defaults): boolean {
+    return sameArrangement(layout, defaults)
+        && layout.columns.every((blocks) => blocks.every((block) => block.every((stack) => stack.front === stack.ids[0])))
+        && layout.widths === null
+        && Object.keys(layout.panels).length === 0;
 }
 
 /**
@@ -249,7 +285,7 @@ export function isDefault(layout: PageLayout, defaults: string[][]): boolean {
  * arrangement (ids sorted, nothing empty), and null for the markup's, which
  * is not stored at all.
  */
-export function canonicalLayout(layout: PageLayout, defaults: string[][]): PageLayout | null {
+export function canonicalLayout(layout: PageLayout, defaults: Defaults): PageLayout | null {
     const clean = normalizeLayout(layout, defaults);
     return isDefault(clean, defaults) ? null : clean;
 }
@@ -395,6 +431,23 @@ export function stackNeighbor(layout: PageLayout, id: string, step: -1 | 1, show
     return null;
 }
 
+/**
+ * Takes a stack apart: every panel of the panel's stack but the first in a
+ * block of its own, in the stack's order, right after the stack's block.
+ */
+export function unstackAll(layout: PageLayout, id: string): PageLayout {
+    const place = locate(layout, id);
+    if (!place) {
+        return layout;
+    }
+    const ids = layout.columns[place.column]![place.block]![place.stack]!.ids;
+    let next = layout;
+    for (const other of ids.slice(1).reverse()) {
+        next = unstack(next, other);
+    }
+    return next;
+}
+
 /** Takes the panel out of its stack into a block of its own right after the stack's block. */
 export function unstack(layout: PageLayout, id: string): PageLayout {
     const place = locate(layout, id);
@@ -529,11 +582,12 @@ export function setWidths(layout: PageLayout, widths: number[] | null): PageLayo
 }
 
 /**
- * Puts one panel back as the markup has it: out of any stack or block, in
- * its column before the first block holding a panel the markup puts after
- * it, with nothing the operator set on it.
+ * Puts one panel back as the markup has it: out of any stack or block,
+ * into the stack the markup puts it in or else in its column before the
+ * first block holding a panel the markup puts after it, with nothing the
+ * operator set on it.
  */
-export function resetPanel(layout: PageLayout, id: string, defaults: string[][]): PageLayout {
+export function resetPanel(layout: PageLayout, id: string, defaults: Defaults): PageLayout {
     const place = locate(layout, id);
     if (!place) {
         return layout;
@@ -579,7 +633,7 @@ export function readObject(text: string | null): Record<string, unknown> {
  * in their stored form: each made to fit its page, the markup's left out,
  * pages in the order `defaults` lists them.
  */
-export function canonicalLayouts(raw: Record<string, unknown>, defaults: Record<string, string[][]>): Layouts {
+export function canonicalLayouts(raw: Record<string, unknown>, defaults: Record<string, Defaults>): Layouts {
     const out: Layouts = {};
     for (const [page, columns] of Object.entries(defaults)) {
         const layout = canonicalLayout(normalizeLayout(raw[page] ?? null, columns), columns);
@@ -618,7 +672,7 @@ export function presetNameProblem(name: string): string | null {
 }
 
 /** The kept name whose layouts are the ones given, Default for the markup's everywhere, or null for none. */
-export function matchingPreset(current: Layouts, presets: Record<string, Record<string, unknown>>, defaults: Record<string, string[][]>): string | null {
+export function matchingPreset(current: Layouts, presets: Record<string, Record<string, unknown>>, defaults: Record<string, Defaults>): string | null {
     const shown = JSON.stringify(current);
     if (shown === "{}") {
         return DEFAULT_PRESET;
