@@ -36,6 +36,38 @@ describe("version panel", () => {
             + " (spinny-web --rollback). Restart from /opt/spinny/spinny/bin/spinny-web to finish.",
         );
         expect(versionLines({ ...RELEASE, error: "no release is published at github.com/tmpk13/spinny-cnc yet" }).problem).toBe("no release is published at github.com/tmpk13/spinny-cnc yet");
+        // Pre-releases followed: the check says so, and a pre-release is named one.
+        expect(versionLines({ ...RELEASE, prereleases: true }).lines[1]).toBe("Not checked yet: Check asks GitHub for the newest release, pre-releases too.");
+        const pre = { ...latest, version: "0.3.0rc1", tag: "v0.3.0rc1", prerelease: true };
+        expect(versionLines({ ...RELEASE, prereleases: true, latest: pre, status: "newer", checked: "now" }).lines[1])
+            .toBe("Latest on GitHub: 0.3.0rc1 (2026-11-12), a pre-release, newer: Update installs it beside this one.");
+    });
+
+    test("the pre-release box is kept on the backend, forgets the last check, and the next check takes the newest", async () => {
+        const store = new Store<AppState>(initialState(true));
+        const backend = new MockBackend({ timers: false });
+        const ctx = createContext(backend, store);
+        const root = document.createElement("section");
+        document.body.append(root);
+        mountVersion(root, ctx);
+        await settle();
+        const buttons = Array.from(root.querySelectorAll("button"));
+        const check = buttons.find((b) => b.textContent === "Check")!;
+        const install = buttons.find((b) => b.textContent === "Update")!;
+        const pre = root.querySelector('input[aria-label="Follow pre-releases"]') as HTMLInputElement;
+        expect(pre.checked).toBe(false);
+        check.click();
+        await settle();
+        expect(root.textContent).toContain("Latest on GitHub: 0.2.0");
+        pre.click();
+        await settle();
+        expect((await backend.updateState()).prereleases).toBe(true);
+        expect(root.textContent).toContain("Not checked yet: Check asks GitHub for the newest release, pre-releases too.");
+        expect(install.dataset["reason"]).toBe("check for a release first");
+        check.click();
+        await settle();
+        expect(root.textContent).toContain("Latest on GitHub: 0.3.0rc1 (2026-11-13), a pre-release, newer");
+        root.remove();
     });
 
     test("Check finds the newer release, Update installs it, and the panel says to restart", async () => {
@@ -79,6 +111,7 @@ describe("version panel", () => {
         await api.updateState();
         await api.updateCheck();
         await api.updateInstall();
-        expect(calls).toEqual([["GET", "/api/update"], ["POST", "/api/update/check"], ["POST", "/api/update/install"]]);
+        await api.updatePrereleases(true);
+        expect(calls).toEqual([["GET", "/api/update"], ["POST", "/api/update/check"], ["POST", "/api/update/install"], ["PUT", "/api/update/settings"]]);
     });
 });

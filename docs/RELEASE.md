@@ -70,6 +70,14 @@ bin/spinny-web --update         # download, check, unpack beside this one, switc
 bin/spinny-web --rollback       # back to the release before the last update
 ```
 
+GitHub's latest release is never a pre-release. To follow pre-releases
+too, tick *pre-releases* in the Version panel (kept in `config.json`) or
+add `--pre` to `--check-update` or `--update`: the check then lists the
+releases and takes the newest by version, a pre-release or not, among
+those carrying this platform's archive and `SHA256SUMS` (a draft is never
+taken). A pre-release stands before the release of its numbers, so
+`0.3.0rc2` is offered over `0.3.0rc1`, and `0.3.0` over both.
+
 An update downloads `spinny-<version>-<platform>.tar.gz` for this
 computer's platform (the `platform` line of `VERSION`), checks it against
 the release's `SHA256SUMS`, unpacks it next to the running release, and
@@ -166,9 +174,12 @@ the packages, at the versions in `uv.lock`.
 ### Publishing one
 
 An installed release finds an update only in a published GitHub
-release of tmpk13/spinny-cnc (not a draft or a pre-release: the API's
-"latest" skips those) whose tag is `v<version>`, carrying as its files
-both archives and the `SHA256SUMS` beside them, as `dist/` has them.
+release of tmpk13/spinny-cnc (not a draft; a pre-release only where
+pre-releases are followed, since the API's "latest" skips them) whose tag
+is `v<version>`, carrying as its files both archives and the `SHA256SUMS`
+beside them, as `dist/` has them. For a pre-release, give the version a
+pre-release part (`0.3.0rc1` in `pyproject.toml`, tagged `v0.3.0rc1`) and
+mark the release as one (`gh release create --prerelease`).
 Bump the version in `web/backend/pyproject.toml`, commit, tag it
 `v<version>` (so the archives are named without a commit), run
 `mise run release`, then make the release on GitHub from that tag and

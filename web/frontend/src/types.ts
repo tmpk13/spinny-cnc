@@ -776,6 +776,8 @@ export interface ReleaseInfo {
     published: string;
     archive: string | null;
     size: number;
+    /** GitHub marks it a pre-release; missing from a backend that predates the choice. */
+    prerelease?: boolean;
 }
 
 /** The installed release and its updates from GitHub (a checkout updates with git). */
@@ -797,6 +799,8 @@ export interface UpdateState {
     /** The release unpacked and linked, and the one it replaced, once an update is done. */
     installed: string | null;
     previous: string | null;
+    /** Whether a check takes pre-releases too, the newest release by version; missing from a backend that predates it. */
+    prereleases?: boolean;
 }
 
 export type RunState = "running" | "hold" | "done" | "stopped" | "error";

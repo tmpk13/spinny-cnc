@@ -19,7 +19,8 @@ from fastapi.testclient import TestClient
 
 from spinny_web import update
 from spinny_web.app import Backend, create_app
-from spinny_web.update import Updater, UpdateError, compare, expected_sum, release_root, rollback
+from spinny_web.app import main
+from spinny_web.update import Updater, UpdateError, compare, expected_sum, list_url, release_order, release_root, rollback
 
 PLATFORM = "x86_64-linux"
 
@@ -43,12 +44,16 @@ def archive_of(tree: Path) -> bytes:
 
 class FakeGitHub:
     """The latest release's listing and its files, served on this computer:
-    `files` maps a name to its bytes, `status` overrides the listing's."""
+    `files` maps a name to its bytes, `status` overrides the listing's.
+    `releases` is the list of every release, newest first, each a dict of
+    `tag`, `files`, and `prerelease` or `draft` when it is one; their files
+    are served under their tags."""
 
     def __init__(self, tag: str, files: dict[str, bytes]) -> None:
         self.tag = tag
         self.files = files
         self.status = 200
+        self.releases: list[dict] = []
         self.asked: list[str] = []
         fake = self
 
@@ -56,13 +61,18 @@ class FakeGitHub:
             def do_GET(self) -> None:
                 fake.asked.append(self.path)
                 assert self.headers["User-Agent"] == update.USER_AGENT
+                listed = {f"{entry['tag']}/{name}": data for entry in fake.releases for name, data in entry["files"].items()}
                 if self.path == "/repos/tmpk13/spinny-cnc/releases/latest":
                     if fake.status != 200:
                         self.send_error(fake.status)
                         return
                     body = json.dumps(fake.listing()).encode()
+                elif self.path == "/repos/tmpk13/spinny-cnc/releases?per_page=100":
+                    body = json.dumps([fake.entry(entry) for entry in fake.releases]).encode()
                 elif self.path.startswith("/download/") and self.path[10:] in fake.files:
                     body = fake.files[self.path[10:]]
+                elif self.path.startswith("/download/") and self.path[10:] in listed:
+                    body = listed[self.path[10:]]
                 else:
                     self.send_error(404)
                     return
@@ -88,6 +98,17 @@ class FakeGitHub:
             "html_url": f"https://github.com/tmpk13/spinny-cnc/releases/tag/{self.tag}",
             "published_at": "2026-11-12T10:00:00Z",
             "assets": [{"name": name, "size": len(data), "browser_download_url": f"{self.base}/download/{name}"} for name, data in self.files.items()],
+        }
+
+    def entry(self, release: dict) -> dict:
+        tag = release["tag"]
+        return {
+            "tag_name": tag,
+            "html_url": f"https://github.com/tmpk13/spinny-cnc/releases/tag/{tag}",
+            "published_at": "2026-11-13T10:00:00Z",
+            "draft": release.get("draft", False),
+            "prerelease": release.get("prerelease", False),
+            "assets": [{"name": name, "size": len(data), "browser_download_url": f"{self.base}/download/{tag}/{name}"} for name, data in release["files"].items()],
         }
 
     def close(self) -> None:
@@ -122,6 +143,17 @@ def test_versions_compare_by_their_numbers_then_their_build():
     assert compare("0.2.0", "0.1.9") == "older" and compare("0.2.0", "0.2.0") == "same"
     # An untagged build of the same version is not the release.
     assert compare("0.2.0-g4a67b63", "0.2.0") == "other" and compare("0.2.0-g4a67b63-dirty", "0.2.0") == "other"
+    # A pre-release comes before the release of its numbers, and after the ones before it.
+    assert compare("0.3.0rc1", "0.3.0") == "newer" and compare("0.3.0", "0.3.0rc1") == "older"
+    assert compare("0.3.0rc2", "0.3.0rc10") == "newer" and compare("0.3.0rc2-g12ab34c", "0.3.0rc2") == "other"
+    assert compare("0.3.0rc2-g12ab34c", "0.3.0rc1") == "older"
+
+
+def test_release_labels_sort_as_they_were_released():
+    labels = ["0.3.0", "0.3.0rc10", "0.2.9", "0.3.0.post1", "0.3.0rc2", "v0.10.0", "0.3.0-beta.2", "0.3.0-beta.10"]
+    assert sorted(labels, key=release_order) == ["0.2.9", "0.3.0-beta.2", "0.3.0-beta.10", "0.3.0rc2", "0.3.0rc10", "0.3.0", "0.3.0.post1", "v0.10.0"]
+    # A word that only starts like a pre-release's is none.
+    assert release_order("0.3.0-custom") > release_order("0.3.0")
 
 
 def test_a_sums_file_gives_the_line_for_the_file():
@@ -248,3 +280,81 @@ def test_the_routes_check_and_install_and_show_the_state(installed, tmp_path):
         # Until a restart runs it, the update is not made again.
         again = client.post("/api/update/install")
         assert again.status_code == 400 and again.json()["detail"].startswith(f"spinny-0.2.0-{PLATFORM} is installed beside this one: restart from")
+
+
+def pre_releases(github: FakeGitHub, built: dict[str, bytes]) -> None:
+    """The fake's list of releases, newest first: a draft, a pre-release
+    with no archive for this platform, one with no SHA256SUMS, the newest
+    complete one (a pre-release), and the stable 0.2.0."""
+
+    def files(label: str, sums: bool = True, here: bool = True) -> dict[str, bytes]:
+        names = {f"spinny-{label}-aarch64-linux.tar.gz": b"another platform's"}
+        if here:
+            names[f"spinny-{label}-{PLATFORM}.tar.gz"] = built.get(label, b"not unpacked")
+        if sums:
+            names["SHA256SUMS"] = "".join(f"{hashlib.sha256(data).hexdigest()}  {name}\n" for name, data in names.items()).encode()
+        return names
+
+    github.releases = [
+        {"tag": "v0.5.0", "files": files("0.5.0"), "draft": True},
+        {"tag": "v0.4.0rc1", "files": files("0.4.0rc1", here=False), "prerelease": True},
+        {"tag": "v0.3.0rc10", "files": files("0.3.0rc10", sums=False), "prerelease": True},
+        {"tag": "v0.3.0rc2", "files": files("0.3.0rc2"), "prerelease": True},
+        {"tag": "v0.2.0", "files": files("0.2.0")},
+    ]
+
+
+def test_followed_pre_releases_give_the_newest_complete_release_by_version(installed, tmp_path):
+    updater, github, _ = installed
+    built = archive_of(release_tree(tmp_path / "pre" / f"spinny-0.3.0rc2-{PLATFORM}", "0.3.0rc2"))
+    pre_releases(github, {"0.3.0rc2": built})
+    assert list_url(github.url) == f"{github.base}/repos/tmpk13/spinny-cnc/releases?per_page=100"
+    # Not followed: GitHub's latest, which is never a pre-release.
+    assert updater.check()["latest"]["version"] == "0.2.0"
+    state = updater.follow_prereleases(True)
+    assert state["prereleases"] is True and state["latest"] is None and state["checked"] is None
+    state = updater.check()
+    assert github.asked[-1] == "/repos/tmpk13/spinny-cnc/releases?per_page=100"
+    assert state["latest"]["version"] == "0.3.0rc2" and state["latest"]["prerelease"] is True and state["status"] == "newer"
+    target = updater.install()
+    assert target.name == f"spinny-0.3.0rc2-{PLATFORM}" and (target / "VERSION").read_text(encoding="utf-8").startswith("spinny: 0.3.0rc2")
+
+
+def test_followed_pre_releases_with_none_complete_say_so(installed):
+    updater, github, _ = installed
+    updater.follow_prereleases(True)
+    with pytest.raises(UpdateError, match="no release is published"):
+        updater.check()
+    github.releases = [{"tag": "v0.3.0rc1", "files": {"SHA256SUMS": b""}, "prerelease": True}]
+    with pytest.raises(UpdateError, match=f"has an archive for {PLATFORM} with SHA256SUMS"):
+        updater.check()
+
+
+def test_the_command_line_takes_pre_releases_with_pre(installed, tmp_path):
+    updater, github, _ = installed
+    pre_releases(github, {})
+    lines: list[str] = []
+    assert update.command("check", updater, lines.append, prereleases=True) == 0
+    assert lines[1].startswith("latest: 0.3.0rc2, a pre-release, ") and lines[2] == "a newer release: update with --update"
+    lines.clear()
+    assert update.command("check", updater, lines.append) == 0
+    assert lines[1].startswith("latest: 0.2.0, ")
+    with pytest.raises(SystemExit):
+        main(["--pre"])
+
+
+def test_the_choice_is_set_from_the_page_and_kept(installed, tmp_path):
+    updater, github, _ = installed
+    pre_releases(github, {})
+    var = tmp_path / "var"
+    backend = Backend(root=var, jobs_dir=var / "jobs", config_path=var / "config.json")
+    backend.updater = updater
+    with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+        assert client.get("/api/update").json()["prereleases"] is False
+        assert client.post("/api/update/check").json()["latest"]["version"] == "0.2.0"
+        state = client.put("/api/update/settings", json={"prereleases": True}).json()
+        assert state["prereleases"] is True and state["latest"] is None
+        assert client.post("/api/update/check").json()["latest"]["version"] == "0.3.0rc2"
+        assert client.put("/api/update/settings", json={}).status_code == 422
+    assert json.loads((var / "config.json").read_text(encoding="utf-8"))["update_prereleases"] is True
+    assert Backend(root=var, jobs_dir=var / "jobs", config_path=var / "config.json").updater.prereleases is True

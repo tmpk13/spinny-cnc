@@ -430,6 +430,11 @@ class SettingsBody(BaseModel):
     host: dict[str, Any] | None = None
 
 
+class UpdateSettingsBody(BaseModel):
+    # Whether a check takes pre-releases too.
+    prereleases: bool
+
+
 class RunBody(BaseModel):
     # How the run follows the board's height: off, auto (the focus axis
     # when one is fitted, else power), focus or power.
@@ -885,8 +890,9 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         # left alone, s; 0 reads it only when a request needs it.
         self.gcode_poll_seconds = GCODE_POLL_SECONDS
         # The release this backend runs from and its updates from GitHub
-        # (a checkout updates with git).
+        # (a checkout updates with git), pre-releases taken when asked.
         self.updater = update.Updater.here()
+        self.updater.follow_prereleases(bool(self.config.get("update_prereleases", False)))
         # The marks that line a job up with the board.
         self.alignment = Alignment()
         self.rates = Rates()
@@ -3665,6 +3671,15 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             return {"job": job_id, "components": [], "note": "only a .kicad_pcb upload keeps the board its parts are read from"}
         return {"job": job_id, "components": mark_filtered(job_components(job, path), filter_of(self.config)), "note": None}
 
+    def set_update_prereleases(self, follow: bool) -> dict:
+        """Takes pre-releases into the update check or leaves them out, kept
+        across restarts."""
+        state = self.updater.follow_prereleases(follow)
+        with self._config_lock:
+            self.config["update_prereleases"] = follow
+        self._save_config()
+        return state
+
     def parts_filter_state(self) -> dict:
         return filter_state(filter_of(self.config))
 
@@ -4389,6 +4404,10 @@ def create_app(
     def update_install():
         return updating(backend.updater.start)
 
+    @app.put("/api/update/settings")
+    def update_settings(body: UpdateSettingsBody):
+        return updating(lambda: backend.set_update_prereleases(body.prereleases))
+
     @app.get("/api/jobs")
     def list_jobs():
         return {"jobs": [job.summary() for job in backend.store.list()]}
@@ -5052,9 +5071,16 @@ def main(argv: list[str] | None = None) -> int:
         help="download the latest release for this platform, check it against its SHA256SUMS, unpack it beside this one and point the link `spinny` beside them at it, then end",
     )
     updating.add_argument("--rollback", action="store_true", help="point the link `spinny` back at the release before the last update, then end")
+    parser.add_argument(
+        "--pre",
+        action="store_true",
+        help="with --check-update or --update: take pre-releases too, the newest release by version that has this platform's archive",
+    )
     args = parser.parse_args(argv)
+    if args.pre and not (args.check_update or args.update):
+        parser.error("--pre goes with --check-update or --update")
     if args.check_update or args.update or args.rollback:
-        return update.command("check" if args.check_update else "update" if args.update else "rollback")
+        return update.command("check" if args.check_update else "update" if args.update else "rollback", prereleases=args.pre)
     setup_log(args.data, level=args.log_level)
     log.info("spinny-web %s starting on %s:%d, files in %s", __version__, args.host, args.port, args.data)
     # A release's first start: the machine and CAM files it ships fill

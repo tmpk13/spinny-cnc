@@ -175,6 +175,8 @@ export interface Api {
     updateCheck(): Promise<UpdateState>;
     /** Starts the update to the release last checked. */
     updateInstall(): Promise<UpdateState>;
+    /** Takes pre-releases into a check, or leaves them out; kept on the backend, and a check made the other way forgotten. */
+    updatePrereleases(follow: boolean): Promise<UpdateState>;
     jobs(): Promise<JobSummary[]>;
     job(id: string): Promise<Job>;
     patchJob(id: string, patch: JobPatch): Promise<void>;
@@ -668,6 +670,10 @@ export class HttpApi implements Api {
 
     updateCheck(): Promise<UpdateState> {
         return this.request<UpdateState>("POST", "/api/update/check");
+    }
+
+    updatePrereleases(follow: boolean): Promise<UpdateState> {
+        return this.request<UpdateState>("PUT", "/api/update/settings", { prereleases: follow });
     }
 
     updateInstall(): Promise<UpdateState> {

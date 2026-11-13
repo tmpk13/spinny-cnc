@@ -4257,8 +4257,9 @@ export class MockBackend implements Api, EventFeed {
     }
 
     // The mock plays an installed release, 0.1.0 for x86_64-linux, which
-    // GitHub has 0.2.0 newer than, as spinny_web.update answers: a check
-    // finds it, an update downloads, then is done at the next look.
+    // GitHub has 0.2.0 newer than, and the pre-release 0.3.0rc1 newer
+    // still, as spinny_web.update answers: a check finds the one followed,
+    // an update downloads, then is done at the next look.
     private updating: UpdateState = {
         kind: "release",
         version: "0.1.0",
@@ -4274,7 +4275,18 @@ export class MockBackend implements Api, EventFeed {
         error: null,
         installed: null,
         previous: null,
+        prereleases: false,
     };
+
+    async updatePrereleases(follow: boolean): Promise<UpdateState> {
+        if (this.updating.state === "downloading") {
+            throw new ApiError(400, "an update is under way");
+        }
+        if (follow !== this.updating.prereleases) {
+            this.updating = { ...this.updating, prereleases: follow, latest: null, status: null, checked: null, error: null };
+        }
+        return { ...this.updating };
+    }
 
     async updateState(): Promise<UpdateState> {
         if (this.updating.state === "downloading") {
@@ -4291,7 +4303,9 @@ export class MockBackend implements Api, EventFeed {
         if (this.updating.state === "downloading") {
             throw new ApiError(400, "an update is under way");
         }
-        const latest = { version: "0.2.0", tag: "v0.2.0", page: "https://github.com/tmpk13/spinny-cnc/releases/tag/v0.2.0", published: "2026-11-12T10:00:00Z", archive: "spinny-0.2.0-x86_64-linux.tar.gz", size: 48_000_000 };
+        const latest = this.updating.prereleases
+            ? { version: "0.3.0rc1", tag: "v0.3.0rc1", page: "https://github.com/tmpk13/spinny-cnc/releases/tag/v0.3.0rc1", published: "2026-11-13T10:00:00Z", archive: "spinny-0.3.0rc1-x86_64-linux.tar.gz", size: 49_000_000, prerelease: true }
+            : { version: "0.2.0", tag: "v0.2.0", page: "https://github.com/tmpk13/spinny-cnc/releases/tag/v0.2.0", published: "2026-11-12T10:00:00Z", archive: "spinny-0.2.0-x86_64-linux.tar.gz", size: 48_000_000, prerelease: false };
         this.updating = { ...this.updating, latest, status: "newer", checked: new Date().toISOString().slice(0, 19), error: null };
         return { ...this.updating };
     }

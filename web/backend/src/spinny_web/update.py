@@ -10,7 +10,10 @@ updated with git.
 A check asks GitHub's API for the latest release of tmpk13/spinny-cnc: its
 tag is the version (`v0.2.0`), and among its files are the archives,
 `spinny-<label>-<platform>.tar.gz`, and `SHA256SUMS`, which release.py
-writes beside them. An update downloads the archive for this platform
+writes beside them. GitHub's latest release is never a pre-release; when
+pre-releases are followed, the check lists the releases instead and takes
+the newest by version (a draft skipped) that carries this platform's
+archive and SHA256SUMS, a pre-release or not. An update downloads the archive for this platform
 next to the install, checks it against SHA256SUMS, unpacks it into its
 own directory beside the running one, and points the link `spinny` in that
 directory at it, atomically (a new link renamed over the old one); the
@@ -46,6 +49,8 @@ from . import __version__
 
 REPOSITORY = "tmpk13/spinny-cnc"
 LATEST_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
+# The releases a check that follows pre-releases looks through, newest first.
+LISTED = 100
 # What the requests call themselves: GitHub's API refuses a request with none.
 USER_AGENT = "spinny-update"
 # How long a request may wait for an answer, s.
@@ -61,6 +66,11 @@ SUMS = "SHA256SUMS"
 # A target triple as the VERSION file of an older release names it, and its platform.
 PLATFORMS = {"x86_64-unknown-linux-gnu": "x86_64-linux", "aarch64-unknown-linux-gnu": "aarch64-linux"}
 LABEL = re.compile(r"^v?(\d+(?:\.\d+)*)(.*)$")
+# What release.py adds to the version of a build from a commit with no tag
+# of its own, or with changes not committed.
+BUILD = re.compile(r"(-g[0-9a-f]+)?(-dirty)?$")
+# What marks a version as one before its release: 0.3.0rc1, 0.3.0-beta.2, 0.3.0.dev1.
+PRE = re.compile(r"^[-.]?(dev|a|alpha|b|beta|c|rc|pre|preview)(?![a-z])", re.IGNORECASE)
 
 
 class UpdateError(Exception):
@@ -97,23 +107,38 @@ def version_key(label: str) -> tuple[tuple[int, ...], str]:
     return (tuple(int(part) for part in found.group(1).split(".")), found.group(2))
 
 
+def release_order(label: str) -> tuple:
+    """A key that sorts release labels as they were released: by their
+    numbers, and for the same numbers a pre-release (0.3.0rc1) before the
+    release (0.3.0) before anything after it (0.3.0.post1), the rest of the
+    label compared with its numbers as numbers (rc2 before rc10)."""
+    numbers, rest = version_key(label)
+    rank = 1 if rest == "" else 0 if PRE.match(rest) else 2
+    words = tuple((0, int(token), "") if token.isdigit() else (1, 0, token.lower()) for token in re.findall(r"\d+|\D+", rest))
+    return (numbers, rank, words)
+
+
 def compare(installed: str, latest: str) -> str:
     """How the latest release stands against the one installed: `newer`,
     `same`, `older`, or `other` for the same version built from another
     commit (an untagged or changed build, which the tagged release
-    replaces)."""
+    replaces). A pre-release stands before the release of its numbers."""
     have, want = version_key(installed), version_key(latest)
     if have == want:
         return "same"
     if want[0] != have[0]:
         return "newer" if want[0] > have[0] else "older"
-    return "other"
+    base = BUILD.sub("", installed.strip())
+    if version_key(base) == want:
+        return "other"
+    return "newer" if release_order(latest) > release_order(base) else "older"
 
 
 @dataclass
 class Release:
     """The latest release as GitHub lists it: its version, its page, and
-    the archive for this platform with the checksums beside it."""
+    the archive for this platform with the checksums beside it, and
+    whether GitHub marks it a pre-release."""
 
     version: str
     tag: str
@@ -123,9 +148,13 @@ class Release:
     archive_url: str | None
     size: int
     sums_url: str | None
+    prerelease: bool = False
 
     def to_dict(self) -> dict:
-        return {"version": self.version, "tag": self.tag, "page": self.page, "published": self.published, "archive": self.archive, "size": self.size}
+        return {
+            "version": self.version, "tag": self.tag, "page": self.page, "published": self.published, "archive": self.archive, "size": self.size,
+            "prerelease": self.prerelease,
+        }
 
 
 def _get(url: str, timeout: float, limit: int = MAX_ANSWER) -> bytes:
@@ -147,14 +176,8 @@ def _get(url: str, timeout: float, limit: int = MAX_ANSWER) -> bytes:
     return data
 
 
-def latest_release(platform: str, url: str = LATEST_URL, timeout: float = TIMEOUT) -> Release:
-    """The latest release GitHub lists, with its archive for `platform`."""
-    try:
-        listed = json.loads(_get(url, timeout))
-    except ValueError as exc:
-        raise UpdateError(f"GitHub's answer is not JSON: {exc}") from exc
-    if not isinstance(listed, dict) or not isinstance(listed.get("tag_name"), str):
-        raise UpdateError("GitHub's answer names no release")
+def _release_of(listed: dict, platform: str) -> Release:
+    """A release as GitHub's API lists it, with its archive for `platform`."""
     tag = listed["tag_name"]
     assets = [asset for asset in listed.get("assets") or [] if isinstance(asset, dict) and isinstance(asset.get("name"), str)]
     pattern = re.compile(rf"^spinny-(?P<label>[0-9A-Za-z.+-]+)-{re.escape(platform)}\.tar\.gz$")
@@ -170,7 +193,49 @@ def latest_release(platform: str, url: str = LATEST_URL, timeout: float = TIMEOU
         archive_url=str(archive.get("browser_download_url")) if archive is not None else None,
         size=int(archive.get("size") or 0) if archive is not None else 0,
         sums_url=str(sums.get("browser_download_url")) if sums is not None else None,
+        prerelease=listed.get("prerelease") is True,
     )
+
+
+def _answer(url: str, timeout: float):
+    try:
+        return json.loads(_get(url, timeout))
+    except ValueError as exc:
+        raise UpdateError(f"GitHub's answer is not JSON: {exc}") from exc
+
+
+def latest_release(platform: str, url: str = LATEST_URL, timeout: float = TIMEOUT) -> Release:
+    """The latest release GitHub lists, with its archive for `platform`."""
+    listed = _answer(url, timeout)
+    if not isinstance(listed, dict) or not isinstance(listed.get("tag_name"), str):
+        raise UpdateError("GitHub's answer names no release")
+    return _release_of(listed, platform)
+
+
+def list_url(url: str) -> str:
+    """Where the releases are listed, from where the latest is asked: the
+    same address without its `/latest`."""
+    base = url.split("?", 1)[0].removesuffix("/")
+    return f"{base.removesuffix('/latest')}?per_page={LISTED}"
+
+
+def newest_release(platform: str, url: str = LATEST_URL, timeout: float = TIMEOUT) -> Release:
+    """The newest release by version, a pre-release or not, that carries
+    an archive for `platform` and SHA256SUMS; drafts are passed over. `url`
+    is where the latest release is asked, the list beside it."""
+    listed = _answer(list_url(url), timeout)
+    if not isinstance(listed, list):
+        raise UpdateError("GitHub's answer is no list of releases")
+    releases = [
+        _release_of(entry, platform) for entry in listed
+        if isinstance(entry, dict) and isinstance(entry.get("tag_name"), str) and entry.get("draft") is not True
+    ]
+    if not releases:
+        raise UpdateError(f"no release is published at github.com/{REPOSITORY} yet")
+    complete = [release for release in releases if release.archive is not None and release.sums_url is not None]
+    if not complete:
+        raise UpdateError(f"no release at github.com/{REPOSITORY} has an archive for {platform} with {SUMS} beside it")
+    return max(complete, key=lambda release: release_order(release.version))
 
 
 def expected_sum(sums: str, name: str) -> str | None:
@@ -203,6 +268,9 @@ class Updater:
     url: str = LATEST_URL
     on_change: Callable[[], None] = lambda: None
     state: dict = field(default_factory=dict)
+    # Whether a check takes pre-releases too: the newest release by
+    # version, not GitHub's latest.
+    prereleases: bool = False
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()
@@ -226,6 +294,7 @@ class Updater:
             "error": None,
             "installed": None,
             "previous": None,
+            "prereleases": self.prereleases,
         }
 
     @classmethod
@@ -257,13 +326,25 @@ class Updater:
 
     # --- the check ---------------------------------------------------------------
 
+    def follow_prereleases(self, follow: bool) -> dict:
+        """Takes pre-releases into a check, or leaves them out again; a check
+        made the other way is forgotten, since its answer may differ."""
+        if self.busy:
+            raise UpdateError("an update is under way")
+        if follow != self.prereleases:
+            self.prereleases = follow
+            self.release = None
+            self._set(prereleases=follow, latest=None, status=None, checked=None, error=None)
+        return self.snapshot()
+
     def check(self) -> dict:
-        """Asks for the latest release and how it stands against this one."""
+        """Asks for the latest release, or with pre-releases followed the
+        newest, and how it stands against this one."""
         self._release_only()
         if self.busy:
             raise UpdateError("an update is under way")
         try:
-            release = latest_release(self.platform, self.url)
+            release = newest_release(self.platform, self.url) if self.prereleases else latest_release(self.platform, self.url)
         except UpdateError as exc:
             self._set(error=str(exc), checked=time.strftime("%Y-%m-%dT%H:%M:%S"))
             raise
@@ -405,11 +486,13 @@ def rollback(root: Path) -> str:
     return before
 
 
-def command(action: str, updater: Updater | None = None, out: Callable[[str], None] = print) -> int:
+def command(action: str, updater: Updater | None = None, out: Callable[[str], None] = print, prereleases: bool = False) -> int:
     """`spinny-web --check-update`, `--update` and `--rollback`: what was
-    found or done, in words; 0 when it went as asked."""
+    found or done, in words; 0 when it went as asked. With `prereleases`
+    (`--pre`) the check takes the newest release, a pre-release or not."""
     updater = updater or Updater.here()
     try:
+        updater.follow_prereleases(prereleases)
         if updater.root is None:
             raise UpdateError("this is a checkout of the repository, not an installed release: it updates with git (git pull)")
         if action == "rollback":
@@ -419,7 +502,7 @@ def command(action: str, updater: Updater | None = None, out: Callable[[str], No
         state = updater.check()
         latest = state["latest"]
         out(f"installed: {updater.version} ({updater.platform}) in {updater.root}")
-        out(f"latest: {latest['version']}, {latest['page']}")
+        out(f"latest: {latest['version']}{', a pre-release' if latest['prerelease'] else ''}, {latest['page']}")
         status = state["status"]
         if action == "check":
             words = {"newer": "a newer release: update with --update", "same": "up to date", "older": "the installed one is newer", "other": "the same version from another build: --update installs the release"}

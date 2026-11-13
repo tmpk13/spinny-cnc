@@ -1,10 +1,11 @@
 // The Config page's Version panel: the release this backend runs from,
-// the latest one GitHub lists (Check), and the update to it (Update): the
-// archive for this platform downloaded, checked against the SHA256SUMS
-// published beside it, unpacked beside the running release, and the link
-// `spinny` beside them pointed at it. The running backend goes on with the
-// code it started with until it is started again from that link. A
-// checkout of the repository updates with git instead, and says so.
+// the latest one GitHub lists (Check), or with pre-releases followed the
+// newest by version, and the update to it (Update): the archive for this
+// platform downloaded, checked against the SHA256SUMS published beside it,
+// unpacked beside the running release, and the link `spinny` beside them
+// pointed at it. The running backend goes on with the code it started with
+// until it is started again from that link. A checkout of the repository
+// updates with git instead, and says so.
 
 import { button, el, lockFor, replace } from "../dom.ts";
 import type { UpdateState } from "../types.ts";
@@ -32,9 +33,12 @@ export function versionLines(state: UpdateState): { lines: string[]; problem: st
             other: "the same version, as released: Update installs it beside this build",
         };
         const published = latest.published ? ` (${latest.published.slice(0, 10)})` : "";
-        lines.push(`Latest on GitHub: ${latest.version}${published}, ${said[state.status ?? "same"] ?? state.status}.`);
+        const pre = latest.prerelease ? ", a pre-release" : "";
+        lines.push(`Latest on GitHub: ${latest.version}${published}${pre}, ${said[state.status ?? "same"] ?? state.status}.`);
     } else if (state.checked === null) {
-        lines.push("Not checked yet: Check asks GitHub for the latest release.");
+        lines.push(state.prereleases
+            ? "Not checked yet: Check asks GitHub for the newest release, pre-releases too."
+            : "Not checked yet: Check asks GitHub for the latest release.");
     }
     if (state.state === "downloading") {
         lines.push(`Downloading ${latest?.archive ?? "the archive"}: ${megabytes(state.done)} of ${megabytes(state.total)} MB.`);
@@ -55,11 +59,14 @@ export function mountVersion(root: HTMLElement, ctx: Ctx): void {
     check.title = "Ask GitHub for the latest release";
     const install = button("Update", () => run(ctx.api.updateInstall()), "btn");
     install.title = "Download the latest release for this platform, check it and install it beside this one";
+    const pre = el("input", { type: "checkbox", "aria-label": "Follow pre-releases" }) as HTMLInputElement;
+    const preLabel = el("label", { class: "muted", title: "Check takes releases GitHub marks as pre-releases too" }, pre, " pre-releases");
+    pre.addEventListener("change", () => void run(ctx.api.updatePrereleases(pre.checked)));
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Version")),
         el("div", { class: "panel-body" },
             said,
-            el("div", { class: "button-row" }, check, install),
+            el("div", { class: "button-row" }, check, install, preLabel),
         ),
     );
 
@@ -73,6 +80,9 @@ export function mountVersion(root: HTMLElement, ctx: Ctx): void {
         );
         const checkout = state.kind === "checkout";
         const busy = state.state === "downloading" || state.state === "unpacking";
+        pre.checked = state.prereleases === true;
+        pre.disabled = checkout || busy;
+        preLabel.classList.toggle("hidden", state.prereleases === undefined);
         lockFor(check,
             [checkout, "a checkout updates with git"],
             [busy, "an update is under way"],
