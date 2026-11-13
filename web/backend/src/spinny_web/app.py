@@ -46,13 +46,16 @@ from .cam import NotFound, ProfileStore, build_job, gcode_of
 from .boardlook import (
     CORNERS,
     BoardLook,
+    CLEAR_MM,
     BoardMover,
     Estimate,
+    Feature,
     PictureFrame,
     RestTracker,
     check_places,
     corner_of,
     found_text,
+    pick_features,
     rough_box,
     search,
     search_box,
@@ -60,7 +63,19 @@ from .boardlook import (
     search_stops,
     settings_now,
 )
-from .camera import Camera, CameraError, MachineAccess, pose_summary
+from .camera import (
+    CENTER_TOLERANCE,
+    CENTER_TRIES,
+    Camera,
+    CameraError,
+    MachineAccess,
+    feature_limits,
+    picture_to_machine,
+    pose_summary,
+    round_problem,
+    spot_of,
+    wait_settled,
+)
 from .camlog import CAMERAS, CameraLog
 from .searchlog import SearchLog, SearchRecord, affine_of
 from . import searchreport
@@ -542,6 +557,15 @@ class BoardSearchBody(Finite):
 
 class BoardPlaceBody(Finite):
     job: str
+
+
+class CameraRefineBody(Finite):
+    # The job whose board was found (or whose corners were taken), which
+    # features to center (auto: fiducials, else holes, else pads), and how
+    # many far apart.
+    job: str
+    use: Literal["auto", "fiducials", "holes", "pads"] = "auto"
+    count: int = Field(default=3, ge=2, le=6)
 
 
 class BoardCornerBody(Finite):
@@ -3309,6 +3333,122 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             self.camera.run_routine("search", len(stops) + 1, "looking for the board", link, run)
         return self.camera_state()
 
+    def _refine_features(self, job) -> tuple[list[Feature], list[Feature], list[Feature]]:
+        """A job's fiducials (from its kept board), drilled holes and pads
+        as features to center, in its frame."""
+        fiducials: list[Feature] = []
+        try:
+            parts = self.job_parts(job.id)["components"]
+        except Exception as exc:  # the parts are a help, never needed
+            log.warning("refine: the board's parts were not read: %r", exc)
+            parts = []
+        for part in parts:
+            if part.get("fiducial"):
+                diameter = part.get("diameter")
+                size = float(diameter) if isinstance(diameter, (int, float)) and diameter > 0 else 1.0
+                fiducials.append(Feature("fiducial", (float(part["x"]), float(part["y"])), size, str(part.get("ref") or "fiducial")))
+        holes = [Feature("hole", (float(h[0]), float(h[1])), float(h[2]), f"hole at {h[0]:.2f}, {h[1]:.2f}") for h in job.holes]
+        pads = [
+            Feature("pad", (float(q[0]), float(q[1])), 2.0 * math.sqrt(max(float(q[2]), 0.0) / math.pi), f"pad at {q[0]:.2f}, {q[1]:.2f}")
+            for q in job.pads
+        ]
+        return fiducials, holes, pads
+
+    def camera_refine(self, body: CameraRefineBody) -> dict:
+        """After the board is found (else from its corners), the head camera
+        centers features far apart on it (boardlook.pick_features), each
+        where the place found puts it, and makes them the job's camera
+        marks in Align: a fit over a long baseline, whose turn does not lean
+        on the camera's roll or on the picture's few millimeters. On the
+        camera's routine thread, owning the machine as the search does."""
+        job = self._job(body.job)
+        look = self.head_look
+        place = look.consensus.best if look.job == job.id and look.consensus.found else None
+        if place is None:
+            place = look.rough(job.id)
+        if place is None:
+            raise ValueError("the board's place is not known yet: Look for board and Search until it is found, or take its corners")
+        settings = self.camera.settings()
+        scale = settings.mm_per_px
+        if scale <= 0.0:
+            raise ValueError("the camera's scale is not measured: Find mark first")
+        if not self.camera.running:
+            raise ValueError("the camera is not running: start it first")
+        fiducials, holes, pads = self._refine_features(job)
+        chosen = pick_features(fiducials, holes, pads, body.use, body.count)
+        if len(chosen) < 2:
+            raise ValueError(f"the board has no two {'features' if body.use == 'auto' else body.use} clear of the rest to center on")
+        with self._owner_lock:
+            link = self._movable()
+            values = self._values(force=True)
+            status = link.status_now(1.0, routine=True)
+            access = MachineAccess(
+                link=link,
+                streamer=self.streamer(status),
+                lift=self.lift_height(),
+                has_focus_axis=bool(values.get("h_axis")),
+                head_point=lambda report: head_board(report.r, self.table_angle(report), report.z, self.cartesian),
+            )
+            mover = BoardMover(access, self.camera.aborting, CameraError, lambda: self.camera._halt(link))
+
+            def run(progress) -> None:
+                mover.begin()
+                mover.lift()
+                seen: list[tuple[tuple[float, float], tuple[float, float]]] = []
+                for index, feature in enumerate(chosen):
+                    progress.step = feature.name
+                    progress.done = index
+                    self.publish_camera()
+                    machine = self._center_feature(mover, place.apply(feature.job), feature, settings, progress)
+                    seen.append((feature.job, machine))
+                state = self.alignment.replace_camera(job, seen)
+                self.publish_align()
+                fit = state.get("fit") or {}
+                rms = fit.get("rms")
+                self.publish_message(
+                    "info",
+                    f"{len(seen)} {chosen[0].kind}s centered, {max(math.dist(a[0], b[0]) for a in seen for b in seen):.1f} mm apart at most:"
+                    f" the board turned {fit.get('rotation', 0.0):+.3f} degrees"
+                    + (f", {rms * 1000.0:.0f} um rms" if isinstance(rms, (int, float)) else "")
+                    + "; Apply in Align moves the job",
+                )
+
+            self.camera.run_routine("refine", len(chosen) + 1, "centering features", link, run)
+        return self.camera_state()
+
+    def _center_feature(self, mover: BoardMover, point: tuple[float, float], feature: Feature, settings, progress) -> tuple[float, float]:
+        """The head camera's picture centered on a feature expected at
+        `point` (the board frame): looked for within its clearance of there,
+        of about its size (round for a fiducial or a hole), the head moved
+        by what is left until the center sits on it; where it is."""
+        client = self.camera.client
+        scale, roll, offset = settings.mm_per_px, settings.roll, settings.offset
+        round_kind = feature.kind in ("fiducial", "hole")
+        limits = feature_limits(feature.size, scale) if round_kind else feature_limits(None, scale, math.pi * feature.size * feature.size / 4.0)
+        within = max(feature.size / 2.0 + CLEAR_MM / 2.0, 0.5)
+        shade = "dark" if feature.kind == "hole" else "bright"
+        head = (point[0] - offset[0], point[1] - offset[1])
+        mover.go(head)
+        for _ in range(CENTER_TRIES + 1):
+            if self.camera.aborting():
+                raise CameraError("stopped")
+            wait_settled(client)
+            reply = client.spot(radius=within / scale, polarity=shade, **limits)
+            if not reply.get("found"):
+                raise CameraError(f"{feature.name}: nothing within {within:.2f} mm of where the board's place puts it: Search again, or check the camera's scale")
+            problem = round_problem(reply) if round_kind else None
+            if problem is not None:
+                raise CameraError(f"{feature.name}: {problem}")
+            progress.spot = spot_of(reply, within / scale)
+            off = picture_to_machine(float(reply.get("dx", 0.0)), float(reply.get("dy", 0.0)), scale, roll)
+            progress.spot.mm = math.hypot(*off)
+            self.publish_camera()
+            if math.hypot(*off) <= CENTER_TOLERANCE:
+                break
+            head = (head[0] + off[0], head[1] + off[1])
+            mover.go(head)
+        return (round(head[0] + offset[0] + off[0], 4), round(head[1] + offset[1] + off[1], 4))
+
     def camera_mark(self, body: CameraMarkBody) -> dict:
         """Records the tool's point as the mark, and cuts it with the tool
         unless `here`."""
@@ -4327,6 +4467,10 @@ def create_app(
     @app.get("/api/cameras/controls")
     def camera_controls(camera: Literal["head", "up", "top"] = "head"):
         return guarded(lambda: backend.camera_controls(camera))
+
+    @app.post("/api/camera/refine")
+    def camera_refine(body: CameraRefineBody):
+        return guarded(lambda: backend.camera_refine(body))
 
     @app.post("/api/cameras/lens")
     def camera_lens(body: CameraLensBody):

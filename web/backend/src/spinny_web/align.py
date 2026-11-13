@@ -127,6 +127,17 @@ class Alignment:
             self._fit()
         return self.state()
 
+    def replace_camera(self, job, pairs: list[tuple[Point, Point]], kind: str = "feature") -> dict:
+        """The camera's marks for the job become `pairs` (a design point
+        and the machine point the camera centered it at); the tool's marks
+        stay."""
+        with self._lock:
+            self._for(job.id)
+            self.marks = [mark for mark in self.marks if mark.source != CAMERA]
+            self.marks.extend(Mark(design=design, machine=machine, source=CAMERA, kind=kind) for design, machine in pairs)
+            self._fit()
+        return self.state()
+
     def remove(self, index: int) -> dict:
         with self._lock:
             if not 0 <= index < len(self.marks):

@@ -1129,6 +1129,87 @@ def search(
         raise
 
 
+# --- features to center once the board is found -------------------------------------
+
+# A feature to center stands at least this far clear of every other one,
+# mm, beyond both their sizes: the spot nearest the picture's center is
+# then that feature, whatever small error the place found has.
+CLEAR_MM = 1.0
+# The most candidates of one kind the far-apart pick weighs, the ones
+# furthest out along eight directions; a board's pads can run to
+# thousands.
+PICK_POOL = 160
+
+
+@dataclass
+class Feature:
+    """A point of the board to center the camera on: a fiducial, a drilled
+    hole or a pad; where it lies in the job's frame, its size (diameter, or
+    a pad's as a disc of its area, mm) and its name."""
+
+    kind: str
+    job: Point
+    size: float
+    name: str
+
+
+def isolated(features: list[Feature], others: list[Feature], clear: float = CLEAR_MM) -> list[Feature]:
+    """The features with no other one (of `others`) nearer than their two
+    sizes' half sums and `clear`."""
+    kept = []
+    for feature in features:
+        near = min(
+            (math.dist(feature.job, other.job) - (feature.size + other.size) / 2.0 for other in others if other is not feature and other.job != feature.job),
+            default=math.inf,
+        )
+        if near >= clear:
+            kept.append(feature)
+    return kept
+
+
+def far_apart(features: list[Feature], count: int) -> list[Feature]:
+    """`count` of the features spread as far as they go: the two furthest
+    apart, then each next the one furthest from those taken."""
+    if len(features) <= count:
+        return list(features)
+    pool = features
+    if len(pool) > PICK_POOL:
+        # The ones furthest out along eight directions.
+        chosen: dict[int, Feature] = {}
+        for k in range(8):
+            angle = math.pi * k / 4.0
+            c, s_ = math.cos(angle), math.sin(angle)
+            ranked = sorted(range(len(features)), key=lambda i: -(features[i].job[0] * c + features[i].job[1] * s_))
+            for i in ranked[: PICK_POOL // 8]:
+                chosen[i] = features[i]
+        pool = list(chosen.values())
+    a, b = max(((x, y) for i, x in enumerate(pool) for y in pool[i + 1:]), key=lambda pair: math.dist(pair[0].job, pair[1].job))
+    taken = [a, b]
+    while len(taken) < count:
+        rest = [f for f in pool if all(f is not t for t in taken)]
+        if not rest:
+            break
+        taken.append(max(rest, key=lambda f: min(math.dist(f.job, t.job) for t in taken)))
+    return taken
+
+
+def pick_features(fiducials: list[Feature], holes: list[Feature], pads: list[Feature], use: str = "auto", count: int = 3) -> list[Feature]:
+    """The features to center after a board is found: `count` far apart
+    of one kind that stand clear of the rest, fiducials first (made to be
+    found), then holes (round, dark, sharp), then pads; `use` names one
+    kind instead of `auto`. Fewer than two when no kind has two."""
+    everything = fiducials + holes + pads
+    kinds = {"fiducials": fiducials, "holes": holes, "pads": pads}
+    order = ["fiducials", "holes", "pads"] if use == "auto" else [use]
+    for kind in order:
+        if kind not in kinds:
+            raise ValueError(f"use must be auto, fiducials, holes or pads, not {kind!r}")
+        clear = isolated(kinds[kind], everything)
+        if len(clear) >= 2:
+            return far_apart(clear, count)
+    return []
+
+
 def _rounded(point: Point) -> list[float]:
     return [round(point[0], 4), round(point[1], 4)]
 

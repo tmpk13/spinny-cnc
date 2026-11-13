@@ -71,6 +71,44 @@ LOOK_THRESHOLD = 0.5
 CORNER_MM = 2.0
 
 
+# A round feature (a fiducial, a drilled hole) is looked for at least this
+# round (its spot's minor over major axis) and of this many times less or
+# more than its area (so its diameter within about 40 percent); a spot that
+# fills less of its ellipse than MIN_FILL is a ring, a cross or two things
+# touching. A pad is looked for within PAD_AREA either way of its area.
+MIN_ROUNDNESS = 0.7
+AREA_SPREAD = 2.0
+MIN_FILL = 0.75
+PAD_AREA = 2.5
+
+
+def feature_limits(diameter: float | None, mm_per_px: float, area: float | None = None) -> dict:
+    """The spot request's limits for a feature: a round one of `diameter`
+    mm (roundness and area), or a pad of `area` mm^2 (area only); none
+    without a size or a scale."""
+    if mm_per_px <= 0.0:
+        return {}
+    if diameter is not None and diameter > 0.0:
+        px = math.pi * diameter * diameter / 4.0 / (mm_per_px * mm_per_px)
+        return {"min_area": px / AREA_SPREAD, "max_area": px * AREA_SPREAD, "min_roundness": MIN_ROUNDNESS}
+    if area is not None and area > 0.0:
+        px = area / (mm_per_px * mm_per_px)
+        return {"min_area": px / PAD_AREA, "max_area": px * PAD_AREA}
+    return {}
+
+
+def round_problem(reply: dict) -> str | None:
+    """Why a spot found is not a round feature, or None: it fills too little
+    of its ellipse (pcbv's `fill`), or is too long (minor over major axis)."""
+    fill = reply.get("fill")
+    if isinstance(fill, (int, float)) and not isinstance(fill, bool) and fill < MIN_FILL:
+        return f"the spot found fills {fill * 100.0:.0f}% of its outline, not a round mark"
+    major, minor = reply.get("major"), reply.get("minor")
+    if isinstance(major, (int, float)) and isinstance(minor, (int, float)) and major > 0.0 and minor / major < MIN_ROUNDNESS:
+        return f"the spot found is {minor / major * 100.0:.0f}% as wide as it is long, not a round mark"
+    return None
+
+
 def check_look(threshold: float, corner_mm: float) -> None:
     """A camera's look settings, as the page may set them."""
     if not (math.isfinite(threshold) and 0.0 <= threshold <= 1.0):

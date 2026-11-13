@@ -809,3 +809,71 @@ def test_a_cameras_lens_is_measured_from_a_dot_grid_kept_and_sent_and_forgotten(
         client.backend.camera.set_lens({"k1": 2.0, "k2": 0.0, "width": 1280, "height": 720})
     stand_in.running = False
     assert client.post("/api/cameras/lens", json={"camera": "head"}).status_code == 400
+
+
+class HolesStandIn(BoardStandIn):
+    """The head camera over a board whose drilled holes show as dark discs:
+    a spot is the hole nearest the picture's center, where the board truly
+    lies (`seen`), within the radius asked."""
+
+    def __init__(self, fake, seen, offset, mm_per_px, holes, diameter) -> None:
+        super().__init__(fake, seen, offset, 0.0, mm_per_px)
+        self.holes = [seen_point(seen, hole) for hole in holes]
+        self.diameter = diameter
+        self.looked: list[tuple[float, float]] = []
+
+    def spot(self, radius=None, polarity="dark", min_area=None, max_area=None, min_roundness=None, color=None):
+        center = (self.fake.joint[0] + self.offset[0], self.fake.z + self.offset[1])
+        self.looked.append(center)
+        best = None
+        for hole in self.holes:
+            dx, dy = (hole[0] - center[0]) / self.mm_per_px, -(hole[1] - center[1]) / self.mm_per_px
+            if polarity != "dark" or (radius is not None and math.hypot(dx, dy) > radius):
+                continue
+            if best is None or math.hypot(dx, dy) < math.hypot(best["dx"], best["dy"]):
+                size = self.diameter / self.mm_per_px
+                best = {"found": True, "dx": dx, "dy": dy, "area": math.pi * size * size / 4.0, "major": size, "minor": size, "fill": 0.98}
+        return best or {"found": False}
+
+
+def seen_point(seen: SeenBoard, job_point):
+    c, s = math.cos(math.radians(seen.rotation)), math.sin(math.radians(seen.rotation))
+    return (seen.shift[0] + c * job_point[0] - s * job_point[1], seen.shift[1] + s * job_point[0] + c * job_point[1])
+
+
+def test_the_head_camera_centers_holes_far_apart_and_makes_them_the_alignment_marks(client, fake):
+    holes = [(2.0, 2.0, 1.0), (38.0, 2.0, 1.0), (38.0, 28.0, 1.0), (20.0, 15.0, 1.0), (2.0, 27.5, 1.0)]
+    job = Job(
+        name="board", source="kicad", groups=[Group(label="g", paths=[[(0.0, 0.0), (1.0, 0.0)]])],
+        outline=[[(0.0, 0.0), (40.0, 0.0), (40.0, 30.0), (0.0, 30.0), (0.0, 0.0)]],
+        design=Design(shift=(-100.0, -70.0), board=True), holes=holes,
+    )
+    client.backend.store.add(job)
+    seen = SeenBoard((0.0, 0.0, 40.0, 30.0), 1.0, (40.0, 30.0), design_shift=(-100.0, -70.0))
+    stand_in = HolesStandIn(fake, seen, (12.5, -3.25), 0.02, [hole[:2] for hole in holes], 1.0)
+    client.backend.camera.client = stand_in
+    client.put("/api/camera/settings", json={"offset": [12.5, -3.25], "roll": 0.0, "mm_per_px": 0.02})
+    # Nothing found and no corners: no place to start from.
+    assert client.post("/api/camera/refine", json={"job": job.id}).status_code == 400
+
+    def take(corner: str, point) -> None:
+        # The corners taken a little off (0.3 mm), as by eye.
+        machine = seen_point(seen, point)
+        fake.joint[0] = machine[0] + 0.3 - 12.5
+        fake.z = machine[1] + 3.25
+        assert client.post("/api/camera/corner", json={"job": job.id, "corner": corner}).status_code == 200
+
+    take("bottom left", (0.0, 0.0))
+    take("top right", (40.0, 30.0))
+    response = client.post("/api/camera/refine", json={"job": job.id, "count": 3})
+    assert response.status_code == 200, response.text
+    state = wait_routine(client)
+    assert state["routine"]["state"] == "done" and state["routine"]["kind"] == "refine", state["routine"]
+    marks = client.get("/api/align").json()["marks"]
+    # Three holes far apart (not the middle one), each centered where it is.
+    assert len(marks) == 3 and all(mark["source"] == "camera" and mark["kind"] == "feature" for mark in marks)
+    assert [20.0, 15.0] not in [mark["design"] for mark in marks]
+    for mark in marks:
+        assert mark["machine"] == pytest.approx(list(seen_point(seen, mark["design"])), abs=0.02)
+    fit = client.get("/api/align").json()["fit"]
+    assert fit["rotation"] == pytest.approx(1.0, abs=0.01) and fit["rms"] < 0.02

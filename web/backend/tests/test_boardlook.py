@@ -313,3 +313,20 @@ def test_a_measured_scale_keeps_the_board_search_within_a_fifth_of_it():
     assert fields == {"path": "b.kicad_pcb", "side": "back", "finish": "bare", "scale": "0.016:0.024", "paste": True, "placed": ["R1", "C2"]}
     assert board_record_fields({"side": "front", "finish": "masked", "scale": None}) == {"side": "front", "finish": "masked"}
 
+
+
+def test_features_to_center_are_far_apart_clear_of_the_rest_fiducials_first():
+    from spinny_web.boardlook import Feature, pick_features
+
+    fiducials = [Feature("fiducial", (1.0, 1.0), 1.0, "FID1"), Feature("fiducial", (39.0, 29.0), 1.0, "FID2")]
+    holes = [Feature("hole", (x, y), 0.8, f"H{x}") for x, y in ((5.0, 5.0), (35.0, 5.0), (20.0, 25.0), (35.4, 5.0))]
+    pads = [Feature("pad", (10.0 + i, 10.0), 0.5, f"P{i}") for i in range(10)]
+    assert [f.name for f in pick_features(fiducials, holes, pads)] == ["FID1", "FID2"]
+    # Holes: the two touching at 35 and 35.4 stand too close, so of three
+    # asked for only the two clear ones come.
+    taken = pick_features([], holes, pads, count=3)
+    assert {f.name for f in taken} == {"H5.0", "H20.0"}
+    # Pads a millimeter apart are never clear of each other.
+    assert pick_features([], [], pads, use="pads") == []
+    with pytest.raises(ValueError):
+        pick_features([], [], [], use="vias")

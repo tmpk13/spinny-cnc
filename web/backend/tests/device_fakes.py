@@ -58,7 +58,7 @@ class DeviceUpCamera:
         axis = self.fake.angle if axis is None else axis
         return -axis if self.cw else axis
 
-    def spot(self, radius=None, polarity="dark", min_area=None, max_area=None):
+    def spot(self, radius=None, polarity="dark", min_area=None, max_area=None, min_roundness=None, color=None):
         return self.spot_at(self.fake.bed_position, self.fake.angle, polarity)
 
     def spot_at(self, position, axis: float, polarity: str):
@@ -111,7 +111,7 @@ class LaggingUpCamera(DeviceUpCamera):
         now = time.monotonic()
         return self.started + math.floor((now - self.started) / self.period) * self.period
 
-    def spot(self, radius=None, polarity="dark", min_area=None, max_area=None):
+    def spot(self, radius=None, polarity="dark", min_area=None, max_area=None, min_roundness=None, color=None):
         shown = self._newest() - self.lag
         position, angle = self.history[0][1], self.history[0][2]
         for at, place, turned in self.history:
@@ -139,7 +139,7 @@ class DeviceTopCamera:
         self.running = True
         self.device = "/dev/video4"
 
-    def spot(self, radius=None, polarity="dark", min_area=None, max_area=None):
+    def spot(self, radius=None, polarity="dark", min_area=None, max_area=None, min_roundness=None, color=None):
         center = (self.fake.bed_position[0] + self.offset[0], self.fake.bed_position[1] + self.offset[1])
         best = None
         for shade, x, y, length, width in self.things:
@@ -152,6 +152,8 @@ class DeviceTopCamera:
                 continue
             area = length * width / (self.scale * self.scale)
             if (min_area is not None and area < min_area) or (max_area is not None and area > max_area):
+                continue
+            if min_roundness is not None and min(length, width) / max(length, width) < min_roundness:
                 continue
             if best is None or math.hypot(u, v) < math.hypot(best["dx"], best["dy"]):
                 best = {"found": True, "dx": u, "dy": v, "x": 640 + u, "y": 360 + v, "area": area, "major": length / self.scale, "minor": width / self.scale, "contrast": 60.0}

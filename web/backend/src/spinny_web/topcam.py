@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from spinny_laser import machines as machine_files
 
-from .camera import CORNER_MM, LOOK_THRESHOLD, Spot, check_look, picture_to_machine, spot_of
+from .camera import CORNER_MM, LOOK_THRESHOLD, Spot, check_look, feature_limits, picture_to_machine, round_problem, spot_of
 from .cameras import check_controls
 from .openpnp import SHADES
 from .pnp import Mover, PickCamera, PnpError, RoutineProgress, calibrate
@@ -187,8 +187,8 @@ class TopCamera(PickCamera):
             area = size[0] * size[1] / (scale * scale)
             limits = {"min_area": area * 0.25, "max_area": area * 4.0}
         elif diameter is not None and diameter > 0.0:
-            area = math.pi * diameter * diameter / 4.0 / (scale * scale)
-            limits = {"min_area": area * 0.3, "max_area": area * 3.0}
+            # A fiducial: round, of about its size (camera.feature_limits).
+            limits = feature_limits(diameter, scale)
         seen: Point | None = None
         for _ in range(1 + (LOOK_TRIES if center else 0)):
             if mover.stopped():
@@ -197,6 +197,9 @@ class TopCamera(PickCamera):
             self._log_look(routine, step, reply, shade)
             if not reply.get("found"):
                 return None
+            problem = round_problem(reply) if "min_roundness" in limits else None
+            if problem is not None:
+                raise PnpError(f"{step or 'the mark'}: {problem}; the light, the shade looked for, or the board's place")
             off = picture_to_machine(float(reply.get("dx", 0.0)), float(reply.get("dy", 0.0)), scale, settings.roll, settings.mirror)
             if progress is not None:
                 progress.spot = spot_of(reply, within / scale)
