@@ -56,11 +56,11 @@ function drawing(topic: InfoTopic): SVGElement {
     switch (topic) {
         case "heights":
             root.append(
-                line(10, 22, 210, 22, "tip-dash"), text(12, 18, "Safe Z"),
+                line(10, 22, 210, 22, "tip-dash"), text(20, 18, "Safe Z"),
                 nozzle(50, 52), rect(30, 58, 40, 10), text(50, 80, "feeder", "middle"), line(28, 52, 72, 52, "tip-dash"), text(74, 55, "pick Z"),
                 nozzle(120, 86), rect(95, 92, 50, 8), text(120, 112, "board", "middle"), line(93, 86, 147, 86, "tip-dash"), text(149, 89, "Place Z"),
-                nozzle(185, 70), rect(175, 82, 20, 12), text(185, 106, "bottom camera", "middle"),
-                arrow(200, 22, 200, 66), text(203, 48, "Z"),
+                nozzle(200, 70), rect(190, 82, 20, 12), text(216, 108, "bottom camera", "end"),
+                arrow(12, 66, 12, 26), text(16, 48, "Z"),
             );
             break;
         case "feeder":
@@ -94,16 +94,16 @@ function drawing(topic: InfoTopic): SVGElement {
             break;
         case "references":
             root.append(
-                rect(15, 30, 70, 50, "tip-faint"), text(50, 24, "board", "middle"),
+                rect(15, 30, 70, 50, "tip-faint"), text(50, 15, "board", "middle"),
                 circle(30, 45, 4, "tip-mark"), circle(70, 65, 4, "tip-mark"), text(30, 94, "R1"), text(62, 94, "C2"),
                 svg("g", { transform: "rotate(-12 160 55)" }, rect(125, 30, 70, 50, "tip-faint"), circle(140, 45, 4, "tip-mark"), circle(180, 65, 4, "tip-mark")),
-                text(160, 24, "on the machine", "middle"),
+                text(160, 15, "on the machine", "middle"),
                 arrow(36, 45, 132, 50), arrow(76, 65, 170, 72), text(110, 112, "shift + turn", "middle"),
             );
             break;
         case "runout":
             root.append(
-                circle(110, 60, 30, "tip-dash"), circle(110, 60, 3, "tip-mark"), text(116, 64, "axis"),
+                circle(110, 60, 30, "tip-dash"), circle(110, 60, 3, "tip-mark"), text(110, 76, "axis", "middle"),
                 circle(140, 60, 5), circle(125, 34, 5), circle(95, 34, 5), circle(80, 60, 5), circle(95, 86, 5), circle(125, 86, 5),
                 arrow(113, 60, 134, 60), text(110, 112, "the tip at six turns", "middle"),
             );

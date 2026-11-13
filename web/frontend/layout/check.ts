@@ -10,6 +10,9 @@
 // - Text keeps clear of the inner edge of the box drawn around it (a
 //   border on that side, or a background of its own).
 // - Every button shown says what it does on hover: a title.
+// - The info drawings (the "i" beside some settings, drawn all at once on
+//   layout/tips.html) keep their words apart: no text over other text, over
+//   a solid shape, or out of the drawing.
 //
 // Run with `mise run test-layout`. Chromium is Playwright's build for the
 // pinned playwright-core, or CHROMIUM=/path/to/chrome. Under bun the
@@ -19,6 +22,7 @@
 // curl and touch INSTALLATION_COMPLETE in it.
 
 import index from "../index.html";
+import tips from "./tips.html";
 import { chromium, type Page } from "playwright-core";
 
 type Finding = { kind: string; where: string; detail: string };
@@ -119,6 +123,55 @@ function stackFindings(): Finding[] {
     return findings;
 }
 
+/**
+ * Words in the info drawings that run into other words, onto a solid shape
+ * (a part, a mark; not the faint boxes and dashed circles the words are
+ * meant to sit in), across a line or an arrow, or out of the drawing; runs
+ * in the browser on layout/tips.html.
+ */
+function drawingFindings(): Finding[] {
+    const findings: Finding[] = [];
+    const hit = (a: DOMRect, b: DOMRect): boolean => a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+    for (const pop of Array.from(document.querySelectorAll<HTMLElement>("[data-topic]"))) {
+        const where = `info drawing ${pop.dataset["topic"]}`;
+        const frame = pop.querySelector("svg")!.getBoundingClientRect();
+        const texts = Array.from(pop.querySelectorAll<SVGTextElement>("svg text"));
+        const solid = Array.from(pop.querySelectorAll<SVGGraphicsElement>("svg rect.tip-shape, svg rect.tip-mark, svg circle.tip-shape, svg circle.tip-mark"));
+        const strokes = Array.from(pop.querySelectorAll<SVGGeometryElement>("svg line, svg path.tip-shape")).filter((node) => !node.closest("marker"));
+        texts.forEach((text, index) => {
+            const box = text.getBoundingClientRect();
+            if (box.left < frame.left - 0.5 || box.right > frame.right + 0.5 || box.top < frame.top - 0.5 || box.bottom > frame.bottom + 0.5) {
+                findings.push({ kind: "draw", where, detail: `"${text.textContent}" runs out of the drawing` });
+            }
+            for (const other of texts.slice(index + 1)) {
+                if (hit(box, other.getBoundingClientRect())) {
+                    findings.push({ kind: "draw", where, detail: `"${text.textContent}" runs into "${other.textContent}"` });
+                }
+            }
+            for (const shape of solid) {
+                if (hit(box, shape.getBoundingClientRect())) {
+                    findings.push({ kind: "draw", where, detail: `"${text.textContent}" over a ${shape.tagName}` });
+                }
+            }
+            // Lines and outlines by points along them: a slanted arrow's box
+            // is far larger than the arrow.
+            for (const stroke of strokes) {
+                const matrix = stroke.getScreenCTM();
+                const length = stroke.getTotalLength();
+                for (let step = 0; matrix && step <= 40; step++) {
+                    const at = stroke.getPointAtLength((length * step) / 40);
+                    const point = new DOMPoint(at.x, at.y).matrixTransform(matrix);
+                    if (point.x > box.left + 0.5 && point.x < box.right - 0.5 && point.y > box.top + 0.5 && point.y < box.bottom - 0.5) {
+                        findings.push({ kind: "draw", where, detail: `"${text.textContent}" over a ${stroke.tagName}` });
+                        break;
+                    }
+                }
+            }
+        });
+    }
+    return findings;
+}
+
 /** Buttons shown with no title to say what they do; runs in the browser. */
 function tipFindings(): Finding[] {
     const findings: Finding[] = [];
@@ -203,7 +256,7 @@ function wallFindings(): Finding[] {
     return findings;
 }
 
-const PAGES = ["jobs", "plot", "cam", "pnp", "auto", "config", "connection"];
+const PAGES = ["overview", "jobs", "plot", "cam", "pnp", "auto", "config", "connection"];
 
 async function openDetails(page: Page): Promise<void> {
     await page.evaluate(() => document.querySelectorAll("details").forEach((d) => d.setAttribute("open", "")));
@@ -342,7 +395,7 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
     })),
 ];
 
-const server = Bun.serve({ port: 0, routes: { "/": index } });
+const server = Bun.serve({ port: 0, routes: { "/": index, "/tips": tips } });
 const browser = await chromium.launch(process.env["CHROMIUM"] ? { executablePath: process.env["CHROMIUM"] } : {});
 const found = new Map<string, string>();
 try {
@@ -368,6 +421,13 @@ try {
         }
         await context.close();
     }
+    const drawings = await browser.newPage();
+    await drawings.goto(`${server.url}tips`);
+    await drawings.waitForSelector("body[data-ready]");
+    for (const finding of await drawings.evaluate(drawingFindings)) {
+        found.set(`${finding.kind} ${finding.where}: ${finding.detail}`, `${finding.kind.padEnd(4)} ${finding.where}: ${finding.detail}`);
+    }
+    await drawings.close();
 } finally {
     await browser.close();
     server.stop(true);

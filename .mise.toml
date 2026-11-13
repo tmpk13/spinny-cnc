@@ -105,7 +105,7 @@ description = "Page: type check and tests"
 run = "cd web/frontend && bun run --silent check && bun test"
 
 [tasks.test-layout]
-description = "Page spacing and tooltips in Chromium over the mock: stacked blocks one --flow token apart, no text against a box's edge, a title on every button"
+description = "Page spacing and tooltips in Chromium over the mock: stacked blocks one --flow token apart, no text against a box's edge, a title on every button, the info drawings' words apart"
 run = "cd web/frontend && bun layout/check.ts"
 
 [tasks.test-render]

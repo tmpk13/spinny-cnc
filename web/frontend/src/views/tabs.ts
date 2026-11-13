@@ -1,4 +1,5 @@
-// The page's tabs: the Jobs page (the dashboard: position, jogging, the
+// The page's tabs: the Overview page (a card for each page, with what it
+// holds now), the Jobs page (the dashboard: position, jogging, the
 // jobs and their preview), the Plot page (simple cuts made by hand, a
 // board's holes drilled), the CAM page, the PNP page (parts, the board and
 // the up camera), the Auto page (a conversation with a language model that
@@ -19,9 +20,10 @@ import { popUp } from "../dismiss.ts";
 import { closeMenu, openMenu } from "../menu.ts";
 import type { AppState, Store } from "../state.ts";
 
-export type PageId = "jobs" | "plot" | "cam" | "pnp" | "auto" | "config" | "connection";
+export type PageId = "overview" | "jobs" | "plot" | "cam" | "pnp" | "auto" | "config" | "connection";
 
 export const PAGES: { id: PageId; label: string; tip: string }[] = [
+    { id: "overview", label: "Overview", tip: "every page at a glance" },
     { id: "jobs", label: "Jobs", tip: "jobs, the preview and runs" },
     { id: "plot", label: "Plot", tip: "operations drawn by hand" },
     { id: "cam", label: "CAM", tip: "CAM profiles and their G-code" },

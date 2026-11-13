@@ -17,6 +17,7 @@ import { mountVersion } from "./views/version.ts";
 import { mountConsole } from "./views/console.ts";
 import { into, type Ctx } from "./views/context.ts";
 import { mountOpenPnpImport } from "./views/openpnpimport.ts";
+import { mountOverview } from "./views/overview.ts";
 import { mountDro } from "./views/dro.ts";
 import { mountHeightMap } from "./views/heightmap.ts";
 import { mountJobJson } from "./views/jobjson.ts";
@@ -290,6 +291,7 @@ function main(): void {
     mountConnection(panel("connection"), ctx);
     mountFocusBanner(panel("status"), ctx);
     const tabTools = mountTabs(panel("tabs"), store);
+    mountOverview(panel("overview"), ctx);
     mountSteps(panel("steps"), ctx);
     mountDro(panel("dro"), ctx);
     mountJog(panel("jog"), ctx);

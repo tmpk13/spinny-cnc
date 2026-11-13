@@ -329,6 +329,11 @@ leaving the page with any asks first.
 
 ### Panels, tabs and the page settings
 
+The Overview tab has a card for every other page: a small drawing of
+what it is for, and a line on what it holds now (the jobs kept and a run
+under way, the parts of the board picked, the machine connected, edits
+not applied). A press on a card shows its page.
+
 Every panel's head has a fold button (the chevron before its name) and a
 menu (the dots after it, or a right click on the head): fold, hide, move
 up, down or to the next column, stack with the panel above or below,

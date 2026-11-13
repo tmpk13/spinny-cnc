@@ -275,7 +275,12 @@ input[type="checkbox"] {
 #app[data-page="pnp"] > #page-jobs,
 #app[data-page="auto"] > #page-jobs,
 #app[data-page="config"] > #page-jobs,
-#app[data-page="connection"] > #page-jobs {
+#app[data-page="connection"] > #page-jobs,
+#app[data-page="overview"] > #page-jobs {
+    display: none;
+}
+
+#app:not([data-page="overview"]) > #page-overview {
     display: none;
 }
 
@@ -791,6 +796,11 @@ table.settings-list td {
         grid-template-columns: minmax(0, 48rem);
     }
 
+    /* The Overview page: its cards over the page's width, up to a limit. */
+    .overview-grid {
+        grid-template-columns: minmax(0, 76rem);
+    }
+
     /* The Config page: the machine file on the left, the list of every key
        a file can set on the right. */
     .config-grid {
@@ -1120,6 +1130,95 @@ input.num.field.invalid {
 .field-grid .field,
 .field-grid input.num.field {
     width: 100%;
+}
+
+/* The Overview page: a card per page, a drawing over its name, what it
+   is for, and what it holds now; each card a button showing its page. The
+   drawing is lines in the text color with its accent in the card's color. */
+.overview-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 10rem), 1fr));
+    gap: var(--gap);
+}
+
+.overview-card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+    padding: 0.9rem 1rem 1rem;
+    font: inherit;
+    text-align: left;
+    color: var(--text);
+    background: var(--panel-2);
+    border: thin solid var(--border);
+    border-radius: var(--radius-lg);
+    cursor: pointer;
+    transition: border-color 0.12s, box-shadow 0.12s, transform 0.12s;
+}
+
+.overview-card:hover {
+    border-color: var(--card-accent, var(--accent));
+    box-shadow: var(--shadow-lg);
+    transform: translateY(-0.125rem);
+}
+
+.overview-card:focus-visible {
+    outline: 0.15rem solid var(--ring);
+    outline-offset: 0.1rem;
+}
+
+.overview-drawing {
+    display: block;
+    width: 100%;
+    max-width: 12rem;
+    height: auto;
+    margin-bottom: 0.35rem;
+    fill: none;
+    stroke: var(--muted);
+    stroke-width: 2.2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.overview-drawing .accent {
+    stroke: var(--card-accent, var(--accent));
+}
+
+.overview-drawing .fill {
+    fill: var(--card-accent, var(--accent));
+}
+
+.overview-drawing .faint {
+    stroke: var(--border);
+    stroke-width: 1.2;
+}
+
+.overview-name {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--strong);
+}
+
+.overview-tip,
+.overview-note {
+    font-size: 0.85rem;
+}
+
+.overview-note {
+    color: var(--strong);
+    font-weight: 600;
+}
+
+.overview-note::before {
+    content: "";
+    display: inline-block;
+    width: 0.5em;
+    height: 0.5em;
+    margin-right: 0.4em;
+    border-radius: 50%;
+    background: var(--card-accent, var(--accent));
+    vertical-align: 0.05em;
 }
 
 /* Status bar */
