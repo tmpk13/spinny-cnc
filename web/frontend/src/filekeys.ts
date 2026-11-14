@@ -136,7 +136,7 @@ export const FILE_KEYS: FileKey[] = [
         ["feed_xy", "mm/min across, and a jog's or goto's without a feed", "speed feed rate", 6000],
         ["feed_z", "mm/min up and down", "speed feed rate height", 1200],
         ["safe_z", "the lowest height a move across goes at: a nozzle below it rises to it first", "travel clearance height", null],
-        ["seesaw", "one Z motor drives two nozzles: moves across come to safe_z from either side, Z jogs stop at it", "lumenpnp two nozzles n1 n2 safe height", false],
+        ["seesaw", "true: one Z motor drives two nozzles, moves across come to safe_z from either side, Z jogs stop at it; false: a plain Z, a nozzle above safe_z stays up; left out: from either side, jogs go where sent", "lumenpnp two nozzles n1 n2 safe height", null],
         ["place_z", "the tip with a part on it at the board's top", "height board place", null],
         ["pick_dwell_ms", "ms the vacuum gets before the nozzle rises with a part", "vacuum suction wait pick", 200],
         ["place_dwell_ms", "ms after the vacuum lets go of a part", "vacuum wait place", 150],
@@ -202,6 +202,11 @@ export const FILE_KEYS: FileKey[] = [
         ["address", "the feeder's address on the bus", "feeder bus slot", null],
         ["at", "X Y Z with the nozzle over the slot's pick point", "feeder slot place", null],
         ["rotation", "the slot's angle, degrees", "feeder slot angle turn", null],
+    ], true),
+    ...keys("part_class", "gcode", "G-code", [
+        ["name", "the class's name, shown in the bottom camera's Crop list", "part class size crop", null],
+        ["match", "words a part's value and footprint must all hold; the first class that matches is the part's", "part class size value footprint", null],
+        ["crop", "mm from the bottom camera's center its parts are looked for, when their feeder gives none", "part class bottom camera reach crop size", null],
     ], true),
     ...keys("feeder", "gcode", "G-code", [
         ["id", "the feeder's name: letters, digits, - and _", "feeder name", null],

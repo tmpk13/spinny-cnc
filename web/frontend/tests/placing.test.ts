@@ -250,7 +250,8 @@ describe("heights on the mock's G-code machine", () => {
         const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
         await marlinRig(backend, "", false);
         const parked = await backend.machineFile("openpnp-marlin");
-        await backend.saveMachineFile("openpnp-marlin", parked.text.replace(/^safe_z = .*$/m, "safe_z = 0\npark = [5.0, 5.0]"));
+        // A plain Z, said so: a nozzle above the safe height stays up.
+        await backend.saveMachineFile("openpnp-marlin", parked.text.replace(/^safe_z = .*$/m, "safe_z = 0\npark = [5.0, 5.0]\nseesaw = false"));
         await backend.connect("/dev/ttyACM1", "openpnp-marlin");
         const { components } = await backend.components(job.id);
         const part = components.find((entry) => !entry.fiducial)!;
@@ -263,7 +264,7 @@ describe("heights on the mock's G-code machine", () => {
         expect(sent().slice(before).filter((line) => / Z/.test(line))).toEqual([]);
         // A seesaw: from above the safe height it comes down first.
         const file = await backend.machineFile("openpnp-marlin");
-        await backend.saveMachineFile("openpnp-marlin", file.text.replace(/^safe_z = .*$/m, "safe_z = 0\nseesaw = true"));
+        await backend.saveMachineFile("openpnp-marlin", file.text.replace(/^seesaw = false$/m, "seesaw = true"));
         await backend.connect("/dev/ttyACM1", "openpnp-marlin");
         await backend.goto({ kind: "joint", h: 12 });
         before = sent().length;

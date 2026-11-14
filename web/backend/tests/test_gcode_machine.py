@@ -20,7 +20,7 @@ from gcode_rig import URL, connect, gcode_file, rig_backend
 
 from spinny_web.app import _move_device_config, create_app, move_device_profiles
 from spinny_web.jobs import Design, Group, Job
-from spinny_web.openpnp import goto_lines, parse
+from spinny_web.openpnp import goto_lines, parse, seesaw_jog
 
 REPO = Path(__file__).resolve().parents[3]
 LUMEN = REPO / "machines" / "opulo-lumen-rev5.toml"
@@ -44,6 +44,7 @@ place_z = -1
 pick_dwell_ms = 0
 place_dwell_ms = 0
 park = [40.0, 400.0]
+seesaw = false
 [vacuum]
 read = ["M260 A112 B1 S1", "M105"]
 [camera]
@@ -311,13 +312,21 @@ def test_moves_across_never_bring_a_nozzle_above_the_safe_height_down(client):
     assert sent(client, start) == ["M114", "G0 Z5 F600", "G0 X100 Y50 F3000", "M400", "M114"]
 
 
-SEESAW = PROFILE.replace("park = [40.0, 400.0]\n", "park = [40.0, 400.0]\nseesaw = true\n")
+SEESAW = PROFILE.replace("seesaw = false\n", "seesaw = true\n")
+UNSAID = PROFILE.replace("seesaw = false\n", "")
 
 
 def test_a_seesaw_comes_to_the_safe_height_from_above_and_its_z_jogs_stop_there(tmp_path):
     machine = parse(gcode_file(SEESAW), "rig")
     assert machine.seesaw is True and machine.document()["seesaw"] is True
     assert parse(gcode_file(PROFILE), "rig").seesaw is False
+    # A file that does not say is taken as it always was: from above the
+    # safe height a move across comes down to it (safe for a seesaw nobody
+    # marked), and a Z jog goes where it is sent.
+    unsaid = parse(gcode_file(UNSAID), "rig")
+    assert unsaid.seesaw is None and unsaid.document()["seesaw"] is None
+    assert goto_lines(unsaid, {"x": 0.0, "y": 0.0, "z": 12.0}, {"x": 1.0}) == ["G0 Z5 F600", "G0 X1 F3000"]
+    assert seesaw_jog(unsaid, 3.0, 9.0) == 9.0 and seesaw_jog(machine, 3.0, 9.0) == 5.0
     # Above the safe height the other nozzle hangs down: it comes up first.
     assert goto_lines(machine, {"x": 0.0, "y": 0.0, "z": 12.0}, {"x": 1.0}) == ["G0 Z5 F600", "G0 X1 F3000"]
     fake = FakeMarlin(position=(100.0, 50.0, 3.0))

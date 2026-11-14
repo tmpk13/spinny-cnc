@@ -257,13 +257,15 @@ class GcodeMachine:
     # A positive turn of the rotation axis turns the nozzle clockwise seen
     # from above, so every angle goes out with its sign changed.
     rotation_cw: bool = False
-    # Z is a seesaw: one motor drives two nozzles, the first down below
-    # safe_z and the second above it, both up only at safe_z (the
-    # LumenPnP). A move across then comes to safe_z from either side, and
-    # a Z jog stops at it. Otherwise Z grows upward and safe_z is the
-    # lowest height a move across goes at: a nozzle at or above it stays
-    # where it is.
-    seesaw: bool = False
+    # Z is a seesaw (True): one motor drives two nozzles, the first down
+    # below safe_z and the second above it, both up only at safe_z (the
+    # LumenPnP); a move across comes to safe_z from either side and a Z jog
+    # stops at it. A plain Z (False) grows upward and safe_z is the lowest
+    # height a move across goes at: a nozzle at or above it stays where it
+    # is. A file that does not say (None) is taken as it always was: moves
+    # across come to safe_z from either side, which is safe for a seesaw
+    # nobody marked, and jogs go where they are sent.
+    seesaw: bool | None = None
     # Where a part that failed a check is let go, X Y Z; None puts it back
     # in the pocket it came from.
     discard: tuple[float, float, float] | None = None
@@ -653,7 +655,8 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
     discard = read.point(motion, "discard", "motion", 3, None) if "discard" in motion else None
     pick_tries = read.integer(motion, "pick_tries", "motion", 3, 1, 20)
     park = read.point(motion, "park", "motion", 2, None) if "park" in motion else None
-    seesaw = read.flag(motion, "seesaw", "motion", False)
+    # Left out, the file does not say which: GcodeMachine.seesaw.
+    seesaw = read.flag(motion, "seesaw", "motion", False) if "seesaw" in motion else None
     read.done(motion, "motion", {"feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms", "discard", "pick_tries", "park", "seesaw"})
 
     vacuum = None
@@ -1058,7 +1061,9 @@ def needs_lift(machine: GcodeMachine, z: float | None) -> bool:
     a Z that grows upward a nozzle at or above the safe height stays."""
     if z is None:
         return True
-    if machine.seesaw:
+    if machine.seesaw is not False:
+        # A seesaw, or a Z the file does not say: a nozzle above the safe
+        # height may be the other one hanging down.
         return abs(z - machine.safe_z) > 1e-6
     return z < machine.safe_z - 1e-6
 
@@ -1070,7 +1075,7 @@ def seesaw_jog(machine: GcodeMachine, z: float, target: float) -> float:
     not go up, which lowers the other nozzle (a goto to a height above it
     still does). Elsewhere, or on a Z that grows upward, the target."""
     safe = machine.safe_z
-    if not machine.seesaw:
+    if machine.seesaw is not True:
         return target
     if abs(z - safe) <= 1e-6:
         return safe if target > safe else target

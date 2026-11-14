@@ -199,6 +199,11 @@ address = 1
 at = [100.0, 30.0, 12.0]
 rotation = 0
 
+[[part_class]]
+name = "0402"
+match = "0402"
+crop = 1.0
+
 [[feeder]]
 id = "tray"
 match = "10k"

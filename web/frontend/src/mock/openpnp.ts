@@ -155,8 +155,8 @@ export interface MockDevice {
     camera_z: number | null;
     /** A positive rotation turns the nozzle clockwise: every angle goes out negated. */
     rotation_cw: boolean;
-    /** One Z motor drives two nozzles, both up only at the safe height: moves across come to it from either side, Z jogs stop at it. */
-    seesaw: boolean;
+    /** One Z motor drives two nozzles, both up only at the safe height (true): moves across come to it from either side, Z jogs stop at it; a plain Z (false); not said (null): moves across from either side, jogs go where sent. */
+    seesaw: boolean | null;
     discard: [number, number, number] | null;
     pick_tries: number;
     vacuum: MockVacuum | null;
@@ -415,7 +415,7 @@ export function parseGcodeTables(top: TomlTable, id: string, name: string, descr
     device.discard = "discard" in motion ? (read.point(motion, "discard", "motion", 3, null) as [number, number, number]) : null;
     device.pick_tries = read.integer(motion, "pick_tries", "motion", 3, 1, 20);
     device.park = "park" in motion ? (read.point(motion, "park", "motion", 2, null) as [number, number]) : null;
-    device.seesaw = read.flag(motion, "seesaw", "motion", false);
+    device.seesaw = "seesaw" in motion ? read.flag(motion, "seesaw", "motion", false) : null;
     read.done(motion, "motion", ["feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms", "discard", "pick_tries", "park", "seesaw"]);
     device.vacuum = null;
     const sensor = read.table(top, "vacuum");
@@ -901,7 +901,8 @@ export function needsLift(device: MockDevice, z: number | undefined | null): boo
     if (z === undefined || z === null) {
         return true;
     }
-    return device.seesaw ? Math.abs(z - device.safe_z) > 1e-6 : z < device.safe_z - 1e-6;
+    // A seesaw, or a Z the file does not say (null): from either side.
+    return device.seesaw !== false ? Math.abs(z - device.safe_z) > 1e-6 : z < device.safe_z - 1e-6;
 }
 
 /**
@@ -911,7 +912,7 @@ export function needsLift(device: MockDevice, z: number | undefined | null): boo
  */
 export function seesawJog(device: MockDevice, z: number, target: number): number {
     const safe = device.safe_z;
-    if (!device.seesaw) {
+    if (device.seesaw !== true) {
         return target;
     }
     if (Math.abs(z - safe) <= 1e-6) {

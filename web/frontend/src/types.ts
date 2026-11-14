@@ -1448,8 +1448,8 @@ export interface GcodeDocument {
     axes: string[];
     /** A positive rotation turns the nozzle clockwise seen from above. */
     rotation_cw: boolean;
-    /** One Z motor drives two nozzles, both up only at the safe height: moves across come to it from either side, Z jogs stop at it. Otherwise a nozzle above it stays there. */
-    seesaw?: boolean;
+    /** One Z motor drives two nozzles, both up only at the safe height (true): moves across come to it from either side, Z jogs stop at it; a plain Z (false): a nozzle above it stays there; not said (null): moves across come to it from either side, jogs go where sent. */
+    seesaw?: boolean | null;
     /** mm/min across and up or down. */
     feed_xy: number;
     feed_z: number;
