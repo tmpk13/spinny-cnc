@@ -798,7 +798,9 @@ def test_the_top_camera_searches_a_box_for_the_board_and_keeps_its_place(client,
     assert client.put("/api/pnp/top", json={"side": "top"}).status_code == 400
     # Unloaded, the look is forgotten; its settings stay.
     unloaded = client.post("/api/pnp/top/board", json={"job": None}).json()["top"]["board_look"]
-    assert unloaded == {"job": None, "threshold": boardlook.THRESHOLD, "corner_mm": boardlook.CORNER_MM, "method": "vote", "board_stretch": False, "corners": None, "scan": None}
+    # The searches' map (their stops' pictures) is kept while the backend runs.
+    assert unloaded.pop("scan")["motion"] == "search"
+    assert unloaded == {"job": None, "threshold": boardlook.THRESHOLD, "corner_mm": boardlook.CORNER_MM, "method": "vote", "board_stretch": False, "corners": None}
 
 
 def test_the_top_camera_searches_with_the_posterior_when_its_look_method_says_so(client, quick_search):
