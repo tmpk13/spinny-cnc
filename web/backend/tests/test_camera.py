@@ -1153,3 +1153,62 @@ def test_a_blank_boards_corner_is_taken_by_its_edges_and_colors_are_picked_per_i
     assert client.post("/api/cameras/color", json={"camera": "head", "item": "edges", "clear": True}).json()["state"]["colors"] == {}
     assert client.post("/api/cameras/color", json={"camera": "head", "item": "spots"}).status_code == 400
     assert client.post("/api/cameras/color", json={"camera": "head", "item": "nozzle", "x": 1, "y": 1}).status_code == 422
+
+
+def test_a_real_pcbv_lists_its_search_candidates_and_the_posterior_takes_them(tmp_path):
+    # pcbv (the sibling build, or the first on PATH) on a drawn board: every
+    # pose numbers the searches, lists the newest search's candidates (the
+    # lock held among them) with when its frame was taken, and the
+    # probability over the board's pose makes its most likely place there.
+    from spinny_web.boardlook import PictureFrame, pose_estimate
+    from spinny_web.posterior import Board, Posterior
+
+    try:
+        program = find_pcbv("pcbv")
+    except VisionError:
+        pytest.skip("pcbv is not built")
+    import subprocess
+    from pathlib import Path
+
+    board = Path(__file__).resolve().parents[3] / "toolpath" / "tests" / "data" / "board.kicad_pcb"
+    picture = tmp_path / "shot.png"
+    made = subprocess.run(
+        [program, "synth", str(board), "-o", str(picture), "--finish", "bare", "--angle", "12", "--px-per-mm", "20"],
+        capture_output=True, text=True, timeout=60,
+    )
+    if made.returncode != 0:
+        pytest.skip(f"this pcbv draws no boards: {made.stderr.strip()[-200:]}")
+    client = VisionClient()
+    try:
+        client.start(str(picture), "1280x960", 10, program)
+        client.board(str(board), side="front", finish="bare", scale=(0.04, 0.06))
+        deadline = time.monotonic() + 10.0
+        raw = client.pose()
+        while raw.get("state") != "locked" and time.monotonic() < deadline:
+            time.sleep(0.05)
+            raw = client.pose()
+        if "candidates" not in raw:
+            pytest.skip("this pcbv lists no candidates")
+        assert raw["state"] == "locked" and raw["candidates_search"] <= raw["search"], raw
+        assert isinstance(raw["candidates_age_ms"], (int, float)) and raw["candidates_age_ms"] >= raw["age_ms"] - 1
+        held = [candidate for candidate in raw["candidates"] if candidate.get("held")]
+        assert len(held) == 1 and held[0]["passed"] is True and len(held[0]["corners"]) == 4
+        to_job = lambda point: (point[0], -point[1])  # noqa: E731
+        frame = PictureFrame((100.0, 50.0), 0.0, False)
+        middle = to_job(tuple(raw["center"]))
+        estimate, problem = pose_estimate(raw, frame, to_job, middle)
+        assert estimate is not None and problem is None
+        posterior = Posterior(Board.of(middle, (middle[0] - 20.0, middle[1] - 15.0, middle[0] + 20.0, middle[1] + 15.0)), (80.0, 30.0, 120.0, 70.0), sessions=1)
+        posterior.take(raw, frame, 0.0, to_job, estimate, problem, searched_where=frame)
+        # The board's middle was taken as the point under the picture's
+        # center, so the most likely place puts it at the picture's center,
+        # turned as drawn. (The vote's fit through the picture's corners is
+        # pulled a few tenths off by a perspective fit's corners.)
+        lead = posterior.lead
+        assert lead is not None and math.dist(lead.estimate.center, frame.center) < 0.05
+        assert abs(lead.estimate.rotation - 12.0) < 0.2
+        # The drawn board's pads repeat at quarter turns: those candidates
+        # are places of their own, weaker than the lock.
+        assert len(posterior.hypotheses) == len(raw["candidates"]) and lead.probability == max(h.probability for h in posterior.hypotheses)
+    finally:
+        client.close()
