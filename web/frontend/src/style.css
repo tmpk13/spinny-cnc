@@ -682,6 +682,25 @@ table.settings-list td {
     font-size: 0.85rem;
 }
 
+/* A row's Copy and Insert, kept together at the row's end. */
+.settings-row-actions {
+    display: flex;
+    gap: 0.25rem;
+    white-space: nowrap;
+}
+
+/* The field a text is copied from where the page may not use the
+   clipboard itself: drawn, so it can be selected, but never seen. */
+.copy-buffer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 1em;
+    height: 1em;
+    opacity: 0;
+    pointer-events: none;
+}
+
 .config-board {
     display: block;
     font-size: 0.85rem;

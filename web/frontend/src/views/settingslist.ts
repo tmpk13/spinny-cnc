@@ -8,7 +8,7 @@
 // adds the key with the file's value when the file leaves it out, so the
 // file stays the one place a machine is written.
 
-import { el, replace } from "../dom.ts";
+import { button, copyText, el, replace, setLocked } from "../dom.ts";
 import { FILE_KEYS, fileValue, takes, textController, type FileKey, type FileValue } from "../filekeys.ts";
 import { MACHINE_KEYS, fuzzyScore, keyLine, sameValue, sectionFor, tomlValue, valueOf, type KeyValue, type MachineKey } from "../machinekeys.ts";
 import { profileOf } from "../profile.ts";
@@ -29,6 +29,8 @@ export interface SettingsListSource {
      * first table that gives it.
      */
     reveal(section: string | null, key: string, value: FileValue, array?: boolean): void;
+    /** Writes `value` into the editor's text at the key, added where the file leaves it out, and takes the editor there. */
+    insert(section: string | null, key: string, value: FileValue): void;
 }
 
 /** The host's own values: what each is, since the firmware's schema does not hold them. */
@@ -328,6 +330,67 @@ export function keyAt(text: string, line: number, column: number): { section: st
     return { section: null, name: match[2]! };
 }
 
+/** A value a row's Copy gives: the file's for a key of an array of tables, its first table's. */
+function copyValue(row: SettingRow): FileValue {
+    const value = rowAdds(row);
+    return row.fileKey?.array && Array.isArray(value) ? value[0] ?? null : value;
+}
+
+/** A row as a TOML text: its table's header, then `key = value`; null with no value to give. */
+export function rowToml(row: SettingRow): string | null {
+    const value = copyValue(row);
+    if (value === null) {
+        return null;
+    }
+    const line = `${row.name} = ${tomlValue(value)}`;
+    if (row.section === null) {
+        return `${line}\n`;
+    }
+    return row.fileKey?.array ? `[[${row.section}]]\n${line}\n` : `[${row.section}]\n${line}\n`;
+}
+
+/**
+ * Rows as one TOML text: the top's keys first, then each table's under
+ * its header once, in the order the rows have them. A key of an array of
+ * tables is left out, since it would need its table's other keys, and so
+ * is a row with no value.
+ */
+export function rowsToml(rows: SettingRow[]): string {
+    const tables = new Map<string | null, string[]>([[null, []]]);
+    for (const row of rows) {
+        const value = copyValue(row);
+        if (value === null || row.fileKey?.array) {
+            continue;
+        }
+        const lines = tables.get(row.section) ?? [];
+        lines.push(`${row.name} = ${tomlValue(value)}`);
+        tables.set(row.section, lines);
+    }
+    const parts: string[] = [];
+    for (const [section, lines] of tables) {
+        if (lines.length > 0) {
+            parts.push([...(section === null ? [] : [`[${section}]`]), ...lines].join("\n"));
+        }
+    }
+    return parts.length > 0 ? `${parts.join("\n\n")}\n` : "";
+}
+
+/**
+ * What a row's Insert writes into the file: the board's value (or the
+ * camera's) where there is one and the file says otherwise, else, for a
+ * key the file leaves out, the value a click adds; null with nothing to
+ * write. `given` says whether the file's text holds the key.
+ */
+export function insertValue(row: SettingRow, given: boolean): FileValue {
+    if (row.fileKey?.array) {
+        return null;
+    }
+    if (row.board !== null && (!given || !sameFileValue(row.file, row.board))) {
+        return row.board;
+    }
+    return given ? null : rowAdds(row);
+}
+
 /** The text a row is searched by: its key, the setting it drives, its help and the other words it goes by. */
 export function searchText(row: SettingRow): string {
     const words = row.fileKey
@@ -359,9 +422,13 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
     const onlyDiffer = el("input", { type: "checkbox", "aria-label": "Only where the file and the board differ" }) as HTMLInputElement;
     const count = el("span", { class: "muted settings-count" });
     const table = el("table", { class: "settings settings-list" });
+    // The rows the list shows now, for Copy all.
+    let showing: SettingRow[] = [];
+    const copyAll = button("Copy all", () => copyRows(), "btn btn-quiet btn-small", "copy the rows shown as TOML, under their tables");
     const actions = el("div", { class: "button-row settings-actions" },
         search,
         el("label", { class: "muted" }, onlyDiffer, " only differences"),
+        copyAll,
     );
     // The search stays in view while the long table scrolls under it: on
     // the narrow layout the page scrolls under the status bar, stuck to its
@@ -375,7 +442,7 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
         el("div", { class: "panel-head" }, el("h2", {}, "Settings"), count),
         actions,
         el("p", { class: "muted hint" },
-            "click a row to go to its key in the file, added if missing. Scales are full steps, or firmware steps where the file uses steps_per_mm. A camera's keys show the camera's values under Board."),
+            "click a row to go to its key in the file, added if missing; Insert writes the board's value there. Scales are full steps, or firmware steps where the file uses steps_per_mm. A camera's keys show the camera's values under Board."),
         el("div", { class: "settings-scroll" }, table),
     );
 
@@ -399,6 +466,9 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
         }
         const differ = rows.filter((row) => row.differs).length;
         count.textContent = `${picked.length} of ${rows.length}${state.settings ? `, ${differ} differ` : ""}`;
+        showing = picked.map(({ row }) => row);
+        setLocked(copyAll, rowsToml(showing) === "", "no row shown has a value");
+        const text = source.text();
         const body = el("tbody", {}, ...picked.map(({ row }) => {
             // The help under the key (the panel is half the page wide), and
             // again on hover with what a click does.
@@ -410,6 +480,7 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
                 el("td", { class: "mono muted" }, rowSets(row)),
                 el("td", { class: "mono" }, shown(row.file)),
                 el("td", { class: "mono" }, shown(row.board)),
+                el("td", {}, rowActions(row, text)),
             );
             // A key the file leaves out is added with the host's or the
             // camera's value where there is one.
@@ -417,9 +488,51 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
             return line;
         }));
         replace(table,
-            el("thead", {}, el("tr", {}, el("th", {}, "Key"), el("th", {}, "Sets"), el("th", {}, "File"), el("th", {}, "Board"))),
+            el("thead", {}, el("tr", {}, el("th", {}, "Key"), el("th", {}, "Sets"), el("th", {}, "File"), el("th", {}, "Board"), el("th", { "aria-label": "Copy or insert" }))),
             body,
         );
+    }
+
+    /** A row's Copy (the key as TOML) and Insert (the board's value into the file). */
+    function rowActions(row: SettingRow, text: string): HTMLElement {
+        const where = row.section ? (row.fileKey?.array ? `[[${row.section}]] ` : `[${row.section}] `) : "";
+        const toml = rowToml(row);
+        const copy = button("Copy", async () => {
+            if (toml !== null) {
+                await copied(toml, `${where}${row.name}`);
+            }
+        }, "btn btn-quiet btn-small", `copy ${where}${row.name} as TOML`);
+        setLocked(copy, toml === null, "no value to copy");
+        const given = keyLine(text, row.section, row.name) !== null;
+        const value = insertValue(row, given);
+        const from = row.board !== null && value === row.board ? (row.fileKey?.sets === "camera" || row.fileKey?.key === "roll" ? "the camera's" : "the board's") : "its";
+        const insert = button("Insert", () => {
+            if (value !== null) {
+                source.insert(row.section, row.name, value);
+            }
+        }, "btn btn-quiet btn-small", value === null ? `write a value into the file at ${where}${row.name}` : `write ${from} ${shown(value)} into the file at ${where}${row.name}`);
+        setLocked(insert, value === null, row.fileKey?.array ? `type it into its [[${row.section}]] table` : given ? "the file has this value" : "no value to insert: type it");
+        // A press on a button is not a press on its row.
+        const cell = el("div", { class: "settings-row-actions" }, copy, insert);
+        cell.addEventListener("click", (event) => event.stopPropagation());
+        return cell;
+    }
+
+    /** A text put on the clipboard, and what became of it said. */
+    async function copied(toml: string, what: string): Promise<void> {
+        if (await copyText(toml)) {
+            ctx.toast("info", `copied ${what}`);
+        } else {
+            ctx.toast("error", "the browser would not copy: select the key in the file instead");
+        }
+    }
+
+    async function copyRows(): Promise<void> {
+        const toml = rowsToml(showing);
+        if (toml !== "") {
+            const keys = toml.split("\n").filter((line) => /^\S+ = /.test(line)).length;
+            await copied(toml, `${keys} key${keys === 1 ? "" : "s"} as TOML`);
+        }
     }
 
     /** The cameras' values the rows show, as one text. */

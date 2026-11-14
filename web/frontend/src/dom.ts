@@ -431,6 +431,38 @@ export function downloadText(filename: string, text: string, type = "text/plain"
 }
 
 /**
+ * Puts a text on the clipboard; false when the browser would not. The
+ * clipboard's own call works only on a secure page (https, or the host
+ * itself), so a page reached over the network falls back to the older
+ * copy command on a hidden field, which the press that asked allows. The
+ * focus goes back where it was.
+ */
+export async function copyText(text: string): Promise<boolean> {
+    try {
+        if (globalThis.isSecureContext && navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+    } catch {
+        // Refused: the copy command may still take it.
+    }
+    const before = document.activeElement as HTMLElement | null;
+    const field = el("textarea", { readonly: "", "aria-hidden": "true", class: "copy-buffer" });
+    field.value = text;
+    document.body.append(field);
+    field.select();
+    let copied = false;
+    try {
+        copied = typeof document.execCommand === "function" && document.execCommand("copy");
+    } catch {
+        copied = false;
+    }
+    field.remove();
+    before?.focus?.({ preventScroll: true });
+    return copied;
+}
+
+/**
  * A drop zone and its file field: the files dropped on `zone` or picked
  * in `input` go to `take` a batch at a time, while `ready` says the zone
  * takes files; a drop or a pick while a batch is under way is ignored. The

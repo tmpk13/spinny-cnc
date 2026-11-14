@@ -5,7 +5,7 @@ import { MACHINE_KEYS, fuzzyScore } from "../src/machinekeys.ts";
 import { gcodeMachineOf, parseMachine } from "../src/mock/machines.ts";
 import { parseToml } from "../src/toml.ts";
 import type { CameraState, MachineDocument, PlacingState } from "../src/types.ts";
-import { liveValue, searchText, settingRows, type SettingRow } from "../src/views/settingslist.ts";
+import { insertValue, liveValue, rowToml, rowsToml, searchText, settingRows, type SettingRow } from "../src/views/settingslist.ts";
 
 // A file of this project's firmware giving every key of its own (no
 // firmware setting holds them), and a G-code machine's giving every key of
@@ -344,3 +344,31 @@ describe("the settings list's search", () => {
         expect([top.file, top.board, top.differs]).toEqual([180, 179.5, true]);
     });
 });
+
+describe("the settings list's Copy and Insert", () => {
+    const rows = settingRows(null, GCODE_SAMPLE, null, { tool: "laser", h_axis: false });
+    const row = (section: string | null, name: string): SettingRow => rows.find((entry) => entry.section === section && entry.name === name)!;
+
+    test("a row copies as its table and its key, a feeder's as its first table's", () => {
+        expect(rowToml(row("vacuum", "part_on"))).toBe("[vacuum]\npart_on = [40, 100]\n");
+        expect(rowToml(row(null, "name"))).toBe('name = "Sample"\n');
+        expect(rowToml(row("feeder", "id"))).toBe('[[feeder]]\nid = "tray"\n');
+    });
+
+    test("rows copy as one text, the top's keys first, each table once, an array's keys left out", () => {
+        const text = rowsToml([row("vacuum", "read"), row(null, "name"), row("vacuum", "part_on"), row("feeder", "id"), row("motion", "safe_z")]);
+        expect(text).toBe('name = "Sample"\n\n[vacuum]\nread = "M105"\npart_on = [40, 100]\n\n[motion]\nsafe_z = 5\n');
+        expect(parseToml(text)).toEqual({ name: "Sample", vacuum: { read: "M105", part_on: [40, 100] }, motion: { safe_z: 5 } });
+        expect(rowsToml([row("feeder", "id")])).toBe("");
+    });
+
+    test("Insert writes the live value where the file says otherwise, else adds a missing key with its value", () => {
+        const camera = { ...row("up_camera", "roll"), board: 1.5, differs: true };
+        expect(insertValue(camera, true)).toBe(1.5);
+        expect(insertValue({ ...camera, board: 90, differs: false }, true)).toBeNull();
+        expect(insertValue({ ...row("up_camera", "crop"), file: null }, false)).toBeNull();
+        expect(insertValue(row("motion", "feed_xy"), false)).toBe(6000);
+        expect(insertValue(row("feeder", "id"), true)).toBeNull();
+    });
+});
+

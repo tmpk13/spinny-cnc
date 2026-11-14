@@ -13,7 +13,7 @@ import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, lockFor, readStored, replace, setLocked, writeStored } from "../dom.ts";
 import type { FileValue } from "../filekeys.ts";
-import { keyLine, setKey } from "../machinekeys.ts";
+import { keyLine, setKey, tomlValue } from "../machinekeys.ts";
 import { profileOf } from "../profile.ts";
 import { setPending } from "../state.ts";
 import { setTip } from "../tooltip.ts";
@@ -124,6 +124,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         document: () => checked ?? shown?.document ?? null,
         text: () => editor.getText(),
         reveal: (section, name, value, array) => reveal(section, name, value, array === true),
+        insert: (section, name, value) => insert(section, name, value),
     });
     // An edit not saved is counted on the page's tab.
     const setDirty = (value: boolean): void => {
@@ -213,6 +214,24 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
             editor.revealLine(line);
         }
     }
+    /** The key written with `value` in the editor's text, added where the file leaves it out; an edit, not saved. */
+    function insert(section: string | null, name: string, value: FileValue): void {
+        if (editor.syntaxProblem() !== null) {
+            ctx.toast("error", "fix the text first: it does not parse");
+            return;
+        }
+        const text = setKey(editor.getText(), section, name, value);
+        editor.setText(text);
+        setDirty(true);
+        setStatus(`set ${section ? `[${section}] ` : ""}${name} = ${tomlValue(value)}, not saved`, false);
+        scheduleCheck();
+        list.refresh();
+        const line = keyLine(text, section, name);
+        if (line !== null) {
+            editor.revealLine(line);
+        }
+    }
+
     pick.addEventListener("change", () => {
         const next = pick.value;
         if (next === picked) {
