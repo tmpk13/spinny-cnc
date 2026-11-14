@@ -211,6 +211,40 @@ describe("a G-code machine in the mock", () => {
     });
 });
 
+describe("heights on the mock's G-code machine", () => {
+    test("a move across never brings a nozzle above the safe height down; a seesaw comes to it and its Z jogs stop there", async () => {
+        const backend = new MockBackend({ timers: false });
+        const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
+        await marlinRig(backend, "", false);
+        const parked = await backend.machineFile("openpnp-marlin");
+        await backend.saveMachineFile("openpnp-marlin", parked.text.replace(/^safe_z = .*$/m, "safe_z = 0\npark = [5.0, 5.0]"));
+        await backend.connect("/dev/ttyACM1", "openpnp-marlin");
+        const { components } = await backend.components(job.id);
+        const part = components.find((entry) => !entry.fiducial)!;
+        await backend.pnpReference({ job: job.id, ref: part.ref, at: [40, 30] });
+        const sent = (): string[] => backend["deviceLink"].log.filter((entry: { dir: string }) => entry.dir === "tx").map((entry: { text: string }) => entry.text);
+        await backend.goto({ kind: "joint", h: 12 });
+        let before = sent().length;
+        await backend.pnpGoto({ job: job.id, ref: part.ref });
+        await backend.pnpPark();
+        expect(sent().slice(before).filter((line) => / Z/.test(line))).toEqual([]);
+        // A seesaw: from above the safe height it comes down first.
+        const file = await backend.machineFile("openpnp-marlin");
+        await backend.saveMachineFile("openpnp-marlin", file.text.replace(/^safe_z = .*$/m, "safe_z = 0\nseesaw = true"));
+        await backend.connect("/dev/ttyACM1", "openpnp-marlin");
+        await backend.goto({ kind: "joint", h: 12 });
+        before = sent().length;
+        await backend.pnpGoto({ job: job.id, ref: part.ref });
+        expect(sent().slice(before).filter((line) => / Z/.test(line))).toEqual(["G0 Z0 F1200"]);
+        // A Z jog up to it stops there, and from there goes no higher.
+        await backend.goto({ kind: "joint", h: -3 });
+        before = sent().length;
+        await backend.jog({ kind: "joint", dh: 10 });
+        await backend.jog({ kind: "joint", dh: 1 });
+        expect(sent().slice(before)).toEqual(["M114", "G0 Z0 F1200", "M114"]);
+    });
+});
+
 describe("the bottom camera on the mock's G-code machine", () => {
     test("centers the nozzle over it, then each part marked for it is placed where its center lands", async () => {
         const backend = new MockBackend({ timers: false });

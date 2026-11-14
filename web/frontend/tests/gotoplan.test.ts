@@ -4,8 +4,8 @@ import { gotoPlanText, gotoSteps, planNumber, type PlanInput } from "../src/goto
 
 const LETTERS = { r: "X", z: "Y", h: "Z", a: "A" } as const;
 
-function gcode(here: { r: number; z: number; h: number; a?: number }, safe = 31.5): PlanInput {
-    return { gcode: true, height: safe, here: { a: 0, ...here }, board: null, letters: LETTERS };
+function gcode(here: { r: number; z: number; h: number; a?: number }, safe = 31.5, seesaw = false): PlanInput {
+    return { gcode: true, height: safe, seesaw, here: { a: 0, ...here }, board: null, letters: LETTERS };
 }
 
 describe("the goto plan of a G-code machine", () => {
@@ -21,8 +21,11 @@ describe("the goto plan of a G-code machine", () => {
         expect(gotoPlanText(gcode({ r: 10, z: 20, h: 5 }), { kind: "joint", r: 50, h: 4 })).toBe("Go: Z 5 to 31.5, then X 10 to 50, then Z 31.5 to 4.");
     });
 
-    test("from above the safe height it comes down to it too (a seesaw Z)", () => {
+    test("from above the safe height a nozzle stays up, unless the Z is a seesaw", () => {
         expect(gotoSteps(gcode({ r: 0, z: 0, h: 40 }), { kind: "joint", z: 5 })).toEqual([
+            [{ letter: "Y", from: 0, to: 5 }],
+        ]);
+        expect(gotoSteps(gcode({ r: 0, z: 0, h: 40 }, 31.5, true), { kind: "joint", z: 5 })).toEqual([
             [{ letter: "Z", from: 40, to: 31.5 }],
             [{ letter: "Y", from: 0, to: 5 }],
         ]);

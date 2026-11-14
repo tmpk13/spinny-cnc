@@ -909,8 +909,9 @@ nozzle's height Z and its turn A; the LumenPnP's say which way N1 goes on
 its seesaw); a jog reads where the head is (M114) and moves by the step
 from there, so jogs pressed quickly add up. A goto in the Jog panel moves
 only the axes given: it goes up to the file's safe height only to go
-across, from above or below, turns the nozzle on the way, and puts the
-height last, so the nozzle goes down only over where it is going; the
+across and only from below it (a nozzle above it stays there; a seesaw
+comes down to it from above too), turns the nozzle on the way, and puts
+the height last, so the nozzle goes down only over where it is going; the
 line under the goto rows says what Go will move, from where to where, as
 soon as a field is typed in. With `leave` in the file's `[up_camera]`, a
 jog that takes the nozzle away from over the bottom camera with its tip off
@@ -920,7 +921,8 @@ Head panel on the PNP tab has *Light*, *Park*, *Nozzle over camera* (the
 nozzle over the bottom camera at the height it is sharp at), *Nozzle to
 camera spot* and *Camera to nozzle spot* (the head moved by the top
 camera's offset), the vacuum, and *Tune the machine file*. *Go to part*
-moves X and Y only, at the safe height. The Bottom camera view and Top
+moves X and Y only: it rises to the safe height first when the nozzle is
+below it and never brings it down. The Bottom camera view and Top
 camera view panels show the two pictures (stack them, or put them side
 by side, from the panels' menus); a drag on a picture moves the head so
 the picture follows the pointer, a double-click brings a point to the
@@ -933,7 +935,10 @@ that lagged, or a spot that is not the nozzle): *Look once* and the
 camera log show what the finder took.
 
 On a seesaw Z like the LumenPnP's, both nozzles are up only at the safe
-height (31.5): every move across goes there first, from above or below.
+height (31.5), and its file says `seesaw = true`: every move across goes
+there first, from above or below, and a Z jog stops there (N1 fully up)
+rather than go on and lower N2; a goto to a Z above 31.5 still lowers N2.
+The readout's Z going down from above 31.5 is N2 coming up.
 Measure *place_z* before the first run (the file's 20 keeps the tip well
 above a board): jog the tip down onto the board's top, read its Z in the
 readout, and set it to that Z plus the parts' height under *Tune the

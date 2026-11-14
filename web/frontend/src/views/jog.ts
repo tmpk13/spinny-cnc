@@ -534,6 +534,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
         return {
             gcode,
             height: gcode ? state.placing?.document?.safe_z ?? null : state.settings?.host.travel ?? null,
+            seesaw: gcode && state.placing?.document?.seesaw === true,
             here: { r: joint.r, a: joint.a, z: joint.z, h: joint.h ?? null },
             board: machine.board ? { x: machine.board.x, y: machine.board.y } : null,
             letters,

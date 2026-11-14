@@ -33,7 +33,7 @@ from .gcode_link import IDENTIFY, GcodeLinkError, firmware_of
 from .kinematics import check_feed, num
 from .log import log, wire_line, wire_note
 from .openpnp import LINE as GCODE_LINE
-from .openpnp import AXIS_NAMES, GcodeMachine, goto_lines, lifts_leaving, move_line, read_position, safe_line
+from .openpnp import AXIS_NAMES, GcodeMachine, goto_lines, lifts_leaving, move_line, read_position, safe_line, seesaw_jog
 
 if TYPE_CHECKING:
     from .app import GotoBody, JogBody, PositionBody
@@ -48,6 +48,8 @@ PLACE_LIMIT = 10000.0
 JOINTS = {"r": "x", "z": "y", "h": "z", "a": "rotation"}
 # How long a home may take, in the file's line timeouts.
 HOME_TIMEOUTS = 3
+# How long a seesaw's Z jog held at the safe height waits before saying why again, s.
+SEESAW_SAID_SECONDS = 5.0
 
 
 class GcodePart:
@@ -284,6 +286,19 @@ class GcodePart:
         self.gcode.position = position
         return dict(position)
 
+    def _say_seesaw(self, machine: GcodeMachine) -> None:
+        """Says why a Z jog of a seesaw went no further than the safe height,
+        once in a while: a held jog asks again every tenth of a second."""
+        now = time.monotonic()
+        if now - getattr(self, "_seesaw_said", -1e9) < SEESAW_SAID_SECONDS:
+            return
+        self._seesaw_said = now
+        self.publish_message(
+            "info",
+            f"Z stays at {machine.safe_z:g}, the safe height, where both nozzles of {machine.name}'s seesaw are up: above it the other"
+            " nozzle goes down; a goto to a height above it still goes there",
+        )
+
     def _gcode_jog(self, body: JogBody) -> dict:
         check_feed(body.feed)
         if body.kind == "joint":
@@ -307,6 +322,15 @@ class GcodePart:
                 letter = machine.axes[AXIS_NAMES.index(missing[0])]
                 raise GcodeLinkError(f"'{machine.position}' answered no {letter}: it cannot be jogged from where it is")
             target = {name: here[name] + value for name, value in steps.items()}
+            if "z" in target:
+                # A seesaw Z stops at the safe height, both nozzles up, rather
+                # than go past it and lower the other nozzle.
+                target["z"] = seesaw_jog(machine, here["z"], target["z"])
+                if abs(target["z"] - here["z"]) <= 1e-9:
+                    del target["z"]
+                    self._say_seesaw(machine)
+                    if not target:
+                        return {"lines": []}
             # A feed given is the move's (a held jog matches its pieces to
             # the time between them); none is the file's own for the axes.
             feed = body.feed

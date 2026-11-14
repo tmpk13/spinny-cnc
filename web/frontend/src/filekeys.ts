@@ -135,7 +135,8 @@ export const FILE_KEYS: FileKey[] = [
     ...keys("motion", "gcode", "G-code", [
         ["feed_xy", "mm/min across, and a jog's or goto's without a feed", "speed feed rate", 6000],
         ["feed_z", "mm/min up and down", "speed feed rate height", 1200],
-        ["safe_z", "the height every move across goes at", "travel clearance height", null],
+        ["safe_z", "the lowest height a move across goes at: a nozzle below it rises to it first", "travel clearance height", null],
+        ["seesaw", "one Z motor drives two nozzles: moves across come to safe_z from either side, Z jogs stop at it", "lumenpnp two nozzles n1 n2 safe height", false],
         ["place_z", "the tip with a part on it at the board's top", "height board place", null],
         ["pick_dwell_ms", "ms the vacuum gets before the nozzle rises with a part", "vacuum suction wait pick", 200],
         ["place_dwell_ms", "ms after the vacuum lets go of a part", "vacuum wait place", 150],

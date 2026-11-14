@@ -131,11 +131,13 @@ import {
     gotoLines,
     liftsLeaving,
     moveLine,
+    needsLift,
     placeLines,
     planDevice,
     planSummary,
     planText,
     safeLine,
+    seesawJog,
     vacuumReading,
     wrapAngle,
     xyLine,
@@ -2195,6 +2197,8 @@ export class MockBackend implements Api, EventFeed {
     private machineUsed: string | null = null;
     /** Whether the G-code machine's motors were last switched on, and what its firmware said it is. */
     private gcodeMotors = true;
+    /** When a seesaw's Z jog last said why it stopped at the safe height, ms. */
+    private seesawSaid = -Infinity;
     private gcodeFirmware: string | null = null;
     /** The connected G-code machine's link: a fake controller that answers every line `ok`, its head's place, and what it was told. */
     private deviceLink: {
@@ -7549,6 +7553,17 @@ export class MockBackend implements Api, EventFeed {
         for (const [name, value] of Object.entries(steps) as [AxisName, number][]) {
             target[name] = here[name] + value;
         }
+        if (target.z !== undefined) {
+            // A seesaw stops at the safe height rather than lower its other nozzle.
+            target.z = seesawJog(device, here.z, target.z);
+            if (Math.abs(target.z - here.z) <= 1e-9) {
+                delete target.z;
+                this.saySeesaw(device);
+                if (Object.keys(target).length === 0) {
+                    return;
+                }
+            }
+        }
         const feed = request.feed ?? null;
         // Leaving the up camera with the nozzle down near its lens goes up
         // first, when the file asks for it.
@@ -7557,6 +7572,16 @@ export class MockBackend implements Api, EventFeed {
         }
         this.deviceLine(device, moveLine(device, target, feed));
         this.emit({ type: "state", data: this.snapshot() });
+    }
+
+    /** Says why a seesaw's Z jog stopped at the safe height, at most once in five seconds; the backend's _say_seesaw. */
+    private saySeesaw(device: MockDevice): void {
+        const now = Date.now();
+        if (now - this.seesawSaid < 5000) {
+            return;
+        }
+        this.seesawSaid = now;
+        this.message("info", `Z stays at ${gnum(device.safe_z)}, the safe height, where both nozzles of ${device.name}'s seesaw are up: above it the other nozzle goes down; a goto to a height above it still goes there`);
     }
 
     /** A goto: across at the safe height only when X or Y changes, the height last, run to its end; as the backend's _gcode_goto. */
@@ -9089,7 +9114,7 @@ export class MockBackend implements Api, EventFeed {
             const offset = this.topOffsetOf(device);
             [x, y] = [x - offset[0], y - offset[1]];
         }
-        this.headLines(device, [safeLine(device), moveLine(device, { x, y })]);
+        this.headLines(device, gotoLines(device, this.deviceHere(device), { x, y }));
         this.emitPlacing();
     }
 
@@ -9132,7 +9157,9 @@ export class MockBackend implements Api, EventFeed {
         if (device.park === null) {
             throw new ApiError(400, `${device.name}'s file has no [motion] park place`);
         }
-        this.headLines(device, gotoLines(device, this.deviceHere(device), { x: device.park[0], y: device.park[1], z: device.safe_z }));
+        const here = this.deviceHere(device);
+        // The head waits at the safe height, or above it where Z grows upward.
+        this.headLines(device, gotoLines(device, here, { x: device.park[0], y: device.park[1], ...(needsLift(device, here.z) ? { z: device.safe_z } : {}) }));
         this.emitPlacing();
         return this.placingStateOf();
     }

@@ -241,6 +241,13 @@ class GcodeMachine:
     # A positive turn of the rotation axis turns the nozzle clockwise seen
     # from above, so every angle goes out with its sign changed.
     rotation_cw: bool = False
+    # Z is a seesaw: one motor drives two nozzles, the first down below
+    # safe_z and the second above it, both up only at safe_z (the
+    # LumenPnP). A move across then comes to safe_z from either side, and
+    # a Z jog stops at it. Otherwise Z grows upward and safe_z is the
+    # lowest height a move across goes at: a nozzle at or above it stays
+    # where it is.
+    seesaw: bool = False
     # Where a part that failed a check is let go, X Y Z; None puts it back
     # in the pocket it came from.
     discard: tuple[float, float, float] | None = None
@@ -331,6 +338,7 @@ class GcodeMachine:
             "timeout": self.timeout,
             "axes": list(self.axes),
             "rotation_cw": self.rotation_cw,
+            "seesaw": self.seesaw,
             "feed_xy": self.feed_xy,
             "feed_z": self.feed_z,
             "safe_z": self.safe_z,
@@ -611,7 +619,8 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
     discard = read.point(motion, "discard", "motion", 3, None) if "discard" in motion else None
     pick_tries = read.integer(motion, "pick_tries", "motion", 3, 1, 20)
     park = read.point(motion, "park", "motion", 2, None) if "park" in motion else None
-    read.done(motion, "motion", {"feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms", "discard", "pick_tries", "park"})
+    seesaw = read.flag(motion, "seesaw", "motion", False)
+    read.done(motion, "motion", {"feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms", "discard", "pick_tries", "park", "seesaw"})
 
     vacuum = None
     sensor = read.table(top, "vacuum")
@@ -827,6 +836,7 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
         feeders=tuple(feeders),
         camera_z=camera_z,
         rotation_cw=rotation_cw,
+        seesaw=seesaw,
         discard=discard,
         pick_tries=pick_tries,
         vacuum=vacuum,
@@ -987,16 +997,44 @@ def safe_line(machine: GcodeMachine) -> str:
     return move_z(machine, machine.safe_z)
 
 
+def needs_lift(machine: GcodeMachine, z: float | None) -> bool:
+    """Whether a nozzle at height `z` goes to the safe height before a move
+    across: when its height is not known, when it is below the safe height,
+    and on a seesaw Z above it too (the other nozzle hangs down there). On
+    a Z that grows upward a nozzle at or above the safe height stays."""
+    if z is None:
+        return True
+    if machine.seesaw:
+        return abs(z - machine.safe_z) > 1e-6
+    return z < machine.safe_z - 1e-6
+
+
+def seesaw_jog(machine: GcodeMachine, z: float, target: float) -> float:
+    """Where a jog of a seesaw Z from `z` toward `target` ends: at the safe
+    height when it would pass it either way (both nozzles up there; the
+    next jog goes on to the other side), and from the safe height it does
+    not go up, which lowers the other nozzle (a goto to a height above it
+    still does). Elsewhere, or on a Z that grows upward, the target."""
+    safe = machine.safe_z
+    if not machine.seesaw:
+        return target
+    if abs(z - safe) <= 1e-6:
+        return safe if target > safe else target
+    if (z - safe) * (target - safe) < 0.0:
+        return safe
+    return target
+
+
 def lifts_leaving(machine: GcodeMachine, here: dict[str, float], target: dict[str, float], camera: tuple[float, float] | None) -> bool:
     """Whether a jog from `here` to `target` (the controller's x, y, z)
     goes up to the safe height first: the file asks for it ([up_camera]
-    leave), the up camera's place is known, the nozzle is off the safe
-    height and within `leave` mm of that place, and the jog ends farther
-    than that from it."""
+    leave), the up camera's place is known, the nozzle is lower than the
+    safe height (or off it, on a seesaw Z) within `leave` mm of that place,
+    and the jog ends farther than that from it."""
     if machine.leave is None or camera is None or ("x" not in target and "y" not in target):
         return False
     z = here.get("z")
-    if z is None or abs(z - machine.safe_z) <= 1e-6 or "z" in target:
+    if z is None or not needs_lift(machine, z) or "z" in target:
         return False
     if "x" not in here or "y" not in here:
         return False
@@ -1026,16 +1064,17 @@ def move_line(machine: GcodeMachine, target: dict[str, float], feed: float | Non
 def goto_lines(machine: GcodeMachine, here: dict[str, float], want: dict[str, float], feed: float | None = None) -> list[str]:
     """The lines that take the head from `here` to `want` (x, y, z and the
     rotation, as the controller counts them; an axis left out stays where
-    it is). Only a move across, X or Y changing, goes up to the safe height
-    first, from either side of it (on a seesaw Z a height above it lowers
-    the other nozzle); the turn goes with the move across, and the height
-    comes last, so a nozzle goes down only over where it is going. `feed`
-    is for the move across; the height goes at the Z feed."""
+    it is). Only a move across, X or Y changing, goes to the safe height
+    first, and only from below it, or on a seesaw Z from above it too (a
+    height above it lowers the other nozzle; needs_lift); the turn goes
+    with the move across, and the height comes last, so a nozzle goes down
+    only over where it is going. `feed` is for the move across; the height
+    goes at the Z feed."""
     across = {name: want[name] for name in ("x", "y") if name in want and (name not in here or abs(want[name] - here[name]) > 1e-6)}
     lines: list[str] = []
     z = here.get("z")
     if across:
-        if z is None or abs(z - machine.safe_z) > 1e-6:
+        if needs_lift(machine, z):
             lines.append(safe_line(machine))
             z = machine.safe_z
         flat = dict(across)

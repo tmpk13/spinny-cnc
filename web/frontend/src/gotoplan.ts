@@ -3,9 +3,10 @@
 // rises to on the way. The backend decides the moves; this says the same
 // thing it will do, so the operator sees what Go moves before pressing it.
 //
-// - A G-code machine (the backend's openpnp.goto_lines) goes up to its
-//   safe height only to go across (X or Y changing), from either side of
-//   it, turns the nozzle with the move across, and puts the height last,
+// - A G-code machine (the backend's openpnp.goto_lines) goes to its safe
+//   height only to go across (X or Y changing), and only from below it (a
+//   nozzle above it stays there) or, on a seesaw Z, from either side of
+//   it; turns the nozzle with the move across, and puts the height last,
 //   skipping a height already reached.
 // - This project's firmware (App._goto and _travel_rise) rises to the
 //   travel height first when one is set, the goto moves something across
@@ -30,6 +31,8 @@ export interface PlanInput {
     gcode: boolean;
     /** The G-code machine's safe height, or the firmware's travel height (null: off). */
     height: number | null;
+    /** A G-code machine's Z is a seesaw: a height above the safe one lowers its other nozzle, so a move across comes down to it too. */
+    seesaw?: boolean;
     /** The joints where the head is now; null for one not reported. */
     here: Partial<Record<JointAxis, number | null>>;
     /** The board point under the head now, for a board goto; null when unknown. */
@@ -71,7 +74,8 @@ export function gotoSteps(input: PlanInput, want: PlanWant): PlanMove[][] {
         const across = (["r", "z"] as JointAxis[]).filter((axis) => target[axis] !== undefined && differs(here(axis), target[axis]!));
         let height = here("h");
         if (across.length > 0) {
-            if (input.height !== null && differs(height, input.height)) {
+            // From below the safe height, or from above it on a seesaw.
+            if (input.height !== null && differs(height, input.height) && (height === null || height < input.height - SAME || input.seesaw === true)) {
                 steps.push([{ letter: letter("h"), from: height, to: input.height }]);
                 height = input.height;
             }

@@ -155,6 +155,8 @@ export interface MockDevice {
     camera_z: number | null;
     /** A positive rotation turns the nozzle clockwise: every angle goes out negated. */
     rotation_cw: boolean;
+    /** One Z motor drives two nozzles, both up only at the safe height: moves across come to it from either side, Z jogs stop at it. */
+    seesaw: boolean;
     discard: [number, number, number] | null;
     pick_tries: number;
     vacuum: MockVacuum | null;
@@ -411,7 +413,8 @@ export function parseGcodeTables(top: TomlTable, id: string, name: string, descr
     device.discard = "discard" in motion ? (read.point(motion, "discard", "motion", 3, null) as [number, number, number]) : null;
     device.pick_tries = read.integer(motion, "pick_tries", "motion", 3, 1, 20);
     device.park = "park" in motion ? (read.point(motion, "park", "motion", 2, null) as [number, number]) : null;
-    read.done(motion, "motion", ["feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms", "discard", "pick_tries", "park"]);
+    device.seesaw = read.flag(motion, "seesaw", "motion", false);
+    read.done(motion, "motion", ["feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms", "discard", "pick_tries", "park", "seesaw"]);
     device.vacuum = null;
     const sensor = read.table(top, "vacuum");
     if (Object.keys(sensor).length > 0) {
@@ -658,6 +661,7 @@ export function deviceDocument(device: MockDevice): GcodeDocument {
         timeout: device.timeout,
         axes: [...device.axes],
         rotation_cw: device.rotation_cw,
+        seesaw: device.seesaw,
         feed_xy: device.feed_xy,
         feed_z: device.feed_z,
         safe_z: device.safe_z,
@@ -861,18 +865,46 @@ export function safeLine(device: MockDevice): string {
 }
 
 /**
+ * Whether a nozzle at height `z` goes to the safe height before a move
+ * across: unknown, below it, or on a seesaw Z above it too; on a Z that
+ * grows upward one at or above it stays. The backend's openpnp.needs_lift.
+ */
+export function needsLift(device: MockDevice, z: number | undefined | null): boolean {
+    if (z === undefined || z === null) {
+        return true;
+    }
+    return device.seesaw ? Math.abs(z - device.safe_z) > 1e-6 : z < device.safe_z - 1e-6;
+}
+
+/**
+ * Where a seesaw's Z jog from `z` toward `target` ends: at the safe height
+ * when it would pass it, and no higher from it; elsewhere, or on a Z that
+ * grows upward, the target. The backend's openpnp.seesaw_jog.
+ */
+export function seesawJog(device: MockDevice, z: number, target: number): number {
+    const safe = device.safe_z;
+    if (!device.seesaw) {
+        return target;
+    }
+    if (Math.abs(z - safe) <= 1e-6) {
+        return target > safe ? safe : target;
+    }
+    return (z - safe) * (target - safe) < 0 ? safe : target;
+}
+
+/**
  * Whether a jog from `here` to `target` goes up to the safe height first:
  * the file asks for it ([up_camera] leave), the up camera's place is
- * known, the nozzle is off the safe height within `leave` mm of that
- * place, and the jog ends farther than that. The backend's
- * openpnp.lifts_leaving.
+ * known, the nozzle is lower than the safe height (off it on a seesaw)
+ * within `leave` mm of that place, and the jog ends farther than that.
+ * The backend's openpnp.lifts_leaving.
  */
 export function liftsLeaving(device: MockDevice, here: Partial<Record<AxisName, number>>, target: Partial<Record<AxisName, number>>, camera: [number, number] | null): boolean {
     if (device.leave === null || camera === null || (target.x === undefined && target.y === undefined)) {
         return false;
     }
     const z = here.z;
-    if (z === undefined || Math.abs(z - device.safe_z) <= 1e-6 || target.z !== undefined || here.x === undefined || here.y === undefined) {
+    if (z === undefined || !needsLift(device, z) || target.z !== undefined || here.x === undefined || here.y === undefined) {
         return false;
     }
     const start = Math.hypot(here.x - camera[0], here.y - camera[1]);
@@ -905,10 +937,10 @@ export function moveLine(device: MockDevice, target: Partial<Record<AxisName, nu
 }
 
 /**
- * The lines that take the head from `here` to `want`: up to the safe
- * height only for a move across (X or Y changing), from either side of it,
- * the turn with the move across, the height last and only when it
- * changes. The backend's openpnp.goto_lines.
+ * The lines that take the head from `here` to `want`: to the safe height
+ * only for a move across (X or Y changing), and only from below it (from
+ * either side on a seesaw), the turn with the move across, the height last
+ * and only when it changes. The backend's openpnp.goto_lines.
  */
 export function gotoLines(device: MockDevice, here: Partial<Record<AxisName, number>>, want: Partial<Record<AxisName, number>>, feed: number | null = null): string[] {
     const across: Partial<Record<AxisName, number>> = {};
@@ -922,7 +954,7 @@ export function gotoLines(device: MockDevice, here: Partial<Record<AxisName, num
     const lines: string[] = [];
     let z = here.z;
     if (Object.keys(across).length > 0) {
-        if (z === undefined || Math.abs(z - device.safe_z) > 1e-6) {
+        if (needsLift(device, z)) {
             lines.push(safeLine(device));
             z = device.safe_z;
         }

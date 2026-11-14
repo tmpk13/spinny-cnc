@@ -283,6 +283,72 @@ def test_lines_for_a_goto_skip_a_height_already_reached():
     assert goto_lines(machine, here, {"rotation": 90.0, "z": -1.0}) == ["G0 A90 F3000", "G0 Z-1 F600"]
 
 
+def test_moves_across_never_bring_a_nozzle_above_the_safe_height_down(client):
+    # Z grows upward on this file: a nozzle above the safe height stays there.
+    machine = parse(gcode_file(PROFILE), "rig")
+    above = {"x": 0.0, "y": 0.0, "z": 12.0}
+    assert goto_lines(machine, above, {"x": 1.0}) == ["G0 X1 F3000"]
+    assert goto_lines(machine, {**above, "z": 4.0}, {"x": 1.0}) == ["G0 Z5 F600", "G0 X1 F3000"]
+    job_id = board_job(client)
+    connect(client, "rig")
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    client.post("/api/goto", json={"kind": "joint", "h": 12.0})
+    for action in (
+        lambda: client.post("/api/pnp/goto", json={"job": job_id, "ref": "R2"}),
+        lambda: client.post("/api/pnp/goto", json={"job": job_id, "ref": "R1", "camera": True}),
+        lambda: client.post("/api/pnp/park"),
+        lambda: client.post("/api/pnp/swap", json={"to": "nozzle"}),
+        lambda: client.post("/api/goto", json={"kind": "board", "x": 20.0, "y": 30.0}),
+    ):
+        start = len(client.fake.lines)
+        assert action().status_code == 200
+        assert not any(line.startswith("G0 Z") for line in sent(client, start)), sent(client, start)
+    assert client.get("/api/state").json()["machine"]["joint"]["h"] == 12.0
+    # Below it, Go to part goes up first and stays up.
+    client.post("/api/goto", json={"kind": "joint", "h": -1.0})
+    start = len(client.fake.lines)
+    client.post("/api/pnp/goto", json={"job": job_id, "ref": "R1"})
+    assert sent(client, start) == ["M114", "G0 Z5 F600", "G0 X100 Y50 F3000", "M400", "M114"]
+
+
+SEESAW = PROFILE.replace("park = [40.0, 400.0]\n", "park = [40.0, 400.0]\nseesaw = true\n")
+
+
+def test_a_seesaw_comes_to_the_safe_height_from_above_and_its_z_jogs_stop_there(tmp_path):
+    machine = parse(gcode_file(SEESAW), "rig")
+    assert machine.seesaw is True and machine.document()["seesaw"] is True
+    assert parse(gcode_file(PROFILE), "rig").seesaw is False
+    # Above the safe height the other nozzle hangs down: it comes up first.
+    assert goto_lines(machine, {"x": 0.0, "y": 0.0, "z": 12.0}, {"x": 1.0}) == ["G0 Z5 F600", "G0 X1 F3000"]
+    fake = FakeMarlin(position=(100.0, 50.0, 3.0))
+    backend = rig_backend(tmp_path, {"rig": SEESAW}, lambda url, baud: fake)
+    with TestClient(create_app(backend, frontend=tmp_path / "no-dist")) as client:
+        client.fake = fake
+        connect(client, "rig")
+        # A jog up that would pass the safe height stops at it, both nozzles up.
+        start = len(fake.lines)
+        client.post("/api/jog", json={"kind": "joint", "dh": 10.0})
+        assert sent(client, start) == ["M114", "G0 Z5 F600"]
+        # From there it goes no higher, and says why, once in a while.
+        said: list[str] = []
+        backend.publish_message = lambda level, text: said.append(text)
+        start = len(fake.lines)
+        assert client.post("/api/jog", json={"kind": "joint", "dh": 1.0}).json() == {"lines": []}
+        assert client.post("/api/jog", json={"kind": "joint", "dh": 1.0}).json() == {"lines": []}
+        assert sent(client, start) == ["M114", "M114"]
+        assert len([text for text in said if "seesaw" in text]) == 1
+        # Down from it goes on, and a goto above it still goes there.
+        start = len(fake.lines)
+        client.post("/api/jog", json={"kind": "joint", "dh": -2.0, "dr": 1.0})
+        assert sent(client, start) == ["M114", "G0 X101 Z3 F3000"]
+        client.post("/api/goto", json={"kind": "joint", "h": 9.0})
+        assert fake.position[2] == 9.0
+        # From above, a jog down that would pass it stops there too.
+        start = len(fake.lines)
+        client.post("/api/jog", json={"kind": "joint", "dh": -10.0})
+        assert sent(client, start) == ["M114", "G0 Z5 F600"]
+
+
 def test_a_position_is_declared_homed_and_stopped(client):
     connect(client, "rig")
     start = len(client.fake.lines)
@@ -386,7 +452,7 @@ def test_the_top_camera_goes_over_a_part_and_takes_a_reference_by_the_designed_o
     client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
     start = len(client.fake.lines)
     assert client.post("/api/pnp/goto", json={"job": job_id, "ref": "R1", "camera": True}).status_code == 200
-    assert sent(client, start) == ["G0 Z5 F600", "G0 X80 Y-10 F3000", "M400", "M114"]
+    assert sent(client, start) == ["M114", "G0 Z5 F600", "G0 X80 Y-10 F3000", "M400", "M114"]
     # The camera's crosshair over R2 now: the reference is the nozzle's place for it.
     state = client.post("/api/pnp/references", json={"job": job_id, "ref": "R2", "camera": True}).json()
     assert {"job": job_id, "ref": "R2", "at": [100.0, 50.0], "by": "camera"} in state["references"]

@@ -38,7 +38,8 @@ motors_off = "M18"
 [motion]
 feed_xy = 6000           # mm/min
 feed_z = 1200
-safe_z = 0               # the height moves go across at
+safe_z = 0               # the lowest height moves go across at; a nozzle above it stays there
+# seesaw = true          # one Z motor driving two nozzles, the first down below safe_z and the second above it: moves across come to safe_z from either side
 place_z = -20            # the nozzle tip with a part on it at the board's top
 pick_dwell_ms = 200
 place_dwell_ms = 150

@@ -220,6 +220,8 @@ interface Axis {
     safeLow: number | null;
     safeHigh: number | null;
     feed: number | null;
+    /** The axis a mapped axis (OpenPnP's ReferenceMappedAxis) follows: a seesaw's other nozzle's Z follows the first's. */
+    input: string | null;
 }
 
 interface Command {
@@ -323,6 +325,7 @@ function axesOf(machine: XmlNode): Map<string, Axis> {
             safeLow: node.attrs["safe-zone-low-enabled"] === "true" ? lengthOf(child(node, "safe-zone-low"), 0) : null,
             safeHigh: node.attrs["safe-zone-high-enabled"] === "true" ? lengthOf(child(node, "safe-zone-high"), 0) : null,
             feed: child(node, "feedrate-per-second") ? lengthOf(child(node, "feedrate-per-second"), 0) * 60 : null,
+            input: node.attrs["input-axis-id"] ?? null,
         });
     }
     return axes;
@@ -559,6 +562,8 @@ export interface ProfileData {
     feedXy: number;
     feedZ: number;
     safeZ: number;
+    /** One Z motor drives two nozzles: the first down below safe Z, the other above it. */
+    seesaw: boolean;
     placeZ: number | null;
     pickDwell: number;
     placeDwell: number;
@@ -623,6 +628,7 @@ export function defaultProfile(name: string): ProfileData {
         feedXy: 6000,
         feedZ: 1200,
         safeZ: 0,
+        seesaw: false,
         placeZ: null,
         pickDwell: 200,
         placeDwell: 150,
@@ -708,6 +714,7 @@ export function profileText(data: ProfileData): string {
         `feed_xy = ${fixed(data.feedXy)}`,
         `feed_z = ${fixed(data.feedZ)}`,
         `safe_z = ${fixed(data.safeZ)}`,
+        ...(data.seesaw ? ["seesaw = true            # one Z motor, two nozzles: moves across come to safe_z from either side, Z jogs stop there"] : []),
         ...(data.placeZ === null
             ? ["# MEASURE: jog the tip down onto the board's top, and set this to that Z plus the parts' height.", `place_z = ${fixed(data.safeZ)}`]
             : [`place_z = ${fixed(data.placeZ)}`]),
@@ -882,6 +889,15 @@ export function machineItems(machine: OpenPnpMachine, nozzleName?: string): { it
                 note: z.safeLow !== null ? `OpenPnP's safe zone ${fixed(z.safeLow)} to ${fixed(z.safeHigh ?? z.safeLow)}, home ${fixed(z.home)}` : `home ${fixed(z.home)}`,
                 apply: (data) => { data.safeZ = safe; },
             });
+            // Another nozzle's Z mapped from this one's: one motor, a seesaw.
+            const other = [...machine.axes.values()].find((axis) => axis.type === "Z" && axis.input === z.id);
+            if (other) {
+                push({
+                    id: "seesaw", group: "Motion", label: "Seesaw Z", value: `${nozzle.name} and ${other.name} on ${z.name}`, keep: true,
+                    note: `${other.name}'s Z follows ${z.name}: above safe Z the other nozzle goes down`,
+                    apply: (data) => { data.seesaw = true; },
+                });
+            }
             if (z.feed) {
                 const feedZ = z.feed;
                 push({ id: "feed_z", group: "Motion", label: "Feed Z, OpenPnP's most", value: `${fixed(feedZ)} mm/min`, keep: false, apply: (data) => { data.feedZ = feedZ; } });

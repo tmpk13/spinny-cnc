@@ -41,7 +41,7 @@ from .feederbus import BusError, FeederBus, slot_place
 from .gcode_link import GcodeLinkError, GcodeMover
 from .gcode_part import HOME_TIMEOUTS
 from .kinematics import num
-from .openpnp import GcodeMachine, Plan, board_fit, goto_lines, move_line, plan, safe_line
+from .openpnp import GcodeMachine, Plan, board_fit, goto_lines, needs_lift, plan
 from .placer import Placement, PlaceSetup, fiducial_fit
 from .pnp import CameraPlace, PnpError
 from .log import log
@@ -766,7 +766,9 @@ class PlacingPart:
 
     def gcode_goto_part(self, body: PnpGotoBody) -> dict:
         """The nozzle, or the top camera's picture center, over a part's place
-        on the machine: up to the safe height, then across; Z stays there."""
+        on the machine: X and Y only, as a goto goes across. The nozzle goes
+        up to the safe height first only from below it (on a seesaw Z from
+        above it too); it never comes down."""
         machine = self._placing_idle()
         parts = self.job_parts(body.job)["components"]
         part = self._part(body.job, body.ref, parts)
@@ -775,7 +777,7 @@ class PlacingPart:
         if body.camera:
             offset = self._top_offset(machine)
             x, y = x - offset[0], y - offset[1]
-        self._head_lines(machine, [safe_line(machine), move_line(machine, {"x": x, "y": y})])
+        self._head_lines(machine, goto_lines(machine, self._here(machine), {"x": x, "y": y}))
         return self.publish_placing()
 
     # --- placing --------------------------------------------------------------------------
@@ -890,7 +892,12 @@ class PlacingPart:
         machine = self._placing_idle()
         if machine.park is None:
             raise ValueError(f"{machine.name}'s file has no [motion] park place")
-        self._head_lines(machine, goto_lines(machine, self._here(machine), {"x": machine.park[0], "y": machine.park[1], "z": machine.safe_z}))
+        here = self._here(machine)
+        # The head waits at the safe height, or above it where Z grows upward.
+        want = {"x": machine.park[0], "y": machine.park[1]}
+        if needs_lift(machine, here.get("z")):
+            want["z"] = machine.safe_z
+        self._head_lines(machine, goto_lines(machine, here, want))
         return self.publish_placing()
 
     def pnp_over_camera(self) -> dict:

@@ -352,8 +352,10 @@ def test_a_board_is_referenced_planned_sent_and_its_feeders_counted(client):
     assert client.post("/api/pnp/feeders/reset", json={"feeder": "res"}).json()["taken"] == {}
     # Over a part, a home, a raw line, and a refusal.
     lines = len(client.fake.lines)
-    assert client.post("/api/pnp/goto", json={"job": job_id, "ref": "R2"}).status_code == 200
-    assert client.fake.lines[lines:] == ["G0 Z5 F600", "G0 X100 Y60 F3000", "M400", "M114"]
+    # The run left the nozzle over R2 at the safe height: over R1 it goes
+    # across with no rise, and over R2 again it does not move.
+    assert client.post("/api/pnp/goto", json={"job": job_id, "ref": "R1"}).status_code == 200
+    assert client.fake.lines[lines:] == ["M114", "G0 Y50 F3000", "M400", "M114"]
     client.post("/api/home", json={})
     assert client.get("/api/pnp/placing").json()["homed"] is True
     assert client.post("/api/command", json={"line": "M114"}).json()["lines"][-1] == "ok"

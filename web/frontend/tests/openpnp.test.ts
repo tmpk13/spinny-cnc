@@ -176,6 +176,8 @@ describe("reading an OpenPnP setup", () => {
         expect(value("park")).toBe("X 42.328 Y 411.916");
         // Where the top camera looks for it, less N1's offset: the nozzle's place over it.
         expect(value("home_fiducial")).toBe("X 60.91 Y 175.23");
+        // N2's Z follows N1's: one motor, a seesaw.
+        expect(value("seesaw")).toBe("N1 and z2 on z1");
         expect(warnings).toEqual([]);
         // N2's Z is a mapped axis: its letters cannot be read.
         expect(machineItems(machine, "N2").warnings[0]).toContain("seesaw");
@@ -188,6 +190,7 @@ describe("reading an OpenPnP setup", () => {
         const text = buildProfile("lumen", items, kept);
         const device = gcodeMachineOf(text, "lumen");
         expect(device.safe_z).toBe(31.5);
+        expect(device.seesaw).toBe(true);
         expect(device.pick).toEqual(["M106 P1 S180", "M106"]);
         expect(device.light_on).toEqual(["M150 P255 R255 U255 B255"]);
         expect(device.vacuum?.read).toEqual(["M260 A112 B1 S1", "M261 A109 B1 S2"]);

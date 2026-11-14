@@ -114,6 +114,7 @@ pick_dwell_ms = 200
 place_dwell_ms = 150
 pick_tries = 3
 park = [40.0, 400.0]
+seesaw = true
 discard = [10.0, 10.0, -1.0]
 
 [vacuum]

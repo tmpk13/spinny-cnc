@@ -41,7 +41,7 @@ import serial
 from .camera import DONE, ERROR, RUNNING, STOPPED
 from .link import check_url
 from .log import log
-from .openpnp import GcodeMachine, code_of, move_xy, move_z, read_position
+from .openpnp import GcodeMachine, code_of, move_xy, move_z, needs_lift, read_position
 from .pnp import Mover, PnpError
 
 OK = re.compile(r"^ok\b", re.IGNORECASE)
@@ -517,10 +517,10 @@ class GcodeMover(Mover):
         return self._at[2]
 
     def lift(self) -> None:
-        # To the safe height from either side: on a seesaw Z (two nozzles on
-        # one motor) a Z above it lowers the other nozzle.
-        z = self._at[2]
-        if z is None or abs(z - self.machine.safe_z) > 1e-6:
+        # Up to the safe height from below; a nozzle above it stays there,
+        # but on a seesaw Z (two nozzles on one motor) a Z above it lowers
+        # the other nozzle, so it comes down to it (needs_lift).
+        if needs_lift(self.machine, self._at[2]):
             self._z(self.machine.safe_z)
 
     def go(self, point) -> None:

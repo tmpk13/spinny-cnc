@@ -1145,7 +1145,7 @@ reference, the angle, a count) needs a G-code machine to keep it for.
 | `GET /api/pnp/program.gcode?job=ID&refs=R1,C2` | the program as a file |
 | `POST /api/pnp/run` | `{"job", "refs", "fiducials": false}`: places the parts on its own thread as above; each pick counts against its feeder once answered; 409 while one is under way, 400 when a camera it looks with is not running |
 | `POST /api/pnp/run/stop` | sends the file's `stop` at once and nothing after the line in flight |
-| `POST /api/pnp/goto` | `{"job", "ref", "camera": false}`: on a G-code machine, up to `safe_z` and the nozzle over the part's place, or with `camera` the top camera's picture center (by the measured offset, else the file's); run to its end and the place read |
+| `POST /api/pnp/goto` | `{"job", "ref", "camera": false}`: on a G-code machine, the nozzle over the part's place, or with `camera` the top camera's picture center (by the measured offset, else the file's), as a goto goes across: up to `safe_z` first only from below it (from above it too with `seesaw`), Z never brought down; run to its end and the place read |
 | `POST /api/pnp/park` | to `[motion] park` at the safe height, as a goto; 400 without one |
 | `POST /api/pnp/over-camera` | the lights on, then as a goto: across at `safe_z` and the nozzle turned to 0 over the bottom camera's place (measured, else the file's `[up_camera] position`), the height last (`[up_camera] z`, else `safe_z`) |
 | `POST /api/pnp/swap` | `{"to": "nozzle" \| "camera"}`: the head moved by the top camera's offset as a goto, so the nozzle goes over the point the camera looked at, or the camera over the nozzle's |

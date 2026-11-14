@@ -492,7 +492,8 @@ light_off = []
 [motion]
 feed_xy = 6000           # mm/min across, and of a jog or goto without a feed of its own
 feed_z = 1200            # mm/min up and down
-safe_z = 0               # needed: the height every move across goes at, gone to from above or below (a seesaw Z lowers its other nozzle above it)
+safe_z = 0               # needed: the lowest height a move across goes at; a nozzle below it rises to it first, one above it stays there
+seesaw = false           # true: one Z motor drives two nozzles, the first down below safe_z and the second above it (the LumenPnP): moves across come to safe_z from either side, and Z jogs stop at it
 place_z = -20            # needed: the tip with a part on it at the board's top
 pick_dwell_ms = 200
 place_dwell_ms = 150
@@ -568,8 +569,11 @@ port as that machine, anything else as this project's firmware. The
 connect sends `init`, asks M115 for the firmware's name and reads the
 head's place. A jog reads the place first and is answered once queued, so
 jogs pressed quickly add up; a goto moves only the axes it names, rises to
-`safe_z` only to go across, puts the height last, and is answered once its
-moves have run. The console sends lines as typed; Stop sends `stop`. What
+`safe_z` only to go across and only from below it (a nozzle above it stays
+there; with `seesaw` it comes down to it too), puts the height last, and is
+answered once its moves have run. Go to part, Park, the camera swaps and
+the cameras' routines go across by the same rule, and a seesaw's Z jog
+stops at `safe_z`, both nozzles up, rather than go past it. The console sends lines as typed; Stop sends `stop`. What
 needs this project's firmware (the laser, the spindle, runs, probing,
 settings, the head camera's routines) answers that the machine is a G-code
 one. The PNP tab places with it (see OPERATING.md), and the Config page
