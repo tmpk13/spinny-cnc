@@ -406,7 +406,8 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
     if "test_ms" in output:
         settings["laser_ms"] = reader.integer(output, "test_ms", "output", 1, 60_000)
     if "pin" in output:
-        settings["laser_pin"] = reader.pin(output, "pin", "output")
+        # An output, so not a STOP header's: its buffer would drive against it.
+        settings["laser_pin"] = reader.output_pin(output, "pin", "output")
     reader.done(output, "output", {"pwm_hz", "s_max", "s_min", "invert", "test_ms", "pin"})
 
     # The tool output. The firmware takes the pins one setting at a time,
@@ -423,6 +424,9 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
         for section, other in (("output", "laser_pin"), ("probe", "probe_pin")):
             if settings["tool_pin"] == settings[other]:
                 raise MachineError(f"{where}: [enable] pin {pin_name(settings['tool_pin'])} is the [{section}] pin too")
+        # An output, so not a STOP header's: its buffer would drive against it.
+        if settings["tool_pin"] in BUFFERED_INPUTS:
+            raise reader.fail("enable", "pin", f"{pin_name(settings['tool_pin'])} is a STOP header's, an input behind a buffer that would drive against it")
     servos = _parse_servos(reader, top, settings)
     driven = _check_servo_pins(where, settings)
     # A fitted endstop is an input like the probe, which it may share;

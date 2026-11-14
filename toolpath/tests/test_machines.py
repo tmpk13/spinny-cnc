@@ -688,6 +688,9 @@ def test_servos_land_on_their_numbers_with_the_page_s_bars():
         # An endstop on a servo's pin would read the servo's pulse.
         ('[rail]\nendstop = "min"\nendstop_pin = 29\n[servo.1]\npin = 29\n', "[rail] endstop_pin 29 (SERVO) is the [servo.1] pin too"),
         ('[rail]\nendstop = "min"\nendstop_pin = 0\n[servo.1]\nchannel = 0\n', "[rail] endstop_pin 0 (TX) is the [pca9685] pin too"),
+        # The laser and a fitted tool output are outputs too.
+        ("[output]\npin = 4\n", "[output] pin 4 (X-STOP) is a STOP header's"),
+        ("[enable]\nfitted = true\npin = 25\n[probe]\npin = 22\n", "[enable] pin 25 (Z-STOP) is a STOP header's"),
         # A G-code machine's controller keeps its own servos.
         ('controller = "gcode"\n[servo.1]\npin = 29\n', "servo is for a machine on this project's firmware"),
     ],
@@ -707,3 +710,8 @@ def test_a_bus_no_servo_uses_keeps_its_pins_to_themselves():
     # Servos on the two channels of one PWM slice both run.
     s = parse("[servo.1]\npin = 26\n[servo.2]\npin = 27\n", "slice").settings
     assert (s["servo1_pin"], s["servo2_pin"]) == (26, 27)
+
+
+def test_a_tool_output_not_fitted_may_name_any_pin():
+    # Unfitted, its pin is never claimed, so a STOP header's is no clash.
+    assert parse("[enable]\nfitted = false\npin = 16\n", "unfitted").settings["tool_pin"] == 16

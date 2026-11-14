@@ -281,7 +281,10 @@ are on whichever GPIOs `[output] pin`, `[probe] pin` and `[enable] pin`
 name, and an axis's switch on its `endstop_pin`: any GPIO but the driver
 sockets' and the UART's, which
 [firmware/rp2040/README.md](../firmware/rp2040/README.md#pins) lists
-with the headers' GPIOs. The firmware takes the pins one setting at a time,
+with the headers' GPIOs. An output (the laser's, a fitted tool output's, a
+servo's) may not be a STOP header's either (GP3, GP4, GP16, GP25): their
+signals reach the chip through an input buffer, which would drive against
+it. The firmware takes the pins one setting at a time,
 so a pin named twice is refused here, where the whole file is seen: the
 probe may not share the output's pin, and a fitted tool output may share
 neither. An axis's `endstop_pin` is an input like the probe's: two axes

@@ -86,6 +86,8 @@ describe("servos in a machine file, as the backend reads them", () => {
         ["[pca9685]\nbus = 1\n", "[pca9685] bus is not a key here"],
         ['[rail]\nendstop = "min"\nendstop_pin = 29\n[servo.1]\npin = 29\n', "[rail] endstop_pin 29 (SERVO) is the [servo.1] pin too"],
         ['[rail]\nendstop = "min"\nendstop_pin = 0\n[servo.1]\nchannel = 0\n', "[rail] endstop_pin 0 (TX) is the [pca9685] pin too"],
+        ["[output]\npin = 4\n", "[output] pin 4 (X-STOP) is a STOP header's"],
+        ["[enable]\nfitted = true\npin = 25\n[probe]\npin = 22\n", "[enable] pin 25 (Z-STOP) is a STOP header's"],
         ['controller = "gcode"\n[servo.1]\npin = 29\n', "servo is for a machine on this project's firmware"],
     ];
     for (const [text, message] of refused) {

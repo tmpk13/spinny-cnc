@@ -529,7 +529,8 @@ export function parseMachine(text: string, id: string): MachineDocument {
         settings["laser_ms"] = reader.integer(output, "test_ms", "output", 1, 60000);
     }
     if ("pin" in output) {
-        settings["laser_pin"] = reader.pin(output, "pin", "output");
+        // An output, so not a STOP header's: its buffer would drive against it.
+        settings["laser_pin"] = reader.outputPin(output, "pin", "output");
     }
     reader.done(output, "output", ["pwm_hz", "s_max", "s_min", "invert", "test_ms", "pin"]);
 
@@ -548,6 +549,10 @@ export function parseMachine(text: string, id: string): MachineDocument {
             if (settings["tool_pin"] === settings[other]) {
                 throw new Error(`${where}: [enable] pin ${pinName(settings["tool_pin"]!)} is the [${section}] pin too`);
             }
+        }
+        // An output, so not a STOP header's: its buffer would drive against it.
+        if (BUFFERED_INPUTS.has(settings["tool_pin"]!)) {
+            throw reader.fail("enable", "pin", `${pinName(settings["tool_pin"]!)} is a STOP header's, an input behind a buffer that would drive against it`);
         }
     }
     const servos = parseServos(reader, top, settings);
