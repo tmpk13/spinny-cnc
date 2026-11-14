@@ -1416,8 +1416,9 @@ describe("the mock machine answers as the firmware does", () => {
         expect(help[2]).toBe("cartesian=1: Z is a joint with R, H: go, cut, jog, jogto, set take Z; go, cut take no A");
         expect(help[4]).toBe("home [R] [A] [H] [Z]: a - or + after a letter picks the end; alone, every axis with an endstop");
         expect(help[6]).toBe("spindle=1: spindle S | spindle off; no S or M on cut and dwell, no laser S");
-        expect(help[7]).toBe("dispenser=1 (with cartesian): A is the plunger in mm, on go and cut too; no S or M on cut and dwell, no laser S");
-        expect(help.length).toBe(12);
+        expect(help[7]).toBe("servo N A [T] | servo N off: servo N (1 to 4, servoN_out set) to A degrees, then a wait of T ms");
+        expect(help[8]).toBe("dispenser=1 (with cartesian): A is the plunger in mm, on go and cut too; no S or M on cut and dwell, no laser S");
+        expect(help.length).toBe(13);
     });
 
     test("the status line has no negative zero", () => {

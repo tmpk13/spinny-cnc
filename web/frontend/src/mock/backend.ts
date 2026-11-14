@@ -673,6 +673,7 @@ export const HELP_LINES = [
     "home [R] [A] [H] [Z]: a - or + after a letter picks the end; alone, every axis with an endstop",
     "dwell T [S] | mode dyn|const | laser S [T] | laser off | set [R] [A] [H]",
     "spindle=1: spindle S | spindle off; no S or M on cut and dwell, no laser S",
+    "servo N A [T] | servo N off: servo N (1 to 4, servoN_out set) to A degrees, then a wait of T ms",
     "dispenser=1 (with cartesian): A is the plunger in mm, on go and cut too; no S or M on cut and dwell, no laser S",
     "enable | disable | unlock | version | status | help | diag",
     "$ | $name | $name=value | $save | $load | $defaults | $tmc",
