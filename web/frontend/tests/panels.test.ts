@@ -135,6 +135,53 @@ describe("the panel menu", () => {
         expect(console.hasAttribute("data-behind")).toBe(false);
     });
 
+    test("a stack folds as one: its fold button folds every panel of it, and a tab shows its panel folded too", () => {
+        const app = makeApp();
+        mountPanels(app);
+        openMenuOf("p-console");
+        pick("Stack with above");
+        const console = app.querySelector("#p-console")!;
+        const preview = app.querySelector("#p-preview")!;
+        app.querySelector<HTMLButtonElement>("#p-console .panel-chevron")!.click();
+        expect(console.hasAttribute("data-collapsed")).toBe(true);
+        expect(preview.hasAttribute("data-collapsed")).toBe(true);
+        Array.from(app.querySelectorAll<HTMLButtonElement>(".panel-tab")).find((tab) => tab.textContent === "Preview")!.click();
+        expect(preview.hasAttribute("data-behind")).toBe(false);
+        expect(preview.hasAttribute("data-collapsed")).toBe(true);
+        app.querySelector<HTMLButtonElement>("#p-preview .panel-chevron")!.click();
+        expect(console.hasAttribute("data-collapsed")).toBe(false);
+        expect(preview.hasAttribute("data-collapsed")).toBe(false);
+        // Taken apart, each panel folds on its own again.
+        openMenuOf("p-preview");
+        pick("Unstack");
+        app.querySelector<HTMLButtonElement>("#p-preview .panel-chevron")!.click();
+        expect(preview.hasAttribute("data-collapsed")).toBe(true);
+        expect(console.hasAttribute("data-collapsed")).toBe(false);
+    });
+
+    test("a stack of a disclosure and a panel folds as one, from either, and takes the fold of the panel put in front", () => {
+        const app = makeApp();
+        mountPanels(app);
+        // The laser folded, then stacked under the open Setup: Setup is in front, so the stack is open.
+        app.querySelector<HTMLButtonElement>("#p-laser .panel-chevron")!.click();
+        openMenuOf("p-steps");
+        pick("Stack with above");
+        const details = app.querySelector<HTMLDetailsElement>("#p-steps details")!;
+        const laser = app.querySelector("#p-laser")!;
+        expect(details.open).toBe(true);
+        expect(laser.hasAttribute("data-collapsed")).toBe(false);
+        // Folded from the panel behind, by its tab's menu: the disclosure in front folds too.
+        const tab = Array.from(app.querySelectorAll<HTMLButtonElement>(".panel-tab")).find((node) => node.textContent === "Laser")!;
+        tab.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+        pick("Fold");
+        expect(laser.hasAttribute("data-collapsed")).toBe(true);
+        expect(details.open).toBe(false);
+        // Opened by hand from its own head: the laser follows.
+        details.open = true;
+        details.dispatchEvent(new Event("toggle"));
+        expect(laser.hasAttribute("data-collapsed")).toBe(false);
+    });
+
     test("a panel its view hides leaves the stack's tabs, and comes back to them", () => {
         const app = makeApp();
         const panels = mountPanels(app);

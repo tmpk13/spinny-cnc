@@ -5,7 +5,8 @@
 // below, stick to the panel above, lay a block side by side, fit the
 // panel to the screen, and reset. A stack shows one panel at a time under
 // a row of tabs, one per panel, drawn as a folder with the panels behind as
-// sheets under it; a tab dragged off the row takes its panel out of the
+// sheets under it, and folds as one: its panels share the fold of the one
+// in front. A tab dragged off the row takes its panel out of the
 // stack to where it is let go, and a button at the row's end takes the
 // whole stack apart. The markup stacks a panel with the one before it from
 // the start by `data-stack`. Panels stuck together are drawn as one
@@ -387,6 +388,13 @@ export function mountPanels(app: HTMLElement): PanelsController {
         fold?.addEventListener("toggle", () => {
             applyPanel(panel);
             positionHandles(panel.page);
+            // Opened or closed by hand: the rest of its stack follows.
+            if (!folding) {
+                const next = foldAll(stackOf(panel), collapsedOf(panel), panel.page.layout);
+                if (next !== panel.page.layout) {
+                    update(panel.page, next);
+                }
+            }
         });
         resize.addEventListener("pointerdown", (event) => dragHeight(panel, event));
         resize.addEventListener("dblclick", () => update(panel.page, setPrefs(panel.page.layout, panel.id, { height: undefined })));
@@ -436,14 +444,77 @@ export function mountPanels(app: HTMLElement): PanelsController {
         return panel.fold ? !panel.fold.open : prefsOf(panel).collapsed === true;
     }
 
-    function setCollapsed(panel: PanelView, collapsed: boolean): void {
-        if (panel.fold) {
-            // The disclosure's own listener keeps the fold; its toggle
-            // event draws the panel again.
-            panel.fold.open = !collapsed;
-            return;
+    /** The panels of a panel's stack, itself among them, in the stack's order. */
+    function stackOf(panel: PanelView): PanelView[] {
+        const where = locate(panel.page.layout, panel.id);
+        if (!where) {
+            return [panel];
         }
-        update(panel.page, setPrefs(panel.page.layout, panel.id, { collapsed: collapsed || undefined }));
+        return panel.page.layout.columns[where.column]![where.block]![where.stack]!.ids
+            .map((id) => panels.get(id))
+            .filter((member): member is PanelView => member !== undefined);
+    }
+
+    // Set while the layer opens or closes disclosures itself, so that their
+    // toggle events (synchronous in some DOMs) do not fold the stack again.
+    let folding = false;
+
+    /**
+     * Folds or unfolds each of `members`: a disclosure by its own fold (its
+     * listener keeps it, and its toggle event draws the panel again), the
+     * others in `layout`, which comes back changed, or the same object when
+     * none of them changed.
+     */
+    function foldAll(members: PanelView[], collapsed: boolean, layout: PageLayout): PageLayout {
+        let next = layout;
+        folding = true;
+        try {
+            for (const member of members) {
+                if (member.fold) {
+                    if (member.fold.open === collapsed) {
+                        member.fold.open = !collapsed;
+                    }
+                } else if ((next.panels[member.id]?.collapsed === true) !== collapsed) {
+                    next = setPrefs(next, member.id, { collapsed: collapsed || undefined });
+                }
+            }
+        } finally {
+            folding = false;
+        }
+        return next;
+    }
+
+    /** Folds or unfolds a panel, and with it every panel of its stack: a stack has one fold. */
+    function setCollapsed(panel: PanelView, collapsed: boolean): void {
+        const next = foldAll(stackOf(panel), collapsed, panel.page.layout);
+        if (next !== panel.page.layout) {
+            update(panel.page, next);
+        }
+    }
+
+    /**
+     * Gives every stack of a page the fold of its panel in front, the one a
+     * stack is folded and unfolded by: a stack made by a drop or a menu, or
+     * the markup's, whose panels were folded each their own way, folds as
+     * one from then on.
+     */
+    function syncFolds(page: PageView): void {
+        let layout = page.layout;
+        for (const stack of page.layout.columns.flat(2)) {
+            if (stack.ids.length < 2) {
+                continue;
+            }
+            const members = stack.ids.map((id) => panels.get(id)).filter((member): member is PanelView => member !== undefined);
+            const visible = members.filter((member) => shown(member.id));
+            const front = visible.find((member) => member.id === stack.front) ?? visible[0];
+            if (front) {
+                layout = foldAll(members, collapsedOf(front), layout);
+            }
+        }
+        if (layout !== page.layout) {
+            page.layout = layout;
+            save();
+        }
     }
 
     /** Whether the panel shows: its view has not hidden it (read as it is now) and neither has the operator. */
@@ -567,6 +638,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
     }
 
     function render(page: PageView): void {
+        syncFolds(page);
         page.root.toggleAttribute("data-arranged", !sameArrangement(page.layout, page.defaults));
         if (page.layout.widths) {
             page.root.setAttribute("data-widths", "");
