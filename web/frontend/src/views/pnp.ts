@@ -171,17 +171,17 @@ export interface BoardScene {
     camera: { x: number; y: number } | null;
 }
 
+/** The jobs made from a KiCad board, the newest first, at most four: what the empty board drawing offers to pick. */
+export function boardJobs(state: AppState): JobSummary[] {
+    return state.jobs.filter((job) => job.source === "kicad").slice(-4).reverse();
+}
+
 /**
  * The board drawing: outline, pads, every part as a dot with its reference
  * (its value and footprint on hover), and the up camera; y up. The head is
  * drawn into it by `placeHead`, which follows the machine without drawing
  * the board again.
  */
-/** The jobs made from a KiCad board, the newest first, at most four: what the empty board drawing offers to pick. */
-export function boardJobs(state: AppState): JobSummary[] {
-    return state.jobs.filter((job) => job.source === "kicad").slice(-4).reverse();
-}
-
 export function boardSvg(scene: BoardScene, onPick: (ref: string) => void): { root: SVGElement; box: Box } | null {
     const box = drawingBox(scene.job, scene.parts, scene.camera ? [scene.camera] : []);
     if (box === null) {
