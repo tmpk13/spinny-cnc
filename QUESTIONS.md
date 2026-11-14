@@ -75,3 +75,52 @@ Why it matters: a camera mounted upside down showed its picture upside down, and
 - C. A turn of its own per camera (0, 90, 180, 270), apart from the roll: free to differ from the machine's directions.
 Applied: A, in ff3183b.
 Answer:
+
+## Q11. What should a panel folder be?
+Why it matters: stacks were already drawn as folders, so "Panel folders" may have meant something else.
+- A. A named group of panels in a box whose head folds, renames and moves it as one; panels go in or out from their menu or by a drop (recommended): stacks stay as they are.
+- B. A per-page list of named folders, like a sidebar, showing a folder's panels when opened: another way of moving around, more work.
+Applied: A, in 2987645.
+Answer:
+
+## Q12. Is the new default arrangement of panels the one you want?
+Why it matters: a layout already kept in a browser stays as it was until Reset in the page settings.
+- A. A Camera folder on Jobs; Bottom camera, Top camera and Machine folders on PNP; the Placing panel under the steps (recommended): camera panels fold away in one press and little else moves.
+- B. A bigger change, for example the Console in the left column and Height map, Align and Tests in a folder of their own.
+Applied: A, in bdd512a.
+Answer:
+
+## Q13. Colors: one per page, or one per panel?
+Why it matters: "colors for panels" may mean each panel has its own color.
+- A. One Solarized color per page, on its tab's underline and along the top edge of its panels and folders, with a page setting to turn it off (recommended): a tab and its panels match.
+- B. Each panel or folder gets its own color, picked from its menu.
+Applied: A, in 136e99a.
+Answer:
+
+## Q14. Which hidden content should the page point out?
+Why it matters: the marks add a little to every held panel and every long column.
+- A. A fade with "more below" at the foot of a held panel or a column with panels below, a shadow under a head with content scrolled under it, "folded" beside a folded panel's name, a count on the eye of hidden panels (recommended).
+- B. All of A, plus a thin placeholder with Show where a hidden panel sits.
+Applied: A, in 25fc3a8.
+Answer:
+
+## Q15. Which - and + should be part of the box?
+Why it matters: number fields have no stepper buttons; the camera zoom's were the only - and + beside a field.
+- A. The zoom's - and + become the ends of its box, through a reusable stepperBox helper (recommended).
+- B. Every number field gets - and + inside its box: this takes width in every row.
+Applied: A, in a6f8dca.
+Answer:
+
+## Q16. Should PageUp and PageDown ever scroll the page?
+Why it matters: the page can no longer be paged through with the keyboard.
+- A. Never, except in a text area or a dropdown (recommended).
+- B. Blocked only while the shown page's jog panel uses them as jog keys.
+Applied: A, in c3a86d8.
+Answer:
+
+## Q17. Which version should the top bar show?
+Why it matters: the long text it showed was most likely a G-code machine's answer to M115, which was not seen on the real machine.
+- A. The firmware's first word and version number (Marlin 2.1.2), the whole answer on hover (recommended).
+- B. Also this program's own release version in the top bar.
+Applied: A, in 214c76f.
+Answer:

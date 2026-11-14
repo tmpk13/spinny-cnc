@@ -808,3 +808,15 @@
 - Full scan: rows over the whole board from a rough place, every picture weighed, laid out as a mosaic with the board found; at rest, or on the move with the camera's delay measured from rows run both ways.
 - Board stretch: the posterior fits the board's X and Y scale and shear; Align shows the stretch of three marks or more, a mark far off taken as wrong.
 - Machine skew: learned from boards found at different turns, shown with its uncertainty, written into a cartesian machine file's steps per mm on request.
+- Panel folders: panels gather into named folders that fold, rename and move as one (New folder, Into, Out of, Up and Down in the folder, or a drop on a folder's head), kept in the page's layout and in kept layouts.
+- Panels are grouped by task: the Jobs page's camera panels in a Camera folder; the PNP page's in Bottom camera and Top camera; a G-code machine's head, board place and feeders in Machine; every panel's menu ends with Edit panels.
+- Each page has its own color: its tab is underlined in it and its panels and folders are edged in it; Colors for tabs and panels in the page settings turns this off.
+- Content out of sight shows: a fade and "more below" at the foot of a held panel or a long column, a shadow under a head with content scrolled under it, "folded" beside a folded panel or stack, and a count on the eye of hidden panels.
+- Number fields center their numbers; the camera zoom's - and + are the ends of its field's box.
+- PageUp and PageDown never scroll the page; text areas and dropdowns keep them.
+- The jog panel has a board pad: eight arrows, the corners moving X and Y together, the head's board X and Y in the middle; each jog bar shows where its axis is now.
+- A stack of panels folds as one, from any of its panels.
+- The Overview's Connection card names the port and keeps long words inside; its cards fill the page in 1, 2, 4 or 8 columns (it was sized in rem all along, but capped at 76rem).
+- The feeder scan's Keep slot, Slot here and Count again buttons have tooltips.
+- The top bar shows the firmware's version (Marlin 2.1.2), its whole description on hover, instead of the long text.
+- The PNP Board panel with no board offers Open a board and the four newest board jobs.
