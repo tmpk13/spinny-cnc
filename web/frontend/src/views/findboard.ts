@@ -478,7 +478,9 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
                 "Each column is a place the looks put the board, as tall as its share of the evidence (looks weighed by how well they matched);"
                 + " the most likely is found once it has enough looks and reaches the threshold line. Put the picture's center on a corner of the board"
                 + " (jog, or double-click it in the camera's picture), pick which corner it is and press Corner here: two give the board's place and turn,"
-                + " Search keeps to it, Use as board place takes it when nothing is found, and a guess putting a corner further than Within is ruled out."),
+                + " Search keeps to it, Use as board place takes it when nothing is found, and a guess putting a corner further than Within is ruled out."
+                + " With Probability over the pose each column is a place's probability, the last (?) what no place holds yet, where nothing has looked;"
+                + " Full scan, once a rough place is known, covers the whole board and lays its pictures out below."),
         ),
     );
 
