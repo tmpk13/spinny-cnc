@@ -2,8 +2,9 @@
 // panel of every page, whatever its view, gets in its head a fold button
 // and a menu (its dots button, or a right click on the head): fold, hide,
 // move up, down or to the next column, stack with the panel above or
-// below, stick to the panel above, lay a block side by side, fit the
-// panel to the screen, and reset. A stack shows one panel at a time under
+// below, stick to the panel above, lay a block side by side, put it in a
+// new folder, into another or out of its own, fit the panel to the
+// screen, reset, and edit mode. A stack shows one panel at a time under
 // a row of tabs, one per panel, drawn as a folder with the panels behind as
 // sheets under it, and folds as one: its panels share the fold of the one
 // in front. A tab dragged off the row takes its panel out of the
@@ -13,7 +14,10 @@
 // block with no gap and move together, or side by side in one row (a
 // wrapper around the block's stacks, which falls back to one column on a
 // narrow screen); there a folded panel gives its width to the others,
-// standing on its side. A panel held at a height shows buttons in its head to
+// standing on its side. A folder is a block with a name, drawn in a box of
+// its own under a head (its fold, name, count and menu) and folded and
+// moved as one; the markup makes one of a run of panels marked with the
+// same `data-folder`. On a narrow screen the box falls away. A panel held at a height shows buttons in its head to
 // scroll to its top and its end. Content out of sight says so: a panel held
 // at a height or a column with more below than it shows fades at its foot
 // under a press that scrolls on, a head with content scrolled under it
@@ -23,8 +27,9 @@
 // holds it at a height, its content scrolling within; a handle between two
 // columns sets their widths; a double click on either gives the size back
 // to the stylesheet. In edit mode each head has a grip that drags its
-// panel (with what is stuck to it) to another place or onto another panel
-// to stack them.
+// panel (with what is stuck to it; a folder's panel alone) to another
+// place, onto another panel to stack them, or onto a folder's head to put
+// it in; a folder's own grip drags the folder.
 //
 // The layer finds the panels in the markup (`main.page > .column >
 // section.panel[id]`) and works on them by id, so a panel added to the

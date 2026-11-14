@@ -8,7 +8,9 @@ Open `http://localhost:8000`, connect to the board on the *Connection*
 tab (or to `socket://127.0.0.1:2323` for the virtual firmware, or to
 `socket://127.0.0.1:2324` for a controller on a Pi forwarded by `mise run
 relay-pi -- user@host`). The top bar shows only the machine's state (a
-press on it opens the Connection tab) and the big *Stop*, always in view:
+press on it opens the Connection tab), the firmware's version (a G-code
+machine's says its first word and version, Marlin 2.1.2, its whole answer
+to M115 on hover) and the big *Stop*, always in view:
 it stops a run or probing the way their own Stop does, else ends a camera
 routine, cancels a jog or goto and turns the beam or spindle off; on a
 G-code machine it sends the file's stop. One machine is connected at a
@@ -19,7 +21,13 @@ axis with the radius buttons, press "Set R=0 here", then turn the table
 with the turn buttons: a positive turn must swing the point under the beam
 counterclockwise seen from above, otherwise set `$dir_invert`. Check steps
 per unit at low speed before the first job. Every axis is a bar in the
-jog panel, with its step choices and a field for any other step; *Cancel*
+jog panel, with where the axis is now at its right, its step choices and
+a field for any other step. On a machine with a board pad the pad comes
+first: eight arrows around the head's X and Y on the board, the corners
+moving X and Y together, X by the X bar's step and Y by the Y bar's (the
+Board X and Board Y bars under it hold those steps, and the arrow keys
+move along one axis at a time). PageUp and PageDown never scroll the
+page (a mill's file binds them to Z); a text area keeps them. *Cancel*
 in the panel's head, or Escape, stops a move (Escape also leaves a text
 field, so the next arrow key jogs). *Fine* in the head jogs every bar by
 its smallest step, as Shift held with a jog key does. Under *Hold to
@@ -337,13 +345,20 @@ what it is for, and a line on what it holds now (the jobs kept and a run
 under way, the parts of the board picked, the machine connected, edits
 not applied). A press on a card shows its page.
 
+Every page has a color of its own (Jobs orange, Plot green, CAM cyan,
+PNP violet, Auto magenta, Config yellow, Connection blue, Plugins red):
+its tab is underlined in it and its panels wear it along their top edge.
+
 Every panel's head has a fold button (the chevron before its name) and a
 menu (the dots after it, or a right click on the head): fold, hide, move
 up, down or to the next column, stack with the panel above or below,
 stick to the panel above, lay stuck panels *Side by side* (and back *One
-above another*), *Fit to screen*, and reset. A stack shows one of its
+above another*), *New folder*, *Into* another folder or *Out of* its own,
+*Fit to screen*, reset, and *Edit panels*. A stack shows one of its
 panels at a time under a row of tabs, drawn as a folder with an edge
-under it for each panel behind; drag a tab off the row to take its panel
+under it for each panel behind, and folds as one: folding any of its
+panels folds them all, and a tab shows its panel folded too. Drag a tab
+off the row to take its panel
 out of the stack to where it is let go (another place, or onto another
 panel to stack it there), or press the button at the row's end (or
 *Take the stack apart* in the menu) to lay all of them out one above
@@ -351,6 +366,20 @@ another. Some panels start stacked. Panels stuck together are drawn as
 one block and move together, one above another or side by side (a phone
 shows them in one column either way); side by side, a folded panel
 stands on its side as a narrow strip and gives its width to the others.
+A folder is a group of panels under a name, in a box with a head: its
+fold (shut, the head names the panels it holds), its name (double click
+to rename), how many panels it holds, and a menu that folds, renames and
+moves the folder as one, or takes it apart. *New folder* in a panel's
+menu makes one named after the panel, its name up for typing; a panel in
+a folder moves *Up* and *Down in the folder*. Some panels start in
+folders: the Jobs page's camera panels in *Camera*, the PNP page's in
+*Bottom camera* and *Top camera*, and a G-code machine's head, board
+place and feeders in *Machine*. A phone shows a folder's panels in the
+one column, without the box. Content out of sight says so: a panel held
+at a height, or a column with panels below its foot, fades there under a
+*more below* press that scrolls on; a held panel's head casts a shadow
+over what scrolled under it; a folded panel or stack says *folded*
+beside its name.
 The Run panel stays at the foot of
 its column unless it is stuck or stacked. On the wide layout a handle
 under each panel holds it at a height (it then scrolls inside, with
@@ -365,14 +394,17 @@ hover or a press, tabs kept out of the bar (they open from *More* at its
 end), the panel layouts kept by name, *Edit panels*, a reset of the page
 shown, the hidden panels to show again, and the look: the page's own
 fonts (Inter and JetBrains Mono, served with the page, so it reads the
-same with no network) or the system's, and *Animate the page* (panels
+same with no network) or the system's, *Animate the page* (panels
 unfolding, a stack's panel coming forward, menus and pages opening; off,
-or with the system's reduced motion, everything simply appears). *Edit panels* puts a grip in
-every head: drag a panel to another place, or onto another panel to
-stack them, then press *Done editing* in the tab bar. While a panel is
-hidden an eye shows beside the gear: pressed, the hidden panels show for
-a while with a dashed edge (their menu has *Show for good*), and pressed
-again they hide. The two arrows beside it scroll the column last pointed
+or with the system's reduced motion, everything simply appears), and
+*Colors for tabs and panels*. *Edit panels* (here or in any panel's
+menu) puts a grip in every head: drag a panel to another place, onto
+another panel to stack them, or onto a folder's head to put it in (a
+panel in a folder goes alone; the folder's own grip drags the folder),
+then press *Done editing* in the tab bar. While a panel is
+hidden an eye shows beside the gear, counting them: pressed, the hidden
+panels show for a while with a dashed edge (their menu has *Show for
+good*), and pressed again they hide. The two arrows beside it scroll the column last pointed
 at to its top or its end. A layout kept by name
 covers every page; *Default* is the page as shipped and cannot be saved
 over. Once one is kept, a pick beside the gear swaps layouts in one
@@ -502,8 +534,9 @@ Every camera picture (the head camera's, and the PNP page's bottom and top
 cameras') works the same way. It is asked for at the size it is shown, so
 it stays sharp when zoomed: *+* and *-* under it, or Ctrl and the wheel (a
 pinch on a touchpad), zoom on its center by steps, and the plain wheel
-scrolls the page; the zoom between *-* and *+* is a field, so any zoom
-from 1 to 8 can be typed in and taken with Enter. A drag moves the head
+scrolls the page; *-* and *+* are the ends of the zoom's own box, and the
+number between them is a field, so any zoom from 1 to 8 can be typed in
+and taken with Enter. A drag moves the head
 so what the camera sees follows the pointer, a line showing the move; a
 double-click brings a point to the crosshair (both once the camera's
 scale is measured). The grip under the picture makes its box taller or
