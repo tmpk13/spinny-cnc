@@ -69,8 +69,11 @@ export function boardText(connected: boolean, picked: string | null, current: st
 }
 
 // How long the editor waits after the last key before it checks the text
-// with the backend, for the list's file values.
+// with the backend, for the list's file values; a find in every file waits
+// as long after the last key of the word.
 const CHECK_AFTER_MS = 400;
+/** The most lines a find in every file lists. */
+const FOUND_MOST = 100;
 
 /** The machine file panel in `root`, and the list of every key a file can set in `listRoot`. */
 export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement): void {
@@ -89,6 +92,21 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
     flash.title = "keep the board's current settings over a restart";
     const loadNote = el("span", { class: "muted config-board" });
     const editor = codeEditor("Machine file");
+    // Finding a word in the file, or in every machine file.
+    const findField = el("input", {
+        type: "search",
+        class: "field config-find",
+        placeholder: "find in the file",
+        "aria-label": "Find in the file",
+        autocomplete: "off",
+        spellcheck: "false",
+        title: "find a word in the file (Ctrl+F in the editor); Enter for the next, Shift+Enter the one before, Escape back to the text",
+    }) as HTMLInputElement;
+    const findCount = el("span", { class: "muted config-find-count" });
+    const findPrevious = button("Previous", () => findStep(-1), "btn btn-quiet btn-small", "the place before (Shift+Enter)");
+    const findNext = button("Next", () => findStep(1), "btn btn-quiet btn-small", "the next place (Enter)");
+    const allFiles = el("input", { type: "checkbox", "aria-label": "Find in every machine file" }) as HTMLInputElement;
+    const foundList = el("ul", { class: "config-found hidden", "aria-label": "Found in the machine files" });
     const check = button("Check", () => checkText(), "btn", "check the file without saving");
     const save = button("Save", () => saveText(), "btn btn-primary", "save the file");
     const revert = button("Revert", () => revertText(), "btn btn-quiet", "drop the edits");
@@ -103,6 +121,11 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         note,
         el("div", { class: "button-row" }, load, read, flash),
         loadNote,
+        el("div", { class: "button-row config-find-row" },
+            findField, findCount, findPrevious, findNext,
+            el("label", { class: "muted", title: "list the lines of every machine file that hold it" }, allFiles, " all files"),
+        ),
+        foundList,
         editor.root,
         el("div", { class: "button-row" }, check, save, revert, status),
         problems,
@@ -156,6 +179,135 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         setDirty(true);
         setStatus(problem ?? "edited, not saved", problem !== null);
         scheduleCheck();
+        showFound();
+    });
+
+    // --- finding a word -------------------------------------------------------
+
+    /** The machine files' texts as last read, for a find in all of them; dropped when the files may have changed. */
+    const texts = new Map<string, string>();
+    let filesTimer: ReturnType<typeof setTimeout> | null = null;
+
+    /** The count of places the editor's text holds the word, the steps locked with none. */
+    function showFound(): void {
+        const query = findField.value;
+        const count = editor.find(query);
+        findCount.textContent = query === "" ? "" : count === 0 ? "none here" : `${count} here`;
+        for (const node of [findPrevious, findNext]) {
+            setLocked(node, count === 0, query === "" ? "type a word to find" : "the file does not hold it");
+        }
+    }
+
+    function findStep(step: 1 | -1): void {
+        const at = editor.findStep(step);
+        if (at) {
+            findCount.textContent = `${at.index} of ${at.count}`;
+        }
+    }
+
+    /** The word looked for again: in the editor at once, in every file a moment after the last key. */
+    function runFind(): void {
+        showFound();
+        if (filesTimer !== null) {
+            clearTimeout(filesTimer);
+        }
+        filesTimer = setTimeout(() => {
+            filesTimer = null;
+            void findInFiles();
+        }, CHECK_AFTER_MS);
+    }
+
+    /** Every line of every machine file that holds the word, each a button to that file and line; the open file as the editor has it. */
+    async function findInFiles(): Promise<void> {
+        const query = findField.value;
+        if (!allFiles.checked || query === "") {
+            replace(foundList);
+            foundList.classList.add("hidden");
+            return;
+        }
+        const ids = [...files.map((file) => file.id), ...broken.map((entry) => entry.id)];
+        for (const id of ids) {
+            if (!texts.has(id) && id !== picked) {
+                try {
+                    texts.set(id, (await ctx.api.machineFile(id)).text);
+                } catch {
+                    // A file that cannot be read is left out of the find.
+                }
+            }
+        }
+        if (findField.value !== query || !allFiles.checked) {
+            return;
+        }
+        const wanted = query.toLowerCase();
+        const hits: { id: string; line: number; text: string }[] = [];
+        for (const id of ids) {
+            const text = id === picked ? editor.getText() : texts.get(id);
+            text?.split("\n").forEach((line, index) => {
+                if (line.toLowerCase().includes(wanted)) {
+                    hits.push({ id, line: index, text: line.trim() });
+                }
+            });
+        }
+        const shownHits = hits.slice(0, FOUND_MOST);
+        replace(foundList,
+            ...shownHits.map((hit) => {
+                const name = files.find((file) => file.id === hit.id)?.name ?? hit.id;
+                const go = el("button", { type: "button", class: "config-found-item", title: `open ${name} at line ${hit.line + 1}` },
+                    el("span", { class: "config-found-where" }, `${hit.id}:${hit.line + 1}`),
+                    el("span", { class: "mono config-found-text" }, hit.text),
+                );
+                go.addEventListener("click", () => void openAt(hit.id, hit.line));
+                return el("li", {}, go);
+            }),
+            ...(hits.length === 0 ? [el("li", { class: "muted" }, "no machine file holds it")] : []),
+            ...(hits.length > shownHits.length ? [el("li", { class: "muted" }, `and ${hits.length - shownHits.length} more lines`)] : []),
+        );
+        foundList.classList.remove("hidden");
+    }
+
+    /** A file opened at a line that holds the word, the word selected there. */
+    async function openAt(id: string, line: number): Promise<void> {
+        if (id !== picked) {
+            if (dirty && picked !== null && !(await askConfirm(`Leave ${picked}? Unsaved edits are lost.`, "Leave"))) {
+                return;
+            }
+            picked = id;
+            pick.value = id;
+            writeStored(PICK_KEY, id);
+            await open(id);
+        }
+        const text = editor.getText();
+        const start = text.split("\n").slice(0, line).reduce((sum, each) => sum + each.length + 1, 0);
+        const column = (text.split("\n")[line] ?? "").toLowerCase().indexOf(findField.value.toLowerCase());
+        showFound();
+        editor.selectRange(start + Math.max(0, column), start + Math.max(0, column) + (column >= 0 ? findField.value.length : 0), true);
+    }
+
+    findField.addEventListener("input", () => runFind());
+    allFiles.addEventListener("change", () => void findInFiles());
+    findField.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            findStep(event.shiftKey ? -1 : 1);
+        } else if (event.key === "Escape") {
+            // Back to the text, at the place found.
+            event.preventDefault();
+            event.stopPropagation();
+            editor.textarea.focus({ preventScroll: true });
+        }
+    });
+    // Ctrl+F in the text finds in it, starting from the word selected.
+    editor.textarea.addEventListener("keydown", (event) => {
+        if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "f") {
+            event.preventDefault();
+            const selected = editor.getText().slice(editor.textarea.selectionStart, editor.textarea.selectionEnd);
+            if (selected !== "" && !selected.includes("\n")) {
+                findField.value = selected;
+                runFind();
+            }
+            findField.focus();
+            findField.select();
+        }
     });
 
     /** The text checked with the backend a moment after the last key, for the list. */
@@ -315,6 +467,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         if (!listed) {
             return;
         }
+        texts.clear();
         files = listed.machines;
         broken = listed.problems;
         const ids = [...files.map((file) => file.id), ...broken.map((entry) => entry.id)];
@@ -356,6 +509,8 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         checked = null;
         setDirty(false);
         editor.setText(response.text);
+        texts.set(response.document?.id ?? picked ?? "", response.text);
+        showFound();
         showProblems(response.problems);
         showNotes([]);
         list.refresh();
@@ -368,6 +523,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
     async function refreshList(): Promise<void> {
         const listed = await ctx.call(ctx.api.machines());
         if (listed) {
+            texts.clear();
             files = listed.machines;
             broken = listed.problems;
             renderPick();

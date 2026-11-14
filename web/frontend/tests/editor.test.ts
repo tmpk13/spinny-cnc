@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { highlightLine, highlightToml } from "../src/highlight.ts";
-import { codeEditor, tomlProblem } from "../src/views/editor.ts";
+import { codeEditor, findMatches, tomlProblem } from "../src/views/editor.ts";
 
 describe("TOML coloring", () => {
     test("comments, headers, keys and values each get their span", () => {
@@ -31,6 +31,39 @@ describe("TOML coloring", () => {
 });
 
 describe("the code editor", () => {
+    test("a find marks every place the text holds a word, any case, and steps through them round the end", () => {
+        expect(findMatches("Roll = 1\nroll = 2\npoll", "roll")).toEqual([0, 9]);
+        expect(findMatches("aaaa", "aa")).toEqual([0, 2]);
+        expect(findMatches("abc", "")).toEqual([]);
+        const editor = codeEditor("Machine file");
+        document.body.appendChild(editor.root);
+        editor.setText('[camera]\nroll = 90\n[top_camera]\nroll = 180  # Roll\n');
+        expect(editor.find("roll")).toBe(3);
+        const marks = editor.root.querySelector(".code-marks")!;
+        expect(marks.querySelectorAll("mark.code-found").length).toBe(3);
+        const field = editor.textarea;
+        field.setSelectionRange(0, 0);
+        // Forward from the caret: the first, the second, the third, round to the first.
+        expect(editor.findStep(1)).toEqual({ index: 1, count: 3 });
+        expect(field.value.slice(field.selectionStart, field.selectionEnd)).toBe("roll");
+        expect(field.selectionStart).toBe(9);
+        expect(marks.querySelector("mark.current")?.textContent).toBe("roll");
+        expect(editor.findStep(1)).toEqual({ index: 2, count: 3 });
+        expect(editor.findStep(1)).toEqual({ index: 3, count: 3 });
+        expect(field.value.slice(field.selectionStart, field.selectionEnd)).toBe("Roll");
+        expect(editor.findStep(1)).toEqual({ index: 1, count: 3 });
+        expect(editor.findStep(-1)).toEqual({ index: 3, count: 3 });
+        // Typed into, the marks follow the text; an empty word takes them away.
+        field.value = "roll\n";
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+        expect(marks.querySelectorAll("mark.code-found").length).toBe(1);
+        expect(editor.find("")).toBe(0);
+        expect(marks.textContent).toBe("");
+        expect(editor.findStep(1)).toBeNull();
+        editor.dispose();
+        editor.root.remove();
+    });
+
     test("names the line that does not read as it is typed, and a text put in is no edit", () => {
         const editor = codeEditor("Machine file");
         document.body.appendChild(editor.root);

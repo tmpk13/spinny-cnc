@@ -682,6 +682,11 @@ table.settings-list td {
     font-size: 0.85rem;
 }
 
+/* What a key sets (a firmware setting, host, camera, G-code) on one line. */
+.settings-sets {
+    white-space: nowrap;
+}
+
 /* A row's Copy and Insert, kept together at the row's end. */
 .settings-row-actions {
     display: flex;
@@ -704,6 +709,54 @@ table.settings-list td {
 .config-board {
     display: block;
     font-size: 0.85rem;
+}
+
+/* Finding a word in the machine file, or in every one. */
+.config-find {
+    flex: 1 1 10rem;
+    min-width: 0;
+}
+
+.config-find-count {
+    font-size: 0.85rem;
+}
+
+.config-found {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    max-height: 12rem;
+    overflow-y: auto;
+    font-size: 0.85rem;
+}
+
+.config-found-item {
+    display: flex;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.2rem 0.4rem;
+    border: 0;
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.config-found-item:hover, .config-found-item:focus-visible {
+    background: color-mix(in oklab, var(--accent) 12%, transparent);
+}
+
+.config-found-where {
+    flex: none;
+    color: var(--muted);
+}
+
+.config-found-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .config-notes {
@@ -2813,6 +2866,21 @@ table.cam-table input[type="checkbox"] {
 
 .code-text {
     font: inherit;
+}
+
+/* The places a find marks, under the colored text: the text itself unseen. */
+.code-marks {
+    color: transparent;
+}
+
+.code-found {
+    color: transparent;
+    background: color-mix(in oklab, var(--yellow) 30%, transparent);
+    border-radius: 0.15rem;
+}
+
+.code-found.current {
+    background: color-mix(in oklab, var(--orange) 55%, transparent);
 }
 
 .code-input {

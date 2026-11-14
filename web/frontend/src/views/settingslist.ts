@@ -477,7 +477,7 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
                     el("span", { class: "mono settings-key" }, row.section ? `[${row.section}] ${row.name}` : row.name),
                     el("span", { class: "muted settings-help" }, row.help),
                 ),
-                el("td", { class: "mono muted" }, rowSets(row)),
+                el("td", { class: "mono muted settings-sets" }, rowSets(row)),
                 el("td", { class: "mono" }, shown(row.file)),
                 el("td", { class: "mono" }, shown(row.board)),
                 el("td", {}, rowActions(row, text)),

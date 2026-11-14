@@ -1427,6 +1427,59 @@ describe("machine files", () => {
         localStorage.removeItem("spinny.machine");
     });
 
+    test("a word is found in the file, stepped through, and in every file, a line of another file opening it there", async () => {
+        localStorage.removeItem("spinny.machine");
+        const { ctx, root } = setup();
+        mountConfig(root, ctx, document.createElement("section"));
+        await settle();
+        const pick = root.querySelector("select[aria-label='Machine file']") as HTMLSelectElement;
+        pick.value = "polar-laser";
+        pick.dispatchEvent(new Event("change"));
+        await settle();
+        const text = root.querySelector("textarea") as HTMLTextAreaElement;
+        const field = root.querySelector("input[aria-label='Find in the file']") as HTMLInputElement;
+        const count = (): string => root.querySelector(".config-find-count")?.textContent ?? "";
+        field.value = "max_rate";
+        field.dispatchEvent(new Event("input"));
+        const here = Number(/^(\d+) here$/.exec(count())?.[1]);
+        expect(here).toBeGreaterThan(1);
+        // Enter goes to the next place, Shift+Enter back, the focus kept in the field.
+        field.focus();
+        field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        expect(count()).toBe(`1 of ${here}`);
+        expect(text.value.slice(text.selectionStart, text.selectionEnd)).toBe("max_rate");
+        field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        expect(count()).toBe(`2 of ${here}`);
+        field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true }));
+        expect(count()).toBe(`1 of ${here}`);
+        expect(document.activeElement).toBe(field);
+        // A word the file does not hold locks the steps.
+        field.value = "vacuum";
+        field.dispatchEvent(new Event("input"));
+        expect(count()).toBe("none here");
+        expect((Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Next") as HTMLButtonElement).disabled).toBe(true);
+        // In every file: the LumenPnP's [vacuum] lines, a press opening that file at the line.
+        const all = root.querySelector("input[aria-label='Find in every machine file']") as HTMLInputElement;
+        all.checked = true;
+        all.dispatchEvent(new Event("change"));
+        for (let i = 0; i < 4; i += 1) {
+            await settle();
+        }
+        const found = Array.from(root.querySelectorAll(".config-found-item")) as HTMLButtonElement[];
+        const lumen = found.find((item) => item.textContent?.startsWith("opulo-lumen-rev5:") && item.textContent.includes("[vacuum]"))!;
+        expect(lumen).toBeDefined();
+        lumen.click();
+        for (let i = 0; i < 4; i += 1) {
+            await settle();
+        }
+        expect(pick.value).toBe("opulo-lumen-rev5");
+        expect(text.value.slice(text.selectionStart, text.selectionEnd).toLowerCase()).toBe("vacuum");
+        expect(text.value.split("\n")[text.value.slice(0, text.selectionStart).split("\n").length - 1]).toBe("[vacuum]");
+        expect(Number(/^(\d+) here$/.exec(count())?.[1])).toBeGreaterThan(0);
+        (document.activeElement as HTMLElement | null)?.blur();
+        localStorage.removeItem("spinny.machine");
+    });
+
     test("a load that changes a pin says the board must be saved and restarted", () => {
         expect(changedBootSettings(undefined, { laser_pin: 20 })).toEqual([]);
         const before = { laser_pin: 20, probe_pin: 25, tool_out: 0, tool_pin: 17, tool_invert: 0, r_rate: 1 };
