@@ -800,3 +800,4 @@
 - Bug reports: a screenshot and the recent actions, saved by the backend, handed to a GitHub issue page or posted to a link set on the Config page (none by default).
 - Plugins: a Plugins tab of page modules with a switch each; Auto can write them but never turn one on.
 - mise run shots: screenshots of the page over its mock from a list of shots.
+- Servos: up to four, on the board's pins (PWM at 50 Hz) or a PCA9685 over I2C, set in machine files ([servo.N], [pca9685]), moved from the jog panel or with servo N A; STOP header pins refused for every output.
