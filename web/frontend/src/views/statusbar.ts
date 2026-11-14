@@ -9,7 +9,7 @@ import { button, el, setLocked } from "../dom.ts";
 import { isMilling, profileBadge, profileOf } from "../profile.ts";
 import { gcodePort } from "../ports.ts";
 import type { AppState } from "../state.ts";
-import type { Port } from "../types.ts";
+import type { Firmware, Port } from "../types.ts";
 import type { Ctx } from "./context.ts";
 import { runActive, runMapUse, showMapUse } from "./heightmap.ts";
 import { showPage } from "./tabs.ts";
@@ -60,6 +60,39 @@ export function portLabel(port: Port): string {
     return name ? `${name} (${where})` : where;
 }
 
+/** A version number in a firmware's words: 2.1.2, v0.3.0-rc1, bugfix-2.1.x. */
+const VERSION = /\bv?\d+(?:\.[\dx]+)+(?:[-+][\w.]+)?|\b[a-z]+-\d+(?:\.[\dx]+)+/i;
+
+/**
+ * What the top bar says of the firmware: its version, short. This
+ * project's firmware gives only a version; a G-code machine's says of
+ * itself whatever its answer to M115 holds (a build date, a fork's name, a
+ * line of notes), so the bar shows its first word and the version in it,
+ * and the whole answer on hover. A machine that said nothing of its
+ * firmware shows nothing: the badge beside it names the machine.
+ */
+export function firmwareLabel(firmware: Firmware | null): { text: string; title: string } {
+    if (firmware === null) {
+        return { text: "", title: "" };
+    }
+    if (firmware.name === undefined) {
+        return { text: `v${firmware.version}`, title: `this project's firmware, version ${firmware.version}` };
+    }
+    const said = firmware.version.trim();
+    if (said === "") {
+        return { text: "", title: "" };
+    }
+    const found = VERSION.exec(said);
+    const word = said.split(/\s+/)[0]!;
+    let text: string;
+    if (found === null) {
+        text = word.length > 16 ? `${word.slice(0, 15)}...` : word;
+    } else {
+        text = found.index === 0 ? found[0] : `${word} ${found[0]}`;
+    }
+    return { text, title: `firmware: ${said}` };
+}
+
 export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
     // The state, a press away from the Connection tab where the port is picked.
     const stateBadge = el("button", { type: "button", class: "badge state", "data-state": "none", title: "the machine's state; press for the Connection tab" }, "No link");
@@ -107,7 +140,9 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
             stateBadge.setAttribute("data-state", machine.state);
             stateBadge.toggleAttribute("data-stale", stale);
         }
-        firmware.textContent = snapshot.firmware ? snapshot.firmware.name ?? `v${snapshot.firmware.version}` : "";
+        const label = firmwareLabel(snapshot.firmware);
+        firmware.textContent = label.text;
+        firmware.title = label.title;
         const badgeName = snapshot.connected ? profileBadge(profileOf(snapshot)) : "";
         profile.textContent = badgeName;
         profile.classList.toggle("hidden", badgeName === "");

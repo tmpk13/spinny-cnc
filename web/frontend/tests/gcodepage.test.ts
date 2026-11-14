@@ -4,7 +4,7 @@ import { mountConfig } from "../src/views/config.ts";
 import { mountConsole } from "../src/views/console.ts";
 import { mountJog } from "../src/views/jog.ts";
 import { mountConnection } from "../src/views/connection.ts";
-import { defaultPort, machineOfPort, mountStatusBar, portLabel } from "../src/views/statusbar.ts";
+import { defaultPort, firmwareLabel, machineOfPort, mountStatusBar, portLabel } from "../src/views/statusbar.ts";
 import { findButton, settle, setup } from "./harness.ts";
 
 // A G-code machine used like the other machines on the page: its port named
@@ -35,11 +35,29 @@ describe("a G-code machine in the top bar", () => {
         const snapshot = store.get().snapshot;
         expect(snapshot.connected).toBe(true);
         expect(snapshot.profile?.controller).toBe("gcode");
-        expect(bar.querySelector(".firmware")?.textContent).toContain("Marlin");
+        // The version, short, with the whole answer to M115 on hover.
+        expect(bar.querySelector(".firmware")?.textContent).toBe("Marlin 2.1.2");
+        expect(bar.querySelector<HTMLElement>(".firmware")?.title).toContain("Marlin 2.1.2");
         expect(bar.querySelector(".badge.profile")?.textContent).toBe("Opulo LumenPnP (Rev05, Marlin)");
         // Remembered: a button switches back to it in one press.
         expect(root.querySelector(".connection-recent button")?.textContent).toBe("Opulo LumenPnP (Rev05, Marlin)");
         bar.remove();
+    });
+});
+
+describe("the firmware in the top bar", () => {
+    test("is its version, short; whatever else a firmware says of itself shows on hover", () => {
+        expect(firmwareLabel(null)).toEqual({ text: "", title: "" });
+        expect(firmwareLabel({ version: "0.1.0", lines: 16, blocks: 32 }).text).toBe("v0.1.0");
+        const gcode = (said: string) => firmwareLabel({ version: said, lines: 1, blocks: 0, name: said || "Opulo LumenPnP" });
+        expect(gcode("Marlin 2.1.2.1 (Sep 12 2023 16:42:58)")).toEqual({ text: "Marlin 2.1.2.1", title: "firmware: Marlin 2.1.2.1 (Sep 12 2023 16:42:58)" });
+        expect(gcode("Marlin bugfix-2.1.x (Github)").text).toBe("Marlin bugfix-2.1.x");
+        expect(gcode("RepRapFirmware for Duet 3 MB6HC version 3.5.0-rc.1 notes: lots of words").text).toBe("RepRapFirmware 3.5.0-rc.1");
+        expect(gcode("v1.4.2 Smoothie edge").text).toBe("v1.4.2");
+        expect(gcode("Smoothieware").text).toBe("Smoothieware");
+        expect(gcode("AVeryLongFirmwareNameWithNoNumber at all").text).toBe("AVeryLongFirmwa...");
+        // A machine that said nothing of its firmware: the badge names it.
+        expect(gcode("")).toEqual({ text: "", title: "" });
     });
 });
 
