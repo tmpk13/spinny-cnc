@@ -1153,7 +1153,7 @@ export type SearchCamera = "head" | "top";
 export interface SearchRecordLine {
     /** Sorts by time: the second it began and a count within it. */
     id: string;
-    kind: "search" | "look";
+    kind: "search" | "look" | "scan";
     camera: SearchCamera;
     started: string;
     job: string | null;
@@ -1491,7 +1491,7 @@ export type TopStep = "lifting" | "moving" | "lowering" | "scale" | "centering" 
 
 /** The top camera's routine: its offset measured, or the board's fiducials found (a step per fiducial). */
 export interface TopRoutine {
-    kind: "offset" | "fiducials" | "search" | "home";
+    kind: "offset" | "fiducials" | "search" | "scan" | "home";
     target?: "machine" | "gcode";
     state: RoutineState;
     step: TopStep;
@@ -1580,6 +1580,28 @@ export type LookMethod = "vote" | "posterior";
 
 /** How a full scan takes its pictures: the head at rest at each (`stop`), or on the move (`fly`, this project's firmware only). */
 export type ScanMotion = "stop" | "fly";
+
+/** One picture of a full scan: where its center lay on the machine, its roll and mirror, its size as kept (px) and mm per kept px. */
+export interface ScanTile {
+    index: number;
+    center: [number, number];
+    roll: number;
+    mirror: boolean;
+    width: number;
+    height: number;
+    mm_per_px: number;
+}
+
+/** A camera's newest full scan: the job, how its pictures were taken, a number that grows with each change, the job's outline's box (its frame), the place the scan found, and the pictures in the order taken. */
+export interface ScanMosaic {
+    job: string | null;
+    motion: ScanMotion;
+    version: number;
+    started: number;
+    outline: [number, number, number, number] | null;
+    estimate: BoardEstimate | null;
+    pictures: ScanTile[];
+}
 
 /** The board's stretch the posterior fits: X and Y scale and shear (degrees off square), each with its standard deviation. */
 export interface BoardStretch {
@@ -1680,7 +1702,7 @@ export interface CameraPose {
 export type RoutineState = "running" | "done" | "stopped" | "error";
 
 /** Where the camera's routine is: the offset routine lifting, moving over the mark, measuring the scale, centering on it; the board search searching; or done. */
-export type RoutineStep = "lifting" | "moving" | "scale" | "centering" | "searching" | "done";
+export type RoutineStep = "lifting" | "moving" | "scale" | "centering" | "searching" | "scanning" | "done";
 
 /** The rectangle around a spot's pixels: its long and short sides, px, and the long side's direction, degrees from the picture's +x toward its +y. */
 export interface SpotRect {
@@ -1818,6 +1840,8 @@ export interface BoardLook {
     hypotheses?: number;
     stretch?: BoardStretch | null;
     delay?: { seconds: number; sd: number } | null;
+    /** The camera's newest full scan, in short: its job, pictures, version, motion and whether it found the board; null with none. */
+    scan?: { job: string; pictures: number; version: number; motion: ScanMotion; found: boolean } | null;
 }
 
 /** One V4L2 control of a camera on the backend's computer, as v4l2-ctl lists it, with the value the camera keeps for it (set at each start). */
@@ -1851,8 +1875,8 @@ export interface CameraControls {
 }
 
 export interface CameraRoutine {
-    /** The find routine (the mark) or the board search. */
-    kind?: "find" | "search";
+    /** The find routine (the mark), the board search, or a full scan of the board. */
+    kind?: "find" | "search" | "scan";
     state: RoutineState;
     step: RoutineStep;
     done: number;

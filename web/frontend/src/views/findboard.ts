@@ -21,10 +21,11 @@ import { CORNER_NAMES } from "../corners.ts";
 import { button, el, labeled, lockFor, numberField, readStored, setLocked, Tracked, writeStored } from "../dom.ts";
 import { formatFixed, formatPercent as percent, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
-import type { BoardCorners, BoardGuess, BoardKnown, BoardLook, BoardStretch, CornerName, LookMethod, RefineUse } from "../types.ts";
+import type { BoardCorners, BoardGuess, BoardKnown, BoardLook, BoardStretch, CornerName, LookMethod, RefineUse, ScanMosaic } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
 import type { MachineBox } from "./picture.ts";
 import { gcodePlacing } from "./placing.ts";
+import { mountMosaic } from "./mosaic.ts";
 import { lookText } from "./vision.ts";
 
 /** The cameras that can look for a board. */
@@ -45,6 +46,9 @@ interface LookSource {
     /** One of the camera's routines runs: its search among them. */
     busy(state: AppState): boolean;
     searching(state: AppState): boolean;
+    scanning(state: AppState): boolean;
+    /** A place measured for the job's board besides a find or corners: the Align fit (head camera), the references (top camera). */
+    placeKnown(state: AppState, job: string): boolean;
 }
 
 const SOURCES: Record<LookCamera, LookSource> = {
@@ -56,6 +60,8 @@ const SOURCES: Record<LookCamera, LookSource> = {
         look: (state) => state.camera?.board_look ?? null,
         busy: (state) => state.camera?.routine?.state === "running",
         searching: (state) => state.camera?.routine?.state === "running" && state.camera.routine.kind === "search",
+        scanning: (state) => state.camera?.routine?.state === "running" && state.camera.routine.kind === "scan",
+        placeKnown: (state, job) => state.align?.job === job && (state.align.fit ?? null) !== null,
     },
     top: {
         label: "Top camera",
@@ -65,6 +71,8 @@ const SOURCES: Record<LookCamera, LookSource> = {
         look: (state) => state.placing?.top?.board_look ?? null,
         busy: (state) => state.placing?.top?.routine?.state === "running",
         searching: (state) => state.placing?.top?.routine?.state === "running" && state.placing.top.routine.kind === "search",
+        scanning: (state) => state.placing?.top?.routine?.state === "running" && state.placing.top.routine.kind === "scan",
+        placeKnown: (state, job) => (state.placing?.references ?? []).some((reference) => reference.job === job),
     },
 };
 
@@ -353,6 +361,8 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
     const lookButton = button("Look for board", () => lookForBoard(), "btn", "load the selected job's board: the camera looks for it in every picture until Unload");
     const searchButton = button("Search", () => runSearch(), "btn",
         "move the camera over the search box (Shift and a drag on its picture), else where the corners put the board, else the board's size about where it looks, until a guess is likely enough; it starts where the board is known to be (corners, a place found before, the marks or references, the job's place) and tells pcbv to look there first");
+    const scanButton = button("Full scan", () => runScan(), "btn",
+        "move the camera over the whole board where a rough place puts it (a find, the corners, the Align marks or references), row by row: every picture is weighed and kept for the mosaic below");
     const placeButton = button("Use as board place", () => usePlace(), "btn");
     const unloadButton = button("Unload", () => unload(), "btn btn-quiet", "stop looking for the board");
     const lookLine = el("p", { class: "muted find-look" });
@@ -402,6 +412,12 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
     within.title = "a guess that puts a corner further than this from where it was taken is ruled out";
     within.addEventListener("change", () => void setWithin());
     const tracked = new Tracked([within]);
+    // The newest full scan's pictures, fetched again when its version moves.
+    const scanHead = el("h3", { class: "hidden" }, "Full scan");
+    const scanLine = el("p", { class: "muted find-scan hidden" });
+    const mosaic = mountMosaic();
+    let scanShown: { camera: LookCamera; version: number } | null = null;
+    let scanData: ScanMosaic | null = null;
     const cornersLine = el("p", { class: "muted find-corners" });
 
     root.append(
@@ -409,7 +425,7 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
         el("fieldset", { class: "panel-body" },
             el("div", { class: "button-row" }, labeled("Camera", pick, "labeled inline")),
             note,
-            el("div", { class: "button-row" }, lookButton, searchButton, placeButton, unloadButton),
+            el("div", { class: "button-row" }, lookButton, searchButton, scanButton, placeButton, unloadButton),
             lookLine,
             knownLine,
             el("h3", {}, "Guesses"),
@@ -424,6 +440,9 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             cornersLine,
             refineHead,
             refineRow,
+            scanHead,
+            scanLine,
+            mosaic.root,
             el("p", { class: "muted hint" },
                 "Each column is a place the looks put the board, as tall as its share of the evidence (looks weighed by how well they matched);"
                 + " the most likely is found once it has enough looks and reaches the threshold line. Put the picture's center on a corner of the board"
@@ -507,6 +526,31 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             await into(ctx, "placing", ctx.api.topSearch(box));
         } else {
             await into(ctx, "camera", ctx.api.cameraSearch(box));
+        }
+    }
+
+    async function runScan(): Promise<void> {
+        if (chosen === "top") {
+            await into(ctx, "placing", ctx.api.topScan(null));
+        } else {
+            await into(ctx, "camera", ctx.api.cameraScan(null));
+        }
+    }
+
+    /** The newest scan's pictures, fetched once per version of it. */
+    async function showScan(camera: LookCamera, version: number): Promise<void> {
+        if (scanShown !== null && scanShown.camera === camera && scanShown.version === version) {
+            return;
+        }
+        scanShown = { camera, version };
+        try {
+            scanData = camera === "top" ? await ctx.api.topScanState() : await ctx.api.cameraScanState();
+        } catch {
+            scanData = null;
+        }
+        if (scanShown.camera === camera && scanShown.version === version) {
+            const urlOf = camera === "top" ? (index: number) => ctx.api.topScanUrl(index, version) : (index: number) => ctx.api.cameraScanUrl(index, version);
+            mosaic.render(scanData, urlOf);
         }
     }
 
@@ -636,7 +680,7 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
         const busy = src.busy(state);
         const job = state.job;
         const threshold = thresholdOf(state);
-        const badgeText = src.searching(state) ? "searching" : busy ? "routine" : !running ? "stopped" : look?.found ? "found" : look?.job ? "looking" : "running";
+        const badgeText = src.searching(state) ? "searching" : src.scanning(state) ? "scanning" : busy ? "routine" : !running ? "stopped" : look?.found ? "found" : look?.job ? "looking" : "running";
         badge.textContent = badgeText;
         badge.setAttribute("data-camera", badgeText === "routine" ? "finding mark" : badgeText);
         note.textContent = running ? "" : `The ${src.label.toLowerCase()} is not running: start it in its panel.`;
@@ -700,6 +744,26 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             [!machineFree, "the machine must be Idle"],
             [!((state.camera?.mm_per_px ?? 0) > 0), "the camera's scale is not measured: Find mark first"],
             [busy, "a routine is under way"]);
+        // A full scan starts from a rough place: found, corners, or measured.
+        const rough = found || ours || (job !== null && src.placeKnown(state, job.id));
+        lockFor(scanButton,
+            [!look?.job, "load a board first: Look for board"],
+            [!rough, "a full scan needs a rough place: Search, take the board's corners, or mark it (Align, references)"],
+            [!machineReady, "connect the machine first"],
+            [!machineFree, chosen === "top" ? "the machine is busy" : "the machine must be Idle"],
+            [busy, "a routine is under way"],
+            [!scaled, "the camera's scale is not measured"]);
+        const scanned = look?.scan ?? null;
+        scanHead.classList.toggle("hidden", scanned === null);
+        scanLine.classList.toggle("hidden", scanned === null);
+        if (scanned === null) {
+            mosaic.render(null, () => "");
+        } else {
+            const where = scanned.job === job?.id ? "" : ` of ${state.jobs.find((entry) => entry.id === scanned.job)?.name ?? scanned.job}`;
+            scanLine.textContent = `${src.scanning(state) ? "Scanning" : "The newest scan"}${where}: ${scanned.pictures} ${scanned.pictures === 1 ? "picture" : "pictures"}`
+                + ` taken ${scanned.motion === "fly" ? "on the move" : "at rest"}${scanned.found ? ", the board found (dashed)" : ""}.`;
+            void showScan(chosen, scanned.version);
+        }
         const name = look?.job ? state.jobs.find((entry) => entry.id === look.job)?.name ?? null : null;
         lookLine.textContent = lookText(look, name) || "No board loaded: pick a board job and press Look for board.";
         knownLine.textContent = look?.job ? knownText(look.known) : "";

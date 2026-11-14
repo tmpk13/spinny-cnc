@@ -142,7 +142,10 @@ class TopCamera(PickCamera):
     Settings = TopCameraSettings
     places = ("mark_at", "offset")
     clearable = ("mark_at", "offset")
-    routines = {"offset": "measuring the top camera's offset", "fiducials": "finding the fiducials", "search": "looking for the board", "home": "homing by the fiducial"}
+    routines = {
+        "offset": "measuring the top camera's offset", "fiducials": "finding the fiducials", "search": "looking for the board",
+        "scan": "scanning the board", "home": "homing by the fiducial",
+    }
 
     def __init__(self, store: Callable[[], dict], save: Callable[[], None], publish: Callable[[], None], message: Callable[[str, str], None]) -> None:
         super().__init__(store, save, publish, message)

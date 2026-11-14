@@ -306,3 +306,57 @@ describe("the Find board panel", () => {
         expect(store.get().placing?.top?.board_look?.corners).toBeNull();
     });
 });
+
+describe("the full scan's mosaic", () => {
+    test("a picture's px land where the head took it, turned by the roll and flipped when mirrored", async () => {
+        const { tileMatrix } = await import("../src/views/mosaic.ts");
+        const tile = { index: 0, center: [10, 20] as [number, number], roll: 0, mirror: false, width: 640, height: 360, mm_per_px: 0.04 };
+        const at = (m: number[], x: number, y: number): [number, number] => [m[0]! * x + m[2]! * y + m[4]!, m[1]! * x + m[3]! * y + m[5]!];
+        // The top left px is half a picture left of the center and up (y up on the machine, down on screen).
+        const [x, y] = at(tileMatrix(tile), 0, 0);
+        expect(x).toBeCloseTo(10 - 12.8, 6);
+        expect(y).toBeCloseTo(-(20 + 7.2), 6);
+        // Turned a quarter: the picture's +x is the machine's +y.
+        const turned = tileMatrix({ ...tile, roll: 90 });
+        const [cx, cy] = at(turned, 320, 180);
+        const [rx, ry] = at(turned, 420, 180);
+        expect([cx, cy].map((v) => Number(v.toFixed(6)))).toEqual([10, -20]);
+        expect(rx - cx).toBeCloseTo(0, 6);
+        expect(-(ry - cy)).toBeCloseTo(4, 6);
+        // Mirrored: the picture's +x is the machine's -x.
+        const mirrored = tileMatrix({ ...tile, mirror: true });
+        expect(at(mirrored, 420, 180)[0] - at(mirrored, 320, 180)[0]).toBeCloseTo(-4, 6);
+    });
+
+    test("Full scan waits for a rough place, then the mosaic shows each picture and the board found", async () => {
+        const { store, ctx, root, api, backend, calls } = setup();
+        await api.connect("/dev/ttyACM0");
+        await backend.applyMachine("cartesian-mill");
+        await ctx.refreshState();
+        const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
+        await ctx.refreshJobs();
+        await ctx.selectJob(job.id);
+        await ctx.refreshCamera();
+        mountFindBoard(root, ctx, { page: "test-scan", boxes: { head: () => null, top: () => null } });
+        store.set({ camera: await api.cameraStart() });
+        store.set({ camera: await api.cameraSettings({ mm_per_px: 0.02 }) });
+        click(root, "Look for board");
+        await twice();
+        expect(findButton(root, "Full scan").dataset["reason"]).toContain("rough place");
+        const corner = root.querySelector('select[aria-label="Corner of the board"]') as HTMLSelectElement;
+        corner.value = "bottom left";
+        click(root, "Corner here");
+        await twice();
+        expect(findButton(root, "Full scan").disabled).toBe(false);
+        click(root, "Full scan");
+        await twice();
+        await twice();
+        expect(calls.some((call) => call.name === "cameraScan")).toBe(true);
+        const scan = store.get().camera?.board_look?.scan;
+        expect(scan?.pictures).toBeGreaterThan(1);
+        expect(root.querySelector(".find-scan")?.textContent).toContain(`${scan!.pictures} pictures taken at rest, the board found (dashed)`);
+        expect(root.querySelectorAll(".mosaic image").length).toBe(scan!.pictures);
+        expect(root.querySelector(".mosaic .mosaic-outline")).not.toBeNull();
+        expect(root.querySelector(".mosaic image")?.getAttribute("href")).toStartWith("data:image/svg+xml,");
+    });
+});

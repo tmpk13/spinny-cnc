@@ -30,6 +30,8 @@ from .boardlook import (
     found_text,
     known_place,
     measured_known,
+    scan,
+    scan_text,
     search,
     search_box,
     search_extra,
@@ -50,6 +52,7 @@ if TYPE_CHECKING:
     from .app import (
         BoardCornerBody,
         BoardPlaceBody,
+        BoardScanBody,
         BoardSearchBody,
         PnpAngleBody,
         PnpCameraBody,
@@ -405,6 +408,50 @@ class PlacingPart:
             self.top._message("info", found_text(found, look.consensus))
 
         self.top._begin("search", steps, mover, run)
+        return self.placing_state()
+
+    def top_scan(self, body: BoardScanBody) -> dict:
+        """Moves the top camera over the whole board where a rough place
+        puts it, row by row, stopping for each picture (a G-code machine
+        reports its place only at rest), every one weighed by the look and
+        kept for the mosaic (boardlook.scan), on its routine thread."""
+        machine = self._placing_idle()
+        if self.top_look.job is None:
+            raise ValueError("no board loaded: press Look for board first")
+        job = self._job(self.top_look.job)
+        offset = self._top_offset(machine)
+        settings = self.top.settings()
+        roll = self._top_roll(machine)
+        width, height, scale = self._look_scale(self.top.client, settings.mm_per_px)
+        known = self._top_known(job, settings.corner_mm)
+        box, stops, outline = self._scan_plan(self.top_look, job, known, (width * scale, height * scale), body.margin)
+        prior = self._top_known(job, settings.corner_mm, corners=False)
+        here = self._here(machine)
+        center = (float(here["x"]) + offset[0], float(here["y"]) + offset[1])
+        z = machine.top.z if machine.top is not None else None
+        mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
+        look = self.top_look
+        steps = ("lifting", *[f"picture {index + 1}" for index in range(len(stops))], "done")
+
+        def run(progress) -> None:
+            mover.begin()
+            self.top._step(progress, "lifting")
+            mover.lift()
+            if z is not None:
+                mover.lower(z)
+            record = self._board_record(
+                "scan", "top", job, self.top.client, self._top_board_settings(job.id),
+                {**self._top_picture(machine), "width": width, "height": height, "mm_per_px_used": scale, "z": z},
+                {**search_extra(box, center, stops, width * scale, height * scale, known), "motion": "stop"},
+            )
+            found = scan(
+                look, mover, stops, offset, lambda point: PictureFrame(point, roll, settings.mirror),
+                mover.stopped, lambda index, count: self.top._step(progress, f"picture {index + 1}"), PnpError, record,
+                box=box, prior=prior, picture=(width, height, scale), outline=outline,
+            )
+            self.top._message("info", scan_text(found, look.consensus, len(stops)))
+
+        self.top._begin("scan", steps, mover, run)
         return self.placing_state()
 
     def _top_known(self, job, corner_mm: float, corners: bool = True) -> KnownPlace | None:

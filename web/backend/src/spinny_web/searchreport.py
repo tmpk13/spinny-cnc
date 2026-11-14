@@ -1209,7 +1209,7 @@ def main(argv: list[str] | None = None) -> int:
     show.add_argument("--html", type=Path, metavar="FILE", help="write the page to FILE (in the record's folder for the pictures to show)")
     sweeping = commands.add_parser("sweep", help="every record's poses through other consensus settings, and with --pcbv every picture through a pcbv build, totalled")
     sweeping.add_argument("--camera", choices=("head", "top"), help="only this camera's records")
-    sweeping.add_argument("--kind", choices=("search", "look"), help="only searches, or only looks")
+    sweeping.add_argument("--kind", choices=("search", "look", "scan"), help="only searches, only looks or only full scans")
     sweeping.add_argument("--need", default=",".join(str(n) for n in NEEDS), help="looks one guess needs, to try (default %(default)s)")
     sweeping.add_argument("--agree", default=",".join(f"{a:g}" for a in AGREES), help="agreement distances to try, mm (default %(default)s)")
     sweeping.add_argument("--method", choices=("vote", "posterior", "both"), default="both", help="the ways to call a board found to run (default %(default)s)")

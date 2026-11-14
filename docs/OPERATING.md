@@ -651,6 +651,17 @@ probability finding boards at least as often and as right
 (`mise run search-report -- sweep --method both` replays both on every
 record kept).
 
+*Full scan* covers the whole board once a rough place is known (a board
+found, its corners taken, the Align marks or the top camera's
+references): the head runs rows over the board's outline, a little past
+it, back and forth, and stops for a picture at each place. Every picture
+is weighed by the look, whichever the method, and the scan does not end
+when the board is found, so the place comes from the whole board rather
+than from one corner of it (the long baseline board stretch needs). The
+pictures are laid side by side under the panel's *Full scan* heading as a
+mosaic, each where the head took it, with the board's outline dashed where
+the scan found it.
+
 *Use as board place* keeps where the found board lies: with the top camera
 as the job's references (two parts far apart; *Find fiducials* then makes
 them exact), with the head camera as marks in the Align panel.

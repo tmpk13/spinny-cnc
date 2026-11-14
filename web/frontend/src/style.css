@@ -5128,6 +5128,28 @@ table.find-guesses tr.elsewhere td {
     font-style: italic;
 }
 
+/* A full scan's pictures where the head took them (views/mosaic.ts). */
+.mosaic-box {
+    width: 100%;
+}
+
+.mosaic {
+    display: block;
+    width: 100%;
+    max-height: 28rem;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 0.375rem;
+}
+
+.mosaic .mosaic-outline {
+    fill: none;
+    stroke: var(--green);
+    stroke-width: 2;
+    stroke-dasharray: 6 3;
+    vector-effect: non-scaling-stroke;
+}
+
 /* --- movement (src/look.ts) -------------------------------------------- */
 
 /* Things move into place, briefly, by opacity and transform alone, so the

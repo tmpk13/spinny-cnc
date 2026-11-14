@@ -52,6 +52,8 @@ from .boardlook import (
     Feature,
     KnownPlace,
     PictureFrame,
+    SCAN_MARGIN,
+    SCAN_SOURCES,
     SLOW_MM_S,
     RestTracker,
     check_places,
@@ -67,6 +69,9 @@ from .boardlook import (
     search,
     search_box,
     search_extra,
+    scan,
+    scan_stops,
+    scan_text,
     search_stops,
     settings_now,
 )
@@ -596,6 +601,12 @@ class BoardSearchBody(Finite):
     # G-code machine's top camera); left out, a square the board's diagonal
     # on a side about where the picture's center is now.
     box: tuple[float, float, float, float] | None = None
+
+
+class BoardScanBody(Finite):
+    # How far past where the place known puts the board's outline the rows
+    # run, mm; left out, 2 mm or the place's own tolerance when larger.
+    margin: float | None = Field(default=None, ge=0.0, le=50.0)
 
 
 class BoardPlaceBody(Finite):
@@ -3498,6 +3509,80 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             self.camera.run_routine("search", len(stops) + 1, "looking for the board", link, run)
         return self.camera_state()
 
+    def _scan_plan(self, look: BoardLook, job, known: KnownPlace | None, view: tuple[float, float], margin: float | None):
+        """A full scan's box and rows: the job's outline where the place
+        known puts it, grown by `margin` (else SCAN_MARGIN or the place's
+        own tolerance), covered by pictures `view` mm. A ValueError with no
+        rough place yet, or no outline."""
+        if known is None or known.source not in SCAN_SOURCES:
+            raise ValueError("a full scan needs a rough place first: take the board's corners, find the board, or mark it in Align (top camera: its references)")
+        outline = self._board_box(job)
+        if outline is None:
+            raise ValueError("the job has no outline to scan")
+        grow = margin if margin is not None else max(SCAN_MARGIN, known.within_mm)
+        box = rough_box(known.place, outline, grow)
+        return box, scan_stops(box, view), outline
+
+    def camera_scan(self, body: BoardScanBody) -> dict:
+        """Moves the head camera over the whole board where a rough place
+        puts it, row by row, the head at rest for each picture, every one
+        weighed by the look and kept for the mosaic (boardlook.scan), on
+        the camera's routine thread, owning the machine."""
+        if self.head_look.job is None or self.head_look.job != self.camera.board_job:
+            raise ValueError("no board loaded: press Look for board first")
+        job = self._job(self.head_look.job)
+        settings = self.camera.settings()
+        if settings.scan_motion == "fly":
+            return self._camera_fly_scan(job, settings, body)
+        width, height, scale = self._look_scale(self.camera.client, settings.mm_per_px)
+        known = self._head_known(job, settings.corner_mm)
+        box, stops, outline = self._scan_plan(self.head_look, job, known, (width * scale, height * scale), body.margin)
+        prior = self._head_known(job, settings.corner_mm, corners=False)
+        offset = settings.offset
+        with self._owner_lock:
+            link = self._movable()
+            values = self._values(force=True)
+            status = link.status_now(1.0, routine=True)
+            access = MachineAccess(
+                link=link,
+                streamer=self.streamer(status),
+                lift=self.lift_height(),
+                has_focus_axis=bool(values.get("h_axis")),
+                head_point=lambda report: head_board(report.r, self.table_angle(report), report.z, self.cartesian),
+            )
+            tool = head_board(status.r, self.table_angle(status), status.z, self.cartesian)
+            here = (tool[0] + offset[0], tool[1] + offset[1])
+            mover = BoardMover(access, self.camera.aborting, CameraError, lambda: self.camera._halt(link))
+            look = self.head_look
+
+            def run(progress) -> None:
+                mover.begin()
+                mover.lift()
+                progress.step = "scanning"
+
+                def on_stop(index: int, count: int) -> None:
+                    progress.done = index + 1
+                    self.publish_camera()
+
+                record = self._board_record(
+                    "scan", "head", job, self.camera.client, self.camera.board_settings(),
+                    {**self._head_picture(), "width": width, "height": height, "mm_per_px_used": scale},
+                    {**search_extra(box, here, stops, width * scale, height * scale, known), "motion": "stop"},
+                )
+                found = scan(
+                    look, mover, stops, offset, lambda point: PictureFrame(point, settings.roll, False), mover.stopped, on_stop, CameraError, record,
+                    box=box, prior=prior, picture=(width, height, scale), outline=outline,
+                )
+                self.publish_message("info", scan_text(found, look.consensus, len(stops)))
+
+            self.camera.run_routine("scan", len(stops), "scanning the board", link, run)
+        return self.camera_state()
+
+    def _camera_fly_scan(self, job, settings, body: BoardScanBody) -> dict:
+        """A full scan with the head moving along each row (scan_motion
+        fly)."""
+        raise ValueError("a flying scan is not built yet: set the scan's motion to stop")
+
     def _head_known(self, job, corner_mm: float, corners: bool = True) -> KnownPlace | None:
         """Where the head camera's search expects the job's board: where
         the corners taken put it (unless `corners` is false: the posterior
@@ -4038,6 +4123,14 @@ def _look_tuning(settings) -> tuple[float, float]:
     """A camera's look settings: the threshold of the most likely guess
     and the corners' tolerance."""
     return settings.look_threshold, settings.corner_mm
+
+
+def mosaic_picture(mosaic, index: int) -> Response:
+    """One picture of a camera's newest full scan, 404 past them."""
+    data = mosaic.picture(index)
+    if data is None:
+        raise HTTPException(404, f"no picture {index} in the scan")
+    return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 def _look_options(settings) -> dict:
@@ -4834,6 +4927,18 @@ def create_app(
     def camera_search(body: BoardSearchBody | None = None):
         return guarded(lambda: backend.camera_search(body or BoardSearchBody()))
 
+    @app.post("/api/camera/scan")
+    def camera_scan(body: BoardScanBody | None = None):
+        return guarded(lambda: backend.camera_scan(body or BoardScanBody()))
+
+    @app.get("/api/camera/scan")
+    def camera_scan_state():
+        return backend.head_look.mosaic.state()
+
+    @app.get("/api/camera/scan/{index}.jpg")
+    def camera_scan_picture(index: int):
+        return mosaic_picture(backend.head_look.mosaic, index)
+
     @app.post("/api/camera/abort")
     def camera_abort():
         return guarded(backend.camera_abort)
@@ -5011,6 +5116,18 @@ def create_app(
     @app.post("/api/pnp/top/search")
     def top_search(body: BoardSearchBody | None = None):
         return guarded(lambda: backend.top_search(body or BoardSearchBody()))
+
+    @app.post("/api/pnp/top/scan")
+    def top_scan(body: BoardScanBody | None = None):
+        return guarded(lambda: backend.top_scan(body or BoardScanBody()))
+
+    @app.get("/api/pnp/top/scan")
+    def top_scan_state():
+        return backend.top_look.mosaic.state()
+
+    @app.get("/api/pnp/top/scan/{index}.jpg")
+    def top_scan_picture(index: int):
+        return mosaic_picture(backend.top_look.mosaic, index)
 
     @app.post("/api/pnp/top/place")
     def top_place(body: BoardPlaceBody):

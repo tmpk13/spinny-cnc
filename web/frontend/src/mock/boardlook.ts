@@ -9,7 +9,7 @@
 
 import { fitRigid } from "../align.ts";
 import { turned } from "../kinematics.ts";
-import type { Board, BoardCorners, BoardEstimate, BoardGuess, BoardKnown, BoardLook, CornerName, Job, LookMethod } from "../types.ts";
+import type { Board, BoardCorners, BoardEstimate, BoardGuess, BoardKnown, BoardLook, CornerName, Job, LookMethod, ScanMosaic } from "../types.ts";
 import { round4 } from "./jobs.ts";
 import { jobBounds } from "./vision.ts";
 
@@ -144,6 +144,64 @@ export function roughBox(job: Job, place: BoardEstimate, margin: number): Search
     return [Math.min(...xs) - margin, Math.min(...ys) - margin, Math.max(...xs) + margin, Math.max(...ys) + margin];
 }
 
+/**
+ * A full scan's pictures over where `place` puts the board, made at once:
+ * rows a picture `view` (mm) apart less the overlap over the board's
+ * outline box grown by `margin`, back and forth from the bottom left, each
+ * an SVG of what the camera would see (the board's color where the board
+ * is, the bed beside it), as the backend's scan_stops and its mosaic.
+ */
+export function mockScan(job: Job, place: BoardEstimate, view: [number, number], margin: number, roll: number, mirror: boolean, version: number): { mosaic: ScanMosaic; pictures: string[] } {
+    const box = roughBox(job, place, margin);
+    const bounds = jobBounds(job);
+    if (box === null || bounds === null) {
+        throw new Error("the job has no outline to scan");
+    }
+    const [x0, y0, x1, y1] = box;
+    const stepX = view[0] * (1 - SEARCH_OVERLAP);
+    const stepY = view[1] * (1 - SEARCH_OVERLAP);
+    const spanX = Math.max(x1 - x0 - view[0], 0);
+    const spanY = Math.max(y1 - y0 - view[1], 0);
+    const nx = Math.max(1, Math.ceil(spanX / stepX - 1e-9) + 1);
+    const ny = Math.max(1, Math.ceil(spanY / stepY - 1e-9) + 1);
+    if (nx * ny > MAX_STOPS) {
+        throw new Error(`the board needs ${nx * ny} pictures to cover, more than ${MAX_STOPS}: lower the margin`);
+    }
+    const width = 640;
+    const height = Math.round((width * view[1]) / view[0]);
+    const scale = view[0] / width;
+    const mosaic: ScanMosaic = {
+        job: job.id, motion: "stop", version, started: Date.now() / 1000,
+        outline: [bounds.x0, bounds.y0, bounds.x1, bounds.y1], estimate: { ...place, shift: [...place.shift], center: [...place.center] }, pictures: [],
+    };
+    const pictures: string[] = [];
+    for (let j = 0; j < ny; j += 1) {
+        for (let k = 0; k < nx; k += 1) {
+            const i = j % 2 === 0 ? k : nx - 1 - k;
+            const cx = (x0 + x1) / 2 + (i - (nx - 1) / 2) * (nx > 1 ? spanX / (nx - 1) : 0);
+            const cy = (y0 + y1) / 2 + (j - (ny - 1) / 2) * (ny > 1 ? spanY / (ny - 1) : 0);
+            const index = mosaic.pictures.length;
+            mosaic.pictures.push({ index, center: [round4(cx), round4(cy)], roll, mirror, width, height, mm_per_px: scale });
+            // The board's outline in the picture's px: job corners to the
+            // machine, then about the picture's center back through the roll.
+            const r = (roll * Math.PI) / 180;
+            const points = [[bounds.x0, bounds.y0], [bounds.x1, bounds.y0], [bounds.x1, bounds.y1], [bounds.x0, bounds.y1]].map(([x, y]) => {
+                const at = applyEstimate(place, { x: x!, y: y! });
+                const dx = at.x - cx;
+                const dy = at.y - cy;
+                const u = (dx * Math.cos(r) + dy * Math.sin(r)) / scale;
+                const v = (-dx * Math.sin(r) + dy * Math.cos(r)) / scale;
+                return `${((mirror ? -u : u) + width / 2).toFixed(1)},${(-v + height / 2).toFixed(1)}`;
+            });
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
+                + `<rect width="${width}" height="${height}" fill="#3a3f44"/><polygon points="${points.join(" ")}" fill="#2f6b3a"/>`
+                + `<text x="12" y="28" font-family="sans-serif" font-size="22" fill="#eee8d5">${index + 1}</text></svg>`;
+            pictures.push(`data:image/svg+xml,${encodeURIComponent(svg)}`);
+        }
+    }
+    return { mosaic, pictures };
+}
+
 /** Where corners taken put the board, as the backend's corners_known; null with none. */
 export function cornersKnown(points: BoardCorners["points"], middle: Board, cornerMm: number, diagonal: number): BoardKnown | null {
     const place = roughPlace(points, middle);
@@ -232,6 +290,9 @@ export class MockBoardLook {
     known: BoardKnown | null = null;
     /** Mock time since the last pose read, s. */
     elapsed = 0;
+    /** The newest full scan's pictures, as the backend's mosaic keeps them; each picture an SVG drawn by the mock. */
+    scan: ScanMosaic | null = null;
+    scanPictures: string[] = [];
 
     /** `tuning` gives the camera's threshold (0 to 1), corners' tolerance (mm), look method and board stretch as they are now. */
     constructor(private readonly tuning: () => LookTuning = () => ({ threshold: LOOK_THRESHOLD, cornerMm: CORNER_MM })) {}
@@ -500,8 +561,11 @@ export class MockBoardLook {
             points: this.corners.points.map((point) => ({ ...point, job: [...point.job] as [number, number], machine: [...point.machine] as [number, number] })),
             rough: roughPlace(this.corners.points, this.corners.middle),
         };
+        const scan = this.scan === null || this.scan.job === null ? null : {
+            job: this.scan.job, pictures: this.scan.pictures.length, version: this.scan.version, motion: this.scan.motion, found: this.scan.estimate !== null,
+        };
         if (this.job === null) {
-            return { job: null, threshold, corner_mm: cornerMm, method, board_stretch: boardStretch, corners };
+            return { job: null, threshold, corner_mm: cornerMm, method, board_stretch: boardStretch, corners, scan };
         }
         const lead = this.lead;
         const total = this.guesses.reduce((sum, guess) => sum + guess.weight, 0);
@@ -518,6 +582,7 @@ export class MockBoardLook {
             method,
             board_stretch: boardStretch,
             ...posterior,
+            scan,
             job: this.job,
             looks: this.looks,
             locked: this.locked,

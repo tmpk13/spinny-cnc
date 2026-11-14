@@ -925,6 +925,10 @@ class BoardLook:
         self.searching = False
         # The job's frame to KiCad's board frame, for what pcbv is told.
         self.to_board: Callable[[Point], Point] | None = None
+        # The newest full scan's pictures, for the page's mosaic.
+        from .mosaic import Mosaic
+
+        self.mosaic = Mosaic()
 
     @property
     def client(self) -> VisionClient:
@@ -1222,9 +1226,13 @@ class BoardLook:
         stretch = bool(options.get("stretch")) and method == "posterior"
         if self.job is None:
             threshold, corner_mm = self.tuning()
-            return {"job": None, "threshold": threshold, "corner_mm": corner_mm, "method": method, "board_stretch": stretch, "corners": corners}
+            return {
+                "job": None, "threshold": threshold, "corner_mm": corner_mm, "method": method, "board_stretch": stretch, "corners": corners,
+                "scan": self.mosaic.summary(),
+            }
         return {
             "job": self.job, **consensus.to_dict(), "board_stretch": stretch, "record": self.last_record, "corners": corners, "known": self.known_state(),
+            "scan": self.mosaic.summary(),
         }
 
     def publish(self, force: bool = False) -> None:
@@ -1487,6 +1495,140 @@ def search(
         look._stop_near = None
 
 
+# --- the full scan ---------------------------------------------------------------------
+
+# How many looks a scan's stop takes once a lock came: enough for the vote's
+# guesses to fill and for the posterior's pooled view; the posterior needs
+# one search a picture.
+SCAN_LOOKS = 3
+# The margin a scan's rows run past where the place known puts the board's
+# outline, mm, at least (the place's own tolerance when larger).
+SCAN_MARGIN = 2.0
+# Where a scan may start from: places measured or found, not the job's own
+# place (only where the board was meant to go).
+SCAN_SOURCES = ("corners", "found", "align", "references")
+
+
+def scan_stops(box: Box, view: tuple[float, float], overlap: float = OVERLAP) -> list[Point]:
+    """Rows over a box for the picture's center, a picture `view` (width,
+    height mm) apart less `overlap`, back and forth: the first row along
+    the box's bottom from its left, the next back from its right, so the
+    head never travels a row's length empty. A ValueError for a box that
+    would take more than MAX_STOPS."""
+    x0, y0, x1, y1 = min(box[0], box[2]), min(box[1], box[3]), max(box[0], box[2]), max(box[1], box[3])
+    step_x = max(view[0] * (1.0 - overlap), 0.1)
+    step_y = max(view[1] * (1.0 - overlap), 0.1)
+    # Pictures cover the box: the first and last centers a half picture in.
+    span_x = max(x1 - x0 - view[0], 0.0)
+    span_y = max(y1 - y0 - view[1], 0.0)
+    nx = max(1, math.ceil(span_x / step_x - 1e-9) + 1)
+    ny = max(1, math.ceil(span_y / step_y - 1e-9) + 1)
+    if nx * ny > MAX_STOPS:
+        raise ValueError(f"the board needs {nx * ny} pictures to cover, more than {MAX_STOPS}: lower the margin")
+    cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+    xs = [cx + (i - (nx - 1) / 2.0) * (span_x / max(nx - 1, 1) if nx > 1 else 0.0) for i in range(nx)]
+    ys = [cy + (j - (ny - 1) / 2.0) * (span_y / max(ny - 1, 1) if ny > 1 else 0.0) for j in range(ny)]
+    stops = []
+    for j, y in enumerate(ys):
+        row = xs if j % 2 == 0 else list(reversed(xs))
+        stops.extend((x, y) for x in row)
+    return stops
+
+
+def look_scan_stop(look: BoardLook, frame: PictureFrame, stopped: Callable[[], bool], error: type[Exception]) -> str:
+    """Reads poses with the head at rest at a scan's stop: `locked` once
+    SCAN_LOOKS were used, `no lock` when none came within LOCK_SECONDS,
+    `time up` past STOP_SECONDS. Frames taken the settle time after the
+    stop began are used; the board found does not end it."""
+    began = time.monotonic()
+    trusted = began + camera_module.SETTLE_SECONDS
+    used = 0
+
+    def place(captured: float) -> PictureFrame | str:
+        return frame if captured >= trusted else "the head is coming to rest"
+
+    while True:
+        if stopped():
+            raise error("stopped")
+        if look.sample(place) == "used":
+            used += 1
+        look.publish()
+        if used >= SCAN_LOOKS:
+            return "locked"
+        elapsed = time.monotonic() - began
+        if elapsed >= STOP_SECONDS + camera_module.SETTLE_SECONDS:
+            return "time up"
+        if used == 0 and elapsed >= LOCK_SECONDS + camera_module.SETTLE_SECONDS:
+            return "no lock"
+        time.sleep(SAMPLE_SECONDS / 2.0)
+
+
+def scan(
+    look: BoardLook,
+    mover,
+    stops: list[Point],
+    offset: Point,
+    frame_at: Callable[[Point], PictureFrame],
+    stopped: Callable[[], bool],
+    on_stop: Callable[[int, int], None],
+    error: type[Exception],
+    record=None,
+    box: Box | None = None,
+    prior: KnownPlace | None = None,
+    picture: tuple[float, float, float] | None = None,
+    outline: Box | None = None,
+) -> Estimate | None:
+    """Moves the head (`mover`, already begun) so the picture's center
+    visits every stop of a full scan in turn, the head at rest at each, and
+    looks at each without stopping once the board is found: every picture
+    feeds the look (the posterior's prior over `box` about `prior`). Each
+    stop's picture goes into the look's mosaic (`picture`: the full size
+    picture's width, height px and scale mm per px) and the record. The
+    place found once every stop was looked at, or None when the look
+    calls none; raises `error` when stopped."""
+    look.begin_record(record)
+    look.restart(box, prior)
+    look.searching = True
+    if look.job is not None:
+        look.mosaic.begin(look.job, [round(v, 4) for v in outline] if outline is not None else None, "stop")
+    visited = 0
+    try:
+        for index, stop in enumerate(stops):
+            on_stop(index, len(stops))
+            visited = index + 1
+            head = (stop[0] - offset[0], stop[1] - offset[1])
+            if record is not None:
+                record.stop = index
+                record.event("stop", index=index, target=_rounded(stop), head=_rounded(head), scan=True)
+            mover.go(head)
+            frame = frame_at(stop)
+            # Each picture is searched afresh, pcbv told nothing.
+            _reset(look, None)
+            if record is not None:
+                record.event("arrived", index=index)
+            began = time.monotonic()
+            result = look_scan_stop(look, frame, stopped, error)
+            if picture is not None:
+                look.mosaic.add(look.client, frame.center, frame.roll, frame.mirror, picture[2], picture[0])
+            if record is not None:
+                record.event("stop_end", index=index, result=result, seconds=round(time.monotonic() - began, 3))
+                record.picture(look.client, f"stop-{index:03d}", index=index)
+        consensus = look.consensus
+        found = consensus.best if consensus.found else None
+        look.mosaic.finish(found.to_dict() if found is not None else None)
+        if found is not None:
+            look.remember_found(found)
+        look.publish(force=True)
+        look.end_record("found" if found is not None else "not found", only=record, estimate=found.to_dict() if found is not None else None, visited=visited, scan=True)
+        return found
+    except BaseException as exc:
+        look.end_record("stopped" if stopped() else "error", only=record, message=str(exc) or type(exc).__name__, visited=visited, scan=True)
+        raise
+    finally:
+        look.searching = False
+        look._stop_near = None
+
+
 # --- features to center once the board is found -------------------------------------
 
 # A feature to center stands at least this far clear of every other one,
@@ -1671,6 +1813,16 @@ def found_text(found: Estimate, consensus: Consensus) -> str:
         f"board found: its middle at {found.center[0]:.3f}, {found.center[1]:.3f} mm, turned {found.rotation:+.3f} degrees;"
         f" {consensus.agree} looks agree{spread}{share}"
     )
+
+
+def scan_text(found: Estimate | None, consensus: Consensus, stops: int) -> str:
+    """The line said when a full scan ends."""
+    if found is None:
+        return (
+            f"scan done: {stops} pictures of the board, and the look calls no place found;"
+            " the mosaic shows them, check the board's side and finish, or lower the threshold"
+        )
+    return f"scan done: {stops} pictures; " + found_text(found, consensus)
 
 
 def _reset(look: BoardLook, near: dict | None = None) -> bool:

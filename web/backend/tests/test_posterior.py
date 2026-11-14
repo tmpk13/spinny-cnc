@@ -308,7 +308,8 @@ class SearchCamera:
         return {"ok": True}
 
     def frame(self, width=None, overlay=False, quality=80):
-        return {"width": SIZE[0], "height": SIZE[1], "frame": 0, "age_ms": 0, "bytes": 0}, b""
+        factor = max(1, -(-SIZE[0] // width)) if width else 1
+        return {"width": SIZE[0] // factor, "height": SIZE[1] // factor, "frame": 0, "age_ms": 0}, b"\xff\xd8 picture \xff\xd9"
 
 
 class Mover:
@@ -392,3 +393,54 @@ def test_a_recorded_search_replays_through_the_posterior_and_the_sweep_sets_both
     assert "the posterior, threshold" in text and "the vote, need" in text
     shown = searchreport.text(searchreport.summarize(loaded), None, None, searchreport.posterior_ifs(loaded))
     assert "threshold 0.5: found" in shown
+
+
+def test_a_scans_rows_cover_the_box_back_and_forth():
+    from spinny_web.boardlook import scan_stops
+
+    stops = scan_stops((0.0, 0.0, 60.0, 30.0), (25.6, 14.4))
+    xs = sorted({round(x, 6) for x, _ in stops})
+    ys = sorted({round(y, 6) for _, y in stops})
+    # The first and last pictures reach the box's edges, a picture less the overlap apart at most.
+    assert xs[0] - 12.8 <= 0.0 + 1e-9 and xs[-1] + 12.8 >= 60.0 - 1e-9
+    assert ys[0] - 7.2 <= 0.0 + 1e-9 and ys[-1] + 7.2 >= 30.0 - 1e-9
+    assert max(b - a for a, b in zip(xs, xs[1:])) <= 25.6 * 0.7 + 1e-9
+    # Row by row from the bottom, the first left to right, the next back.
+    rows = [[x for x, y in stops if abs(y - row) < 1e-9] for row in ys]
+    assert rows[0] == sorted(rows[0]) and rows[1] == sorted(rows[1], reverse=True)
+    assert len(stops) == len(xs) * len(ys)
+    with pytest.raises(ValueError, match="pictures to cover"):
+        scan_stops((0.0, 0.0, 2000.0, 2000.0), (2.0, 2.0))
+
+
+@pytest.mark.parametrize("method", ["vote", "posterior"])
+def test_a_full_scan_looks_at_every_picture_keeps_each_for_the_mosaic_and_finds_the_board(quick, method):
+    from spinny_web.boardlook import rough_box, scan, scan_stops
+    from spinny_web.boardlook import Estimate as Place
+
+    middle = truth_middle()
+    camera = SearchCamera(FakePcbv())
+    look_ = BoardLook(lambda: camera, publish=lambda: None, paused=lambda: True, options=lambda: {"method": method, "scale": SCALE})
+    look_.start("j1", DESIGN.board_to_job, MIDDLE, lambda captured: "the watcher is held off", features=PADS, outline=OUTLINE)
+    # A rough place a millimeter and a half off: the rows cover the board around it.
+    rough = Place(TRUTH_TURN, (TRUTH_SHIFT[0] + 1.5, TRUTH_SHIFT[1] - 1.0), middle, 0.0)
+    box = rough_box(rough, OUTLINE, 3.0)
+    stops = scan_stops(box, (SIZE[0] * SCALE, SIZE[1] * SCALE))
+    mover = Mover(camera)
+    try:
+        found = scan(
+            look_, mover, stops, (0.0, 0.0), lambda point: PictureFrame(point, 0.0, False), lambda: False, lambda index, count: None, RuntimeError,
+            box=box, picture=(SIZE[0], SIZE[1], SCALE), outline=OUTLINE,
+        )
+    finally:
+        look_.stop()
+    assert len(mover.places) == len(stops), "every stop is looked at, found or not"
+    assert found is not None and math.dist(found.center, middle) < 0.1
+    state = look_.mosaic.state()
+    assert state["job"] == "j1" and state["motion"] == "stop" and len(state["pictures"]) == len(stops)
+    tile = state["pictures"][0]
+    # Kept at most 640 px wide: each kept px two full size ones.
+    assert tile["width"] == 640 and tile["mm_per_px"] == pytest.approx(SCALE * 2.0)
+    assert tile["center"] == pytest.approx(list(stops[0]))
+    assert state["estimate"]["center"] == pytest.approx(list(found.center), abs=1e-3)
+    assert look_.mosaic.picture(0) == b"\xff\xd8 picture \xff\xd9" and look_.mosaic.picture(len(stops)) is None

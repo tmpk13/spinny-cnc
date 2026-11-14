@@ -74,6 +74,7 @@ import type {
     ResumePlan,
     ResumeRecord,
     ResumeRequest,
+    ScanMosaic,
     SearchCamera,
     SearchLogState,
     SettingsResponse,
@@ -296,6 +297,11 @@ export interface Api {
     cameraAbort(): Promise<CameraState>;
     /** Moves the head camera over a box (board frame mm; null: where the corners taken put the board, else the board's size about where it looks now) until a guess of the board loaded is likely enough. */
     cameraSearch(box: [number, number, number, number] | null): Promise<CameraState>;
+    /** A full scan of the board where a rough place puts it, the rows run `margin` mm past its outline (null: the backend's). */
+    cameraScan(margin: number | null): Promise<CameraState>;
+    cameraScanState(): Promise<ScanMosaic>;
+    /** One picture of the head camera's newest scan; `version` keeps a browser from showing one of an older scan. */
+    cameraScanUrl(index: number, version: number): string;
     /** The head camera's picture's center is on this corner of the job's board: its place is kept. */
     cameraCorner(jobId: string, corner: CornerName): Promise<CameraState>;
     /** The head camera's corners taken are forgotten. */
@@ -405,6 +411,9 @@ export interface Api {
     topBoard(jobId: string | null): Promise<PlacingState>;
     /** Moves the top camera over a box (machine X Y; null: where the corners taken put the board, else the board's size about where it looks now) until a guess is likely enough. */
     topSearch(box: [number, number, number, number] | null): Promise<PlacingState>;
+    topScan(margin: number | null): Promise<PlacingState>;
+    topScanState(): Promise<ScanMosaic>;
+    topScanUrl(index: number, version: number): string;
     /** The board's place the look found, else the one its corners give, kept as the job's references. */
     topPlace(jobId: string): Promise<PlacingState>;
     /** The top camera's picture's center is on this corner of the job's board: its place is kept. */
@@ -1009,6 +1018,18 @@ export class HttpApi implements Api {
         return this.request<CameraState>("POST", "/api/camera/search", box ? { box } : {});
     }
 
+    cameraScan(margin: number | null): Promise<CameraState> {
+        return this.request<CameraState>("POST", "/api/camera/scan", margin !== null ? { margin } : {});
+    }
+
+    cameraScanState(): Promise<ScanMosaic> {
+        return this.request<ScanMosaic>("GET", "/api/camera/scan");
+    }
+
+    cameraScanUrl(index: number, version: number): string {
+        return `${this.base}/api/camera/scan/${index}.jpg?v=${version}`;
+    }
+
     cameraCorner(jobId: string, corner: CornerName): Promise<CameraState> {
         return this.request<CameraState>("POST", "/api/camera/corner", { job: jobId, corner });
     }
@@ -1249,6 +1270,18 @@ export class HttpApi implements Api {
 
     topSearch(box: [number, number, number, number] | null): Promise<PlacingState> {
         return this.request<PlacingState>("POST", "/api/pnp/top/search", box ? { box } : {});
+    }
+
+    topScan(margin: number | null): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/top/scan", margin !== null ? { margin } : {});
+    }
+
+    topScanState(): Promise<ScanMosaic> {
+        return this.request<ScanMosaic>("GET", "/api/pnp/top/scan");
+    }
+
+    topScanUrl(index: number, version: number): string {
+        return `${this.base}/api/pnp/top/scan/${index}.jpg?v=${version}`;
     }
 
     topPlace(jobId: string): Promise<PlacingState> {

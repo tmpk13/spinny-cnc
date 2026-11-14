@@ -689,7 +689,7 @@ def test_the_top_camera_searches_a_box_for_the_board_and_keeps_its_place(client,
     assert client.put("/api/pnp/top", json={"side": "top"}).status_code == 400
     # Unloaded, the look is forgotten; its settings stay.
     unloaded = client.post("/api/pnp/top/board", json={"job": None}).json()["top"]["board_look"]
-    assert unloaded == {"job": None, "threshold": boardlook.THRESHOLD, "corner_mm": boardlook.CORNER_MM, "method": "vote", "board_stretch": False, "corners": None}
+    assert unloaded == {"job": None, "threshold": boardlook.THRESHOLD, "corner_mm": boardlook.CORNER_MM, "method": "vote", "board_stretch": False, "corners": None, "scan": None}
 
 
 def test_the_top_camera_searches_with_the_posterior_when_its_look_method_says_so(client, quick_search):
@@ -716,6 +716,40 @@ def test_the_top_camera_searches_with_the_posterior_when_its_look_method_says_so
     assert look["views"] >= 1 and look["representation"] in ("samples", "gaussian")
     # Back to the vote, the look starts over with it.
     assert client.put("/api/pnp/top", json={"look_method": "vote"}).json()["top"]["board_look"]["method"] == "vote"
+
+
+def test_the_top_camera_scans_the_whole_board_from_a_rough_place_and_keeps_a_mosaic(client, quick_search):
+    rig(client, profile(rest=TOP))
+    job_id = outlined_job(client)
+    board = SeenBoard((0.0, 0.0, 40.0, 30.0), 2.0, (150.0, 80.0), design_shift=(-100.0, -70.0))
+    camera = BoardTopCamera(client.fake, (34.0, -9.0), board, roll=1.5)
+    client.backend.top.client = camera
+    client.put("/api/pnp/top", json={"offset": [34.0, -9.0], "mm_per_px": 0.02, "roll": 1.5, "mirror": False})
+    assert client.post("/api/pnp/top/board", json={"job": job_id}).status_code == 200
+    # Nothing tells where the board is yet.
+    response = client.post("/api/pnp/top/scan", json={})
+    assert response.status_code == 400 and "rough place" in response.json()["detail"]
+    assert client.post("/api/pnp/top/search", json={"box": [140.0, 70.0, 200.0, 125.0]}).status_code == 200
+    assert routine_done(client, "/api/pnp/placing")["state"] == "done"
+    response = client.post("/api/pnp/top/scan", json={"margin": 1.0})
+    assert response.status_code == 200, response.text
+    routine = routine_done(client, "/api/pnp/placing")
+    assert routine["state"] == "done" and routine["kind"] == "scan", routine
+    look = client.get("/api/pnp/placing").json()["top"]["board_look"]
+    mosaic = client.get("/api/pnp/top/scan").json()
+    assert mosaic["job"] == job_id and len(mosaic["pictures"]) >= 4 and look["scan"]["pictures"] == len(mosaic["pictures"])
+    middle = (150.0 + 20.0 * math.cos(math.radians(2.0)) - 15.0 * math.sin(math.radians(2.0)), 80.0 + 20.0 * math.sin(math.radians(2.0)) + 15.0 * math.cos(math.radians(2.0)))
+    assert mosaic["estimate"]["center"] == pytest.approx(list(middle), abs=0.05) and mosaic["outline"] == [0.0, 0.0, 40.0, 30.0]
+    # The pictures cover the board: the place found, from every stop.
+    centers = [tuple(picture["center"]) for picture in mosaic["pictures"]]
+    assert min(x for x, _ in centers) - 12.8 <= middle[0] - 20.0 and max(x for x, _ in centers) + 12.8 >= middle[0] + 20.0
+    assert min(y for _, y in centers) - 7.2 <= middle[1] - 15.0 and max(y for _, y in centers) + 7.2 >= middle[1] + 15.0
+    assert all(picture["width"] == 640 and picture["mm_per_px"] == pytest.approx(0.04) for picture in mosaic["pictures"])
+    picture = client.get("/api/pnp/top/scan/0.jpg")
+    assert picture.status_code == 200 and picture.headers["content-type"] == "image/jpeg"
+    assert client.get(f"/api/pnp/top/scan/{len(centers)}.jpg").status_code == 404
+    records = client.get("/api/searchlog?camera=top").json()["records"]
+    assert records[0]["kind"] == "scan" and records[0]["result"] == "found"
 
 
 def test_corners_taken_with_the_top_camera_give_a_rough_place_a_search_box_and_references(client, quick_search):
@@ -772,7 +806,7 @@ def test_a_search_that_covers_its_box_without_the_board_ends_as_not_found(client
     rig(client, profile(rest=TOP))
     job_id = outlined_job(client)
     board = SeenBoard((0.0, 0.0, 40.0, 30.0), 0.0, (500.0, 500.0), design_shift=(-100.0, -70.0))
-    client.backend.top.client = BoardTopCamera(client.fake, (34.0, -9.0), board, roll=0.0)
+    client.backend.top.client = BoardTopCamera(client.fake, (34.0, -9.0), board, roll=0.0, pictures=False)
     client.put("/api/pnp/top", json={"offset": [34.0, -9.0], "mm_per_px": 0.02, "roll": 0.0})
     client.post("/api/pnp/top/board", json={"job": job_id})
     assert client.post("/api/pnp/top/search", json={"box": [100.0, 30.0, 140.0, 60.0]}).status_code == 200

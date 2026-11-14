@@ -104,6 +104,7 @@ import {
     estimateOf,
     jobKnown,
     jobSize,
+    mockScan,
     onBoard,
     roughBox,
     searchStops,
@@ -213,6 +214,7 @@ import type {
     HostSettings,
     Job,
     LookMethod,
+    ScanMosaic,
     JobIcon,
     JobPatch,
     JobSummary,
@@ -8123,6 +8125,66 @@ export class MockBackend implements Api, EventFeed {
         this.topBoardLook.start(jobId);
         this.emitPlacing();
         return this.placingStateOf();
+    }
+
+    /** A full scan with a camera's look, made at once in the mock: the place the look found, else its corners' rough place. */
+    private scanWith(look: MockBoardLook, job: Job, view: [number, number], margin: number | null, roll: number, mirror: boolean): void {
+        const place = look.state().estimate ?? look.rough(job.id);
+        if (!place) {
+            throw new ApiError(400, "a full scan needs a rough place first: take the board's corners, find the board, or mark it in Align (top camera: its references)");
+        }
+        try {
+            const { mosaic, pictures } = mockScan(job, place, view, margin ?? 2, roll, mirror, (look.scan?.version ?? 0) + 1);
+            look.scan = mosaic;
+            look.scanPictures = pictures;
+        } catch (error) {
+            throw new ApiError(400, errorText(error));
+        }
+    }
+
+    async cameraScan(margin: number | null): Promise<CameraState> {
+        this.requireConnected();
+        const jobId = this.headLook.job;
+        if (jobId === null || jobId !== this.cameraJob) {
+            throw new ApiError(400, "no board loaded: press Look for board first");
+        }
+        if (this.machine.state !== "Idle" || this.outbox.length > 0) {
+            throw new ApiError(409, `the machine is ${statusLine(this.machine)}, not Idle`);
+        }
+        const scale = this.cameraConfig.mm_per_px > 0 ? this.cameraConfig.mm_per_px : CAMERA_TRUTH.mmPerPx;
+        const [width, height] = parseSize(this.cameraConfig.size);
+        this.scanWith(this.headLook, this.requireJob(jobId), [width * scale, height * scale], margin, this.cameraConfig.roll, false);
+        this.message("info", `scan done: ${this.headLook.scan?.pictures.length ?? 0} pictures of the board`);
+        this.emitCamera();
+        return this.cameraStateOf();
+    }
+
+    async cameraScanState(): Promise<ScanMosaic> {
+        return this.headLook.scan ?? { job: null, motion: "stop", version: 0, started: 0, outline: null, estimate: null, pictures: [] };
+    }
+
+    cameraScanUrl(index: number, _version: number): string {
+        return this.headLook.scanPictures[index] ?? "";
+    }
+
+    async topScan(margin: number | null): Promise<PlacingState> {
+        const jobId = this.topBoardLook.job;
+        if (jobId === null) {
+            throw new ApiError(400, "no board loaded: press Look for board first");
+        }
+        const scale = this.topConfig.mm_per_px > 0 ? this.topConfig.mm_per_px : 0.02;
+        const [width, height] = parseSize(this.topConfig.size);
+        this.scanWith(this.topBoardLook, this.requireJob(jobId), [width * scale, height * scale], margin, this.topConfig.roll, this.topConfig.mirror);
+        this.emitPlacing();
+        return this.placingStateOf();
+    }
+
+    async topScanState(): Promise<ScanMosaic> {
+        return this.topBoardLook.scan ?? { job: null, motion: "stop", version: 0, started: 0, outline: null, estimate: null, pictures: [] };
+    }
+
+    topScanUrl(index: number, _version: number): string {
+        return this.topBoardLook.scanPictures[index] ?? "";
     }
 
     async topSearch(box: SearchBox | null): Promise<PlacingState> {

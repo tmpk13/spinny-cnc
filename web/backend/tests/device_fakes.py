@@ -218,9 +218,11 @@ class BoardTopCamera(DeviceTopCamera):
     `seen` board's from where the head stands; it takes a board's file,
     a reset and a hello as pcbv does."""
 
-    def __init__(self, fake: FakeMarlin, offset, seen: SeenBoard, roll: float = 1.5, mirror: bool = False, scale: float = 0.02) -> None:
+    def __init__(self, fake: FakeMarlin, offset, seen: SeenBoard, roll: float = 1.5, mirror: bool = False, scale: float = 0.02, pictures: bool = True) -> None:
         super().__init__(fake, offset, [], roll, mirror, scale)
         self.seen = seen
+        # A camera that gives no pictures, as a pcbv whose frames fail.
+        self.pictures = pictures
         self.loaded = None
         self.board_fields: dict = {}
         self.assemblies: list[dict] = []
@@ -235,6 +237,13 @@ class BoardTopCamera(DeviceTopCamera):
     def assembly(self, paste=None, placed=None):
         self.assemblies.append({"paste": paste, "placed": placed})
         return {"features": 40}
+
+    def frame(self, width=None, overlay=False, quality=80):
+        """A picture as pcbv sends one: shrunk by a whole factor to at most `width`."""
+        if not self.pictures:
+            raise RuntimeError("no picture")
+        factor = max(1, -(-1280 // width)) if width else 1
+        return {"width": 1280 // factor, "height": 720 // factor, "frame": self.frames, "age_ms": 0}, b"\xff\xd8 top picture \xff\xd9"
 
     def request(self, cmd, timeout=None, **fields):
         self.asked.append(cmd)
