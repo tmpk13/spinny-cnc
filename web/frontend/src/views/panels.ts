@@ -39,19 +39,29 @@
 // (data-unfold, data-arrive) while the page moves things (src/look.ts).
 
 import { el, readStored, svgIcon, writeStored } from "../dom.ts";
+import { countText } from "../format.ts";
 import {
+    blockFolder,
     blockIsRow,
     bringToFront,
     canonicalLayouts,
     DEFAULT_PRESET,
+    FOLDER_NAME_MAX,
+    folderNameProblem,
+    folderOf,
+    foldersOf,
+    intoFolder,
     isRow,
     isStuck,
     locate,
     matchingPreset,
     MIN_HEIGHT,
     moveBlock,
+    moveStack,
     moveToColumn,
+    nameFolder,
     normalizeLayout,
+    outOfFolder,
     placeBlock,
     presetNameProblem,
     readObject,
@@ -61,14 +71,17 @@ import {
     setPrefs,
     setRow,
     setWidths,
+    shutFolder,
     stackNeighbor,
     stackOnto,
     stick,
+    ungroup,
     unstack,
     unstackAll,
     unstick,
     withStacks,
     type Defaults,
+    type Folder,
     type PageLayout,
     type Stack,
 } from "../layout.ts";
@@ -137,6 +150,23 @@ interface PageView {
     cells: Map<string, HTMLElement>;
     /** Each column's mark of more below than it shows, by column. */
     more: HTMLElement[];
+    /** The folders' boxes and heads, by the panel heading each. */
+    folders: Map<string, FolderView>;
+}
+
+interface FolderView {
+    page: PageView;
+    /** The panel heading the folder's block, which its moves act through. */
+    lead: string;
+    /** Its box, holding its head and its panels. */
+    wrap: HTMLElement;
+    head: HTMLElement;
+    chevron: HTMLButtonElement;
+    name: HTMLElement;
+    /** How many panels it holds; shut, which. */
+    count: HTMLElement;
+    menu: HTMLButtonElement;
+    grip: HTMLButtonElement;
 }
 
 interface PanelView {
@@ -196,22 +226,38 @@ function remPx(): number {
 /**
  * The markup's layout of a page's columns: their panels in order, a panel
  * marked `data-stack` joining the stack of the panel before it (the first
- * of a run of them heads the stack).
+ * of a run of them heads the stack), and the panels of a run marked with
+ * the same `data-folder="Name"` making one folder of that name, headed by
+ * the first of them.
  */
 export function markupDefaults(columns: HTMLElement[]): Defaults {
     const stacked: Record<string, string> = {};
+    const stuck: Record<string, string> = {};
+    const folders: Record<string, string> = {};
     const ids = columns.map((column) => {
         let head: string | null = null;
+        let folder: { name: string; head: string } | null = null;
         return childrenOf(column, "section.panel[id]").map((panel) => {
+            const name = panel.getAttribute("data-folder");
+            const inFolder = name !== null && folder !== null && folder.name === name;
             if (panel.hasAttribute("data-stack") && head !== null) {
                 stacked[panel.id] = head;
             } else {
                 head = panel.id;
+                if (inFolder) {
+                    stuck[panel.id] = folder!.head;
+                }
+            }
+            if (name === null) {
+                folder = null;
+            } else if (!inFolder) {
+                folder = { name, head: panel.id };
+                folders[panel.id] = name;
             }
             return panel.id;
         });
     });
-    return withStacks(ids, stacked);
+    return withStacks(ids, stacked, stuck, folders);
 }
 
 /** Whether the page is laid out in columns (the wide layout) rather than as one column. */
@@ -261,6 +307,8 @@ export const TO_TOP = "M3 2.5h10v1.5h-10zM8 5l4.5 4.5l-1.1 1.1l-2.65 -2.65v5.55h
 export const TO_END = "M3 13.5h10v-1.5h-10zM8 11l4.5 -4.5l-1.1 -1.1l-2.65 2.65v-5.55h-1.5v5.55l-2.65 -2.65l-1.1 1.1z";
 /** Two bars one above another, apart: a stack taken apart. */
 const APART = "M2.5 2h11v4.5h-11zM2.5 9.5h11v4.5h-11z";
+/** A folder: its tab and its body. */
+const FOLDER = "M1.5 3.5a1 1 0 0 1 1 -1h3.6l1.5 1.6h5.9a1 1 0 0 1 1 1v7.4a1 1 0 0 1 -1 1h-11a1 1 0 0 1 -1 -1zM3 6v6h10v-6z";
 /** Two columns of three dots: a grip. */
 const GRIP = "M5 3.5a1.25 1.25 0 1 0 0.01 0M11 3.5a1.25 1.25 0 1 0 0.01 0M5 8a1.25 1.25 0 1 0 0.01 0M11 8a1.25 1.25 0 1 0 0.01 0M5 12.5a1.25 1.25 0 1 0 0.01 0M11 12.5a1.25 1.25 0 1 0 0.01 0";
 
@@ -310,7 +358,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
         const id = root.id.replace(/^page-/, "");
         const columns = childrenOf(root, ".column");
         const defaults = markupDefaults(columns);
-        const page: PageView = { id, root, columns, defaults, layout: normalizeLayout(stored[id] ?? null, defaults), strips: new Map(), handles: [], rows: new Map(), cells: new Map(), more: [] };
+        const page: PageView = { id, root, columns, defaults, layout: normalizeLayout(stored[id] ?? null, defaults), strips: new Map(), handles: [], rows: new Map(), cells: new Map(), more: [], folders: new Map() };
         pages.set(id, page);
         for (const column of columns) {
             column.addEventListener("pointerover", () => (lastColumn = column));
@@ -633,7 +681,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
         markCut(column, mark, !wide() || docked);
         if (mark && !mark.hidden) {
             const bottom = column.getBoundingClientRect().bottom;
-            const below = childrenOf(column, "section.panel[id]")
+            const below = Array.from(column.querySelectorAll<HTMLElement>("section.panel[id]"))
                 .filter((node) => node.getClientRects().length > 0 && node.getBoundingClientRect().top >= bottom - 1)
                 .map((node) => title(node));
             const press = mark.firstElementChild as HTMLElement | null;
@@ -672,7 +720,8 @@ export function mountPanels(app: HTMLElement): PanelsController {
         const docked = root.hasAttribute("data-dock") && !["data-join-up", "data-join-down", "data-stacked"].some((name) => root.hasAttribute(name));
         // Side by side, a handle the width of the column would not say whose height it sets.
         const inRow = root.parentElement?.classList.contains("panel-row-cell") === true;
-        return collapsed || !shown(panel.id) || root.hasAttribute("data-behind") || docked || inRow;
+        const shut = root.closest(".panel-folder[data-shut]") !== null;
+        return collapsed || !shown(panel.id) || root.hasAttribute("data-behind") || docked || inRow || shut;
     }
 
     // --- drawing a page --------------------------------------------------------
@@ -746,6 +795,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
         const used = new Set<HTMLElement>();
         const usedRows = new Set<HTMLElement>();
         const usedCells = new Set<HTMLElement>();
+        const usedFolders = new Set<FolderView>();
         page.layout.columns.forEach((blocks, index) => {
             const column = page.columns[index];
             if (!column) {
@@ -760,6 +810,11 @@ export function mountPanels(app: HTMLElement): PanelsController {
                 // tabs over its panels; the row is drawn as one thing.
                 const row = blockIsRow(page.layout, block) && block.filter((stack) => stack.ids.some(shown)).length > 1;
                 const cells: HTMLElement[] = [];
+                // The block's nodes in order, and the ones drawn as its own
+                // (a stack's tabs and the panel in front of it, or its row),
+                // which join each other; a folder holds them all in its box.
+                const nodes: HTMLElement[] = [];
+                const own: HTMLElement[] = [];
                 for (const stack of block) {
                     const members = stack.ids.map((id) => panels.get(id)).filter((panel): panel is PanelView => panel !== undefined);
                     const visible = members.filter((panel) => shown(panel.id));
@@ -772,7 +827,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
                         used.add(strip);
                         into.push(strip);
                         if (!row) {
-                            drawn.push({ node: strip, block: blockIndex });
+                            own.push(strip);
                         }
                     }
                     for (const panel of members) {
@@ -792,11 +847,11 @@ export function mountPanels(app: HTMLElement): PanelsController {
                         }
                         applyPanel(panel);
                         if (panel === front && !row) {
-                            drawn.push({ node: panel.root, block: blockIndex });
+                            own.push(panel.root);
                         }
                     }
                     if (!row) {
-                        desired.push(...into);
+                        nodes.push(...into);
                         continue;
                     }
                     for (const node of into) {
@@ -825,8 +880,30 @@ export function mountPanels(app: HTMLElement): PanelsController {
                     }
                     usedRows.add(wrapper);
                     reorder(wrapper, cells);
-                    desired.push(wrapper);
-                    drawn.push({ node: wrapper, block: blockIndex });
+                    nodes.push(wrapper);
+                    own.push(wrapper);
+                }
+                const folder = blockFolder(page.layout, block);
+                if (folder === null) {
+                    desired.push(...nodes);
+                    drawn.push(...own.map((node) => ({ node, block: blockIndex })));
+                    return;
+                }
+                // A folder: its head over the block's nodes in its box, which
+                // is drawn as one thing; inside it nothing joins, the panels
+                // sitting a little apart.
+                const view = folderView(page, folder.head);
+                usedFolders.add(view);
+                for (const node of nodes) {
+                    for (const name of ["data-join-up", "data-join-down", "data-first", "data-last"]) {
+                        node.removeAttribute(name);
+                    }
+                }
+                reorder(view.wrap, [view.head, ...nodes]);
+                drawFolder(view, folder, block, own.length === 0);
+                desired.push(view.wrap);
+                if (own.length > 0) {
+                    drawn.push({ node: view.wrap, block: blockIndex });
                 }
             });
             reorder(column, [...desired, ...handles, ...(page.more[index] ? [page.more[index]!] : [])]);
@@ -863,8 +940,162 @@ export function mountPanels(app: HTMLElement): PanelsController {
                 }
             }
         }
+        for (const [key, view] of page.folders) {
+            if (!usedFolders.has(view)) {
+                view.wrap.remove();
+                page.folders.delete(key);
+            }
+        }
         positionHandles(page);
         markCuts(page);
+    }
+
+    // --- folders -----------------------------------------------------------------
+
+    /** A folder's box and head, made once for the panel heading it and kept while it does. */
+    function folderView(page: PageView, head: string): FolderView {
+        const kept = page.folders.get(head);
+        if (kept) {
+            return kept;
+        }
+        const chevron = el("button", { type: "button", class: "panel-chevron", "aria-expanded": "true" });
+        const icon = svgIcon(FOLDER);
+        icon.classList.add("panel-folder-icon");
+        const name = el("span", { class: "panel-folder-name", title: "the folder's name; double click to rename it" });
+        const count = el("span", { class: "panel-folder-count" });
+        const grip = el("button", { type: "button", class: "panel-grip", title: "drag the folder to another place" });
+        grip.append(svgIcon(GRIP));
+        const menu = el("button", { type: "button", class: "panel-menu-button", "aria-haspopup": "menu", title: "folder menu" });
+        menu.append(svgIcon(DOTS));
+        const headNode = el("div", { class: "panel-folder-head" }, grip, chevron, icon, name, count, menu);
+        const wrap = el("div", { class: "panel-folder" }, headNode);
+        const view: FolderView = { page, lead: head, wrap, head: headNode, chevron, name, count, menu, grip };
+        chevron.addEventListener("click", () => {
+            const folder = folderOf(page.layout, view.lead);
+            if (folder) {
+                update(page, shutFolder(page.layout, view.lead, !folder.shut));
+            }
+        });
+        name.addEventListener("dblclick", () => renameFolder(view));
+        menu.addEventListener("click", () => openFolderMenu(view, menu));
+        headNode.addEventListener("contextmenu", (event) => {
+            if ((event.target as Element | null)?.closest("input")) {
+                return;
+            }
+            event.preventDefault();
+            openFolderMenu(view, { x: event.clientX, y: event.clientY }, headNode);
+        });
+        grip.addEventListener("pointerdown", (event) => {
+            const lead = panels.get(view.lead);
+            if (lead) {
+                dragPanel(lead, event, true);
+            }
+        });
+        page.folders.set(head, view);
+        return view;
+    }
+
+    /**
+     * Draws a folder's head as the layout has it: its name, how many panels
+     * it holds (and, shut, which), and its fold; hidden when none of its
+     * panels shows.
+     */
+    function drawFolder(view: FolderView, folder: Folder, block: Stack[], empty: boolean): void {
+        view.wrap.hidden = empty;
+        view.wrap.toggleAttribute("data-shut", folder.shut);
+        // Not while a field takes the name's place for a rename.
+        if (view.name.parentElement === view.head && view.name.textContent !== folder.name) {
+            view.name.textContent = folder.name;
+        }
+        const names = block.flatMap((stack) => stack.ids).filter(shown).map((id) => title(panels.get(id)!.root));
+        const count = countText(names.length, "panel", "panels");
+        const text = folder.shut ? `${count}: ${names.join(", ")}` : count;
+        if (view.count.textContent !== text) {
+            view.count.textContent = text;
+        }
+        view.count.title = folder.shut ? `folded away: ${names.join(", ")}` : names.join(", ");
+        view.chevron.setAttribute("aria-expanded", String(!folder.shut));
+        view.chevron.setAttribute("aria-label", `${folder.shut ? "Unfold" : "Fold"} the ${folder.name} folder`);
+        view.chevron.title = folder.shut ? "unfold the folder" : "fold the folder to its head";
+        view.menu.setAttribute("aria-label", `${folder.name} folder menu`);
+        view.grip.setAttribute("aria-label", `Drag the ${folder.name} folder`);
+    }
+
+    /** Puts a field in place of a folder's name: Enter or leaving it renames the folder, Escape keeps the name. */
+    function renameFolder(view: FolderView): void {
+        const folder = folderOf(view.page.layout, view.lead);
+        if (!folder || view.name.parentElement !== view.head) {
+            return;
+        }
+        const input = el("input", { type: "text", class: "field panel-folder-rename", "aria-label": "Folder name", maxlength: FOLDER_NAME_MAX, autocomplete: "off", spellcheck: "false" }) as HTMLInputElement;
+        input.value = folder.name;
+        view.name.replaceWith(input);
+        input.focus({ preventScroll: true });
+        input.select();
+        let done = false;
+        const finish = (keep: boolean): void => {
+            if (done) {
+                return;
+            }
+            done = true;
+            input.replaceWith(view.name);
+            const name = input.value.trim();
+            if (keep && folderNameProblem(name) === null && name !== folder.name) {
+                update(view.page, nameFolder(view.page.layout, view.lead, name));
+            }
+        };
+        input.addEventListener("keydown", (event) => {
+            // The jog keys and the page's own Escape stop short of the field.
+            event.stopPropagation();
+            if (event.key === "Enter") {
+                event.preventDefault();
+                finish(true);
+            } else if (event.key === "Escape") {
+                event.preventDefault();
+                finish(false);
+            }
+        });
+        input.addEventListener("blur", () => finish(true));
+    }
+
+    function openFolderMenu(view: FolderView, at: HTMLElement | { x: number; y: number }, from?: Element): void {
+        const { page } = view;
+        const layout = page.layout;
+        const folder = folderOf(layout, view.lead);
+        const where = locate(layout, view.lead);
+        if (!folder || !where) {
+            return;
+        }
+        const blocks = layout.columns[where.column]!;
+        const visibleBlock = (index: number): boolean => blocks[index]!.some((stack) => stack.ids.some(shown));
+        const before = blocks.slice(0, where.block).some((_, index) => visibleBlock(index));
+        const after = blocks.slice(where.block + 1).some((_, index) => visibleBlock(where.block + 1 + index));
+        const apply = (next: PageLayout): void => update(page, next);
+        const entries: MenuEntry[] = [
+            { label: folder.shut ? "Unfold" : "Fold", run: () => apply(shutFolder(layout, view.lead, !folder.shut)) },
+            { label: "Rename", run: () => renameFolder(view) },
+            "-",
+            { label: "Move up", run: () => apply(moveBlock(layout, view.lead, -1, shown)), disabled: before ? undefined : "already at the top" },
+            { label: "Move down", run: () => apply(moveBlock(layout, view.lead, 1, shown)), disabled: after ? undefined : "already at the bottom" },
+        ];
+        if (layout.columns.length > 1) {
+            entries.push(
+                { label: "Move left", run: () => apply(moveToColumn(layout, view.lead, -1)), disabled: where.column > 0 ? undefined : "already in the first column" },
+                { label: "Move right", run: () => apply(moveToColumn(layout, view.lead, 1)), disabled: where.column < layout.columns.length - 1 ? undefined : "already in the last column" },
+            );
+        }
+        entries.push("-", { label: "Take the folder apart", run: () => apply(ungroup(layout, view.lead)) });
+        openMenu(entries, at, `${folder.name} folder`, from);
+    }
+
+    /** Makes the panel's block a folder named after the panel, and puts its name up for renaming. */
+    function newFolder(panel: PanelView): void {
+        update(panel.page, nameFolder(panel.page.layout, panel.id, title(panel.root)));
+        const folder = folderOf(panel.page.layout, panel.id);
+        const view = folder ? panel.page.folders.get(folder.head) : undefined;
+        if (view) {
+            renameFolder(view);
+        }
     }
 
     /** Puts each panel's height handle on its bottom edge and each column handle between its columns. */
@@ -906,20 +1137,33 @@ export function mountPanels(app: HTMLElement): PanelsController {
         const collapsed = collapsedOf(panel);
         const columns = layout.columns.length;
         const apply = (next: PageLayout): void => update(page, next);
+        // In a folder, a panel moves among the folder's panels; the folder
+        // itself moves from its head.
+        const folder = folderOf(layout, id);
+        const block = blocks[where.block]!;
         const entries: MenuEntry[] = [
             { label: collapsed ? "Unfold" : "Fold", run: () => setCollapsed(panel, !collapsed) },
             prefs.hidden
                 ? { label: "Show for good", run: () => apply(setPrefs(layout, id, { hidden: undefined })) }
                 : { label: "Hide", run: () => apply(setPrefs(layout, id, { hidden: true })) },
             "-",
-            { label: "Move up", run: () => apply(moveBlock(layout, id, -1, shown)), disabled: before ? undefined : "already at the top" },
-            { label: "Move down", run: () => apply(moveBlock(layout, id, 1, shown)), disabled: after ? undefined : "already at the bottom" },
         ];
-        if (columns > 1) {
+        if (folder) {
             entries.push(
-                { label: "Move left", run: () => apply(moveToColumn(layout, id, -1)), disabled: where.column > 0 ? undefined : "already in the first column" },
-                { label: "Move right", run: () => apply(moveToColumn(layout, id, 1)), disabled: where.column < columns - 1 ? undefined : "already in the last column" },
+                { label: "Up in the folder", run: () => apply(moveStack(layout, id, -1)), disabled: where.stack > 0 ? undefined : "already first in the folder" },
+                { label: "Down in the folder", run: () => apply(moveStack(layout, id, 1)), disabled: where.stack < block.length - 1 ? undefined : "already last in the folder" },
             );
+        } else {
+            entries.push(
+                { label: "Move up", run: () => apply(moveBlock(layout, id, -1, shown)), disabled: before ? undefined : "already at the top" },
+                { label: "Move down", run: () => apply(moveBlock(layout, id, 1, shown)), disabled: after ? undefined : "already at the bottom" },
+            );
+            if (columns > 1) {
+                entries.push(
+                    { label: "Move left", run: () => apply(moveToColumn(layout, id, -1)), disabled: where.column > 0 ? undefined : "already in the first column" },
+                    { label: "Move right", run: () => apply(moveToColumn(layout, id, 1)), disabled: where.column < columns - 1 ? undefined : "already in the last column" },
+                );
+            }
         }
         entries.push(
             "-",
@@ -932,12 +1176,21 @@ export function mountPanels(app: HTMLElement): PanelsController {
                 { label: "Take the stack apart", run: () => apply(unstackAll(layout, id)) },
             );
         }
-        entries.push(stuck
-            ? { label: "Unstick", run: () => apply(unstick(layout, id)) }
-            : { label: "Stick to above", run: () => apply(stick(layout, id, shown)), disabled: before ? undefined : "no panel above" });
-        if (blocks[where.block]!.length > 1) {
+        if (!folder) {
+            entries.push(stuck
+                ? { label: "Unstick", run: () => apply(unstick(layout, id)) }
+                : { label: "Stick to above", run: () => apply(stick(layout, id, shown)), disabled: before ? undefined : "no panel above" });
+        }
+        if (block.length > 1) {
             const row = isRow(layout, id);
             entries.push({ label: row ? "One above another" : "Side by side", run: () => apply(setRow(layout, id, !row)) });
+        }
+        // Folders: a new one, out of the one it is in, or into another.
+        entries.push("-", folder
+            ? { label: `Out of ${folder.name}`, run: () => apply(outOfFolder(layout, id)) }
+            : { label: "New folder", run: () => newFolder(panel) });
+        for (const other of foldersOf(layout).filter((entry) => entry.head !== folder?.head)) {
+            entries.push({ label: `Into ${other.name}`, run: () => apply(intoFolder(layout, id, other.head)) });
         }
         entries.push("-");
         entries.push({ label: "Fit to screen", run: () => apply(setPrefs(layout, id, { height: screenHeight(panel) })) });
@@ -1049,19 +1302,25 @@ export function mountPanels(app: HTMLElement): PanelsController {
 
     // --- dragging a panel in edit mode -------------------------------------------
 
-    type Drop = { kind: "before"; column: number; before: string | null } | { kind: "stack"; target: string };
+    type Drop = { kind: "before"; column: number; before: string | null } | { kind: "stack"; target: string } | { kind: "folder"; head: string };
 
     /**
      * Where a panel dragged to (x, y) would go, and the box to mark for it;
      * null for nowhere. A tab dragged off its stack's row (`alone`) moves
      * only its panel: the block it leaves is a place to go before or after,
-     * and it may stack onto any other panel.
+     * and it may stack onto any other panel. Over a folder's head, it goes
+     * into the folder.
      */
     function dropAt(page: PageView, dragged: string, x: number, y: number, alone = false): { drop: Drop; mark: { left: number; top: number; width: number; height: number } } | null {
         const where = locate(page.layout, dragged);
         if (!where) {
             return null;
         }
+        /** The panels of the block a box is drawn for. */
+        const ids = (box: { first: string }): string[] => {
+            const at = locate(page.layout, box.first);
+            return at ? page.layout.columns[at.column]![at.block]!.flatMap((stack) => stack.ids) : [];
+        };
         const own = page.layout.columns[where.column]![where.block]!;
         const ownIds = new Set(own.flatMap((stack) => stack.ids));
         const rects = page.columns.map((column) => column.getBoundingClientRect());
@@ -1071,8 +1330,9 @@ export function mountPanels(app: HTMLElement): PanelsController {
         }
         const rect = rects[column]!;
         const rem = remPx();
-        // Blocks drawn in the column, each the box around what it shows.
-        const boxes: { first: string; top: number; bottom: number; own: boolean; fronts: { id: string; rect: DOMRect }[] }[] = [];
+        // Blocks drawn in the column, each the box around what it shows; a
+        // folder's takes in its head, which a drop goes into it by.
+        const boxes: { first: string; top: number; bottom: number; own: boolean; fronts: { id: string; rect: DOMRect }[]; folder: { head: string; rect: DOMRect } | null }[] = [];
         for (const block of page.layout.columns[column]!) {
             const ids = block.flatMap((stack) => stack.ids);
             const isOwn = ids.some((id) => ownIds.has(id));
@@ -1082,7 +1342,15 @@ export function mountPanels(app: HTMLElement): PanelsController {
             const fronts: { id: string; rect: DOMRect }[] = [];
             let top = Infinity;
             let bottom = -Infinity;
-            for (const stack of block) {
+            const folder = blockFolder(page.layout, block);
+            const view = folder ? page.folders.get(folder.head) : undefined;
+            const shownView = view !== undefined && !view.wrap.hidden && view.wrap.isConnected;
+            if (shownView) {
+                const rect = view.wrap.getBoundingClientRect();
+                top = rect.top;
+                bottom = rect.bottom;
+            }
+            for (const stack of folder?.shut ? [] : block) {
                 const visible = stack.ids.filter(shown);
                 const front = visible.includes(stack.front) ? stack.front : visible[0];
                 if (!front) {
@@ -1094,8 +1362,15 @@ export function mountPanels(app: HTMLElement): PanelsController {
                 top = Math.min(top, strip?.isConnected ? strip.getBoundingClientRect().top : box.top);
                 bottom = Math.max(bottom, box.bottom);
             }
-            if (fronts.length > 0) {
-                boxes.push({ first: ids[0]!, top, bottom, own: isOwn, fronts });
+            if (fronts.length > 0 || shownView) {
+                boxes.push({ first: ids[0]!, top, bottom, own: isOwn, fronts, folder: shownView && folder ? { head: folder.head, rect: view.head.getBoundingClientRect() } : null });
+            }
+        }
+        // Over a folder's head: into the folder (not the one it is in).
+        for (const box of boxes) {
+            const head = box.folder?.rect;
+            if (box.folder && head && !ids(box).some((id) => id === dragged) && x >= head.left && x < head.right && y >= head.top && y < head.bottom) {
+                return { drop: { kind: "folder", head: box.folder.head }, mark: { left: head.left, top: head.top, width: head.width, height: head.height } };
             }
         }
         // Over the middle of a panel: stack onto it, when what is dragged is one stack.
@@ -1152,7 +1427,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
             drop = found?.drop ?? null;
             mark.hidden = found === null;
             if (found) {
-                mark.classList.toggle("stack", found.drop.kind === "stack");
+                mark.classList.toggle("stack", found.drop.kind === "stack" || found.drop.kind === "folder");
                 mark.style.left = `${found.mark.left}px`;
                 mark.style.top = `${found.mark.top}px`;
                 mark.style.width = `${found.mark.width}px`;
@@ -1171,7 +1446,12 @@ export function mountPanels(app: HTMLElement): PanelsController {
         };
     }
 
-    function dragPanel(panel: PanelView, event: PointerEvent): void {
+    /**
+     * Drags a panel by its grip in edit mode, with what is stuck to it; a
+     * panel in a folder goes with its stack alone, out of the folder unless
+     * let go into it, and the folder's own grip (`whole`) drags the folder.
+     */
+    function dragPanel(panel: PanelView, event: PointerEvent, whole = false): void {
         if (event.button !== 0 || !editing || !wide()) {
             return;
         }
@@ -1183,11 +1463,13 @@ export function mountPanels(app: HTMLElement): PanelsController {
             return;
         }
         const block = page.layout.columns[where.column]![where.block]!;
-        const carried = block.flatMap((stack) => stack.ids).map((id) => panels.get(id)!.root);
+        const alone = !whole && folderOf(page.layout, panel.id) !== null;
+        const ids = alone ? block[where.stack]!.ids : block.flatMap((stack) => stack.ids);
+        const carried = ids.map((id) => panels.get(id)!.root);
         for (const node of carried) {
             node.setAttribute("data-dragged", "");
         }
-        const drag = dropFollower(page, panel.id, title(panel.root), false, { x: event.clientX, y: event.clientY });
+        const drag = dropFollower(page, panel.id, title(panel.root), alone, { x: event.clientX, y: event.clientY });
         follow(event, (_dx, _dy, at) => drag.show(at.clientX, at.clientY), (cancelled) => {
             const drop = drag.drop();
             drag.end();
@@ -1197,9 +1479,22 @@ export function mountPanels(app: HTMLElement): PanelsController {
             if (cancelled || drop === null) {
                 return;
             }
-            const next = drop.kind === "stack"
-                ? stackOnto(page.layout, panel.id, drop.target)
-                : placeBlock(page.layout, panel.id, drop.column, drop.before);
+            let next: PageLayout;
+            if (drop.kind === "stack") {
+                next = stackOnto(page.layout, panel.id, drop.target);
+            } else if (drop.kind === "folder") {
+                // Every stack carried goes in, in its order.
+                const firsts = alone ? [panel.id] : block.map((stack) => stack.ids[0]!);
+                next = firsts.reduce((layout, first) => intoFolder(layout, first, drop.head), page.layout);
+            } else if (alone) {
+                // Out of its folder, then where it was let go; "before the
+                // folder it left" names that folder by a panel still in it.
+                const left = block.flatMap((stack) => stack.ids).filter((id) => !ids.includes(id));
+                const before = drop.before !== null && ids.includes(drop.before) ? left[0] ?? null : drop.before;
+                next = placeBlock(outOfFolder(page.layout, panel.id), panel.id, drop.column, before);
+            } else {
+                next = placeBlock(page.layout, panel.id, drop.column, drop.before);
+            }
             update(page, next);
         });
     }
@@ -1249,6 +1544,8 @@ export function mountPanels(app: HTMLElement): PanelsController {
             let next = unstack(page.layout, panel.id);
             if (drop.kind === "stack") {
                 next = stackOnto(next, panel.id, drop.target);
+            } else if (drop.kind === "folder") {
+                next = intoFolder(next, panel.id, drop.head);
             } else {
                 next = placeBlock(next, panel.id, drop.column, drop.before === panel.id ? left[0] ?? null : drop.before);
             }
@@ -1401,7 +1698,8 @@ export function mountPanels(app: HTMLElement): PanelsController {
             sizes?.unobserve(panel.root);
             panel.resize.remove();
             const page = panel.page;
-            page.defaults = page.defaults.map((ids) => ids.filter((other) => other !== id));
+            const { stacked = {}, stuck = {}, folders = {} } = page.defaults;
+            page.defaults = withStacks(page.defaults.map((ids) => ids.filter((other) => other !== id)), stacked, stuck, folders);
             page.layout = normalizeLayout(page.layout, page.defaults);
             render(page);
             notify();

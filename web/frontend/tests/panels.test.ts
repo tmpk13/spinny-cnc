@@ -424,6 +424,111 @@ describe("the panel menu", () => {
     });
 });
 
+describe("folders", () => {
+    test("a panel makes a new folder, named after it and up for renaming; Enter keeps the name", () => {
+        const app = makeApp();
+        mountPanels(app);
+        openMenuOf("p-laser");
+        pick("New folder");
+        const folder = app.querySelector(".column > .panel-folder")!;
+        expect(Array.from(folder.querySelectorAll("section.panel")).map((node) => node.id)).toEqual(["p-laser"]);
+        const field = folder.querySelector<HTMLInputElement>(".panel-folder-rename")!;
+        expect(field.value).toBe("Laser");
+        field.value = "Machine";
+        field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        expect(folder.querySelector(".panel-folder-name")?.textContent).toBe("Machine");
+        expect(folder.querySelector(".panel-folder-rename")).toBeNull();
+        expect(JSON.parse(localStorage.getItem(LAYOUT_KEY)!).jobs.panels).toEqual({ "p-laser": { folder: "Machine" } });
+        // Every button of its head says what it does.
+        for (const node of Array.from(folder.querySelectorAll<HTMLButtonElement>(".panel-folder-head button"))) {
+            expect(node.title).not.toBe("");
+        }
+        // Escape in a rename keeps the name it had.
+        folder.querySelector<HTMLElement>(".panel-folder-name")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+        const again = folder.querySelector<HTMLInputElement>(".panel-folder-rename")!;
+        again.value = "Other";
+        again.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        expect(folder.querySelector(".panel-folder-name")?.textContent).toBe("Machine");
+    });
+
+    test("panels go into a folder from anywhere on the page and out again; the folder shuts to its head, naming them", () => {
+        const app = makeApp();
+        mountPanels(app);
+        openMenuOf("p-dro");
+        pick("New folder");
+        app.querySelector<HTMLInputElement>(".panel-folder-rename")!.blur();
+        openMenuOf("p-console");
+        pick("Into Position");
+        openMenuOf("p-steps");
+        pick("Into Position");
+        const folder = app.querySelector(".panel-folder")!;
+        expect(Array.from(folder.querySelectorAll("section.panel")).map((node) => node.id)).toEqual(["p-dro", "p-console", "p-steps"]);
+        expect(folder.querySelector(".panel-folder-count")?.textContent).toBe("3 panels");
+        // Inside a folder nothing joins.
+        expect(app.querySelector("#p-console")!.hasAttribute("data-join-up")).toBe(false);
+        // Shut: its head names what it holds, and its panels' handles go.
+        folder.querySelector<HTMLButtonElement>(".panel-folder-head .panel-chevron")!.click();
+        expect(folder.hasAttribute("data-shut")).toBe(true);
+        expect(folder.querySelector(".panel-folder-count")?.textContent).toBe("3 panels: Position, Console, Setup");
+        expect(Array.from(app.querySelectorAll<HTMLElement>(".panel-resize")).filter((node) => !node.hidden).length).toBe(2);
+        folder.querySelector<HTMLButtonElement>(".panel-folder-head .panel-chevron")!.click();
+        expect(folder.hasAttribute("data-shut")).toBe(false);
+        // A panel in a folder moves among its panels, and out of it.
+        openMenuOf("p-steps");
+        pick("Up in the folder");
+        expect(Array.from(folder.querySelectorAll("section.panel")).map((node) => node.id)).toEqual(["p-dro", "p-steps", "p-console"]);
+        openMenuOf("p-console");
+        pick("Out of Position");
+        expect(Array.from(folder.querySelectorAll("section.panel")).map((node) => node.id)).toEqual(["p-dro", "p-steps"]);
+        expect(app.querySelector("#p-console")!.parentElement!.classList.contains("column")).toBe(true);
+    });
+
+    test("a folder's menu moves it as one and takes it apart", () => {
+        const app = makeApp();
+        mountPanels(app);
+        openMenuOf("p-laser");
+        pick("New folder");
+        app.querySelector<HTMLInputElement>(".panel-folder-rename")!.blur();
+        openMenuOf("p-steps");
+        pick("Into Laser");
+        const [left, right] = Array.from(app.querySelectorAll(".column"));
+        const folderMenu = (): void => app.querySelector<HTMLButtonElement>(".panel-folder-head .panel-menu-button")!.click();
+        folderMenu();
+        pick("Move up");
+        expect(left!.firstElementChild?.classList.contains("panel-folder")).toBe(true);
+        folderMenu();
+        pick("Move right");
+        expect(right!.querySelector(".panel-folder")).not.toBeNull();
+        expect(ids(left!)).toEqual(["p-dro"]);
+        folderMenu();
+        pick("Take the folder apart");
+        expect(app.querySelector(".panel-folder")).toBeNull();
+        expect(ids(right!)).toEqual(["p-laser", "p-steps", "p-preview", "p-console", "p-device"]);
+    });
+
+    test("the markup puts a run of panels marked with one data-folder in a folder of that name, which a reset brings back", () => {
+        const app = makeApp();
+        for (const id of ["p-preview", "p-console"]) {
+            app.querySelector(`#${id}`)!.setAttribute("data-folder", "View");
+        }
+        const columns = markupDefaults(Array.from(app.querySelectorAll<HTMLElement>(".column")));
+        expect(columns.folders).toEqual({ "p-preview": "View" });
+        expect(columns.stuck).toEqual({ "p-console": "p-preview" });
+        const panels = mountPanels(app);
+        const folder = app.querySelector(".panel-folder")!;
+        expect(folder.querySelector(".panel-folder-name")?.textContent).toBe("View");
+        expect(Array.from(folder.querySelectorAll("section.panel")).map((node) => node.id)).toEqual(["p-preview", "p-console"]);
+        // The markup's own: nothing kept.
+        expect(localStorage.getItem(LAYOUT_KEY) === null || JSON.parse(localStorage.getItem(LAYOUT_KEY)!).jobs === undefined).toBe(true);
+        expect(app.querySelector("#page-jobs")!.hasAttribute("data-arranged")).toBe(false);
+        app.querySelector<HTMLButtonElement>(".panel-folder-head .panel-menu-button")!.click();
+        pick("Take the folder apart");
+        expect(app.querySelector(".panel-folder")).toBeNull();
+        panels.resetPage("jobs");
+        expect(app.querySelector(".panel-folder .panel-folder-name")?.textContent).toBe("View");
+    });
+});
+
 describe("kept layouts", () => {
     test("a layout kept by name comes back from its name; Default is the markup's", () => {
         const app = makeApp();

@@ -10,9 +10,13 @@
 //
 // A column is a list of blocks, a block a list of stacks stuck together,
 // and a stack a list of panel ids. A panel alone is a stack of one in a
-// block of one. The markup may stack panels from the start (Defaults'
-// `stacked`). Every function returns a new layout and leaves the one it
-// was given alone.
+// block of one. A block may be a folder: it has a name, and folds and
+// moves as one. What belongs to a block (side by side, its folder's name,
+// the folder shut) is kept on the panel heading it, the first of its first
+// stack, and passes to the next one when that panel leaves. The markup may
+// stack panels from the start (Defaults' `stacked`) and put panels in
+// folders (`stuck`, `folders`). Every function returns a new layout and
+// leaves the one it was given alone.
 
 export interface Stack {
     /** The panels in the stack, in the order their tabs show. */
@@ -34,6 +38,10 @@ export interface PanelPrefs {
     height?: number;
     /** On the first panel of a block: its stacks sit side by side rather than one above another. */
     row?: boolean;
+    /** On the first panel of a block: the block is a folder of this name, which folds and moves as one. */
+    folder?: string;
+    /** On the first panel of a folder's block: the folder is folded to its head. */
+    shut?: boolean;
 }
 
 export interface PageLayout {
@@ -54,17 +62,22 @@ export interface Place {
 }
 
 /**
- * The markup's layout of a page: each column's panel ids in order, and the
+ * The markup's layout of a page: each column's panel ids in order, the
  * panels it stacks from the start (`stacked`: a panel's id to the id of the
- * panel whose stack it joins, which the markup puts before it). Plain
- * columns of ids stack nothing.
+ * panel whose stack it joins, which the markup puts before it), and its
+ * folders: `stuck`, a panel's id to the id of the panel heading the block
+ * it joins, and `folders`, a heading panel's id to its folder's name.
+ * Plain columns of ids stack nothing and have no folders.
  */
-export type Defaults = string[][] & { stacked?: Record<string, string> };
+export type Defaults = string[][] & { stacked?: Record<string, string>; stuck?: Record<string, string>; folders?: Record<string, string> };
 
-/** Columns of ids with the panels the markup stacks. */
-export function withStacks(columns: string[][], stacked: Record<string, string>): Defaults {
-    return Object.assign(columns.map((ids) => [...ids]), { stacked: { ...stacked } });
+/** Columns of ids with the panels the markup stacks, and the folders it makes. */
+export function withStacks(columns: string[][], stacked: Record<string, string>, stuck: Record<string, string> = {}, folders: Record<string, string> = {}): Defaults {
+    return Object.assign(columns.map((ids) => [...ids]), { stacked: { ...stacked }, stuck: { ...stuck }, folders: { ...folders } });
 }
+
+/** The longest name a folder takes. */
+export const FOLDER_NAME_MAX = 40;
 
 /** Whether a panel shows on the page; a move steps over panels that do not. */
 export type Shown = (id: string) => boolean;
@@ -93,7 +106,7 @@ function copy(layout: PageLayout): PageLayout {
     };
 }
 
-/** The markup's layout: every panel alone, in the markup's columns and order, but for the ones it stacks. */
+/** The markup's layout: every panel alone, in the markup's columns and order, but for the ones it stacks and puts in folders. */
 export function defaultLayout(columns: Defaults): PageLayout {
     const blocks: Block[][] = columns.map(() => []);
     for (const ids of columns) {
@@ -101,7 +114,25 @@ export function defaultLayout(columns: Defaults): PageLayout {
             insertDefault(blocks, id, columns);
         }
     }
-    return { columns: blocks, widths: null, panels: {} };
+    return { columns: blocks, widths: null, panels: defaultPrefs(columns) };
+}
+
+/** What the markup sets on its panels: its folders' names, on the panels heading them, by id in order. */
+function defaultPrefs(defaults: Defaults): Record<string, PanelPrefs> {
+    const known = new Set(defaults.flat());
+    return Object.fromEntries(Object.entries(defaults.folders ?? {})
+        .filter(([id, name]) => known.has(id) && cleanName(name) !== null)
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([id, name]) => [id, { folder: cleanName(name)! }]));
+}
+
+/** A folder's name as kept: trimmed, and at most FOLDER_NAME_MAX letters; null for none. */
+function cleanName(raw: unknown): string | null {
+    if (typeof raw !== "string") {
+        return null;
+    }
+    const name = raw.trim().slice(0, FOLDER_NAME_MAX).trim();
+    return name === "" ? null : name;
 }
 
 /** The panels of each column in the order they are drawn, stacks and blocks flattened. */
@@ -147,6 +178,19 @@ function insertDefault(columns: Block[][], id: string, defaults: Defaults): void
             }
         }
     }
+    // A panel of a markup folder goes in the block of the panel heading
+    // it, wherever that is now, as a stack of its own at its end.
+    const head = defaults.stuck?.[id];
+    if (head !== undefined) {
+        for (const blocks of columns) {
+            for (const block of blocks) {
+                if (block.some((entry) => entry.ids.includes(head))) {
+                    block.push({ ids: [id], front: id });
+                    return;
+                }
+            }
+        }
+    }
     const column = defaults.findIndex((ids) => ids.includes(id));
     if (column < 0 || column >= columns.length) {
         return;
@@ -170,6 +214,13 @@ function cleanPrefs(raw: unknown): PanelPrefs {
     }
     if (raw["row"] === true) {
         prefs.row = true;
+    }
+    const folder = cleanName(raw["folder"]);
+    if (folder !== null) {
+        prefs.folder = folder;
+    }
+    if (raw["shut"] === true) {
+        prefs.shut = true;
     }
     const height = raw["height"];
     if (typeof height === "number" && Number.isFinite(height)) {
@@ -251,9 +302,20 @@ export function normalizeLayout(raw: unknown, defaults: Defaults): PageLayout {
         }
     }
     const panels: Record<string, PanelPrefs> = {};
-    const rawPanels = isObject(raw) && isObject(raw["panels"]) ? raw["panels"] : {};
+    // Nothing stored: the markup's own folders.
+    const rawPanels = isObject(raw) && isObject(raw["panels"]) ? raw["panels"] : isObject(raw) ? {} : defaultPrefs(defaults);
+    // What belongs to a block stays only on a panel heading one.
+    const heads = new Set(columns.flatMap((blocks) => blocks.map((block) => block[0]!.ids[0]!)));
     for (const id of [...known].sort()) {
         const prefs = cleanPrefs(rawPanels[id]);
+        if (!heads.has(id)) {
+            for (const key of BLOCK_PREFS) {
+                delete prefs[key];
+            }
+        }
+        if (prefs.folder === undefined) {
+            delete prefs.shut;
+        }
         if (Object.keys(prefs).length > 0) {
             panels[id] = prefs;
         }
@@ -272,12 +334,12 @@ export function sameArrangement(layout: PageLayout, defaults: Defaults): boolean
     return shape(layout.columns) === shape(defaultLayout(defaults).columns);
 }
 
-/** Whether a layout is the markup's in every respect, each stack showing its first panel. */
+/** Whether a layout is the markup's in every respect, each stack showing its first panel and each folder of the markup's open. */
 export function isDefault(layout: PageLayout, defaults: Defaults): boolean {
     return sameArrangement(layout, defaults)
         && layout.columns.every((blocks) => blocks.every((block) => block.every((stack) => stack.front === stack.ids[0])))
         && layout.widths === null
-        && Object.keys(layout.panels).length === 0;
+        && JSON.stringify(layout.panels) === JSON.stringify(defaultPrefs(defaults));
 }
 
 /**
@@ -379,13 +441,44 @@ export function placeBlock(layout: PageLayout, id: string, column: number, befor
     return next;
 }
 
-/** Takes a stack out of its block; a block left empty goes too. */
+/** The prefs that belong to a block rather than to a panel, kept on the panel heading it. */
+const BLOCK_PREFS = ["row", "folder", "shut"] as const;
+
+/**
+ * Passes what belongs to a block from the panel that headed it to the one
+ * heading it now (`to`), or takes it away with null (the block is gone, or
+ * the panel joined another block).
+ */
+function passBlockPrefs(layout: PageLayout, from: string, to: string | null): void {
+    const prefs = layout.panels[from];
+    if (!prefs || from === to) {
+        return;
+    }
+    const carried: PanelPrefs = {};
+    for (const key of BLOCK_PREFS) {
+        if (prefs[key] !== undefined) {
+            Object.assign(carried, { [key]: prefs[key] });
+            delete prefs[key];
+        }
+    }
+    if (Object.keys(prefs).length === 0) {
+        delete layout.panels[from];
+    }
+    if (to !== null && Object.keys(carried).length > 0) {
+        layout.panels[to] = { ...layout.panels[to], ...carried };
+    }
+}
+
+/** Takes a stack out of its block; a block left empty goes too. The block's own prefs stay with what is left of it. */
 function takeStack(next: PageLayout, place: Place): Stack {
     const blocks = next.columns[place.column]!;
     const block = blocks[place.block]!;
     const [stack] = block.splice(place.stack, 1);
     if (block.length === 0) {
         blocks.splice(place.block, 1);
+    }
+    if (place.stack === 0) {
+        passBlockPrefs(next, stack!.ids[0]!, block[0]?.ids[0] ?? null);
     }
     return stack!;
 }
@@ -461,6 +554,9 @@ export function unstack(layout: PageLayout, id: string): PageLayout {
     if (stack.front === id) {
         stack.front = stack.ids[Math.min(place.index, stack.ids.length - 1)]!;
     }
+    if (place.stack === 0 && place.index === 0) {
+        passBlockPrefs(next, id, stack.ids[0]!);
+    }
     blocks.splice(place.block + 1, 0, single(id));
     return next;
 }
@@ -486,6 +582,8 @@ export function stick(layout: PageLayout, id: string, shown: Shown = always): Pa
     const next = copy(layout);
     const column = next.columns[place.column]!;
     const [block] = column.splice(place.block, 1);
+    // The block joins the one above, which keeps what is its own.
+    passBlockPrefs(next, block![0]!.ids[0]!, null);
     column[target]!.push(...block!);
     return next;
 }
@@ -506,9 +604,10 @@ export function unstick(layout: PageLayout, id: string): PageLayout {
     const column = next.columns[place.column]!;
     const rest = column[place.block]!.splice(place.stack);
     column.splice(place.block + 1, 0, rest);
-    // The parted stacks are a block of their own, one above another.
+    // The parted stacks are a block of their own, one above another, and
+    // no folder.
     for (const other of rest.flatMap((stack) => stack.ids)) {
-        clearRow(next, other);
+        passBlockPrefs(next, other, null);
     }
     return next;
 }
@@ -583,9 +682,10 @@ export function setWidths(layout: PageLayout, widths: number[] | null): PageLayo
 
 /**
  * Puts one panel back as the markup has it: out of any stack or block,
- * into the stack the markup puts it in or else in its column before the
- * first block holding a panel the markup puts after it, with nothing the
- * operator set on it.
+ * into the stack or the folder the markup puts it in or else in its column
+ * before the first block holding a panel the markup puts after it, with
+ * nothing the operator set on it. A folder it headed goes on under the
+ * panel heading it next.
  */
 export function resetPanel(layout: PageLayout, id: string, defaults: Defaults): PageLayout {
     const place = locate(layout, id);
@@ -599,11 +699,146 @@ export function resetPanel(layout: PageLayout, id: string, defaults: Defaults): 
         if (stack.front === id) {
             stack.front = stack.ids[0]!;
         }
+        if (place.stack === 0 && place.index === 0) {
+            passBlockPrefs(next, id, stack.ids[0]!);
+        }
     } else {
         takeStack(next, place);
     }
     insertDefault(next.columns, id, defaults);
     delete next.panels[id];
+    return next;
+}
+
+// --- folders -------------------------------------------------------------------
+
+/** A folder: the panel heading its block, its name, and whether it is shut. */
+export interface Folder {
+    head: string;
+    name: string;
+    shut: boolean;
+}
+
+/** The folder a block is, or null for a block that is none. */
+export function blockFolder(layout: PageLayout, block: Block): Folder | null {
+    const head = block[0]?.ids[0];
+    const name = head === undefined ? undefined : layout.panels[head]?.folder;
+    return head === undefined || name === undefined ? null : { head, name, shut: layout.panels[head]?.shut === true };
+}
+
+/** The folder a panel is in, or null. */
+export function folderOf(layout: PageLayout, id: string): Folder | null {
+    const place = locate(layout, id);
+    return place === null ? null : blockFolder(layout, layout.columns[place.column]![place.block]!);
+}
+
+/** The folders of a page, column by column, top to bottom, with each one's column. */
+export function foldersOf(layout: PageLayout): (Folder & { column: number })[] {
+    return layout.columns.flatMap((blocks, column) => blocks
+        .map((block) => blockFolder(layout, block))
+        .filter((folder): folder is Folder => folder !== null)
+        .map((folder) => ({ ...folder, column })));
+}
+
+/** Why a name cannot be a folder's, or null when it can. */
+export function folderNameProblem(name: string): string | null {
+    if (name.trim() === "") {
+        return "name the folder";
+    }
+    if (name.trim().length > FOLDER_NAME_MAX) {
+        return `name: at most ${FOLDER_NAME_MAX} characters`;
+    }
+    return null;
+}
+
+/** Makes the panel's block a folder of `name`, or renames the folder it is; a name that cannot be one changes nothing. */
+export function nameFolder(layout: PageLayout, id: string, name: string): PageLayout {
+    const place = locate(layout, id);
+    const clean = cleanName(name);
+    if (place === null || clean === null || folderNameProblem(name) !== null) {
+        return layout;
+    }
+    const next = copy(layout);
+    const head = next.columns[place.column]![place.block]![0]!.ids[0]!;
+    next.panels[head] = { ...next.panels[head], folder: clean };
+    return next;
+}
+
+/** Shuts the folder the panel is in (folds it to its head), or opens it. */
+export function shutFolder(layout: PageLayout, id: string, shut: boolean): PageLayout {
+    const folder = folderOf(layout, id);
+    return folder === null ? layout : setPrefs(layout, folder.head, { shut: shut || undefined });
+}
+
+/** Takes apart the folder the panel is in: each of its stacks a block of its own, in order, and no folder any more. */
+export function ungroup(layout: PageLayout, id: string): PageLayout {
+    const place = locate(layout, id);
+    if (place === null) {
+        return layout;
+    }
+    const next = copy(layout);
+    const blocks = next.columns[place.column]!;
+    const block = blocks[place.block]!;
+    passBlockPrefs(next, block[0]!.ids[0]!, null);
+    blocks.splice(place.block, 1, ...block.map((stack) => [stack]));
+    return next;
+}
+
+/**
+ * Moves the panel's stack into the folder headed by `head`, at its end;
+ * from another folder, that one keeps the rest of its panels.
+ */
+export function intoFolder(layout: PageLayout, id: string, head: string): PageLayout {
+    const from = locate(layout, id);
+    const to = locate(layout, head);
+    if (from === null || to === null || blockFolder(layout, layout.columns[to.column]![to.block]!) === null
+        || (from.column === to.column && from.block === to.block)) {
+        return layout;
+    }
+    const next = copy(layout);
+    const stack = takeStack(next, from);
+    const place = locate(next, head)!;
+    next.columns[place.column]![place.block]!.push(stack);
+    return next;
+}
+
+/** Takes the panel's stack out of its folder into a block of its own right after it; the last one out leaves no folder. */
+export function outOfFolder(layout: PageLayout, id: string): PageLayout {
+    const place = locate(layout, id);
+    if (place === null || folderOf(layout, id) === null) {
+        return layout;
+    }
+    if (layout.columns[place.column]![place.block]!.length === 1) {
+        return ungroup(layout, id);
+    }
+    const next = copy(layout);
+    const stack = takeStack(next, place);
+    const after = locate(next, next.columns[place.column]![place.block]![0]!.ids[0]!)!;
+    next.columns[place.column]!.splice(after.block + 1, 0, [stack]);
+    return next;
+}
+
+/**
+ * Moves the panel's stack one place up (step -1) or down (step 1) among
+ * the stacks of its block; what belongs to the block stays with whichever
+ * stack heads it then.
+ */
+export function moveStack(layout: PageLayout, id: string, step: -1 | 1): PageLayout {
+    const place = locate(layout, id);
+    if (place === null) {
+        return layout;
+    }
+    const target = place.stack + step;
+    const block = layout.columns[place.column]![place.block]!;
+    if (target < 0 || target >= block.length) {
+        return layout;
+    }
+    const next = copy(layout);
+    const stacks = next.columns[place.column]![place.block]!;
+    const head = stacks[0]!.ids[0]!;
+    const [stack] = stacks.splice(place.stack, 1);
+    stacks.splice(target, 0, stack!);
+    passBlockPrefs(next, head, stacks[0]!.ids[0]!);
     return next;
 }
 

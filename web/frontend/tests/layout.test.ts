@@ -33,6 +33,16 @@ import {
     unstackAll,
     unstick,
     withStacks,
+    blockFolder,
+    folderNameProblem,
+    folderOf,
+    foldersOf,
+    intoFolder,
+    moveStack,
+    nameFolder,
+    outOfFolder,
+    shutFolder,
+    ungroup,
     type PageLayout,
 } from "../src/layout.ts";
 
@@ -294,6 +304,100 @@ describe("sticking", () => {
         const chain = stick(stick(stick(fresh(), "jog"), "laser"), "markers");
         expect(blocks(chain, 0)).toEqual([[["dro"], ["jog"], ["laser"], ["markers"]]]);
         expect(blocks(unstick(chain, "laser"), 0)).toEqual([[["dro"], ["jog"]], [["laser"], ["markers"]]]);
+    });
+});
+
+describe("folders", () => {
+    test("a block named is a folder; its name and shut stay on the panel heading it", () => {
+        const layout = nameFolder(stick(fresh(), "laser"), "laser", "  Machine  ");
+        expect(folderOf(layout, "jog")).toEqual({ head: "jog", name: "Machine", shut: false });
+        expect(folderOf(layout, "laser")?.name).toBe("Machine");
+        expect(folderOf(layout, "dro")).toBeNull();
+        expect(layout.panels).toEqual({ jog: { folder: "Machine" } });
+        const shut = shutFolder(layout, "laser", true);
+        expect(folderOf(shut, "jog")?.shut).toBe(true);
+        expect(shutFolder(shut, "laser", false).panels).toEqual({ jog: { folder: "Machine" } });
+        // A name that cannot be one changes nothing.
+        expect(nameFolder(fresh(), "jog", "  ")).toEqual(fresh());
+        expect(folderNameProblem("")).toBe("name the folder");
+        expect(folderNameProblem("x".repeat(41))).toBe("name: at most 40 characters");
+        expect(foldersOf(layout)).toEqual([{ head: "jog", name: "Machine", shut: false, column: 0 }]);
+        expect(blockFolder(layout, layout.columns[0]![0]!)).toBeNull();
+    });
+
+    test("a folder keeps its name when the panel heading it leaves, by any way out", () => {
+        const folder = nameFolder(stick(stick(fresh(), "laser"), "markers"), "jog", "Machine");
+        expect(blocks(folder, 0)).toEqual([[["dro"]], [["jog"], ["laser"], ["markers"]]]);
+        // Out of the folder: the next panel heads it.
+        const out = outOfFolder(folder, "jog");
+        expect(blocks(out, 0)).toEqual([[["dro"]], [["laser"], ["markers"]], [["jog"]]]);
+        expect(folderOf(out, "markers")?.head).toBe("laser");
+        expect(folderOf(out, "jog")).toBeNull();
+        // Stacked onto another panel: the same.
+        const stacked = stackOnto(folder, "jog", "dro");
+        expect(folderOf(stacked, "laser")?.name).toBe("Machine");
+        expect(folderOf(stacked, "dro")).toBeNull();
+        // Its stack's first panel unstacked: the panel under it heads the folder.
+        const inStack = stackOnto(folder, "dro", "jog");
+        expect(blocks(inStack, 0)).toEqual([[["jog", "dro"], ["laser"], ["markers"]]]);
+        const unstacked = unstack(inStack, "jog");
+        expect(folderOf(unstacked, "dro")?.name).toBe("Machine");
+        expect(folderOf(unstacked, "jog")).toBeNull();
+        // Put back: likewise.
+        expect(folderOf(resetPanel(folder, "jog", MARKUP), "laser")?.head).toBe("laser");
+        // Moved within: the folder goes with whichever stack heads it.
+        const down = moveStack(folder, "jog", 1);
+        expect(blocks(down, 0)).toEqual([[["dro"]], [["laser"], ["jog"], ["markers"]]]);
+        expect(down.panels).toEqual({ laser: { folder: "Machine" } });
+        expect(moveStack(folder, "jog", -1)).toBe(folder);
+    });
+
+    test("panels go into a folder and out of it; the last out, or ungrouping, leaves no folder", () => {
+        const folder = nameFolder(fresh(), "jog", "Machine");
+        const into = intoFolder(intoFolder(folder, "markers", "jog"), "console", "jog");
+        expect(blocks(into, 0)).toEqual([[["dro"]], [["jog"], ["markers"], ["console"]], [["laser"]]]);
+        expect(blocks(into, 1)).toEqual([[["steps"]], [["preview"]]]);
+        // Into a block that is no folder, or its own: nothing.
+        expect(intoFolder(into, "dro", "laser")).toBe(into);
+        expect(intoFolder(into, "markers", "jog")).toBe(into);
+        const apart = ungroup(into, "markers");
+        expect(blocks(apart, 0)).toEqual([[["dro"]], [["jog"]], [["markers"]], [["console"]], [["laser"]]]);
+        expect(foldersOf(apart)).toEqual([]);
+        expect(apart.panels).toEqual({});
+        const last = outOfFolder(folder, "jog");
+        expect(foldersOf(last)).toEqual([]);
+        // A folder that joins a block above loses its name to that block's.
+        const joined = stick(nameFolder(stick(fresh(), "markers"), "markers", "Other"), "markers");
+        expect(foldersOf(joined)).toEqual([]);
+    });
+
+    test("a folder survives being stored and read back; a name left on a panel heading nothing is dropped", () => {
+        const folder = shutFolder(nameFolder(stick(fresh(), "laser"), "jog", "Machine"), "jog", true);
+        const read = normalizeLayout(JSON.parse(JSON.stringify(folder)), MARKUP);
+        expect(read).toEqual(folder);
+        const raw = JSON.parse(JSON.stringify(folder));
+        raw.panels = { laser: { folder: "Stale", shut: true, collapsed: true }, dro: { shut: true } };
+        expect(normalizeLayout(raw, MARKUP).panels).toEqual({ laser: { collapsed: true } });
+    });
+
+    test("the markup's folders: a block from the start, put back by a reset, open, and not stored", () => {
+        const FOLDED = withStacks(MARKUP, { markers: "laser" }, { laser: "jog" }, { jog: "Machine" });
+        const layout = defaultLayout(FOLDED);
+        expect(blocks(layout, 0)).toEqual([[["dro"]], [["jog"], ["laser", "markers"]]]);
+        expect(layout.panels).toEqual({ jog: { folder: "Machine" } });
+        expect(isDefault(layout, FOLDED)).toBe(true);
+        expect(canonicalLayout(layout, FOLDED)).toBeNull();
+        expect(isDefault(normalizeLayout(null, FOLDED), FOLDED)).toBe(true);
+        // Shut, it is a layout of its own; ungrouped, a panel put back goes back beside the panel that headed it.
+        expect(isDefault(shutFolder(layout, "jog", true), FOLDED)).toBe(false);
+        const apart = ungroup(layout, "jog");
+        expect(blocks(resetPanel(apart, "laser", FOLDED), 0)).toEqual([[["dro"]], [["jog"], ["laser"]], [["markers"]]]);
+        // A panel new to a stored layout joins its folder wherever that is now.
+        const raw = JSON.parse(JSON.stringify(moveToColumn(layout, "jog", 1)));
+        raw.columns = raw.columns.map((column: { ids: string[] }[][]) => column.map((block) => block.map((stack) => ({ ...stack, ids: stack.ids.filter((id) => id !== "laser" && id !== "markers") }))).filter((block) => block.some((stack) => stack.ids.length > 0)));
+        const read = normalizeLayout(raw, FOLDED);
+        expect(folderOf(read, "laser")?.name).toBe("Machine");
+        expect(locate(read, "markers")?.column).toBe(1);
     });
 });
 

@@ -505,14 +505,15 @@ input[type="checkbox"] {
     transition-delay: 0s;
 }
 
-/* The page settings, under the gear. */
+/* The page settings, under the gear: as tall as the window leaves under
+   the bars before it scrolls. */
 .page-settings.panel {
     position: absolute;
     top: calc(100% + 0.25rem);
     right: 0;
     z-index: 10;
     width: min(24rem, calc(100vw - 2 * var(--gap)));
-    max-height: min(40rem, 80vh);
+    max-height: calc(100vh - 8rem);
     overflow-y: auto;
     box-shadow: var(--shadow-lg);
 }
@@ -750,7 +751,8 @@ table.settings-list td {
         overscroll-behavior: contain;
     }
 
-    .column > .panel {
+    .column > .panel,
+    .column > .panel-folder {
         flex: none;
     }
 
@@ -4753,6 +4755,97 @@ dialog.bug-dialog::backdrop {
     }
 }
 
+/* A folder (panels.ts): a block of panels under a name, in a box of its
+   own with a head that folds it and moves it; its panels sit a little
+   apart inside, none of them joined. Shut, only the head shows, naming the
+   panels it holds. On a narrow screen the box and its head fall away and
+   the panels stand in the one column as any others, shut or not: there
+   the panels keep their own folds. */
+.panel-folder {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-width: 0;
+    padding: 0.35rem 0.5rem 0.5rem;
+    background: color-mix(in oklab, var(--panel-2) 45%, var(--bg));
+    border: thin solid var(--border);
+    border-radius: var(--radius-lg);
+}
+
+.panel-folder[hidden] {
+    display: none;
+}
+
+.panel-folder-head {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: 2rem;
+    padding-inline: 0.25rem;
+    color: var(--muted);
+}
+
+.panel-folder-icon {
+    width: 1rem;
+    height: 1rem;
+    color: var(--page-accent, var(--muted));
+}
+
+:root[data-colors="off"] .panel-folder-icon {
+    color: var(--muted);
+}
+
+.panel-folder-name {
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--strong);
+    white-space: nowrap;
+    cursor: text;
+}
+
+.panel-folder-count {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.8rem;
+}
+
+.panel-folder-rename.field {
+    flex: 1 1 8rem;
+    width: auto;
+    min-height: 1.9rem;
+    padding: 0.1rem 0.45rem;
+    font-size: 0.85rem;
+}
+
+.panel-folder-head .panel-menu-button {
+    margin-right: 0;
+}
+
+.panel-folder[data-shut] {
+    padding-bottom: 0.35rem;
+}
+
+@media (min-width: 64rem) {
+    .panel-folder[data-shut] > :not(.panel-folder-head) {
+        display: none !important;
+    }
+}
+
+@media (max-width: 63.99rem) {
+    .panel-folder {
+        display: contents;
+    }
+
+    .panel-folder-head {
+        display: none;
+    }
+}
+
 /* To the top and to the end of a panel held at a height. */
 .panel-scroll {
     display: inline-grid;
@@ -5414,11 +5507,12 @@ table.find-guesses tr.elsewhere td {
 /* Each page has a Solarized accent of its own, which the tab bar sets as
    --page-accent on the page's tab and on the page. A tab is underlined in
    it, faintly until pointed at or shown; the page's panels wear it along
-   their top edge, but for one stuck under another (a block reads as one)
-   and one in front of a stack, whose tab wears it instead. Only edges take
-   the color, never words, so every accent reads in both themes. With
-   colors off (data-colors="off") only the page shown is underlined, in the
-   page's accent, and panels wear none. */
+   their top edge, but for one stuck under another (a block reads as one),
+   one in front of a stack, whose tab wears it instead, and one in a
+   folder, whose box wears it. Only edges take the color, never words, so
+   every accent reads in both themes. With colors off (data-colors="off")
+   only the page shown is underlined, in the page's accent, and panels
+   wear none. */
 :root:not([data-colors="off"]) .tabs .tab {
     border-bottom-color: color-mix(in oklab, var(--page-accent) 35%, transparent);
 }
@@ -5433,8 +5527,18 @@ table.find-guesses tr.elsewhere td {
 }
 
 :root:not([data-colors="off"]) .page .panel:not([data-join-up], [data-stacked]),
-:root:not([data-colors="off"]) .page .panel-tab[aria-selected="true"] {
+:root:not([data-colors="off"]) .page .panel-tab[aria-selected="true"],
+:root:not([data-colors="off"]) .page .panel-folder {
     border-top: 0.2rem solid var(--page-accent);
+}
+
+/* The folder's box is drawn on the wide layout only; there it wears the
+   color for its panels. */
+@media (min-width: 64rem) {
+    :root:not([data-colors="off"]) .page .panel-folder .panel,
+    :root:not([data-colors="off"]) .page .panel-folder .panel-tab[aria-selected="true"] {
+        border-top: thin solid var(--border);
+    }
 }
 
 /* --- movement (src/look.ts) -------------------------------------------- */
