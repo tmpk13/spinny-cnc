@@ -12,7 +12,9 @@ reaches the machine:
   pcbv never locked (misses, pictures to try pcbv on);
 - what other consensus settings (looks one guess needs, the distance they
   must agree within) would have called on the same poses, and whether that
-  call would have been right;
+  call would have been right; and what the probability over the board's
+  pose (posterior.py) would have called at each threshold, the vote and
+  the posterior side by side;
 - with a pcbv program, what it makes of the record's pictures now
   (`pcbv locate`), against what was recorded and the truth.
 
@@ -24,7 +26,8 @@ record's folder; written into the folder it opens as a file too).
     spinny-search show ID|FOLDER [--dir DIR] [--truth X,Y,DEG] [--need 3,4,5]
                        [--agree 0.25,0.5,1] [--pcbv PROGRAM] [--json] [--html FILE]
     spinny-search sweep [--dir DIR] [--camera head|top] [--kind search|look]
-                        [--need 3,4,5] [--agree 0.25,0.5,1] [--pcbv PROGRAM] [--json]
+                        [--method vote|posterior|both] [--need 3,4,5] [--agree 0.25,0.5,1]
+                        [--threshold 0.5,0.7,0.9] [--pcbv PROGRAM] [--json]
 
 `sweep` runs every record kept through the same: a change to the
 consensus settings or to pcbv weighed on all the searches at once.
@@ -46,7 +49,7 @@ from typing import TypeGuard
 
 from spinny_laser.align import turn
 
-from .boardlook import Consensus, Estimate, corners_from
+from .boardlook import AGREE_MM, Consensus, Estimate, KnownPlace, PictureFrame, corners_from, pose_estimate, rival_of
 from .camera import picture_to_machine
 from .searchlog import BOARD, EVENTS, RECORD, RECORD_ID
 
@@ -58,6 +61,9 @@ MISS_COVER = 0.25
 # The consensus settings tried on a record's poses when none are given.
 NEEDS = (3, 4, 5, 6, 7)
 AGREES = (0.25, 0.5, 1.0)
+# The thresholds the posterior's replays try, as probabilities.
+THRESHOLDS = (0.5, 0.7, 0.9)
+METHODS = ("vote", "posterior")
 # How long one `pcbv locate` may take, s.
 LOCATE_SECONDS = 120.0
 # Outliers listed at most.
@@ -473,6 +479,129 @@ def what_ifs(record: Record, truth: Place | None = None, needs=NEEDS, agrees=AGR
     return rows
 
 
+# --- the probability over the board's pose -----------------------------------------------
+
+
+def _affine(record: Record):
+    """The record's map from KiCad board points to the job's frame; None without one."""
+    rows = record.header.get("board_to_job")
+    if not (isinstance(rows, list) and len(rows) == 2 and all(isinstance(row, list) and len(row) == 3 and all(_number(v) for v in row) for row in rows)):
+        return None
+    (a, b, c), (d, e, f) = rows
+    return lambda point: (a * point[0] + b * point[1] + c, d * point[0] + e * point[1] + f)
+
+
+def _known(data) -> KnownPlace | None:
+    """A known place as a record keeps it, back; none from corners taken,
+    which the posterior weighs as evidence of their own."""
+    if not isinstance(data, dict) or data.get("source") == "corners":
+        return None
+    center, shift, rotation = _point(data.get("center")), _point(data.get("shift")), data.get("rotation")
+    within_mm, within_deg = data.get("within_mm"), data.get("within_deg")
+    if center is None or shift is None or not _number(rotation) or not _number(within_mm):
+        return None
+    place = Estimate(float(rotation), shift, center, 0.0)
+    return KnownPlace(str(data.get("source")), place, float(within_mm), float(within_deg) if _number(within_deg) else None)
+
+
+def posterior_of(record: Record, threshold: float | None = None):
+    """A probability over the board's pose for a record's board, with the
+    settings it was looked with (another threshold if given): its box and
+    the place known before for a search, the board's features when the
+    record kept them (else a grid over its outline)."""
+    from .posterior import Board, Posterior
+
+    settings = record.settings
+    header = record.header
+    outline = header.get("outline_box")
+    box = header.get("box")
+    features = header.get("features")
+    picture = header.get("picture") or {}
+    scale = picture.get("mm_per_px_used") or picture.get("mm_per_px")
+    board = Board.of(
+        record.middle,
+        tuple(float(v) for v in outline) if isinstance(outline, list) and len(outline) == 4 else None,
+        [tuple(point) for point in features if _point(point) is not None] if isinstance(features, list) else None,
+    )
+    return Posterior(
+        board,
+        tuple(float(v) for v in box) if isinstance(box, list) and len(box) == 4 else None,
+        _known(header.get("known")),
+        threshold=threshold if threshold is not None else settings.get("threshold"),
+        corner_mm=settings.get("corner_mm"),
+        corners=corners_from(settings.get("corners")),
+        sessions=settings.get("sessions") or 1,
+        scale=float(scale) if _number(scale) else None,
+        stretch=bool(settings.get("stretch")),
+    )
+
+
+def replay_posterior(record: Record, truth: Place | None = None, threshold: float | None = None) -> dict:
+    """The record's poses run again through the probability over the
+    board's pose: when it would have called the board found, where, how far
+    from the truth, and how much was left where nothing had looked. Each
+    pose is placed where it was recorded, else where its stop put the
+    picture's center; a record from before poses kept their place gives
+    nothing for the pictures that locked on nothing."""
+    truth = truth or found_place(record)
+    truth_middle = truth.apply(record.middle) if truth is not None else None
+    to_job = _affine(record)
+    posterior = posterior_of(record, threshold)
+    picture = record.header.get("picture") or {}
+    roll = float(picture.get("roll") or 0.0) if _number(picture.get("roll")) else 0.0
+    mirror = bool(picture.get("mirror"))
+    targets = {event.get("index"): _point(event.get("target")) for event in record.of("stop")}
+    row: dict = {"method": "posterior", "threshold": posterior.threshold, "found": False}
+    resets = 0
+    count = 0
+    for event in record.events:
+        kind = event.get("event")
+        if kind == "settings":
+            posterior.tune(event.get("threshold") if threshold is None else None, event.get("corner_mm"), corners_from(event.get("corners")) if "corners" in event else None)
+            continue
+        if kind in ("arrived", "recheck"):
+            resets += 1
+            continue
+        if kind != "pose" or not isinstance(event.get("pose"), dict):
+            continue
+        count += 1
+        raw = event["pose"]
+        place = event.get("place")
+        where = None
+        if isinstance(place, dict) and _point(place.get("center")) is not None:
+            where = PictureFrame(_point(place["center"]), float(place.get("roll") or 0.0), bool(place.get("mirror")))
+        elif isinstance(event.get("refused"), str):
+            where = event["refused"]
+        elif targets.get(event.get("stop")) is not None:
+            where = PictureFrame(targets[event.get("stop")], roll, mirror)
+        estimate = problem = None
+        if isinstance(where, PictureFrame) and to_job is not None:
+            estimate, problem = pose_estimate(raw, where, to_job, record.middle)
+            if estimate is not None:
+                acquisition = raw.get("acquisition")
+                estimate.session = int(acquisition) if _number(acquisition) else resets
+                estimate.rival = rival_of(raw)
+        posterior.take(raw, where, float(event.get("captured") or 0.0), to_job, estimate, problem, estimate.session if estimate is not None else resets)
+        if posterior.found and posterior.best is not None:
+            best = posterior.best
+            row.update(found=True, t=event.get("t"), stop=event.get("stop"), poses=count, center=[round(best.center[0], 4), round(best.center[1], 4)], rotation=round(best.rotation, 4))
+            if truth is not None and truth_middle is not None:
+                row["error_mm"] = round(math.dist(best.center, truth_middle), 4)
+                row["error_deg"] = round(abs(_wrap(best.rotation - truth.rotation)), 4)
+            break
+    lead = posterior.lead
+    row["probability"] = round(lead.probability, 4) if lead is not None else None
+    row["elsewhere"] = round(posterior.elsewhere, 4)
+    row["views"] = sum(1 for view in posterior.views if view.observed)
+    row["recorded"] = record.settings.get("method") == "posterior" and threshold is None
+    return row
+
+
+def posterior_ifs(record: Record, truth: Place | None = None, thresholds=THRESHOLDS) -> list[dict]:
+    """The record through the posterior at each threshold."""
+    return [replay_posterior(record, truth, float(threshold)) for threshold in thresholds]
+
+
 # --- pcbv again ---------------------------------------------------------------------------
 
 
@@ -572,7 +701,7 @@ def _counts(counts: dict) -> str:
     return ", ".join(f"{name} {count}" for name, count in sorted(counts.items(), key=lambda item: -item[1])) or "none"
 
 
-def text(summary: dict, ifs: list[dict] | None = None, pcbv: list[dict] | None = None) -> str:
+def text(summary: dict, ifs: list[dict] | None = None, pcbv: list[dict] | None = None, posterior: list[dict] | None = None) -> str:
     """The summary as lines for a terminal or an agent."""
     s = summary
     board = s["board"]
@@ -637,6 +766,18 @@ def text(summary: dict, ifs: list[dict] | None = None, pcbv: list[dict] | None =
                 lines.append(f"  need {row['need']} within {row['agree_mm']:g} mm: found at {_f(row['t'], 1, ' s')} ({stop}, pose {row['poses']}){off}{wrong}{mark}")
             else:
                 lines.append(f"  need {row['need']} within {row['agree_mm']:g} mm: never{mark}")
+    if posterior:
+        lines.append("the probability over the board's pose on the same poses (threshold: when found, how far off; the most likely's share and where nothing looked at the end):")
+        for row in posterior:
+            mark = " (as recorded)" if row.get("recorded") else ""
+            ending = f"; {_f(row.get('probability'), 2)} likely, {_f(row.get('elsewhere'), 2)} elsewhere, {row.get('views')} views"
+            if row["found"]:
+                stop = _stop_name(row.get("stop"), s["stop_count"])
+                off = f", {row['error_mm']:.3f} mm {row['error_deg']:.3f} deg off" if "error_mm" in row else ""
+                wrong = "  WRONG" if "error_mm" in row and row["error_mm"] > AGREE_MM else ""
+                lines.append(f"  threshold {row['threshold']:g}: found at {_f(row['t'], 1, ' s')} ({stop}, pose {row['poses']}){off}{wrong}{ending}{mark}")
+            else:
+                lines.append(f"  threshold {row['threshold']:g}: never{ending}{mark}")
     if pcbv is not None:
         lines.append("pcbv locate on the pictures now (locked, error against the truth, paired, ms; recorded used/read at that stop):")
         for row in pcbv:
@@ -912,16 +1053,19 @@ def html(record: Record, truth: Place | None = None, ifs: list[dict] | None = No
 # --- every record at once ----------------------------------------------------------------------
 
 
-def sweep(records: list[Record], needs=NEEDS, agrees=AGREES, program: str | None = None) -> dict:
+def sweep(records: list[Record], needs=NEEDS, agrees=AGREES, program: str | None = None, methods=("vote",), thresholds=THRESHOLDS) -> dict:
     """Every record's poses through each consensus setting, totalled: in how
     many it would have called the board found, how often wrongly (further
     from the place the search found than its own agreement), in how many
     the search itself found nothing, and the poses and seconds it took;
     with `program`, every picture given to that pcbv against the poses
     recorded at its stop. A change to the search's settings or to pcbv is
-    weighed on every search kept instead of on one."""
+    weighed on every search kept instead of on one. `methods` names the
+    ways to call the board found to run: the vote over `needs` and
+    `agrees`, the posterior (posterior.py) at each of `thresholds`, side by
+    side in the answer."""
     totals: dict[tuple[int, float], dict] = {}
-    for record in records:
+    for record in records if "vote" in methods else []:
         found = found_place(record) is not None
         for row in what_ifs(record, None, needs, agrees):
             key = (row["need"], row["agree_mm"])
@@ -944,6 +1088,29 @@ def sweep(records: list[Record], needs=NEEDS, agrees=AGREES, program: str | None
         total["median_s"] = _median(seconds)
         settings.append(total)
     answer: dict = {"records": len(records), "found": sum(1 for record in records if found_place(record) is not None), "settings": settings}
+    if "posterior" in methods:
+        rows = []
+        for threshold in thresholds:
+            total = {"threshold": float(threshold), "records": 0, "found": 0, "wrong": 0, "found_unjudged": 0, "recorded": 0}
+            poses, seconds = [], []
+            for record in records:
+                found = found_place(record) is not None
+                row = replay_posterior(record, None, float(threshold))
+                total["records"] += 1
+                total["recorded"] += 1 if record.settings.get("method") == "posterior" and math.isclose(float(threshold), float(record.settings.get("threshold") or -1.0)) else 0
+                if not row["found"]:
+                    continue
+                total["found"] += 1
+                poses.append(row["poses"])
+                seconds.append(row["t"])
+                if not found:
+                    total["found_unjudged"] += 1
+                elif row.get("error_mm", 0.0) > AGREE_MM:
+                    total["wrong"] += 1
+            total["median_poses"] = _median(poses)
+            total["median_s"] = _median(seconds)
+            rows.append(total)
+        answer["posterior"] = rows
     if program is not None:
         lines = []
         for record in records:
@@ -971,13 +1138,22 @@ def sweep(records: list[Record], needs=NEEDS, agrees=AGREES, program: str | None
 def sweep_text(answer: dict) -> str:
     """A sweep as lines for a terminal or an agent."""
     lines = [f"{answer['records']} records, {answer['found']} found the board (their found place is the truth below)"]
-    lines.append("need within mm: found in, wrong, found where the search found nothing, median poses and seconds to found")
+    if answer["settings"]:
+        lines.append("the vote, need within mm: found in, wrong, found where the search found nothing, median poses and seconds to found")
     for total in answer["settings"]:
         mark = f" (as recorded in {total['recorded']})" if total["recorded"] else ""
         lines.append(
             f"  need {total['need']} within {total['agree_mm']:g}: {total['found']} of {total['records']}, {total['wrong']} wrong,"
             f" {total['found_unjudged']} unjudged, {_f(total['median_poses'], 0)} poses, {_f(total['median_s'], 1, ' s')}{mark}"
         )
+    if answer.get("posterior"):
+        lines.append("the posterior, threshold: found in, wrong (further than the vote's agreement from the truth), found where the search found nothing, median poses and seconds to found")
+        for total in answer["posterior"]:
+            mark = f" (as recorded in {total['recorded']})" if total["recorded"] else ""
+            lines.append(
+                f"  threshold {total['threshold']:g}: {total['found']} of {total['records']}, {total['wrong']} wrong,"
+                f" {total['found_unjudged']} unjudged, {_f(total['median_poses'], 0)} poses, {_f(total['median_s'], 1, ' s')}{mark}"
+            )
     if "pcbv" in answer:
         lines.append("pcbv on every picture now: locked now of the pictures; of the stops where a pose was used then, lost now; locked now where none was used then; median distance from the truth")
         for line in answer["pcbv"]:
@@ -1027,6 +1203,7 @@ def main(argv: list[str] | None = None) -> int:
     show.add_argument("--truth", help="X,Y,DEG: where the board's middle lies on the machine and its turn, from fiducials or a ruler (default: where the record found it)")
     show.add_argument("--need", default=",".join(str(n) for n in NEEDS), help="looks one guess needs, to try on the poses (default %(default)s)")
     show.add_argument("--agree", default=",".join(f"{a:g}" for a in AGREES), help="agreement distances to try, mm (default %(default)s)")
+    show.add_argument("--threshold", default=",".join(f"{t:g}" for t in THRESHOLDS), help="thresholds the posterior tries on the poses (default %(default)s)")
     show.add_argument("--pcbv", metavar="PROGRAM", help="run PROGRAM locate on each picture with the record's board")
     show.add_argument("--json", action="store_true", help="print the summary, the other settings and pcbv's results as JSON")
     show.add_argument("--html", type=Path, metavar="FILE", help="write the page to FILE (in the record's folder for the pictures to show)")
@@ -1035,6 +1212,8 @@ def main(argv: list[str] | None = None) -> int:
     sweeping.add_argument("--kind", choices=("search", "look"), help="only searches, or only looks")
     sweeping.add_argument("--need", default=",".join(str(n) for n in NEEDS), help="looks one guess needs, to try (default %(default)s)")
     sweeping.add_argument("--agree", default=",".join(f"{a:g}" for a in AGREES), help="agreement distances to try, mm (default %(default)s)")
+    sweeping.add_argument("--method", choices=("vote", "posterior", "both"), default="both", help="the ways to call a board found to run (default %(default)s)")
+    sweeping.add_argument("--threshold", default=",".join(f"{t:g}" for t in THRESHOLDS), help="thresholds the posterior tries (default %(default)s)")
     sweeping.add_argument("--pcbv", metavar="PROGRAM", help="run PROGRAM locate on every record's pictures")
     sweeping.add_argument("--json", action="store_true", help="print the totals as JSON")
     args = parser.parse_args(argv)
@@ -1062,7 +1241,8 @@ def main(argv: list[str] | None = None) -> int:
                 if (args.camera and record.header.get("camera") != args.camera) or (args.kind and record.header.get("kind") != args.kind):
                     continue
                 records.append(record)
-            answer = sweep(records, _numbers(args.need, int), _numbers(args.agree, float), args.pcbv)
+            methods = METHODS if args.method == "both" else (args.method,)
+            answer = sweep(records, _numbers(args.need, int), _numbers(args.agree, float), args.pcbv, methods, _numbers(args.threshold, float))
             if args.json:
                 print(json.dumps(answer, indent=1))
             else:
@@ -1071,13 +1251,14 @@ def main(argv: list[str] | None = None) -> int:
         record = load(_find(args.record, folder))
         truth = given_place(record, args.truth) if args.truth else None
         ifs = what_ifs(record, truth, _numbers(args.need, int), _numbers(args.agree, float))
+        posterior = posterior_ifs(record, truth, _numbers(args.threshold, float))
         pcbv = rerun_pcbv(record, args.pcbv, truth) if args.pcbv else None
         if args.html is not None:
             args.html.write_text(html(record, truth, ifs, pcbv), encoding="utf-8")
         if args.json:
-            print(json.dumps({"summary": summarize(record, truth), "what_ifs": ifs, "pcbv": pcbv}, indent=1))
+            print(json.dumps({"summary": summarize(record, truth), "what_ifs": ifs, "posterior": posterior, "pcbv": pcbv}, indent=1))
         else:
-            sys.stdout.write(text(summarize(record, truth), ifs, pcbv))
+            sys.stdout.write(text(summarize(record, truth), ifs, pcbv, posterior))
         return 0
     except ValueError as exc:
         print(f"spinny-search: {exc}", file=sys.stderr)

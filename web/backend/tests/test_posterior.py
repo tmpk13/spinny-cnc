@@ -349,3 +349,46 @@ def test_a_search_with_the_posterior_finds_and_checks_the_board(quick, steer):
     assert abs(found.rotation - TRUTH_TURN) < 0.1
     # Found well before the box was covered.
     assert len(mover.places) < len(stops)
+
+
+def test_a_recorded_search_replays_through_the_posterior_and_the_sweep_sets_both_side_by_side(tmp_path, quick):
+    from spinny_web import searchreport
+    from spinny_web.boardlook import search_extra, settings_now
+    from spinny_web.searchlog import SearchLog, affine_of
+
+    middle = truth_middle()
+    camera = SearchCamera(FakePcbv())
+    look_ = BoardLook(lambda: camera, publish=lambda: None, paused=lambda: True, options=lambda: {"method": "vote"})
+    look_.start("j1", DESIGN.board_to_job, MIDDLE, lambda captured: "the watcher is held off", features=PADS, outline=OUTLINE)
+    box = (middle[0] - 30.0, middle[1] - 25.0, middle[0] + 30.0, middle[1] + 25.0)
+    start = (box[0], box[1])
+    stops = search_stops(box, (SIZE[0] * SCALE, SIZE[1] * SCALE), start)
+    header = {
+        "job": {"id": "j1", "name": "board"},
+        "board": {"file": "board.kicad_pcb", "side": "front", "finish": "masked"},
+        "board_to_job": affine_of(DESIGN.board_to_job),
+        "middle": list(MIDDLE),
+        "outline_box": list(OUTLINE),
+        "features": [list(pad) for pad in PADS],
+        "picture": {"offset": [0.0, 0.0], "roll": 0.0, "mirror": False, "mm_per_px": SCALE, "width": SIZE[0], "height": SIZE[1], "mm_per_px_used": SCALE},
+        "settings": settings_now(look_, "j1"),
+        **search_extra(box, start, stops, SIZE[0] * SCALE, SIZE[1] * SCALE),
+    }
+    log = SearchLog(tmp_path / "log")
+    record = log.begin("search", "head", header, None)
+    assert record is not None
+    try:
+        search(look_, Mover(camera), stops, (0.0, 0.0), lambda point: PictureFrame(point, 0.0, False), lambda: False, lambda index, count: None, RuntimeError, record, box=box)
+    finally:
+        look_.stop()
+    loaded = searchreport.load(record.folder)
+    assert loaded.settings["method"] == "vote"
+    row = searchreport.replay_posterior(loaded)
+    assert row["found"] and row["error_mm"] < 0.1 and row["views"] >= 1
+    answer = searchreport.sweep([loaded], methods=searchreport.METHODS, thresholds=(0.5, 0.99))
+    assert answer["settings"] and [total["threshold"] for total in answer["posterior"]] == [0.5, 0.99]
+    assert answer["posterior"][0]["found"] == 1 and answer["posterior"][0]["wrong"] == 0
+    text = searchreport.sweep_text(answer)
+    assert "the posterior, threshold" in text and "the vote, need" in text
+    shown = searchreport.text(searchreport.summarize(loaded), None, None, searchreport.posterior_ifs(loaded))
+    assert "threshold 0.5: found" in shown
