@@ -17,11 +17,12 @@
 // pose (posterior.py), whose columns are its places' probabilities with one
 // more for where nothing has looked yet.
 
+import { errorText } from "../api.ts";
 import { CORNER_NAMES } from "../corners.ts";
 import { button, el, labeled, lockFor, numberField, readStored, setLocked, Tracked, writeStored } from "../dom.ts";
 import { formatFixed, formatPercent as percent, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
-import type { BoardCorners, BoardGuess, BoardKnown, BoardLook, BoardStretch, CornerName, LookMethod, RefineUse, ScanMosaic } from "../types.ts";
+import type { BoardCorners, BoardGuess, BoardKnown, BoardLook, BoardStretch, CornerName, LookMethod, RefineUse, ScanMosaic, SkewState } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
 import type { MachineBox } from "./picture.ts";
 import { gcodePlacing } from "./placing.ts";
@@ -132,6 +133,19 @@ export function stretchText(stretch: BoardStretch | null | undefined): string {
     const scale = (value: number, sd: number) => `${formatFixed(value, 4)} +- ${formatFixed(sd, 4)}`;
     return `Board stretch: X scale ${scale(stretch.scale_x, stretch.scale_x_sd)}, Y scale ${scale(stretch.scale_y, stretch.scale_y_sd)},`
         + ` shear ${formatFixed(stretch.shear_deg, 3)} +- ${formatFixed(stretch.shear_deg_sd, 3)} deg off square`;
+}
+
+/** What a machine's skew learned says, as a line; empty with nothing learned. */
+export function skewText(skew: SkewState | null): string {
+    const estimate = skew?.estimate;
+    if (!skew || !skew.machine || !estimate) {
+        return "";
+    }
+    const scale = (value: number, sd: number) => `${formatFixed(value, 4)} +- ${formatFixed(sd, 4)}`;
+    const boards = `${estimate.boards} ${estimate.boards === 1 ? "board" : "boards"} at turns ${formatFixed(estimate.turn_span_deg, 0)} deg apart`;
+    const told = estimate.separated ? "" : "; find a board turned a quarter too, to tell it from the boards' own stretch";
+    return `Machine skew of ${skew.machine}: X scale ${scale(estimate.x_scale, estimate.x_sd)}, Y scale ${scale(estimate.y_scale, estimate.y_sd)},`
+        + ` ${formatFixed(estimate.square_deg, 3)} +- ${formatFixed(estimate.square_sd, 3)} deg out of square, from ${boards}${told}`;
 }
 
 /** The look methods as the page names them. */
@@ -425,6 +439,14 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
     const mosaic = mountMosaic();
     let scanShown: { camera: LookCamera; version: number } | null = null;
     let scanData: ScanMosaic | null = null;
+    // The machine's skew its boards show, fetched when a board is found.
+    const skewLine = el("p", { class: "muted find-skew hidden" });
+    const skewApply = button("Write skew to machine file", () => void writeSkew(), "btn btn-quiet",
+        "multiply the machine file's X and Y steps per mm by the X and Y scale learned, and forget the boards measured on the old steps; load the file into the controller after");
+    const skewClear = button("Forget boards", () => void forgetSkew(), "btn btn-quiet", "forget the boards the skew was learned from");
+    const skewRow = el("div", { class: "button-row hidden" }, skewApply, skewClear);
+    let skewData: SkewState | null = null;
+    let skewKey = "";
     const cornersLine = el("p", { class: "muted find-corners" });
 
     root.append(
@@ -450,6 +472,8 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             scanHead,
             scanLine,
             mosaic.root,
+            skewLine,
+            skewRow,
             el("p", { class: "muted hint" },
                 "Each column is a place the looks put the board, as tall as its share of the evidence (looks weighed by how well they matched);"
                 + " the most likely is found once it has enough looks and reaches the threshold line. Put the picture's center on a corner of the board"
@@ -559,6 +583,39 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             const urlOf = camera === "top" ? (index: number) => ctx.api.topScanUrl(index, version) : (index: number) => ctx.api.cameraScanUrl(index, version);
             mosaic.render(scanData, urlOf);
         }
+    }
+
+    /** The machine's skew, fetched again when the camera or what it found changes. */
+    async function showSkew(camera: LookCamera, key: string): Promise<void> {
+        if (key === skewKey) {
+            return;
+        }
+        skewKey = key;
+        try {
+            skewData = await ctx.api.skew(camera);
+        } catch {
+            skewData = null;
+        }
+        render(ctx.store.get());
+    }
+
+    async function writeSkew(): Promise<void> {
+        try {
+            skewData = await ctx.api.skewApply(chosen);
+            ctx.toast("info", `written to ${skewData.machine}: ${(skewData.written ?? []).map((change) => `${change.path.join(".")} ${change.old} to ${change.new}`).join(", ")}; load the file into the controller`);
+        } catch (error) {
+            ctx.toast("error", errorText(error));
+        }
+        render(ctx.store.get());
+    }
+
+    async function forgetSkew(): Promise<void> {
+        try {
+            skewData = await ctx.api.skewClear(chosen);
+        } catch (error) {
+            ctx.toast("error", errorText(error));
+        }
+        render(ctx.store.get());
     }
 
     async function usePlace(): Promise<void> {
@@ -778,6 +835,16 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
                 + ` taken ${scanned.motion === "fly" ? "on the move" : "at rest"}${scanned.found ? ", the board found (dashed)" : ""}${delay}.`;
             void showScan(chosen, scanned.version);
         }
+        void showSkew(chosen, `${chosen}:${look?.found === true}:${look?.scan?.version ?? 0}:${state.align?.marks.length ?? 0}`);
+        const shownSkew = skewData !== null && skewData.camera === chosen ? skewData : null;
+        skewLine.textContent = skewText(shownSkew);
+        skewLine.classList.toggle("hidden", skewLine.textContent === "");
+        skewRow.classList.toggle("hidden", skewLine.textContent === "");
+        lockFor(skewApply,
+            [shownSkew?.apply === null || shownSkew?.apply === undefined, "only a cartesian machine on this project's firmware has steps per mm in its file to write"],
+            [shownSkew?.estimate?.separated !== true, "the boards were all found at about one turn: find one turned a quarter first"],
+            [busy, "a routine is under way"]);
+        setLocked(skewClear, (shownSkew?.count ?? 0) === 0 || busy, "no boards kept");
         const name = look?.job ? state.jobs.find((entry) => entry.id === look.job)?.name ?? null : null;
         lookLine.textContent = lookText(look, name) || "No board loaded: pick a board job and press Look for board.";
         knownLine.textContent = look?.job ? knownText(look.known) : "";

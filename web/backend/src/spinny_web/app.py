@@ -95,6 +95,7 @@ from .camera import (
 )
 from .camlog import CAMERAS, CameraLog
 from .searchlog import SearchLog, SearchRecord, affine_of, record_features
+from .skew import SkewStore
 from . import searchreport
 from .files import write_whole
 from .cameras import ControlsError, controls_note, list_controls, set_controls
@@ -614,6 +615,11 @@ class BoardScanBody(Finite):
     margin: float | None = Field(default=None, ge=0.0, le=50.0)
 
 
+class SkewBody(Finite):
+    # Whose boards' skew: the head camera's (this project's firmware) or the top camera's (a G-code machine).
+    camera: Literal["head", "top"] = "head"
+
+
 class BoardPlaceBody(Finite):
     job: str
 
@@ -938,6 +944,9 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             self.config_path.parent / "searchlog",
             publish=lambda state: self.broadcast.publish_threadsafe({"type": "searchlog", **state}),
         )
+        # The boards found on each machine with their stretch measured: the
+        # machine's skew learned from them (skew.py).
+        self.skew = SkewStore(self.config_path.parent / "skew.json")
         # The link to a machine whose own controller takes G-code, open in
         # place of `link` while one is connected, and the machine file it
         # was opened as.
@@ -3512,6 +3521,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
                     look, mover, stops, offset, lambda point: PictureFrame(point, settings.roll, False), mover.stopped, on_stop, CameraError, record,
                     checks=self._check_places(job, (width * scale, height * scale)), known=known, side=settings.side, box=box, prior=prior, steer=steer,
                 )
+                self._learn_from_look("head", look, found)
                 self.publish_message("info", found_text(found, look.consensus))
 
             self.camera.run_routine("search", len(stops) + 1, "looking for the board", link, run)
@@ -3581,6 +3591,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
                     look, mover, stops, offset, lambda point: PictureFrame(point, settings.roll, False), mover.stopped, on_stop, CameraError, record,
                     box=box, prior=prior, picture=(width, height, scale), outline=outline,
                 )
+                self._learn_from_look("head", look, found)
                 self.publish_message("info", scan_text(found, look.consensus, len(stops)))
 
             self.camera.run_routine("scan", len(stops), "scanning the board", link, run)
@@ -3648,10 +3659,97 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
                     )
                 finally:
                     link.unsubscribe(heard)
+                self._learn_from_look("head", look, found)
                 self.publish_message("info", scan_text(found, look.consensus, len(look.mosaic.tiles)))
 
             self.camera.run_routine("scan", len(rows), "scanning the board on the move", link, run)
         return self.camera_state()
+
+    # --- the machine's skew -----------------------------------------------------------
+
+    def _skew_machine(self, camera: str) -> str | None:
+        """The machine file whose skew a camera's boards measure: the G-code
+        machine connected for the top camera, the file last loaded into this
+        project's firmware for the head camera, when it is cartesian (a
+        polar machine's frame is the table's, which turns: its axes have no
+        X and Y to be out of square)."""
+        if camera == "top":
+            return self._gcode_id
+        name = self.config.get("last_machine")
+        return name if isinstance(name, str) and self.cartesian else None
+
+    def _learn_skew(self, camera: str, job_id: str, source: str, turn_deg: float, stretch: dict | None) -> None:
+        """A board found with its stretch measured, kept for its machine's skew."""
+        machine = self._skew_machine(camera)
+        if machine is None or not stretch:
+            return
+        try:
+            self.skew.add(machine, job_id, source, turn_deg, stretch)
+        except (KeyError, TypeError, ValueError) as exc:
+            log.warning("skew: a board's stretch not kept: %r", exc)
+
+    def _learn_from_look(self, camera: str, look: BoardLook, found) -> None:
+        """A look's board found with its stretch fitted (a posterior with
+        board stretch on), kept for the machine's skew."""
+        stretch = getattr(look.consensus, "stretch", None)
+        if found is not None and stretch and look.job is not None:
+            self._learn_skew(camera, look.job, "look", found.rotation, stretch)
+
+    def skew_state(self, camera: str) -> dict:
+        """The machine's skew as its boards show it, and what Apply would
+        write: the X and Y joints' full steps per mm times the X and Y
+        scale, for a cartesian machine on this project's firmware."""
+        machine = self._skew_machine(camera)
+        state = self.skew.state(machine)
+        state["camera"] = camera
+        state["apply"] = self._skew_changes(machine, state["estimate"]) if camera == "head" else None
+        return state
+
+    def _skew_changes(self, machine: str | None, skew: dict | None) -> dict | None:
+        """The keys Apply writes, each with its value now and after; None
+        with nothing to write."""
+        if machine is None or skew is None:
+            return None
+        try:
+            document = self.machine_store.document(machine)
+        except Exception:  # a file gone or unreadable: nothing to write
+            return None
+        text = document.get("text") if isinstance(document, dict) else None
+        if not isinstance(text, str):
+            return None
+        import tomllib
+
+        try:
+            data = tomllib.loads(text)
+        except tomllib.TOMLDecodeError:
+            return None
+        changes = []
+        for table, key in (("rail", "x_scale"), ("slide", "y_scale")):
+            # The joint's steps per mm as the file gives them: full steps
+            # (times its microsteps), or microsteps already counted in.
+            joint = data.get(table) or {}
+            name = "full_steps_per_mm" if "full_steps_per_mm" in joint else "steps_per_mm"
+            old = joint.get(name)
+            if isinstance(old, (int, float)) and old > 0:
+                changes.append({"path": [table, name], "old": old, "new": round(float(old) * float(skew[key]), 6)})
+        return {"machine": machine, "changes": changes} if changes else None
+
+    def skew_apply(self, camera: str) -> dict:
+        """Writes the learned X and Y scale into the machine file's X and Y
+        joints (their full steps per mm), the boards kept so far then
+        forgotten: they were measured on the old steps. Load the file into
+        the controller for the machine to move by them."""
+        state = self.skew_state(camera)
+        apply = state.get("apply")
+        if not apply:
+            raise ValueError("nothing to write: the skew is written to a cartesian machine file on this project's firmware, once boards are found with their stretch")
+        if not (state["estimate"] or {}).get("separated"):
+            raise ValueError("the boards were all found at about one turn: their own stretch cannot be told from the machine's; find a board turned a quarter first")
+        for change in apply["changes"]:
+            self.machine_store.patch(apply["machine"], change["path"], change["new"])
+        self.skew.clear(apply["machine"])
+        log.info("skew of %s written: %s", apply["machine"], apply["changes"])
+        return {**self.skew_state(camera), "written": apply["changes"]}
 
     def _head_known(self, job, corner_mm: float, corners: bool = True) -> KnownPlace | None:
         """Where the head camera's search expects the job's board: where
@@ -4038,7 +4136,15 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
 
     @editing_job
     def align_apply(self, job_id: str) -> dict:
+        # Three marks or more measure the board's stretch: a board found on
+        # the machine for its skew, kept before Apply clears the marks.
+        try:
+            stretch = self.alignment.fit_dict(job_id).get("stretch")
+        except ValueError:
+            stretch = None
         updated, fit = self.alignment.apply(self._idle_job(job_id))
+        if stretch:
+            self._learn_skew("head", job_id, "align", fit.rotation, stretch)
         updated.refresh_stats(self.streamer())
         self.store.save(updated)
         self.publish_align()
@@ -5010,6 +5116,26 @@ def create_app(
     @app.post("/api/camera/search")
     def camera_search(body: BoardSearchBody | None = None):
         return guarded(lambda: backend.camera_search(body or BoardSearchBody()))
+
+    @app.get("/api/skew")
+    def skew_state(camera: str = "head"):
+        if camera not in ("head", "top"):
+            raise HTTPException(400, "camera must be head or top")
+        return backend.skew_state(camera)
+
+    @app.post("/api/skew/apply")
+    def skew_apply(body: SkewBody | None = None):
+        return guarded(lambda: backend.skew_apply((body or SkewBody()).camera))
+
+    @app.delete("/api/skew")
+    def skew_clear(camera: str = "head"):
+        def clear() -> dict:
+            machine = backend._skew_machine(camera)
+            if machine is not None:
+                backend.skew.clear(machine)
+            return backend.skew_state(camera)
+
+        return guarded(clear)
 
     @app.post("/api/camera/scan")
     def camera_scan(body: BoardScanBody | None = None):

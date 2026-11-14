@@ -1603,6 +1603,27 @@ export interface ScanMosaic {
     pictures: ScanTile[];
 }
 
+/**
+ * A machine's skew learned from the boards found on it with their stretch
+ * (spinny_web.skew): the machine file whose skew it is (null: none to
+ * learn, a polar machine or none loaded), the newest boards, how many, the
+ * estimate (X and Y scale, degrees out of square, each with its standard
+ * deviation, the boards' turns' spread and whether it tells the machine's
+ * skew from the boards' own stretch), and what Apply would write.
+ */
+export interface SkewState {
+    machine: string | null;
+    camera: "head" | "top";
+    boards: { t: string; job: string; source: "look" | "align"; turn_deg: number; scale_x: number; scale_y: number; shear_deg: number }[];
+    count: number;
+    estimate: {
+        x_scale: number; x_sd: number; y_scale: number; y_sd: number; square_deg: number; square_sd: number;
+        boards: number; turn_span_deg: number; separated: boolean;
+    } | null;
+    apply: { machine: string; changes: { path: string[]; old: number; new: number }[] } | null;
+    written?: { path: string[]; old: number; new: number }[];
+}
+
 /** The board's stretch the posterior fits: X and Y scale and shear (degrees off square), each with its standard deviation. */
 export interface BoardStretch {
     scale_x: number;

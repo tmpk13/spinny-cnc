@@ -360,3 +360,17 @@ describe("the full scan's mosaic", () => {
         expect(root.querySelector(".mosaic image")?.getAttribute("href")).toStartWith("data:image/svg+xml,");
     });
 });
+
+describe("the machine's skew", () => {
+    test("says the scales and the axes out of square, and whether the boards' turns tell it from their own stretch", async () => {
+        const { skewText } = await import("../src/views/findboard.ts");
+        expect(skewText(null)).toBe("");
+        const skew = {
+            machine: "cartesian-mill", camera: "head" as const, boards: [], count: 4, apply: null,
+            estimate: { x_scale: 1.0021, x_sd: 0.0003, y_scale: 0.9991, y_sd: 0.0004, square_deg: 0.052, square_sd: 0.02, boards: 4, turn_span_deg: 135, separated: true },
+        };
+        expect(skewText(skew)).toBe("Machine skew of cartesian-mill: X scale 1.0021 +- 0.0003, Y scale 0.9991 +- 0.0004, 0.052 +- 0.020 deg out of square, from 4 boards at turns 135 deg apart");
+        expect(skewText({ ...skew, estimate: { ...skew.estimate, separated: false, turn_span_deg: 2 } })).toContain("find a board turned a quarter too");
+        expect(skewText({ ...skew, machine: null })).toBe("");
+    });
+});

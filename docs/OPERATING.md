@@ -662,6 +662,18 @@ pictures are laid side by side under the panel's *Full scan* heading as a
 mosaic, each where the head took it, with the board's outline dashed where
 the scan found it.
 
+Each board found with its stretch measured (a probability look with
+*Board stretch* on, or Align applied with three marks or more) is kept
+for the machine it lies on: a board's stretch turns with the board, the
+machine's skew does not, so averaged over boards found at different turns
+it is the machine's own: its X and Y scale and how far its axes are out of
+square. The panel says it, with how sure it is and how far apart the
+boards' turns were (find one turned a quarter to tell the two apart).
+*Write skew to machine file*, for a cartesian machine on this project's
+firmware, multiplies the file's X and Y steps per mm by the scales
+learned; load the file into the controller after. Out of square is said,
+never written: square the axes by hand. *Forget boards* starts over.
+
 With the head camera, *Scan* beside the buttons picks *At rest* (the
 default) or *On the move*: the head then runs along each row without
 stopping, and each picture is placed where the machine's position reports

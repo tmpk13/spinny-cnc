@@ -405,6 +405,7 @@ class PlacingPart:
                 mover.stopped, lambda index, count: self.top._step(progress, f"stop {index + 1}"), PnpError, record,
                 checks=self._check_places(job, (width * scale, height * scale)), known=known, side=settings.side, box=box, prior=prior, steer=steer,
             )
+            self._learn_from_look("top", look, found)
             self.top._message("info", found_text(found, look.consensus))
 
         self.top._begin("search", steps, mover, run)
@@ -449,6 +450,7 @@ class PlacingPart:
                 mover.stopped, lambda index, count: self.top._step(progress, f"picture {index + 1}"), PnpError, record,
                 box=box, prior=prior, picture=(width, height, scale), outline=outline,
             )
+            self._learn_from_look("top", look, found)
             self.top._message("info", scan_text(found, look.consensus, len(stops)))
 
         self.top._begin("scan", steps, mover, run)

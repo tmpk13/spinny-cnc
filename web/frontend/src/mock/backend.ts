@@ -215,6 +215,7 @@ import type {
     Job,
     LookMethod,
     ScanMosaic,
+    SkewState,
     JobIcon,
     JobPatch,
     JobSummary,
@@ -8160,6 +8161,19 @@ export class MockBackend implements Api, EventFeed {
         this.message("info", `scan done: ${this.headLook.scan?.pictures.length ?? 0} pictures of the board`);
         this.emitCamera();
         return this.cameraStateOf();
+    }
+
+    /** The mock learns no skew: no machine of its keeps boards' stretch. */
+    async skew(camera: "head" | "top"): Promise<SkewState> {
+        return { machine: null, camera, boards: [], count: 0, estimate: null, apply: null };
+    }
+
+    async skewApply(_camera: "head" | "top"): Promise<SkewState> {
+        throw new ApiError(400, "nothing to write: the skew is written to a cartesian machine file on this project's firmware, once boards are found with their stretch");
+    }
+
+    async skewClear(camera: "head" | "top"): Promise<SkewState> {
+        return this.skew(camera);
     }
 
     async cameraScanState(): Promise<ScanMosaic> {

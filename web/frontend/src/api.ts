@@ -76,6 +76,7 @@ import type {
     ResumeRequest,
     ScanMosaic,
     SearchCamera,
+    SkewState,
     SearchLogState,
     SettingsResponse,
     SettingsUpdate,
@@ -300,6 +301,10 @@ export interface Api {
     /** A full scan of the board where a rough place puts it, the rows run `margin` mm past its outline (null: the backend's). */
     cameraScan(margin: number | null): Promise<CameraState>;
     cameraScanState(): Promise<ScanMosaic>;
+    /** The machine's skew its boards show, as the head or top camera found them; Apply writes it into the machine file, Clear forgets the boards. */
+    skew(camera: "head" | "top"): Promise<SkewState>;
+    skewApply(camera: "head" | "top"): Promise<SkewState>;
+    skewClear(camera: "head" | "top"): Promise<SkewState>;
     /** One picture of the head camera's newest scan; `version` keeps a browser from showing one of an older scan. */
     cameraScanUrl(index: number, version: number): string;
     /** The head camera's picture's center is on this corner of the job's board: its place is kept. */
@@ -1024,6 +1029,18 @@ export class HttpApi implements Api {
 
     cameraScanState(): Promise<ScanMosaic> {
         return this.request<ScanMosaic>("GET", "/api/camera/scan");
+    }
+
+    skew(camera: "head" | "top"): Promise<SkewState> {
+        return this.request<SkewState>("GET", `/api/skew?camera=${camera}`);
+    }
+
+    skewApply(camera: "head" | "top"): Promise<SkewState> {
+        return this.request<SkewState>("POST", "/api/skew/apply", { camera });
+    }
+
+    skewClear(camera: "head" | "top"): Promise<SkewState> {
+        return this.request<SkewState>("DELETE", `/api/skew?camera=${camera}`);
     }
 
     cameraScanUrl(index: number, version: number): string {

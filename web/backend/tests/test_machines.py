@@ -413,3 +413,61 @@ def test_a_refused_write_puts_back_what_it_changed_in_reverse(tmp_path):
         assert response.status_code == 400, response.text
         values = client.get("/api/settings").json()["values"]
         assert (values["s_max"], values["s_min"]) == (before["s_max"], before["s_min"])
+
+
+def test_a_machines_skew_is_learned_from_boards_at_two_turns_and_written_into_its_steps(client, tmp_path):
+    from spinny_web import skew as skew_module
+    from spinny_web.skew import SkewStore, estimate
+
+    # A machine 0.2% long in X, 0.1% short in Y, its axes 0.05 degrees off
+    # square, seen through boards with their own small stretch, at 0 and 90.
+    def board(turn: float, own: tuple[float, float]) -> dict:
+        import math
+
+        half = math.tan(math.radians(0.05)) / 2.0
+        machine = [[1.002, half], [half, 0.999]]
+        c, s = math.cos(math.radians(turn)), math.sin(math.radians(turn))
+        rot = [[c, -s], [s, c]]
+        stretch = [[own[0], 0.0], [0.0, own[1]]]
+        # The board's fitted stretch in its frame: R^T K R S.
+        def mul(a, b):
+            return [[sum(a[i][k] * b[k][j] for k in range(2)) for j in range(2)] for i in range(2)]
+        rt = [[rot[0][0], rot[1][0]], [rot[0][1], rot[1][1]]]
+        fitted = mul(mul(mul(rt, machine), rot), stretch)
+        shear = math.degrees(math.atan(fitted[0][1] + fitted[1][0]))
+        return {"turn_deg": turn, "scale_x": fitted[0][0], "scale_y": fitted[1][1], "shear_deg": shear, "sd": {"scale_x": 0.0003, "scale_y": 0.0003}}
+
+    one_turn = estimate([board(0.0, (1.001, 1.0)), board(2.0, (1.0, 1.001))])
+    assert one_turn is not None and one_turn["separated"] is False
+    learned = estimate([board(0.0, (1.0006, 0.9996)), board(90.0, (1.0006, 0.9996)), board(45.0, (0.9997, 1.0003)), board(135.0, (1.0, 1.0))])
+    assert learned is not None and learned["separated"] is True and learned["boards"] == 4
+    assert learned["x_scale"] == pytest.approx(1.002, abs=0.0006) and learned["y_scale"] == pytest.approx(0.999, abs=0.0006)
+    assert learned["square_deg"] == pytest.approx(0.05, abs=0.03)
+    assert estimate([]) is None
+    # Kept by machine, over a restart, the newest few.
+    store = SkewStore(tmp_path / "skew.json")
+    store.add("rig", "j1", "look", 0.0, {"scale_x": 1.001, "scale_y": 0.999, "shear_deg": 0.0})
+    assert SkewStore(tmp_path / "skew.json").state("rig")["count"] == 1
+    assert store.state(None) == {"machine": None, "boards": [], "count": 0, "estimate": None}
+    # Through the backend: boards of the rig, written into its X and Y steps on the operator's word.
+    backend = client.backend
+    # The rig is the cartesian machine loaded last.
+    backend._skew_machine = lambda camera: "rig"
+    response = client.get("/api/skew?camera=head")
+    assert response.status_code == 200 and response.json()["machine"] == "rig" and response.json()["estimate"] is None
+    assert client.post("/api/skew/apply", json={"camera": "head"}).status_code == 400
+    for turn, own in ((0.0, (1.0006, 0.9996)), (90.0, (1.0006, 0.9996)), (45.0, (0.9997, 1.0003))):
+        b = board(turn, own)
+        backend._learn_skew("head", "j1", "look", turn, {"scale_x": b["scale_x"], "scale_y": b["scale_y"], "shear_deg": b["shear_deg"]})
+    state = client.get("/api/skew?camera=head").json()
+    changes = {tuple(change["path"]): change for change in state["apply"]["changes"]}
+    assert set(changes) == {("rail", "steps_per_mm"), ("slide", "steps_per_mm")}
+    response = client.post("/api/skew/apply", json={"camera": "head"})
+    assert response.status_code == 200, response.text
+    text = (client.machines_dir / "rig.toml").read_text(encoding="utf-8")
+    for (table, key), change in changes.items():
+        assert change["new"] == pytest.approx(change["old"] * state["estimate"]["x_scale" if table == "rail" else "y_scale"])
+        assert f"steps_per_mm = {change['new']}" in text
+    # The boards measured on the old steps are forgotten.
+    assert client.get("/api/skew?camera=head").json()["count"] == 0
+    assert skew_module.KEEP >= 10
