@@ -303,3 +303,20 @@ describe("HttpApi board finding routes", () => {
         ]);
     });
 });
+
+describe("HttpApi machine file in use and release offer routes", () => {
+    test("a file made the one in use, the offers asked for, one taken and one left", async () => {
+        const { calls, fetchFn } = fakeFetch();
+        const api = new HttpApi("http://host", fetchFn);
+        await api.useMachine("k40");
+        await api.machineUpdates();
+        await api.takeMachineUpdate("virtual-pnp", true);
+        await api.takeMachineUpdate("k40", false);
+        expect(calls.map((call) => [call.method, call.url.replace("http://host", ""), call.body])).toEqual([
+            ["POST", "/api/machines/k40/use", null],
+            ["GET", "/api/update/machines", null],
+            ["POST", "/api/update/machines/virtual-pnp", { take: true }],
+            ["POST", "/api/update/machines/k40", { take: false }],
+        ]);
+    });
+});
