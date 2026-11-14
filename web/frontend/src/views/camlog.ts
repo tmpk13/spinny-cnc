@@ -43,6 +43,10 @@ export function searchText(line: SearchRecordLine): string {
 
 /** What a look found, in a few words. */
 export function lookText(entry: CamLogEntry): string {
+    if (entry.edges) {
+        const lines = `${entry.edges.lines} straight ${entry.edges.lines === 1 ? "edge" : "edges"}`;
+        return entry.edges.corner ? `a corner from ${lines}` : `no corner from ${lines}`;
+    }
     const spot = entry.spot;
     if (spot === null) {
         return "no finder";
@@ -52,6 +56,11 @@ export function lookText(entry: CamLogEntry): string {
     }
     const sign = (v: number | undefined): string => `${(v ?? 0) >= 0 ? "+" : ""}${(v ?? 0).toFixed(1)}`;
     return `found at dx ${sign(spot.dx)} dy ${sign(spot.dy)} px`;
+}
+
+/** Whether a look found nothing: a spot not found, or edges that made no corner. */
+export function missedLook(entry: CamLogEntry): boolean {
+    return entry.edges ? entry.edges.corner === null : entry.spot !== null && !entry.spot.found;
 }
 
 /** A moment given as an ISO time, as the time of day. */
@@ -136,7 +145,7 @@ export function mountCameraLog(root: HTMLElement, ctx: Ctx, camera: LoggedCamera
     function drawOwn(): void {
         const mine = own?.entries ?? [];
         count.textContent = (own?.count ?? 0) === 0 ? "" : `${own!.count} kept of this camera`;
-        replace(gallery, ...mine.slice(0, SHOWN).map((entry) => el("li", { class: entry.spot && !entry.spot.found ? "camlog-entry missed" : "camlog-entry" },
+        replace(gallery, ...mine.slice(0, SHOWN).map((entry) => el("li", { class: missedLook(entry) ? "camlog-entry missed" : "camlog-entry" },
             el("a", { href: ctx.api.camLogFileUrl(entry.files.overlay), target: "_blank", rel: "noopener", class: "camlog-thumb" },
                 el("img", { src: ctx.api.camLogFileUrl(entry.files.overlay), alt: `${entry.routine}: ${entry.step}`, loading: "lazy" })),
             el("div", { class: "camlog-text" },

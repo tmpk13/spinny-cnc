@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { MockCameraLog, overlaySvg } from "../src/mock/camlog.ts";
 import { MockSearchLog } from "../src/mock/searchlog.ts";
-import { lookText, mountCameraLog, searchText, SEARCHES_SHOWN } from "../src/views/camlog.ts";
+import { lookText, missedLook, mountCameraLog, searchText, SEARCHES_SHOWN } from "../src/views/camlog.ts";
 import type { CamLogEntry, SearchRecordLine } from "../src/types.ts";
 import { dialogButton, settle, setup } from "./harness.ts";
 
@@ -26,6 +26,14 @@ describe("the camera log", () => {
         expect(lookText(entry(null))).toBe("no finder");
         expect(lookText(entry({ found: false }))).toBe("found nothing");
         expect(lookText(entry({ found: true, dx: -3, dy: 4.25 }))).toBe("found at dx -3.0 dy +4.3 px");
+        // A Corner by edges look says what its edges made, and one that made no corner is a miss.
+        const edges = (corner: [number, number] | null, lines = 2): CamLogEntry => ({ ...entry(null), routine: "corner by edges", step: "bottom left", edges: { lines, corner } });
+        expect(lookText(edges([540, 435]))).toBe("a corner from 2 straight edges");
+        expect(lookText(edges(null, 1))).toBe("no corner from 1 straight edge");
+        expect(missedLook(edges(null))).toBe(true);
+        expect(missedLook(edges([1, 2]))).toBe(false);
+        expect(missedLook(entry({ found: false }))).toBe(true);
+        expect(missedLook(entry(null))).toBe(false);
     });
 
     test("keeps at most its count, the oldest going with their pictures", () => {

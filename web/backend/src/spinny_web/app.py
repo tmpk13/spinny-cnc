@@ -87,6 +87,7 @@ from .camera import (
     CameraError,
     MachineAccess,
     feature_limits,
+    machine_to_picture,
     picture_to_machine,
     pose_summary,
     round_problem,
@@ -3437,7 +3438,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             raise ValueError("the camera is not running: start it first")
         head = head_board(status.r, self.table_angle(status), status.z, self.cartesian)
         frame = PictureFrame((head[0] + settings.offset[0], head[1] + settings.offset[1]), settings.roll, False)
-        machine, rotation = self._edge_corner(self.camera.client, body.corner, frame, settings)
+        machine, rotation = self._edge_corner(self.camera.client, "head", self.head_look, body.corner, frame, settings)
         middle, _ = self._board_size(job)
         self.head_look.add_corner(job.id, body.corner, point, machine, middle, rotation, "edges")
         self.publish_message("info", f"{body.corner} corner found by its edges at {machine[0]:.3f}, {machine[1]:.3f} mm, the board turned {rotation:+.3f} degrees")
@@ -3454,16 +3455,33 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         reply = owner.client.edges(EDGE_LINES, owner.settings().colors.get("edges"))
         return {"camera": camera, "lines": reply.get("lines") or [], "width": reply.get("width"), "height": reply.get("height")}
 
-    def _edge_corner(self, client, corner: str, frame: PictureFrame, settings) -> tuple[tuple[float, float], float]:
+    def _edge_corner(self, client, camera: str, look: BoardLook, corner: str, frame: PictureFrame, settings) -> tuple[tuple[float, float], float]:
         """Where a board's corner is in a camera's picture now, and its turn,
         from the straight edges pcbv finds (on the edges' picked color when
-        there is one)."""
+        there is one). The picture, the edges and the corner they made (or
+        why none) go into the camera log while it logs, and the edges and
+        the corner into the board look's search record when one is open."""
         wait_settled(client)
         reply = client.edges(EDGE_LINES, settings.colors.get("edges"))
         width, height = reply.get("width"), reply.get("height")
         if not isinstance(width, (int, float)) or not isinstance(height, (int, float)):
             raise VisionError("pcbv's edges came without the picture's size")
-        return corner_from_edges(reply.get("lines") or [], corner, frame, settings.mm_per_px, (float(width), float(height)))
+        lines = [line for line in reply.get("lines") or [] if isinstance(line, dict)]
+        record = look.record
+        try:
+            point, rotation = corner_from_edges(lines, corner, frame, settings.mm_per_px, (float(width), float(height)))
+        except ValueError as exc:
+            self.camlog.look(client, camera, "corner by edges", corner, note=str(exc), edges=lines, corner=None)
+            if record is not None:
+                record.event("edges", corner=corner, lines=lines, found=None, message=str(exc))
+            raise
+        off = machine_to_picture(point[0] - frame.center[0], point[1] - frame.center[1], settings.mm_per_px, frame.roll, frame.mirror)
+        seen = (float(width) / 2.0 + off[0], float(height) / 2.0 + off[1])
+        note = f"at {point[0]:.3f}, {point[1]:.3f} mm, the board turned {rotation:+.3f} degrees"
+        self.camlog.look(client, camera, "corner by edges", corner, note=note, edges=lines, corner=seen)
+        if record is not None:
+            record.event("edges", corner=corner, lines=lines, found=[round(point[0], 4), round(point[1], 4)], angle=round(rotation, 4), picture=[round(seen[0], 2), round(seen[1], 2)])
+        return point, rotation
 
     def camera_lens_clear(self, camera: str) -> dict:
         """The camera's lens correction forgotten."""

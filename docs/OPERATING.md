@@ -800,9 +800,10 @@ still found with parts on it.
 
 Both camera panels have the camera log: *log every look* keeps every
 picture the cameras' routines look at (finding the mark, centering the
-nozzle, looking at a part, a G-code machine's run), each as it was and with
-what the finder found drawn on it, so a routine that went wrong can be
-followed look by look; *Photo* keeps one now with what the finder sees.
+nozzle, looking at a part, a G-code machine's run, *Corner by edges* with
+the edges it found and their corner), each as it was and with what the
+finder found drawn on it, so a routine that went wrong can be followed
+look by look; *Photo* keeps one now with what the finder sees.
 
 Every look for a board and every search is recorded, switch or not: the
 poses pcbv gave and why each was used or not, each stop's move and look,

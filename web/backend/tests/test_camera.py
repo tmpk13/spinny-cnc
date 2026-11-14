@@ -1112,12 +1112,19 @@ class EdgesStandIn(LensStandIn):
         super().__init__()
         self.fake, self.offset, self.corner, self.turn, self.scale = fake, offset, corner, turn, scale
         self.colors: list = []
+        # A picture with no edges in it: the bed alone.
+        self.blank = False
 
     def color(self, x, y, radius=3.0):
         return [200, 120, 60]
 
+    def frame(self, width=None, overlay=False, quality=80):
+        return {"width": 1280, "height": 720, "frame": 1, "age_ms": 5}, bytes([0xFF, 0xD8, 0xFF, 0xD9])
+
     def edges(self, most=8, color=None):
         self.colors.append(color)
+        if self.blank:
+            return {"lines": [], "width": 1280, "height": 720}
         center = (self.fake.joint[0] + self.offset[0], self.fake.z + self.offset[1])
         lines = []
         for angle in (self.turn, self.turn + 90.0):
@@ -1141,11 +1148,29 @@ def test_a_blank_boards_corner_is_taken_by_its_edges_and_colors_are_picked_per_i
     response = client.post("/api/cameras/color", json={"camera": "head", "item": "edges", "x": 300.0, "y": 200.0})
     assert response.status_code == 200, response.text
     assert response.json()["rgb"] == [200, 120, 60] and client.backend.camera.settings().colors == {"edges": [200, 120, 60]}
+    assert client.put("/api/camlog", json={"enabled": True}).status_code == 200
     response = client.post("/api/camera/edge-corner", json={"job": job.id, "corner": "bottom left"})
     assert response.status_code == 200, response.text
     corners = response.json()["board_look"]["corners"]
     point = corners["points"][0]
     assert point["by"] == "edges" and point["machine"] == pytest.approx([52.0, 31.0], abs=1e-3) and point["angle"] == pytest.approx(2.0, abs=1e-3)
+    # The camera log keeps the picture with the edges and the corner they made:
+    # the corner 2 mm left of and 1.5 mm under the center, at 0.02 mm a px.
+    entry = client.get("/api/camlog", params={"camera": "head"}).json()["entries"][0]
+    assert entry["routine"] == "corner by edges" and entry["step"] == "bottom left" and entry["spot"] is None
+    assert entry["edges"]["lines"] == 2 and entry["edges"]["corner"] == pytest.approx([540.0, 435.0], abs=0.01)
+    assert "the board turned +2.000 degrees" in entry["note"]
+    drawn = client.get(f"/api/camlog/{entry['files']['overlay']}").text
+    assert "2 straight edges, numbered strongest first; their corner at x 540.0 y 435.0 px" in drawn
+    # A picture with no corner in it: refused, and kept in the log as the one to see.
+    stand_in.blank = True
+    refused = client.post("/api/camera/edge-corner", json={"job": job.id, "corner": "top left"})
+    assert refused.status_code == 400 and "no corner of a board" in refused.json()["detail"]
+    missed = client.get("/api/camlog", params={"camera": "head"}).json()["entries"][0]
+    assert missed["step"] == "top left" and missed["edges"] == {"lines": 0, "corner": None}
+    assert "no corner of a board" in missed["note"]
+    stand_in.blank = False
+    client.put("/api/camlog", json={"enabled": False})
     # The edges were looked for on the color picked for them; one corner
     # with its turn is a whole rough place.
     assert stand_in.colors[-1] == [200, 120, 60]

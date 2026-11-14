@@ -9,12 +9,15 @@ measuring its runout and looking at a part, a G-code machine's run looking
 at each part it picked; and the top camera measuring its offset, finding a
 board's fiducials and a feeder's marks, and looking at a pocket before its
 pick. A look that found nothing is kept too, since that is the one to see.
-A photo can be taken by hand at any time, logging on or not.
+A photo can be taken by hand at any time, logging on or not. Corner by
+edges keeps its picture too, with the straight edges pcbv found and the
+corner they made, or none.
 
 The picture with the marks is an SVG holding the JPEG and the marks over it
 (the picture's center, the circle the finder searched, the spot it found
-with the box of its axes and the line from the center to it), so it opens
-in any browser with no image library here. A head camera with a board
+with the box of its axes and the line from the center to it; or the edges
+found and their corner), so it opens in any browser with no image library
+here. A head camera with a board
 loaded also gives pcbv's own picture with the board's pose drawn on it.
 
 Everything sits in one folder, the pictures by entry id and an index of the
@@ -49,11 +52,12 @@ FILE_NAME = re.compile(r"^[0-9]{8}-[0-9]{6}-[0-9]{3}(-pose)?\.(jpg|svg)$")
 CAMERAS = ("head", "up", "top")
 
 # Colors of the marks, Solarized: the center cyan, the search circle and the
-# line base1, a spot found magenta, a spot missed red.
+# line base1, a spot found magenta, a spot missed red, an edge yellow.
 CENTER = "#2aa198"
 SEARCH = "#93a1a1"
 FOUND = "#d33682"
 MISSED = "#dc322f"
+EDGE = "#b58900"
 
 
 def _now() -> datetime.datetime:
@@ -64,13 +68,25 @@ def _escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
-def overlay_svg(jpeg: bytes, width: int, height: int, spot: dict | None, title: str, radius: float | None = None) -> str:
+def overlay_svg(
+    jpeg: bytes,
+    width: int,
+    height: int,
+    spot: dict | None,
+    title: str,
+    radius: float | None = None,
+    edges: list[dict] | None = None,
+    corner: tuple[float, float] | None = None,
+) -> str:
     """The picture with what a look found drawn over it, as an SVG holding
     the JPEG: the center's crosshair, the circle searched (`radius` px, a
     third of the height when not given, as pcbv searches), and with `spot`
     a reply of pcbv's `spot`: found, its center, a box `major` by `minor`
     round it and the line from the picture's center to it; not found, the
-    words. `title` goes in the top left corner."""
+    words. With `edges` (pcbv's `edges` lines, full size px) the lines in
+    place of the circle searched, numbered strongest first, and the
+    `corner` they made, or the words that none did. `title` goes in the top
+    left corner."""
     cx, cy = width / 2.0, height / 2.0
     search = radius if radius is not None else height / 3.0
     arm = max(8.0, height / 40.0)
@@ -81,11 +97,38 @@ def overlay_svg(jpeg: bytes, width: int, height: int, spot: dict | None, title: 
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         f'<image href="data:image/jpeg;base64,{picture}" x="0" y="0" width="{width}" height="{height}"/>',
         f'<g fill="none" stroke-width="{line_width:.2f}">',
-        f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{search:.1f}" stroke="{SEARCH}" stroke-dasharray="{arm:.0f} {arm / 2:.0f}"/>',
+    ]
+    if edges is None:
+        parts.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{search:.1f}" stroke="{SEARCH}" stroke-dasharray="{arm:.0f} {arm / 2:.0f}"/>')
+    parts += [
         f'<line x1="{cx - arm:.1f}" y1="{cy:.1f}" x2="{cx + arm:.1f}" y2="{cy:.1f}" stroke="{CENTER}"/>',
         f'<line x1="{cx:.1f}" y1="{cy - arm:.1f}" x2="{cx:.1f}" y2="{cy + arm:.1f}" stroke="{CENTER}"/>',
     ]
     lines = [title]
+    labels: list[str] = []
+    if edges is not None:
+        drawn = 0
+        for line in edges:
+            try:
+                x0, y0, x1, y1 = (float(line[key]) for key in ("x0", "y0", "x1", "y1"))
+            except (KeyError, TypeError, ValueError):
+                continue
+            drawn += 1
+            parts.append(f'<line x1="{x0:.1f}" y1="{y0:.1f}" x2="{x1:.1f}" y2="{y1:.1f}" stroke="{EDGE}"/>')
+            labels.append(
+                f'<text x="{(x0 + x1) / 2:.1f}" y="{(y0 + y1) / 2:.1f}" font-family="sans-serif" font-size="{font:.1f}"'
+                f' fill="{EDGE}" stroke="#002b36" stroke-width="{font / 8:.2f}" paint-order="stroke">{drawn}</text>'
+            )
+        if corner is not None:
+            x, y = corner
+            parts += [
+                f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{arm:.1f}" stroke="{FOUND}"/>',
+                f'<line x1="{x - arm:.1f}" y1="{y:.1f}" x2="{x + arm:.1f}" y2="{y:.1f}" stroke="{FOUND}"/>',
+                f'<line x1="{x:.1f}" y1="{y - arm:.1f}" x2="{x:.1f}" y2="{y + arm:.1f}" stroke="{FOUND}"/>',
+            ]
+            lines.append(f"{drawn} straight edges, numbered strongest first; their corner at x {x:.1f} y {y:.1f} px")
+        else:
+            lines.append(f"{drawn} straight edges, numbered strongest first; no two make a corner")
     if spot is not None and spot.get("found"):
         x = float(spot.get("x", cx + float(spot.get("dx", 0.0))))
         y = float(spot.get("y", cy + float(spot.get("dy", 0.0))))
@@ -104,7 +147,9 @@ def overlay_svg(jpeg: bytes, width: int, height: int, spot: dict | None, title: 
     elif spot is not None:
         lines.append("nothing found inside the circle")
     parts.append("</g>")
-    color = FOUND if spot is None or spot.get("found") else MISSED
+    parts += labels
+    missed = (spot is not None and not spot.get("found")) or (edges is not None and corner is None)
+    color = MISSED if missed else FOUND
     for index, text in enumerate(lines):
         y = font * 1.4 * (index + 1)
         parts.append(
@@ -186,13 +231,16 @@ class CameraLog:
         radius: float | None = None,
         pose: bool = False,
         force: bool = False,
+        edges: list[dict] | None = None,
+        corner: tuple[float, float] | None = None,
     ) -> dict | None:
         """Keeps the picture `client` (a running VisionClient) shows now,
         and the same with the marks of `spot`, a reply of its `spot`, when
         logging is on or `force`; with `pose`, also pcbv's picture with the
-        board's pose drawn. The entry kept, or None when nothing was: the
-        log is off, or the picture could not be had or kept, which a
-        routine never stops for."""
+        board's pose drawn. With `edges`, the lines of its `edges` instead,
+        and the `corner` (full size px) they made or None. The entry kept,
+        or None when nothing was: the log is off, or the picture could not
+        be had or kept, which a routine never stops for."""
         if not (self.enabled or force):
             return None
         # The reply's protocol id says nothing about the picture.
@@ -213,7 +261,7 @@ class CameraLog:
         try:
             self.folder.mkdir(parents=True, exist_ok=True)
             (self.folder / files["photo"]).write_bytes(jpeg)
-            (self.folder / files["overlay"]).write_text(overlay_svg(jpeg, width, height, spot, title, radius), encoding="utf-8")
+            (self.folder / files["overlay"]).write_text(overlay_svg(jpeg, width, height, spot, title, radius, edges, corner), encoding="utf-8")
             if pose:
                 try:
                     _, drawn = client.frame(width=None, overlay=True, quality=QUALITY)
@@ -239,6 +287,8 @@ class CameraLog:
             "spot": spot,
             "files": files,
         }
+        if edges is not None:
+            entry["edges"] = {"lines": len(edges), "corner": [round(corner[0], 2), round(corner[1], 2)] if corner is not None else None}
         with self._lock:
             self._entries.append(entry)
             dropped = self._entries[:-MAX_ENTRIES] if len(self._entries) > MAX_ENTRIES else []

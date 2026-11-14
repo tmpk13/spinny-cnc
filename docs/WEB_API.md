@@ -969,14 +969,21 @@ With logging on, every look a camera routine takes keeps the picture the
 finder looked at: the head camera finding its mark, the bottom camera centering
 the nozzle, measuring its runout and looking at a part, the G-code
 device's top camera measuring its offset and finding fiducials, a
-feeder's marks and parts in their pockets, and a G-code machine's run
-looking at each part it picked. A look that found nothing is kept as well. A photo can be
+feeder's marks and parts in their pockets, a G-code machine's run
+looking at each part it picked, and *Corner by edges* on the head or top
+camera. A look that found nothing is kept as well. A photo can be
 taken by hand at any time, logging on or not. Each entry keeps the picture
 as it was (JPEG), the same picture with what the finder found drawn over it
 (an SVG holding the JPEG: the picture's center, the circle searched, the
 spot found with the box of its axes and the line to it, or "nothing
-found"), and with a board loaded on the head camera pcbv's picture with the
-board's pose. They sit in `var/camlog/` with an index of one JSON line an
+found"; for *Corner by edges* the straight edges pcbv found, numbered
+strongest first, and the corner they made, or the words that none did),
+and with a board loaded on the head camera pcbv's picture with the
+board's pose. A *Corner by edges* entry has `spot` null, the corner's
+place and turn in `note`, and `edges`: `{"lines": n, "corner": [x, y]}`,
+the corner in full size px or null; with a board loaded its search record
+gets an `edges` event too (the lines, and the corner on the machine with
+its turn, or why there was none). They sit in `var/camlog/` with an index of one JSON line an
 entry; the oldest go past 300 entries.
 
 | Method and path | Body |

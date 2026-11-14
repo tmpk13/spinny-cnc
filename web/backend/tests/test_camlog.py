@@ -98,6 +98,17 @@ def test_the_oldest_go_with_their_pictures_past_the_most_kept(tmp_path, monkeypa
         assert log.path_of(name) is None
 
 
+def test_an_edges_look_draws_the_lines_numbered_and_their_corner_or_says_none():
+    lines = [{"x0": 100.0, "y0": 600.0, "x1": 900.0, "y1": 610.0}, {"x0": 110.0, "y0": 100.0, "x1": 100.0, "y1": 590.0}, {"x0": "bad"}]
+    svg = overlay_svg(JPEG, 1280, 720, None, "head camera, corner by edges: bottom left", edges=lines, corner=(100.5, 600.2))
+    # No circle searched; both lines and their numbers; the corner ringed.
+    assert 'r="240.0"' not in svg and svg.count('stroke="#b58900"') == 2
+    assert ">1</text>" in svg and ">2</text>" in svg and '<circle cx="100.5" cy="600.2"' in svg
+    assert "2 straight edges, numbered strongest first; their corner at x 100.5 y 600.2 px" in svg
+    missed = overlay_svg(JPEG, 1280, 720, None, "t", edges=[], corner=None)
+    assert "0 straight edges, numbered strongest first; no two make a corner" in missed and 'fill="#dc322f"' in missed
+
+
 def test_the_overlay_marks_the_center_and_the_circle_searched():
     svg = overlay_svg(JPEG, 1280, 720, None, "head camera, photo: by hand")
     assert 'r="240.0"' in svg and "head camera, photo: by hand" in svg

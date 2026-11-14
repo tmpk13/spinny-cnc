@@ -1157,6 +1157,8 @@ export interface CamLogEntry {
     height: number;
     /** What the finder answered for this look; null for a photo without one. */
     spot: SpotReply | null;
+    /** A Corner by edges look's: the straight edges pcbv found, and the corner they made in the full size picture, px (null: none). */
+    edges?: { lines: number; corner: [number, number] | null };
     /** The files: the picture as it was, the same with the marks (an SVG holding it), and pcbv's picture with the board's pose when the camera had a board. */
     files: { photo: string; overlay: string; pose?: string };
 }

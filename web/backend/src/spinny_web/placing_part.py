@@ -594,7 +594,7 @@ class PlacingPart:
         here = self._here(machine)
         offset = self._top_offset(machine)
         frame = PictureFrame((float(here["x"]) + offset[0], float(here["y"]) + offset[1]), self._top_roll(machine), settings.mirror)
-        corner, rotation = self._edge_corner(self.top.client, body.corner, frame, settings)
+        corner, rotation = self._edge_corner(self.top.client, "top", self.top_look, body.corner, frame, settings)
         middle, _ = self._board_size(job)
         self.top_look.add_corner(job.id, body.corner, point, corner, middle, rotation, "edges")
         self._keep_corner(job.id, body.corner, point, corner, rotation)

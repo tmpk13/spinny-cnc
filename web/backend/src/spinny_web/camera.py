@@ -309,6 +309,16 @@ def picture_to_machine(dx: float, dy: float, mm_per_px: float, roll: float, mirr
     return (mm_per_px * (u * c - v * s), mm_per_px * (u * s + v * c))
 
 
+def machine_to_picture(mx: float, my: float, mm_per_px: float, roll: float, mirror: bool = False) -> Point:
+    """A displacement from the point seen at the picture's center, mm, as
+    one in the picture, px right and down: what picture_to_machine undoes."""
+    radians = math.radians(-roll)
+    c, s = math.cos(radians), math.sin(radians)
+    u = (mx * c - my * s) / mm_per_px
+    v = (mx * s + my * c) / mm_per_px
+    return ((-u if mirror else u), -v)
+
+
 def scale_from_shift(before: Point, after: Point, step: float) -> tuple[float, float]:
     """The picture's mm per px and roll from how a spot moved in it, from
     `before` to `after` (px), when the head moved `step` mm along +X: the

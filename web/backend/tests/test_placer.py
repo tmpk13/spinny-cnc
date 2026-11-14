@@ -825,6 +825,26 @@ def test_the_top_camera_scans_the_whole_board_from_a_rough_place_and_keeps_a_mos
     assert records[0]["kind"] == "scan" and records[0]["result"] == "found"
 
 
+def test_the_top_cameras_corner_by_edges_is_kept_with_its_picture_in_the_camera_log(client):
+    rig(client, profile(rest=TOP))
+    job_id = outlined_job(client)
+    board = SeenBoard((0.0, 0.0, 40.0, 30.0), 2.0, (150.0, 80.0), design_shift=(-100.0, -70.0))
+    camera = BoardTopCamera(client.fake, (34.0, -9.0), board, roll=0.0)
+    # The board's bottom left corner under the picture's center, its sides
+    # along the picture's right and up: no turn.
+    camera.edges = lambda most=8, color=None: {"lines": [{"x0": 640.0, "y0": 360.0, "x1": 1000.0, "y1": 360.0}, {"x0": 640.0, "y0": 360.0, "x1": 640.0, "y1": 40.0}], "width": 1280, "height": 720}
+    client.backend.top.client = camera
+    client.put("/api/pnp/top", json={"offset": [34.0, -9.0], "mm_per_px": 0.02, "roll": 0.0, "mirror": False})
+    client.put("/api/camlog", json={"enabled": True})
+    response = client.post("/api/pnp/top/edge-corner", json={"job": job_id, "corner": "bottom left"})
+    assert response.status_code == 200, response.text
+    point = response.json()["top"]["board_look"]["corners"]["points"][0]
+    assert point["by"] == "edges" and point["angle"] == pytest.approx(0.0, abs=1e-6)
+    entry = client.get("/api/camlog", params={"camera": "top"}).json()["entries"][0]
+    assert entry["camera"] == "top" and entry["routine"] == "corner by edges" and entry["edges"] == {"lines": 2, "corner": [640.0, 360.0]}
+    client.put("/api/camlog", json={"enabled": False})
+
+
 def test_corners_taken_with_the_top_camera_give_a_rough_place_a_search_box_and_references(client, quick_search):
     rig(client, profile(rest=TOP))
     job_id = outlined_job(client)
