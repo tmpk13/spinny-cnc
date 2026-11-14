@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { closeMenu } from "../src/menu.ts";
 import { initialState, Store, type AppState } from "../src/state.ts";
 import { mountPageSettings } from "../src/views/pagesettings.ts";
-import { LAYOUT_KEY, markupDefaults, mountPanels, PRESETS_KEY, revealPanel } from "../src/views/panels.ts";
+import { LAYOUT_KEY, markCut, markupDefaults, moreMark, mountPanels, PRESETS_KEY, revealPanel } from "../src/views/panels.ts";
 import { mountTabs, parseTabPrefs, readPage, TABS_KEY, writeTabPrefs } from "../src/views/tabs.ts";
 
 /** A page like index.html's: two columns of panels with heads of each kind. */
@@ -182,6 +182,55 @@ describe("the panel menu", () => {
         expect(laser.hasAttribute("data-collapsed")).toBe(false);
     });
 
+    test("a box that scrolls is marked with what it does not show, and its mark scrolls it on", () => {
+        const box = document.createElement("div");
+        const sizes = { scrollTop: 0, clientHeight: 100, scrollHeight: 300 };
+        for (const name of Object.keys(sizes) as (keyof typeof sizes)[]) {
+            Object.defineProperty(box, name, { configurable: true, get: () => sizes[name] });
+        }
+        let scrolled = 0;
+        box.scrollBy = ((options: ScrollToOptions) => {
+            scrolled += options.top ?? 0;
+        }) as typeof box.scrollBy;
+        const mark = moreMark(box, "scroll on");
+        expect(mark.hidden).toBe(true);
+        expect(markCut(box, mark)).toBe(true);
+        expect(box.hasAttribute("data-cut-bottom")).toBe(true);
+        expect(box.hasAttribute("data-cut-top")).toBe(false);
+        expect(mark.hidden).toBe(false);
+        (mark.querySelector("button") as HTMLButtonElement).click();
+        expect(scrolled).toBe(80);
+        // Scrolled to its end: cut over it only.
+        sizes.scrollTop = 200;
+        markCut(box, mark);
+        expect(box.hasAttribute("data-cut-top")).toBe(true);
+        expect(box.hasAttribute("data-cut-bottom")).toBe(false);
+        expect(mark.hidden).toBe(true);
+        // Not to be marked: no marks at all, and nothing changes the next time.
+        expect(markCut(box, mark, true)).toBe(true);
+        expect(box.hasAttribute("data-cut-top")).toBe(false);
+        expect(markCut(box, mark, true)).toBe(false);
+    });
+
+    test("every panel ends with its mark of more below, each column too; a folded stack's strip says it is folded", () => {
+        const app = makeApp();
+        mountPanels(app);
+        for (const panel of Array.from(app.querySelectorAll<HTMLElement>("section.panel"))) {
+            expect(panel.lastElementChild?.classList.contains("more-mark")).toBe(true);
+            // Not held at a height: never marked.
+            expect((panel.lastElementChild as HTMLElement).hidden).toBe(true);
+        }
+        for (const column of Array.from(app.querySelectorAll(".column"))) {
+            expect(column.lastElementChild?.classList.contains("more-mark")).toBe(true);
+        }
+        openMenuOf("p-console");
+        pick("Stack with above");
+        app.querySelector<HTMLButtonElement>("#p-console .panel-chevron")!.click();
+        expect(app.querySelector(".panel-tabs")!.hasAttribute("data-folded")).toBe(true);
+        app.querySelector<HTMLButtonElement>("#p-console .panel-chevron")!.click();
+        expect(app.querySelector(".panel-tabs")!.hasAttribute("data-folded")).toBe(false);
+    });
+
     test("a panel its view hides leaves the stack's tabs, and comes back to them", () => {
         const app = makeApp();
         const panels = mountPanels(app);
@@ -341,6 +390,8 @@ describe("the panel menu", () => {
         pick("Hide");
         expect(eye.hidden).toBe(false);
         expect(eye.title).toContain("1 hidden panel");
+        // The eye counts them at its corner.
+        expect(eye.dataset["count"]).toBe("1");
         eye.click();
         expect(panels.peeking()).toBe(true);
         expect(eye.getAttribute("aria-pressed")).toBe("true");
@@ -348,6 +399,7 @@ describe("the panel menu", () => {
         panels.showPanel("p-dro");
         expect(panels.peeking()).toBe(false);
         expect(eye.hidden).toBe(true);
+        expect(eye.dataset["count"]).toBeUndefined();
         panels.setEditing(true);
         const done = tools.querySelector<HTMLButtonElement>(".tabs-done")!;
         expect(done.textContent).toBe("Done editing");

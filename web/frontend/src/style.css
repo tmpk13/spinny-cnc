@@ -433,6 +433,27 @@ input[type="checkbox"] {
     border-color: var(--accent-fill);
 }
 
+/* The eye counts the panels hidden, at its corner. */
+.tabs-peek {
+    position: relative;
+}
+
+.tabs-peek[data-count]::after {
+    content: attr(data-count);
+    position: absolute;
+    top: -0.15rem;
+    right: -0.25rem;
+    min-width: 1.1rem;
+    padding: 0 0.25rem;
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1.1rem;
+    text-align: center;
+    color: var(--on-fill);
+    background: color-mix(in oklab, var(--hold) 85%, var(--base03));
+    border-radius: 1rem;
+}
+
 /* Folded, the bar is a strip naming the page; hovering it, a press on it
    (a screen with no hover), or the keyboard's focus in it opens the bar
    over the top of the page. */
@@ -4759,6 +4780,92 @@ dialog.bug-dialog::backdrop {
 .panel-scroll .icon {
     width: 1rem;
     height: 1rem;
+}
+
+/* More below than a box shows: a panel held at a height, or a column on
+   the wide layout (panels.ts moreMark). The mark has no height and sticks
+   to the foot of what scrolls; its fade reaches up from there, over the
+   box's bottom padding too (a sticky box rests at the padding's inner
+   edge), with a press in it that scrolls on. */
+.more-mark {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    height: 0;
+    pointer-events: none;
+    --more-pad: 0rem;
+    --more-fill: var(--panel);
+}
+
+.more-mark::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(-1 * var(--more-pad));
+    height: calc(3rem + var(--more-pad));
+    background: linear-gradient(to bottom, color-mix(in oklab, var(--more-fill) 0%, transparent), var(--more-fill) 80%);
+}
+
+.more-press {
+    position: absolute;
+    left: 50%;
+    bottom: calc(0.4rem - var(--more-pad));
+    transform: translateX(-50%);
+    pointer-events: auto;
+    min-height: 1.6rem;
+    padding: 0.1rem 0.75rem;
+    font: inherit;
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+    color: var(--muted);
+    background: var(--panel);
+    border: thin solid var(--border-strong);
+    border-radius: 1rem;
+    box-shadow: var(--shadow);
+    cursor: pointer;
+}
+
+.more-press:hover {
+    color: var(--strong);
+    background: var(--btn-hover);
+}
+
+/* In a panel: none of the flow's space over it, and the panel's padding
+   under it. In a column: the column's gap taken back, the page behind. */
+.page .panel > .more-mark {
+    margin-top: 0;
+    --more-pad: var(--pad);
+}
+
+.column > .more-mark {
+    margin-top: calc(-1 * var(--gap));
+    --more-fill: var(--bg);
+}
+
+/* Content scrolled away under a held panel's head: the head casts a
+   shadow over it. */
+.page .panel[data-height][data-cut-top] > .panel-head,
+.page .panel[data-height][data-cut-top] > details > summary.panel-head-tools {
+    box-shadow: 0 0.5rem 0.6rem -0.55rem color-mix(in oklab, var(--text) 45%, transparent);
+}
+
+/* A folded panel, or a folded stack's tab in front, says so beside its
+   name: what it holds is there, folded away. */
+.panel[data-collapsed] > .panel-head > h2::after,
+.panel > .panel-fold:not([open]) > summary > h2::after,
+.panel-tabs[data-folded] > .panel-tab[aria-selected="true"]::after {
+    content: "folded";
+    margin-left: 0.6em;
+    padding: 0.05em 0.5em;
+    font-size: 0.85em;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: none;
+    color: var(--muted);
+    border: thin solid var(--border);
+    border-radius: 1em;
 }
 
 /* Hidden by the operator, or a panel of a stack behind the one shown. */

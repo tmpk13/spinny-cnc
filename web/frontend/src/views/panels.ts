@@ -14,7 +14,11 @@
 // wrapper around the block's stacks, which falls back to one column on a
 // narrow screen); there a folded panel gives its width to the others,
 // standing on its side. A panel held at a height shows buttons in its head to
-// scroll to its top and its end. Hidden panels can be shown for a while
+// scroll to its top and its end. Content out of sight says so: a panel held
+// at a height or a column with more below than it shows fades at its foot
+// under a press that scrolls on, a head with content scrolled under it
+// casts a shadow, and a folded panel or stack says it is folded beside its
+// name (the stylesheet). Hidden panels can be shown for a while
 // (peeking), marked as hidden, without being shown again for good. A handle under each panel
 // holds it at a height, its content scrolling within; a handle between two
 // columns sets their widths; a double click on either gives the size back
@@ -131,6 +135,8 @@ interface PageView {
     /** The wrappers of blocks laid side by side, by the block's stacks; and each stack's cell in one, by its ids. */
     rows: Map<string, HTMLElement>;
     cells: Map<string, HTMLElement>;
+    /** Each column's mark of more below than it shows, by column. */
+    more: HTMLElement[];
 }
 
 interface PanelView {
@@ -153,6 +159,8 @@ interface PanelView {
     toEnd: HTMLButtonElement;
     /** Whether it was folded when last drawn, so an unfolding can be told. */
     wasCollapsed: boolean;
+    /** Its mark of more below than it shows, while held at a height. */
+    more: HTMLElement;
 }
 
 let controller: (PanelsController & { reveal(id: string): void }) | null = null;
@@ -256,6 +264,38 @@ const APART = "M2.5 2h11v4.5h-11zM2.5 9.5h11v4.5h-11z";
 /** Two columns of three dots: a grip. */
 const GRIP = "M5 3.5a1.25 1.25 0 1 0 0.01 0M11 3.5a1.25 1.25 0 1 0 0.01 0M5 8a1.25 1.25 0 1 0 0.01 0M11 8a1.25 1.25 0 1 0 0.01 0M5 12.5a1.25 1.25 0 1 0 0.01 0M11 12.5a1.25 1.25 0 1 0 0.01 0";
 
+/**
+ * The mark at the foot of a box with more below than it shows (a panel
+ * held at a height, a column): a fade, and a press that scrolls the box on
+ * by most of what it shows. It has no height and sticks to the foot of the
+ * box as it scrolls; hidden until `markCut` finds the box cut.
+ */
+export function moreMark(scroller: HTMLElement, title: string): HTMLElement {
+    const press = el("button", { type: "button", class: "more-press", title }, "more below");
+    press.addEventListener("click", () => scroller.scrollBy({ top: scroller.clientHeight * 0.8, behavior: "smooth" }));
+    const mark = el("div", { class: "more-mark" }, press);
+    mark.hidden = true;
+    return mark;
+}
+
+/**
+ * Marks a box that scrolls with what it does not show: data-cut-top with
+ * content scrolled away over it, data-cut-bottom with more below; the mark
+ * at its foot shows with the second. A box that is not to be marked (not
+ * held, not wide) passes `off`. True when the marks changed.
+ */
+export function markCut(scroller: HTMLElement, mark: HTMLElement | null, off = false): boolean {
+    const top = !off && scroller.scrollTop > 1;
+    const bottom = !off && scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 1;
+    const changed = scroller.hasAttribute("data-cut-top") !== top || scroller.hasAttribute("data-cut-bottom") !== bottom;
+    scroller.toggleAttribute("data-cut-top", top);
+    scroller.toggleAttribute("data-cut-bottom", bottom);
+    if (mark && mark.hidden === bottom) {
+        mark.hidden = !bottom;
+    }
+    return changed;
+}
+
 export function mountPanels(app: HTMLElement): PanelsController {
     const pages = new Map<string, PageView>();
     const panels = new Map<string, PanelView>();
@@ -270,11 +310,14 @@ export function mountPanels(app: HTMLElement): PanelsController {
         const id = root.id.replace(/^page-/, "");
         const columns = childrenOf(root, ".column");
         const defaults = markupDefaults(columns);
-        const page: PageView = { id, root, columns, defaults, layout: normalizeLayout(stored[id] ?? null, defaults), strips: new Map(), handles: [], rows: new Map(), cells: new Map() };
+        const page: PageView = { id, root, columns, defaults, layout: normalizeLayout(stored[id] ?? null, defaults), strips: new Map(), handles: [], rows: new Map(), cells: new Map(), more: [] };
         pages.set(id, page);
         for (const column of columns) {
             column.addEventListener("pointerover", () => (lastColumn = column));
             column.addEventListener("focusin", () => (lastColumn = column));
+            const more = moreMark(column, "scroll this column on: panels lie below");
+            page.more.push(more);
+            column.addEventListener("scroll", () => markColumn(page, column), { passive: true });
             for (const panel of childrenOf(column, "section.panel[id]")) {
                 panels.set(panel.id, decorate(panel, page));
             }
@@ -354,8 +397,10 @@ export function mountPanels(app: HTMLElement): PanelsController {
         toEnd.append(svgIcon(TO_END));
         toTop.hidden = true;
         toEnd.hidden = true;
-        const panel: PanelView = { id: root.id, page, root, head, fold, chevron, menuButton, grip, resize, viewHidden: root.classList.contains("hidden"), name, toTop, toEnd, wasCollapsed: false };
+        const more = moreMark(root, "scroll the panel on: more lies below");
+        const panel: PanelView = { id: root.id, page, root, head, fold, chevron, menuButton, grip, resize, viewHidden: root.classList.contains("hidden"), name, toTop, toEnd, wasCollapsed: false, more };
         place(panel);
+        root.addEventListener("scroll", () => markPanel(panel), { passive: true });
 
         // In a summary a press would also open or close the disclosure.
         const own = (event: Event): void => {
@@ -555,6 +600,57 @@ export function mountPanels(app: HTMLElement): PanelsController {
         // A panel held at a height scrolls within it: its ends are a press away.
         panel.toTop.hidden = height === null;
         panel.toEnd.hidden = height === null;
+        // Its mark of more below goes last, after anything its view added
+        // since; what it holds is watched for size, as the panel's own box
+        // no longer grows with it.
+        if (root.lastElementChild !== panel.more) {
+            root.append(panel.more);
+        }
+        if (height !== null) {
+            for (const child of Array.from(root.children)) {
+                if (child !== panel.more) {
+                    sizes?.observe(child);
+                }
+            }
+        }
+        markPanel(panel);
+    }
+
+    /** A panel held at a height, marked with what it does not show; any other unmarked. */
+    function markPanel(panel: PanelView): void {
+        markCut(panel.root, panel.more, !panel.root.hasAttribute("data-height"));
+    }
+
+    /**
+     * A column on the wide layout, marked with what it does not show: its
+     * mark says which panels lie below. Not a column whose docked panel
+     * (Run) sits at its foot, whose shadow says so already.
+     */
+    function markColumn(page: PageView, column: HTMLElement): void {
+        const index = page.columns.indexOf(column);
+        const mark = page.more[index] ?? null;
+        const docked = childrenOf(column, ".panel[data-dock]").some((node) => !["data-join-up", "data-join-down", "data-stacked", "data-off"].some((name) => node.hasAttribute(name)) && !node.classList.contains("hidden"));
+        markCut(column, mark, !wide() || docked);
+        if (mark && !mark.hidden) {
+            const bottom = column.getBoundingClientRect().bottom;
+            const below = childrenOf(column, "section.panel[id]")
+                .filter((node) => node.getClientRects().length > 0 && node.getBoundingClientRect().top >= bottom - 1)
+                .map((node) => title(node));
+            const press = mark.firstElementChild as HTMLElement | null;
+            if (press) {
+                press.title = below.length > 0 ? `scroll this column on: ${below.join(", ")} below` : "scroll this column on: the panel goes on below";
+            }
+        }
+    }
+
+    /** Every box of a page marked with what it does not show. */
+    function markCuts(page: PageView): void {
+        for (const panel of panels.values()) {
+            if (panel.page === page) {
+                markPanel(panel);
+            }
+        }
+        page.columns.forEach((column) => markColumn(page, column));
     }
 
     /** Side by side, a cell whose panel in front is folded stands on its side and gives its width to the others. */
@@ -671,6 +767,8 @@ export function mountPanels(app: HTMLElement): PanelsController {
                     const into: HTMLElement[] = [];
                     if (front && visible.length > 1) {
                         const strip = stripFor(page, stack, visible, front);
+                        // Folded, the stack says so on its tab in front.
+                        strip.toggleAttribute("data-folded", collapsedOf(front));
                         used.add(strip);
                         into.push(strip);
                         if (!row) {
@@ -731,7 +829,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
                     drawn.push({ node: wrapper, block: blockIndex });
                 }
             });
-            reorder(column, [...desired, ...handles]);
+            reorder(column, [...desired, ...handles, ...(page.more[index] ? [page.more[index]!] : [])]);
             drawn.forEach(({ node, block }, at) => {
                 node.toggleAttribute("data-join-up", at > 0 && drawn[at - 1]!.block === block);
                 node.toggleAttribute("data-join-down", at < drawn.length - 1 && drawn[at + 1]!.block === block);
@@ -766,6 +864,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
             }
         }
         positionHandles(page);
+        markCuts(page);
     }
 
     /** Puts each panel's height handle on its bottom edge and each column handle between its columns. */
@@ -1325,6 +1424,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
             }
             for (const page of touched) {
                 positionHandles(page);
+                markCuts(page);
             }
         });
         for (const page of pages.values()) {
@@ -1335,6 +1435,14 @@ export function mountPanels(app: HTMLElement): PanelsController {
         }
         for (const panel of panels.values()) {
             observer.observe(panel.root);
+            // What a panel held at a height holds grows inside its box.
+            if (panel.root.hasAttribute("data-height")) {
+                for (const child of Array.from(panel.root.children)) {
+                    if (child !== panel.more) {
+                        observer.observe(child);
+                    }
+                }
+            }
         }
         sizes = observer;
     }

@@ -85,6 +85,12 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
             return;
         }
         peek.hidden = hidden === 0;
+        // The count of panels hidden, drawn at the eye's corner.
+        if (hidden > 0) {
+            peek.dataset["count"] = String(hidden);
+        } else {
+            delete peek.dataset["count"];
+        }
         peek.setAttribute("aria-pressed", String(panels.peeking()));
         peek.title = panels.peeking() ? "hide the hidden panels again" : `show the ${hidden} hidden panel${hidden === 1 ? "" : "s"} for now`;
     }
