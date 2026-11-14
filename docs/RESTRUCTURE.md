@@ -16,10 +16,11 @@ throughout. The decisions only the owner can make are in
 | `web/frontend/` | 61k + 19k | A third of it is a second backend, and every feature edits the same six files. Restructure it. |
 | `docs/` and `notes/` | 660k characters | They restate the code by hand and drift from it. |
 
-The suites at that commit: firmware 375 tests, carve 34, sim 10 and the
-render check pass, and the page passes 930 of 931 tests. The one failure
-comes from an uncommitted edit to `cam/cartesian-laser.toml` that a page
-test reads (problem 8 below).
+The suites at that commit, each run on its own, all pass: firmware 375
+tests, carve 34, sim 10, toolpath 548, and the backend 868 (7.5 minutes
+with the end to end runs), plus the render and layout checks. The page
+passes 930 of 931 tests. The one failure comes from an uncommitted edit
+to `cam/cartesian-laser.toml` that a page test reads (problem 8 below).
 
 ### What works, and stays
 
@@ -198,9 +199,11 @@ work can land between steps; nothing is frozen.
    core test writes it and fails when the committed copy differs.
    `machines.py`, `app.py`, `fake_serial.py` and the page read it, and the
    settings table in `PROTOCOL.md` is generated from it.
-2. The page gets machine keys and default controls from the backend at
-   run time; both already live in `spinny_laser`. The page's own copies go
-   with the mock in phase 3.
+2. A new route serves the machine keys and the default controls, which
+   already live in `spinny_laser`. The Config tab, the settings list and
+   the servo bars read them from it instead of from `machinekeys.ts`.
+   The page's copies then serve only the mock, and they go with it in
+   phase 3.
 3. WebSocket events become pydantic models, one per type, in
    `core/events.py`. Their JSON Schema goes into `openapi.json`.
 
