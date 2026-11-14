@@ -1032,8 +1032,16 @@ class Posterior(Consensus):
             if search is None:
                 return
             place = searched_where if listed and searched_where is not None else where
+            if listed and not isinstance(place, PictureFrame) and isinstance(where, PictureFrame) and estimate is not None:
+                # The searched frame was taken while the head came to rest:
+                # the lock it found, tracked into this frame, stands for it.
+                listed = False
+                place = where
             if not isinstance(place, PictureFrame):
-                if estimate is None or listed:
+                if estimate is None or listed or where is not None:
+                    # Nothing placed yet: the search may still count once a
+                    # frame of it is placed (a tracked one, at rest).
+                    self._acquisitions.discard(search)
                     return
                 place = PictureFrame(estimate.apply(estimate.seen) if estimate.seen is not None else estimate.center, 0.0, False)
             if self._box is None:

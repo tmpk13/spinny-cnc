@@ -638,3 +638,28 @@ def test_a_flying_scan_places_its_frames_by_the_heads_reports_and_fits_the_delay
     state = look_.mosaic.state()
     assert state["motion"] == "fly" and len(state["pictures"]) >= len(rows)
     assert delay is not None and delay["seconds"] == pytest.approx(0.12, abs=0.02)
+
+
+def test_a_search_on_a_frame_taken_while_the_head_settled_counts_through_its_tracked_lock():
+    import time
+
+    middle = truth_middle()
+    box = (middle[0] - 25.0, middle[1] - 25.0, middle[0] + 25.0, middle[1] + 25.0)
+    posterior = Posterior(board(), box, sessions=1, scale=SCALE)
+    pcbv = FakePcbv()
+    center = machine_of((20.0, 15.0))
+    raw = pcbv.pose(center)
+    raw["candidates_age_ms"] = 400
+    raw["searched"] = False
+    frame = PictureFrame(center, 0.0, False)
+    estimate, problem = pose_estimate(raw, frame, DESIGN.board_to_job, MIDDLE)
+    # The search's own frame is refused (the head was coming to rest); this
+    # frame, tracked from its lock, is at rest: the lock counts.
+    posterior.take(raw, frame, time.monotonic(), DESIGN.board_to_job, estimate, problem, searched_where="the head is coming to rest")
+    lead = posterior.lead
+    assert lead is not None and math.dist(lead.estimate.center, middle) < 0.05
+    assert len(posterior.views) == 1 and posterior.views[0].searches == {("search", raw["search"])}
+    # With no frame at rest yet the search is kept for later.
+    other = Posterior(board(), box, sessions=1, scale=SCALE)
+    other.take(raw, "the head is moving", 0.0, DESIGN.board_to_job, None, None, searched_where="the head is coming to rest")
+    assert not other.views and ("search", raw["search"]) not in other._acquisitions
