@@ -1198,7 +1198,16 @@ export function mountPanels(app: HTMLElement): PanelsController {
             entries.push({ label: "Free height", run: () => apply(setPrefs(layout, id, { height: undefined })) });
         }
         entries.push({ label: "Reset panel", run: () => apply(resetPanel(layout, id, page.defaults)) });
+        // Edit mode a press away from any panel, not only from the page settings.
+        entries.push({ label: editing ? "Done editing" : "Edit panels", run: () => editPanels(!editing) });
         openMenu(entries, at, `${title(panel.root)} panel`, from);
+    }
+
+    /** Edit mode on or off: grips in the heads to drag panels and folders about. */
+    function editPanels(on: boolean): void {
+        editing = on;
+        app.toggleAttribute("data-edit", on);
+        notify();
     }
 
     // --- sizes ----------------------------------------------------------------
@@ -1623,11 +1632,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
             }
         },
         editing: () => editing,
-        setEditing(on) {
-            editing = on;
-            app.toggleAttribute("data-edit", on);
-            notify();
-        },
+        setEditing: editPanels,
         hiddenPanels: () => [...panels.values()]
             .filter((panel) => prefsOf(panel).hidden === true)
             .map((panel) => ({ id: panel.id, title: title(panel.root), page: panel.page.id })),

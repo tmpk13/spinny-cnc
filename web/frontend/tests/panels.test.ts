@@ -529,6 +529,34 @@ describe("folders", () => {
     });
 });
 
+describe("the page's own markup", () => {
+    test("groups the camera panels of the Jobs page, each camera's on the PNP page, and a G-code machine's own, in folders", async () => {
+        const html = await Bun.file(new URL("../index.html", import.meta.url)).text();
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const folders = (page: string): Record<string, string> => {
+            const columns = Array.from(doc.querySelectorAll<HTMLElement>(`#page-${page} > .column`));
+            return markupDefaults(columns).folders ?? {};
+        };
+        expect(folders("jobs")).toEqual({ "camera-view": "Camera" });
+        expect(folders("pnp")).toEqual({ "pnp-view": "Bottom camera", "pnp-top-view": "Top camera", "pnp-head": "Machine" });
+        const jobs = markupDefaults(Array.from(doc.querySelectorAll<HTMLElement>("#page-jobs > .column")));
+        expect(jobs.stuck).toEqual({ camera: "camera-view", find: "camera-view" });
+        expect(jobs.stacked).toEqual({ "camera-controls": "camera", "camera-sight": "camera", tests: "align" });
+    });
+
+    test("every panel's menu turns edit mode on and off", () => {
+        const app = makeApp();
+        const panels = mountPanels(app);
+        openMenuOf("p-dro");
+        pick("Edit panels");
+        expect(panels.editing()).toBe(true);
+        expect(app.hasAttribute("data-edit")).toBe(true);
+        openMenuOf("p-laser");
+        pick("Done editing");
+        expect(panels.editing()).toBe(false);
+    });
+});
+
 describe("kept layouts", () => {
     test("a layout kept by name comes back from its name; Default is the markup's", () => {
         const app = makeApp();

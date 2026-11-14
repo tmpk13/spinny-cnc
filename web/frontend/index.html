@@ -29,11 +29,11 @@
                 <section id="steps" class="panel" aria-label="Setup steps"></section>
                 <section id="preview" class="panel preview-panel" aria-label="Preview"></section>
                 <section id="jobjson" class="panel" aria-label="Job JSON"></section>
-                <section id="camera-view" class="panel" aria-label="Camera view"></section>
-                <section id="camera" class="panel" aria-label="Camera"></section>
-                <section id="camera-controls" class="panel" data-stack aria-label="Picture controls"></section>
-                <section id="camera-sight" class="panel" data-stack aria-label="Lens and colors"></section>
-                <section id="find" class="panel" aria-label="Find board"></section>
+                <section id="camera-view" class="panel" data-folder="Camera" aria-label="Camera view"></section>
+                <section id="camera" class="panel" data-folder="Camera" aria-label="Camera"></section>
+                <section id="camera-controls" class="panel" data-stack data-folder="Camera" aria-label="Picture controls"></section>
+                <section id="camera-sight" class="panel" data-stack data-folder="Camera" aria-label="Lens and colors"></section>
+                <section id="find" class="panel" data-folder="Camera" aria-label="Find board"></section>
                 <section id="console" class="panel console" aria-label="Console"></section>
             </div>
             <div class="column">
@@ -76,21 +76,21 @@
             <div class="column">
                 <section id="pnp-board" class="panel" aria-label="Board"></section>
                 <section id="pnp-find" class="panel" aria-label="Find board on the PNP page"></section>
-                <section id="pnp-view" class="panel" aria-label="Bottom camera view"></section>
-                <section id="pnp-top-view" class="panel hidden" aria-label="Top camera view"></section>
-                <section id="pnp-camera" class="panel" aria-label="Bottom camera"></section>
-                <section id="pnp-camera-controls" class="panel" data-stack aria-label="Bottom picture controls"></section>
-                <section id="pnp-camera-sight" class="panel" data-stack aria-label="Bottom lens and colors"></section>
-                <section id="pnp-top" class="panel hidden" aria-label="Top camera"></section>
-                <section id="pnp-top-controls" class="panel hidden" data-stack aria-label="Top picture controls"></section>
-                <section id="pnp-top-sight" class="panel hidden" data-stack aria-label="Top lens and colors"></section>
+                <section id="pnp-view" class="panel" data-folder="Bottom camera" aria-label="Bottom camera view"></section>
+                <section id="pnp-camera" class="panel" data-folder="Bottom camera" aria-label="Bottom camera"></section>
+                <section id="pnp-camera-controls" class="panel" data-stack data-folder="Bottom camera" aria-label="Bottom picture controls"></section>
+                <section id="pnp-camera-sight" class="panel" data-stack data-folder="Bottom camera" aria-label="Bottom lens and colors"></section>
+                <section id="pnp-top-view" class="panel hidden" data-folder="Top camera" aria-label="Top camera view"></section>
+                <section id="pnp-top" class="panel hidden" data-folder="Top camera" aria-label="Top camera"></section>
+                <section id="pnp-top-controls" class="panel hidden" data-stack data-folder="Top camera" aria-label="Top picture controls"></section>
+                <section id="pnp-top-sight" class="panel hidden" data-stack data-folder="Top camera" aria-label="Top lens and colors"></section>
             </div>
             <div class="column">
                 <section id="pnp-steps" class="panel" aria-label="PNP steps"></section>
-                <section id="pnp-head" class="panel hidden" aria-label="Head"></section>
-                <section id="pnp-refs" class="panel hidden" aria-label="Board on the machine"></section>
-                <section id="pnp-feeders" class="panel hidden" aria-label="Feeders"></section>
                 <section id="pnp-run" class="panel hidden" aria-label="Placing"></section>
+                <section id="pnp-head" class="panel hidden" data-folder="Machine" aria-label="Head"></section>
+                <section id="pnp-refs" class="panel hidden" data-folder="Machine" aria-label="Board on the machine"></section>
+                <section id="pnp-feeders" class="panel hidden" data-folder="Machine" aria-label="Feeders"></section>
                 <section id="pnp-nozzle" class="panel" aria-label="Nozzle"></section>
             </div>
         </main>
