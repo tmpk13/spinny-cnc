@@ -279,12 +279,15 @@ def _take(text: str, shipped: str, unit: tuple, remove: bool) -> str:
         return "\n".join(lines)
     table = _plain(tables, path)
     if remove:
-        assert table is not None and key in table.keys
+        if table is None or key not in table.keys:
+            raise MergeError(f"{_where(unit)} is not a line of its own in your file")
         first, end = table.keys[key]
         del lines[first:end]
         return "\n".join(lines)
     giver = _plain(shipped_tables, path)
-    assert giver is not None and key in giver.keys
+    if giver is None or key not in giver.keys:
+        # A dotted key, or a table written inline, has no line of its own.
+        raise MergeError(f"{_where(unit)} is not a line of its own in the release's file")
     first, end = giver.keys[key]
     if table is not None and key in table.keys:
         mine_first, mine_end = table.keys[key]

@@ -131,9 +131,12 @@ def test_without_a_record_of_the_copy_what_the_release_adds_is_added_and_the_ope
     assert merged.changes == ['[gcode] motors_on = "M17" added', "[motion] safe_z: yours kept, 5; the release has 31.5"]
 
 
-def test_a_text_that_does_not_read_is_not_merged():
+def test_a_text_that_does_not_read_or_a_key_without_a_line_of_its_own_is_not_merged():
     with pytest.raises(MergeError):
         merge(BASE, BASE, "[port\n")
+    # A dotted key has no line of its own to take: refused, not guessed at.
+    with pytest.raises(MergeError, match="not a line of its own"):
+        merge(BASE, edit(BASE, "safe_z = 5", "safe_z = 5\nlimits.x = 3"), BASE)
 
 
 def check(text: str, machine_id: str) -> None:
