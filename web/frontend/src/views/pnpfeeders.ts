@@ -134,9 +134,11 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
             const feeder = index >= 0 ? feeders[index]! : null;
             const actions: HTMLElement[] = [];
             if (feeder && feeder.slot !== entry.address && entry.slot) {
-                actions.push(button(`Keep slot ${entry.address}`, () => keepSlot(index, entry.address), "btn btn-quiet btn-small"));
+                actions.push(button(`Keep slot ${entry.address}`, () => keepSlot(index, entry.address), "btn btn-quiet btn-small",
+                    `write address ${entry.address} into feeder ${feeder.id}'s slot in the machine file`));
             }
-            actions.push(button(entry.slot ? "Slot here again" : "Slot here", () => slotHere(entry.address), "btn btn-quiet btn-small"));
+            actions.push(button(entry.slot ? "Slot here again" : "Slot here", () => slotHere(entry.address), "btn btn-quiet btn-small",
+                `take address ${entry.address}'s slot place from where the nozzle is now`));
             return el("li", {}, `address ${entry.address}: ${entry.id}${feeder ? `, feeder ${feeder.id}` : ", no feeder in the machine file has this id"}${entry.slot ? "" : ", no slot place yet"} `, ...actions);
         }));
     }
@@ -164,7 +166,7 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
                         if (await askConfirm(`Count feeder ${feeder.id} from its first part again?`, "Count again")) {
                             await into(ctx, "placing", ctx.api.pnpResetFeeders(feeder.id));
                         }
-                    }, "btn btn-quiet btn-small"));
+                    }, "btn btn-quiet btn-small", "count this feeder's parts from its first again"));
                     return el("tr", {},
                         el("td", { class: "mono" }, feeder.id),
                         el("td", {}, (feeder.refs?.length ?? 0) > 0 ? feeder.refs!.join(" ") : feeder.match),

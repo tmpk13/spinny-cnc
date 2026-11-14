@@ -4,7 +4,9 @@ import { crc8, decodePacket, encodePacket, HEADER_FIELDS, slotPlace } from "../s
 import { DEVICE_LINES_PER_SECOND, MockBackend } from "../src/mock/backend.ts";
 import { planDevice } from "../src/mock/openpnp.ts";
 import type { Component } from "../src/types.ts";
+import { mountPnpFeeders } from "../src/views/pnpfeeders.ts";
 import { connectGcode, parseDevice } from "./gcoderig.ts";
+import { findButton, settle, setup } from "./harness.ts";
 
 const C100N = "0102030405060708090A0B0C";
 const C1U = "AABBCCDDEEFF001122334455";
@@ -108,5 +110,20 @@ describe("the feeder bus in the page and its mock", () => {
         const state = await mock.placingState();
         expect(state.progress?.state).toBe("done");
         expect(state.progress?.steps?.some((step) => step.text === "feeder c-100n advanced 2 mm (address 3)")).toBe(true);
+    });
+
+    test("the scan's buttons say what they do on hover", async () => {
+        const { ctx, root, backend } = setup();
+        await connectGcode(backend, "lumen", PROFILE);
+        await ctx.refreshPlacing();
+        mountPnpFeeders(root, ctx);
+        findButton(root, "Scan bus").click();
+        await settle();
+        // c-1u names no slot, so the scan offers it the one it was found in.
+        expect(findButton(root, "Keep slot 4").title).toBe("write address 4 into feeder c-1u's slot in the machine file");
+        for (const button of Array.from(root.querySelectorAll<HTMLButtonElement>(".bus-scan button, .device-feeders button"))) {
+            expect(button.title).not.toBe("");
+        }
+        root.remove();
     });
 });
