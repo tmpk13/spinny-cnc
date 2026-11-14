@@ -796,9 +796,9 @@ table.settings-list td {
         grid-template-columns: minmax(0, 48rem);
     }
 
-    /* The Overview page: its cards over the page's width, up to a limit. */
+    /* The Overview page: its cards over the page's whole width. */
     .overview-grid {
-        grid-template-columns: minmax(0, 76rem);
+        grid-template-columns: minmax(0, 1fr);
     }
 
     /* The Config page: the machine file on the left, the list of every key
@@ -1134,11 +1134,35 @@ input.num.field.invalid {
 
 /* The Overview page: a card per page, a drawing over its name, what it
    is for, and what it holds now; each card a button showing its page. The
-   drawing is lines in the text color with its accent in the card's color. */
+   drawing is lines in the text color with its accent in the card's color.
+   The cards share the panel's width in 1, 2, 4 or 8 columns, so the eight
+   of them always fill their rows, and grow with the screen. */
+#overview {
+    container-type: inline-size;
+}
+
 .overview-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 10rem), 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--gap);
+}
+
+@container (max-width: 20rem) {
+    .overview-cards {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@container (min-width: 44rem) {
+    .overview-cards {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+}
+
+@container (min-width: 96rem) {
+    .overview-cards {
+        grid-template-columns: repeat(8, minmax(0, 1fr));
+    }
 }
 
 /* A long word (a port's path) breaks rather than spill out of its card. */
@@ -1174,7 +1198,7 @@ input.num.field.invalid {
 .overview-drawing {
     display: block;
     width: 100%;
-    max-width: 12rem;
+    max-width: 16rem;
     height: auto;
     margin-bottom: 0.35rem;
     fill: none;
