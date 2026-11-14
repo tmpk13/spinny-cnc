@@ -17,8 +17,9 @@
 // standing on its side. A folder is a block with a name, drawn in a box of
 // its own under a head (its fold, name, count and menu) and folded and
 // moved as one; the markup makes one of a run of panels marked with the
-// same `data-folder`. On a narrow screen the box falls away. A panel held at a height shows buttons in its head to
-// scroll to its top and its end. Content out of sight says so: a panel held
+// same `data-folder`. On a narrow screen the box falls away. A panel held
+// at a height shows buttons in its head to scroll to its top and its end.
+// Content out of sight says so: a panel held
 // at a height or a column with more below than it shows fades at its foot
 // under a press that scrolls on, a head with content scrolled under it
 // casts a shadow, and a folded panel or stack says it is folded beside its

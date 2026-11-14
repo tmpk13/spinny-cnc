@@ -1,11 +1,15 @@
 import { afterEach, expect, test } from "bun:test";
-import { applyLook, parseLook } from "../src/look.ts";
+import { applyLook, LOOK_KEY, parseLook } from "../src/look.ts";
 import { initialState, Store } from "../src/state.ts";
+import { mountPageSettings } from "../src/views/pagesettings.ts";
+import { mountPanels } from "../src/views/panels.ts";
 import { accentOf, mountTabs, PAGES } from "../src/views/tabs.ts";
 
 afterEach(() => {
     document.body.replaceChildren();
     localStorage.removeItem("spinny.page");
+    localStorage.removeItem(LOOK_KEY);
+    document.documentElement.removeAttribute("data-colors");
 });
 
 test("the look reads safely and goes on the root as attributes, colors on unless turned off", () => {
@@ -31,4 +35,24 @@ test("every page has a color of its own, which its tab and its page carry", () =
     mountTabs(bar, new Store(initialState(true)));
     expect(bar.querySelector<HTMLElement>('.tab[data-page="pnp"]')!.style.getPropertyValue("--page-accent")).toBe("var(--violet)");
     expect(page.style.getPropertyValue("--page-accent")).toBe("var(--orange)");
+});
+
+test("the page settings turn the colors off and on", () => {
+    const app = document.createElement("div");
+    app.id = "app";
+    document.body.append(app);
+    const tools = document.createElement("div");
+    app.append(tools);
+    mountPageSettings(tools, mountPanels(app));
+    tools.querySelector<HTMLButtonElement>(".tabs-gear")!.click();
+    const box = Array.from(tools.querySelectorAll("label.check")).find((label) => label.textContent?.includes("Colors for tabs and panels"))!.querySelector("input")!;
+    expect(box.checked).toBe(true);
+    box.checked = false;
+    box.dispatchEvent(new Event("change"));
+    expect(document.documentElement.getAttribute("data-colors")).toBe("off");
+    expect(parseLook(localStorage.getItem(LOOK_KEY)).colors).toBe("off");
+    const again = Array.from(tools.querySelectorAll("label.check")).find((label) => label.textContent?.includes("Colors for tabs and panels"))!.querySelector("input")!;
+    again.checked = true;
+    again.dispatchEvent(new Event("change"));
+    expect(document.documentElement.hasAttribute("data-colors")).toBe(false);
 });
