@@ -1217,10 +1217,15 @@ class BoardLook:
         self.retune()
         consensus = self.consensus
         corners = self.corners_state()
+        options = self.options()
+        method = "posterior" if options.get("method") == "posterior" else "vote"
+        stretch = bool(options.get("stretch")) and method == "posterior"
         if self.job is None:
             threshold, corner_mm = self.tuning()
-            return {"job": None, "threshold": threshold, "corner_mm": corner_mm, "corners": corners}
-        return {"job": self.job, **consensus.to_dict(), "record": self.last_record, "corners": corners, "known": self.known_state()}
+            return {"job": None, "threshold": threshold, "corner_mm": corner_mm, "method": method, "board_stretch": stretch, "corners": corners}
+        return {
+            "job": self.job, **consensus.to_dict(), "board_stretch": stretch, "record": self.last_record, "corners": corners, "known": self.known_state(),
+        }
 
     def publish(self, force: bool = False) -> None:
         """Tells the page of a change, at most every PUBLISH_SECONDS unless forced."""

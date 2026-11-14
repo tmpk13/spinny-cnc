@@ -52,6 +52,7 @@ from .boardlook import (
     Feature,
     KnownPlace,
     PictureFrame,
+    SLOW_MM_S,
     RestTracker,
     check_places,
     corner_from_edges,
@@ -83,7 +84,7 @@ from .camera import (
     wait_settled,
 )
 from .camlog import CAMERAS, CameraLog
-from .searchlog import SearchLog, SearchRecord, affine_of
+from .searchlog import SearchLog, SearchRecord, affine_of, record_features
 from . import searchreport
 from .files import write_whole
 from .cameras import ControlsError, controls_note, list_controls, set_controls
@@ -557,6 +558,9 @@ class CameraSettingsBody(Finite):
     mm_per_px: float | None = None
     look_threshold: float | None = None
     corner_mm: float | None = None
+    look_method: Literal["vote", "posterior"] | None = None
+    board_stretch: bool | None = None
+    scan_motion: Literal["stop", "fly"] | None = None
 
 
 class CameraBoardBody(BaseModel):
@@ -746,6 +750,8 @@ class TopSettingsBody(Finite):
     mirror: bool | None = None
     look_threshold: float | None = None
     corner_mm: float | None = None
+    look_method: Literal["vote", "posterior"] | None = None
+    board_stretch: bool | None = None
     side: str | None = None
     finish: str | None = None
     paste: bool | None = None
@@ -885,11 +891,11 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         # them itself.
         self.head_look = BoardLook(
             lambda: self.camera.client, self.publish_camera, paused=lambda: self.camera.routine_active,
-            tuning=lambda: _look_tuning(self.camera.settings()),
+            tuning=lambda: _look_tuning(self.camera.settings()), options=lambda: _look_options(self.camera.settings()),
         )
         self.top_look = BoardLook(
             lambda: self.top.client, self.publish_placing, paused=lambda: self.top.routine_active,
-            tuning=lambda: _look_tuning(self.top.settings()),
+            tuning=lambda: _look_tuning(self.top.settings()), options=lambda: _look_options(self.top.settings()),
         )
         self._head_rest = RestTracker()
         self._top_rest = RestTracker()
@@ -3131,6 +3137,12 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         return (min(xs), min(ys), max(xs), max(ys))
 
     @staticmethod
+    def _look_features(job) -> list[tuple[float, float]]:
+        """A job's pads and drilled holes in its frame: what a posterior
+        look expects a picture of the board to show."""
+        return [(float(p[0]), float(p[1])) for p in job.pads] + [(float(h[0]), float(h[1])) for h in job.holes]
+
+    @staticmethod
     def _board_size(job) -> tuple[tuple[float, float], float]:
         """A job's middle (its outline's box, else its paths') and diagonal, in its frame."""
         box = Backend._board_box(job)
@@ -3210,6 +3222,9 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
                 "board_to_job": affine_of(job.design.board_to_job),
                 "middle": [middle[0], middle[1]],
                 "outline_box": list(box) if box is not None else None,
+                # The pads and holes a posterior replay weighs pictures by,
+                # a fixed few hundred of them standing for the rest.
+                "features": record_features(self._look_features(job)),
                 "picture": picture,
                 "settings": settings_now(self.head_look if camera == "head" else self.top_look, job.id),
                 "pcbv": hello,
@@ -3415,7 +3430,9 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             middle, _ = self._board_size(job)
             self.head_look.stop()
             record = self._board_record("look", "head", job, self.camera.client, self.camera.board_settings(), self._head_picture())
-            self.head_look.start(job_id, job.design.board_to_job, middle, self._head_look_place, record)
+            self.head_look.start(
+                job_id, job.design.board_to_job, middle, self._head_look_place, record, features=self._look_features(job), outline=self._board_box(job),
+            )
         return self.publish_camera()
 
     def _head_picture(self) -> dict:
@@ -3452,7 +3469,9 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             here = (tool[0] + offset[0], tool[1] + offset[1])
             box = body.box if body.box is not None else self._corners_box(self.head_look, job, settings.corner_mm) or search_box(here, diagonal)
             known = self._head_known(job, settings.corner_mm)
+            prior = self._head_known(job, settings.corner_mm, corners=False)
             stops = search_stops(box, (width * scale, height * scale), known.place.center if known is not None else here)
+            steer = {"width": width, "height": height, "scale": scale, "speed": SLOW_MM_S, "start": here} if settings.look_method == "posterior" else None
             mover = BoardMover(access, self.camera.aborting, CameraError, lambda: self.camera._halt(link))
             look = self.head_look
 
@@ -3472,17 +3491,19 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
                 )
                 found = search(
                     look, mover, stops, offset, lambda point: PictureFrame(point, settings.roll, False), mover.stopped, on_stop, CameraError, record,
-                    checks=self._check_places(job, (width * scale, height * scale)), known=known, side=settings.side,
+                    checks=self._check_places(job, (width * scale, height * scale)), known=known, side=settings.side, box=box, prior=prior, steer=steer,
                 )
                 self.publish_message("info", found_text(found, look.consensus))
 
             self.camera.run_routine("search", len(stops) + 1, "looking for the board", link, run)
         return self.camera_state()
 
-    def _head_known(self, job, corner_mm: float) -> KnownPlace | None:
+    def _head_known(self, job, corner_mm: float, corners: bool = True) -> KnownPlace | None:
         """Where the head camera's search expects the job's board: where
-        the corners taken put it, else where the camera found it, else the
-        Align marks' fit, else the job's own place (boardlook.known_place)."""
+        the corners taken put it (unless `corners` is false: the posterior
+        weighs them as evidence of their own), else where the camera found
+        it, else the Align marks' fit, else the job's own place
+        (boardlook.known_place)."""
         middle, diagonal = self._board_size(job)
         try:
             fit = self.alignment.fit(job.id)
@@ -3490,7 +3511,8 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         except ValueError:
             align = None
         look = self.head_look
-        return known_place(corners_known(look.corners_of(job.id), middle, corner_mm, diagonal), look.found_known(job.id), align, job_known(middle, diagonal))
+        taken = corners_known(look.corners_of(job.id), middle, corner_mm, diagonal) if corners else None
+        return known_place(taken, look.found_known(job.id), align, job_known(middle, diagonal))
 
     def _refine_features(self, job) -> tuple[list[Feature], list[Feature], list[Feature]]:
         """A job's fiducials (from its kept board), drilled holes and pads
@@ -4016,6 +4038,13 @@ def _look_tuning(settings) -> tuple[float, float]:
     """A camera's look settings: the threshold of the most likely guess
     and the corners' tolerance."""
     return settings.look_threshold, settings.corner_mm
+
+
+def _look_options(settings) -> dict:
+    """How a camera's look calls a board found (vote or posterior), whether
+    the posterior fits the board's stretch, and the camera's scale (mm per
+    px, 0 unmeasured) for its pictures before a lock."""
+    return {"method": settings.look_method, "stretch": settings.board_stretch, "scale": settings.mm_per_px}
 
 
 def _tolerance(value) -> float:

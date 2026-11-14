@@ -81,6 +81,11 @@ class TopCameraSettings(BaseModel):
     # the corners' tolerance (mm).
     look_threshold: float = LOOK_THRESHOLD
     corner_mm: float = CORNER_MM
+    # How the look calls a board found (vote or posterior) and whether the
+    # posterior fits the board's stretch; a G-code machine reports its
+    # place only at rest, so its scans always stop for each picture.
+    look_method: str = "vote"
+    board_stretch: bool = False
     # The board as the camera sees it: the side looked at, whether solder
     # mask hides its copper, and whether it carries solder paste (the parts
     # placed on it are told to pcbv as a run places them).
@@ -104,7 +109,7 @@ class TopCameraSettings(BaseModel):
         if self.finish not in machine_files.CAMERA_FINISHES:
             raise ValueError("the top camera finish must be masked or bare")
         check_controls(self.controls)
-        check_look(self.look_threshold, self.corner_mm)
+        check_look(self.look_threshold, self.corner_mm, self.look_method)
         if not machine_files._CAMERA_SIZE.match(self.size):
             raise ValueError("the top camera size must be WIDTHxHEIGHT")
         if not 1 <= int(self.fps) <= 120:

@@ -69,6 +69,12 @@ class CameraError(Exception):
 # where it was taken, mm.
 LOOK_THRESHOLD = 0.5
 CORNER_MM = 2.0
+# How a camera's look calls a board found: the vote among guesses, or the
+# probability over the board's pose (posterior.py); and how a full scan
+# takes its pictures: the head at rest at each, or on the move (fly, on
+# this project's firmware only).
+LOOK_METHODS = ("vote", "posterior")
+SCAN_MOTIONS = ("stop", "fly")
 
 
 # A round feature (a fiducial, a drilled hole) is looked for at least this
@@ -118,12 +124,16 @@ def round_problem(reply: dict) -> str | None:
     return None
 
 
-def check_look(threshold: float, corner_mm: float) -> None:
+def check_look(threshold: float, corner_mm: float, method: str = "vote", scan_motion: str = "stop") -> None:
     """A camera's look settings, as the page may set them."""
     if not (math.isfinite(threshold) and 0.0 <= threshold <= 1.0):
         raise ValueError("the look's threshold must be 0 to 1")
     if not (math.isfinite(corner_mm) and 0.1 <= corner_mm <= 50.0):
         raise ValueError("the corners' tolerance must be 0.1 to 50 mm")
+    if method not in LOOK_METHODS:
+        raise ValueError(f"the look's method must be {' or '.join(LOOK_METHODS)}")
+    if scan_motion not in SCAN_MOTIONS:
+        raise ValueError(f"the scan's motion must be {' or '.join(SCAN_MOTIONS)}")
 
 
 class CameraSettings(BaseModel):
@@ -145,9 +155,14 @@ class CameraSettings(BaseModel):
     # each time the camera starts, by the names v4l2-ctl gives them.
     controls: dict[str, int] = Field(default_factory=dict)
     # The look for a board: the threshold of the most likely guess, and
-    # the corners' tolerance (mm).
+    # the corners' tolerance (mm); how it calls a board found (LOOK_METHODS),
+    # whether the posterior fits the board's stretch, and how a full scan
+    # takes its pictures (SCAN_MOTIONS).
     look_threshold: float = LOOK_THRESHOLD
     corner_mm: float = CORNER_MM
+    look_method: str = "vote"
+    board_stretch: bool = False
+    scan_motion: str = "stop"
     # The lens correction measured from a dot grid (k1, k2 and the picture
     # size), sent to pcbv at every start; None for none.
     lens: dict[str, float] | None = None
@@ -162,7 +177,7 @@ class CameraSettings(BaseModel):
         check_controls(self.controls)
         check_lens(self.lens)
         check_colors(self.colors)
-        check_look(self.look_threshold, self.corner_mm)
+        check_look(self.look_threshold, self.corner_mm, self.look_method, self.scan_motion)
         if not machine_files._CAMERA_SIZE.match(self.size):
             raise ValueError("the camera size must be WIDTHxHEIGHT")
         if not 1 <= int(self.fps) <= 120:

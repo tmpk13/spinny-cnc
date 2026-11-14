@@ -79,6 +79,17 @@ def _now() -> datetime.datetime:
     return datetime.datetime.now()
 
 
+# The most pads and holes a record keeps for a replay to weigh pictures by.
+MAX_FEATURES = 400
+
+
+def record_features(points: list[tuple[float, float]]) -> list[list[float]]:
+    """A board's pads and holes for a record: at most MAX_FEATURES, taken
+    evenly through the list, to a micrometer."""
+    step = max(1, -(-len(points) // MAX_FEATURES))
+    return [[round(float(x), 3), round(float(y), 3)] for x, y in points[::step]]
+
+
 def affine_of(transform: Callable[[tuple[float, float]], tuple[float, float]]) -> list[list[float]]:
     """An affine map of the plane (a turn, a flip, a shift) as the rows
     [[a, b, c], [d, e, f]] taking (x, y) to (a x + b y + c, d x + e y + f),

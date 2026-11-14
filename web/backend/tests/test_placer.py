@@ -689,7 +689,33 @@ def test_the_top_camera_searches_a_box_for_the_board_and_keeps_its_place(client,
     assert client.put("/api/pnp/top", json={"side": "top"}).status_code == 400
     # Unloaded, the look is forgotten; its settings stay.
     unloaded = client.post("/api/pnp/top/board", json={"job": None}).json()["top"]["board_look"]
-    assert unloaded == {"job": None, "threshold": boardlook.THRESHOLD, "corner_mm": boardlook.CORNER_MM, "corners": None}
+    assert unloaded == {"job": None, "threshold": boardlook.THRESHOLD, "corner_mm": boardlook.CORNER_MM, "method": "vote", "board_stretch": False, "corners": None}
+
+
+def test_the_top_camera_searches_with_the_posterior_when_its_look_method_says_so(client, quick_search):
+    rig(client, profile(rest=TOP))
+    job_id = outlined_job(client)
+    board = SeenBoard((0.0, 0.0, 40.0, 30.0), 2.0, (150.0, 80.0), design_shift=(-100.0, -70.0))
+    camera = BoardTopCamera(client.fake, (34.0, -9.0), board, roll=1.5)
+    client.backend.top.client = camera
+    client.put("/api/pnp/top", json={"offset": [34.0, -9.0], "mm_per_px": 0.02, "roll": 1.5, "mirror": False})
+    assert client.put("/api/pnp/top", json={"look_method": "guess"}).status_code == 422
+    response = client.put("/api/pnp/top", json={"look_method": "posterior"})
+    assert response.status_code == 200, response.text
+    assert response.json()["top"]["board_look"]["method"] == "posterior"
+    assert client.post("/api/pnp/top/board", json={"job": job_id}).status_code == 200
+    response = client.post("/api/pnp/top/search", json={"box": [140.0, 70.0, 200.0, 125.0]})
+    assert response.status_code == 200, response.text
+    routine = routine_done(client, "/api/pnp/placing")
+    assert routine["state"] == "done", routine
+    look = client.get("/api/pnp/placing").json()["top"]["board_look"]
+    middle = (150.0 + 20.0 * math.cos(math.radians(2.0)) - 15.0 * math.sin(math.radians(2.0)), 80.0 + 20.0 * math.sin(math.radians(2.0)) + 15.0 * math.cos(math.radians(2.0)))
+    assert look["method"] == "posterior" and look["found"] is True, look
+    assert look["estimate"]["center"] == pytest.approx(list(middle), abs=0.05) and look["estimate"]["rotation"] == pytest.approx(2.0, abs=0.05)
+    assert 0.0 <= look["elsewhere"] < look["guesses"][0]["probability"]
+    assert look["views"] >= 1 and look["representation"] in ("samples", "gaussian")
+    # Back to the vote, the look starts over with it.
+    assert client.put("/api/pnp/top", json={"look_method": "vote"}).json()["top"]["board_look"]["method"] == "vote"
 
 
 def test_corners_taken_with_the_top_camera_give_a_rough_place_a_search_box_and_references(client, quick_search):

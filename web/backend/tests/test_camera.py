@@ -676,7 +676,8 @@ class BoardStandIn:
         self.running = False
 
 
-def test_the_head_camera_searches_for_the_board_and_a_capture_takes_the_agreed_place(client, fake, monkeypatch):
+@pytest.mark.parametrize("method", ["vote", "posterior"])
+def test_the_head_camera_searches_for_the_board_and_a_capture_takes_the_agreed_place(client, fake, monkeypatch, method):
     monkeypatch.setattr(boardlook, "LOCK_SECONDS", 0.15)
     monkeypatch.setattr(boardlook, "STOP_SECONDS", 0.6)
     monkeypatch.setattr(boardlook, "SAMPLE_SECONDS", 0.01)
@@ -690,7 +691,7 @@ def test_the_head_camera_searches_for_the_board_and_a_capture_takes_the_agreed_p
     seen = SeenBoard((0.0, 0.0, 40.0, 30.0), 1.0, (40.0, 30.0), design_shift=(-100.0, -70.0))
     stand_in = BoardStandIn(fake, seen, (12.5, -3.25), 0.0, 0.02)
     client.backend.camera.client = stand_in
-    client.put("/api/camera/settings", json={"offset": [12.5, -3.25], "roll": 0.0, "mm_per_px": 0.02})
+    client.put("/api/camera/settings", json={"offset": [12.5, -3.25], "roll": 0.0, "mm_per_px": 0.02, "look_method": method})
     assert client.post("/api/camera/search", json={}).status_code == 400
     response = client.post("/api/camera/board", json={"job": job.id})
     assert response.status_code == 200, response.text
@@ -703,9 +704,11 @@ def test_the_head_camera_searches_for_the_board_and_a_capture_takes_the_agreed_p
     assert state["routine"]["state"] == "done" and state["routine"]["kind"] == "search", state["routine"]
     middle = (40.0 + 20.0 * math.cos(math.radians(1.0)) - 15.0 * math.sin(math.radians(1.0)), 30.0 + 20.0 * math.sin(math.radians(1.0)) + 15.0 * math.cos(math.radians(1.0)))
     look = state["board_look"]
-    assert look["found"] is True and look["estimate"]["center"] == pytest.approx(list(middle), abs=0.01)
+    near = 0.01 if method == "vote" else 0.05
+    assert look["method"] == method
+    assert look["found"] is True and look["estimate"]["center"] == pytest.approx(list(middle), abs=near)
     assert look["sessions"] >= boardlook.SESSIONS and look["rechecking"] is False
-    assert (fake.joint[0] + 12.5, fake.z - 3.25) == pytest.approx(middle, abs=0.01)
+    assert (fake.joint[0] + 12.5, fake.z - 3.25) == pytest.approx(middle, abs=near)
     # The search was recorded, and the look begun by loading the board
     # ended as the search began.
     records = client.get("/api/searchlog?camera=head").json()["records"]
@@ -715,7 +718,8 @@ def test_the_head_camera_searches_for_the_board_and_a_capture_takes_the_agreed_p
     assert look["record"] == search_record["id"]
     shown = client.get(f"/api/searchlog/{search_record['id']}").json()
     assert shown["record"]["picture"]["offset"] == [12.5, -3.25] and shown["record"]["board"]["copy"] == "board.kicad_pcb"
-    assert shown["summary"]["estimate"]["center"] == pytest.approx(list(middle), abs=0.01) and shown["summary"]["stops"]
+    assert shown["summary"]["estimate"]["center"] == pytest.approx(list(middle), abs=near) and shown["summary"]["stops"]
+    assert shown["record"]["settings"]["method"] == method and shown["record"]["features"] == []
     page = client.get(f"/api/searchlog/{search_record['id']}/report")
     assert page.status_code == 200 and page.headers["content-type"].startswith("text/html") and "Board search" in page.text
     picture = client.get(f"/api/searchlog/{search_record['id']}/stop-000.jpg")
@@ -727,7 +731,7 @@ def test_the_head_camera_searches_for_the_board_and_a_capture_takes_the_agreed_p
     response = client.post("/api/align/capture", json={"job": job.id})
     assert response.status_code == 200, response.text
     mark = response.json()["marks"][-1]
-    assert mark["machine"] == pytest.approx(list(middle), abs=0.01) and mark["angle"] == pytest.approx(1.0, abs=0.01)
+    assert mark["machine"] == pytest.approx(list(middle), abs=near) and mark["angle"] == pytest.approx(1.0, abs=near)
 
 
 class NearStandIn(BoardStandIn):

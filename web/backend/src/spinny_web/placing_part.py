@@ -297,7 +297,9 @@ class PlacingPart:
         # the file's feed, its acceleration allowed for.
         self._top_rest.speed = max(machine.feed_xy / 120.0, 1.0)
         record = self._board_record("look", "top", job, self.top.client, board, self._top_picture(machine))
-        self.top_look.start(job_id, job.design.board_to_job, middle, self._top_look_place, record)
+        self.top_look.start(
+            job_id, job.design.board_to_job, middle, self._top_look_place, record, features=self._look_features(job), outline=self._board_box(job),
+        )
         return self.publish_placing()
 
     def _top_board_settings(self, job_id: str) -> dict:
@@ -373,7 +375,12 @@ class PlacingPart:
         center = (float(here["x"]) + offset[0], float(here["y"]) + offset[1])
         box = body.box if body.box is not None else self._corners_box(self.top_look, job, settings.corner_mm) or search_box(center, diagonal)
         known = self._top_known(job, settings.corner_mm)
+        prior = self._top_known(job, settings.corner_mm, corners=False)
         stops = search_stops(box, (width * scale, height * scale), known.place.center if known is not None else center)
+        steer = (
+            {"width": width, "height": height, "scale": scale, "speed": max(machine.feed_xy / 60.0, 1.0), "start": center}
+            if settings.look_method == "posterior" else None
+        )
         z = machine.top.z if machine.top is not None else None
         mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
         look = self.top_look
@@ -393,19 +400,20 @@ class PlacingPart:
             found = search(
                 look, mover, stops, offset, lambda point: PictureFrame(point, roll, settings.mirror),
                 mover.stopped, lambda index, count: self.top._step(progress, f"stop {index + 1}"), PnpError, record,
-                checks=self._check_places(job, (width * scale, height * scale)), known=known, side=settings.side,
+                checks=self._check_places(job, (width * scale, height * scale)), known=known, side=settings.side, box=box, prior=prior, steer=steer,
             )
             self.top._message("info", found_text(found, look.consensus))
 
         self.top._begin("search", steps, mover, run)
         return self.placing_state()
 
-    def _top_known(self, job, corner_mm: float) -> KnownPlace | None:
+    def _top_known(self, job, corner_mm: float, corners: bool = True) -> KnownPlace | None:
         """Where the top camera's search expects the job's board: where the
-        corners taken put it, else where the camera found it, else where
-        the job's references (fiducials found, places taken by hand) put
-        it (boardlook.known_place). The job's own frame is not the G-code
-        machine's, so it says nothing here."""
+        corners taken put it (unless `corners` is false: the posterior
+        weighs them as evidence of their own), else where the camera found
+        it, else where the job's references (fiducials found, places taken
+        by hand) put it (boardlook.known_place). The job's own frame is not
+        the G-code machine's, so it says nothing here."""
         middle, diagonal = self._board_size(job)
         references = None
         try:
@@ -414,7 +422,8 @@ class PlacingPart:
         except Exception:  # no references, or none of the job's parts: nothing known from them
             references = None
         look = self.top_look
-        return known_place(corners_known(look.corners_of(job.id), middle, corner_mm, diagonal), look.found_known(job.id), references)
+        taken = corners_known(look.corners_of(job.id), middle, corner_mm, diagonal) if corners else None
+        return known_place(taken, look.found_known(job.id), references)
 
     def top_place(self, body: BoardPlaceBody) -> dict:
         """The board's place the top camera's look found, else the place
