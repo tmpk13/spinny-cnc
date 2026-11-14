@@ -57,5 +57,5 @@ Why it matters: GP3, GP4, GP16 and GP25 reach the chip through a 74LVC2G34 input
 - A. Refuse them in machine files only (recommended): a file naming one is refused with the reason; the firmware keeps reading a stored setting that has one, so nothing already saved is thrown away.
 - B. Refuse them in the firmware as well: also catches the console, but a board with such a setting stored would come up with every setting at its default, wiring included.
 - C. Leave them as they are.
-Applied: C for now (nothing changed); A is a small change in the three machine file readers.
+Applied: A, in 16bce86.
 Answer:
