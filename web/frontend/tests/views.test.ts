@@ -13,7 +13,7 @@ import { droText, mountDro } from "../src/views/dro.ts";
 import { mountJobs } from "../src/views/jobs.ts";
 import { progressText } from "../src/views/run.ts";
 import { findButton } from "./harness.ts";
-import { anyOf, fineStep, holdPiece, HOLD_TICK_MS, keyAction, mountJog } from "../src/views/jog.ts";
+import { anyOf, barPlace, fineStep, holdPiece, HOLD_TICK_MS, keyAction, mountJog } from "../src/views/jog.ts";
 import { confirmSettle } from "../src/confirm.ts";
 import { MAX_BEAM_MS, mountLaser } from "../src/views/laser.ts";
 import { changedBootSettings, mountConfig } from "../src/views/config.ts";
@@ -353,6 +353,23 @@ describe("jog", () => {
         store.set({ snapshot: { connected: false, url: null, firmware: null, machine: null, run: null } });
         expect(root.querySelector("fieldset")?.disabled).toBe(true);
         expect(cancel.disabled).toBe(true);
+    });
+
+    test("each bar says where its axis is now, and follows the machine", () => {
+        const { store, ctx, root } = setup();
+        mountJog(root, ctx);
+        const place = (axis: string): string => root.querySelector(`[data-axis="${axis}"] .axis-bar-at`)?.textContent ?? "";
+        expect(place("r")).toBe("-.--- mm");
+        store.set({ snapshot: connected({ joint: { r: 12.345, a: 90, z: 0.5, h: 2 }, board: { x: 0, y: 12.345 } }) });
+        expect(place("r")).toBe("12.345 mm");
+        expect(place("a")).toBe("90.0000 deg");
+        expect(place("z")).toBe("0.500 mm");
+        store.set({ snapshot: connected({ joint: { r: 3, a: 0, z: 0.5, h: 2 }, board: { x: 3, y: 0 } }) });
+        expect(place("r")).toBe("3.000 mm");
+        // Gone quiet or gone: no numbers.
+        store.set({ snapshot: { connected: false, url: null, firmware: null, machine: null, run: null } });
+        expect(place("r")).toBe("-.--- mm");
+        expect(barPlace("h", "mm", { ...connected().machine!, joint: { r: 0, a: 0, z: 0 } })).toBe("-.--- mm");
     });
 
     test("a step typed in is the step until a choice is pressed again", async () => {

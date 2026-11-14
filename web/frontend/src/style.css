@@ -1681,6 +1681,16 @@ button.badge.state {
     color: var(--strong);
 }
 
+/* Where the axis is now, at the head's right end. */
+.axis-bar-at {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 0.9rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--strong);
+    white-space: nowrap;
+}
+
 .axis-bar-note {
     flex-basis: 100%;
     color: var(--muted);

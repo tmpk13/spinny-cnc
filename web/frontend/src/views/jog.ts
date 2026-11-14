@@ -1,6 +1,6 @@
 // Jog panel, drawn from the machine's controls (controls.ts): one bar per
-// axis, each with its steps (the choices, and a step typed in beside
-// them), its minus and plus buttons and its zero button. The board's X and
+// axis, each with where the axis is now, its steps (the choices, and a step
+// typed in beside them), its minus and plus buttons and its zero button. The board's X and
 // Y bars come first on a machine with a pad, and the arrow keys drive
 // them. Below: the feed field, goto fields, Center, motors and unlock; the
 // cancel button sits in the panel's head, away from every move. Which
@@ -18,12 +18,12 @@
 import { askConfirm } from "../confirm.ts";
 import { controlOf, controlsOf, sameControls, unitOf } from "../controls.ts";
 import { activePage, button, el, inputHasFocus, labeled, lockFieldset, modalOpen, numberField, onEnter, readStored, replace, setLocked, writeStored } from "../dom.ts";
-import { parseNumber } from "../format.ts";
+import { formatDeg, formatMm, parseNumber } from "../format.ts";
 import { gotoPlanText, type PlanInput, type PlanWant } from "../gotoplan.ts";
 import { profileOf } from "../profile.ts";
 import { angleText, readAngle, servoBars, servoKey, type ServoBar } from "../servos.ts";
 import type { AppState } from "../state.ts";
-import type { AxisControl, Controls, GotoRequest, JogRequest, JointAxis, Tool } from "../types.ts";
+import type { AxisControl, Controls, GotoRequest, JogRequest, JointAxis, Machine, Tool } from "../types.ts";
 import { choiceRow, setPressed, type Ctx } from "./context.ts";
 
 export type KeyAction = { dx: number; dy: number } | { axis: JointAxis; sign: 1 | -1 } | "cancel" | null;
@@ -62,6 +62,15 @@ export function keyAction(key: string, controls: Controls): KeyAction {
         }
     }
     return null;
+}
+
+/**
+ * Where a bar's axis is now, in its unit: the board's X or Y, or a joint;
+ * blank numbers when no machine reports, or the machine has no such joint.
+ */
+export function barPlace(id: BarId, unit: "mm" | "deg", machine: Machine | null): string {
+    const value = machine === null ? null : id === "x" ? machine.board.x : id === "y" ? machine.board.y : machine.joint[id];
+    return `${unit === "deg" ? formatDeg(value) : formatMm(value)} ${unit}`;
 }
 
 /** "r", "r and/or a", "r, a and/or h": the fields a goto row wants at least one of. */
@@ -160,6 +169,8 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
     // The servos the bars were drawn for, and each one's angle readout.
     let drawnServos = "";
     const servoAngles = new Map<number, HTMLElement>();
+    // Each bar's place readout and the unit it reads in, by bar.
+    const places = new Map<BarId, { node: HTMLElement; unit: "mm" | "deg" }>();
     let motors: HTMLButtonElement | null = null;
     let home: HTMLButtonElement | null = null;
     // The travel height, a host value: written when the field changes, and
@@ -345,10 +356,13 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
                 setPressed(row, format(pickOf(id, axis)));
             }
         });
+        const place = el("span", { class: "axis-bar-at", title: `where ${title} is now` }, barPlace(id, unit === "deg" ? "deg" : "mm", null));
+        places.set(id, { node: place, unit: unit === "deg" ? "deg" : "mm" });
         return el("div", { class: "axis-bar", "data-axis": id },
             el("div", { class: "axis-bar-head" },
                 el("span", { class: "axis-bar-letter" }, letter),
                 el("span", { class: "axis-bar-title" }, title),
+                place,
                 note ? el("span", { class: "axis-bar-note" }, note) : null,
             ),
             el("div", { class: "axis-bar-steps" }, row, custom),
@@ -608,6 +622,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
         drawnTool = profile.tool;
         drawnController = profile.controller ?? "spinny";
         const bars = el("div", { class: "axis-bars" });
+        places.clear();
         if (controls.pad) {
             bars.append(
                 bar("x", "X", "Board X", "Left and right arrow keys", "mm", undefined, ["X-", "X+"], (sign) => jogBoard(sign * stepOf("x"), 0), (sign) => holdBoard(sign, 0), null),
@@ -671,6 +686,13 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
         }
         if (home) {
             home.classList.toggle("hidden", typeof state.snapshot.machine?.homed !== "string" && profileOf(state.snapshot).controller !== "gcode");
+        }
+        const machine = state.snapshot.connected ? state.snapshot.machine : null;
+        for (const [id, { node, unit }] of places) {
+            const text = barPlace(id, unit, machine);
+            if (node.textContent !== text) {
+                node.textContent = text;
+            }
         }
         const angles = state.snapshot.machine?.servos ?? null;
         for (const [servo, readout] of servoAngles) {
