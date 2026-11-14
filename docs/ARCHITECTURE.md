@@ -33,7 +33,7 @@ its controller before each pick.
 | `firmware/rp2040` | the SKR Pico firmware | `mise run flash` |
 | `firmware/virtual` | the core on a TCP socket with a virtual clock | `mise run virtual` |
 | `web/backend` `virtual_pnp` | a virtual LumenPnP: its Marlin on a TCP socket (moves in time, M400, M410, the vacuum sensor, Photon feeders) and its two cameras drawn from the head's place, served as JPEG snapshots | `mise run virtual-pnp` |
-| `web/backend` | serial link (this project's firmware, or a G-code machine's controller), job import (and again for another bit), the Plot page's operations, markers, streaming, probing (grid or pads), dispensing, the cameras through pcbv and the list of those attached, alignment, the parts of a board, the tools a language model gets (the Auto tab's agent, and `spinny-mcp` for any MCP client), an installed release's update from GitHub's releases, API, serves the page | `uv run spinny-web`, `uv run spinny-mcp` |
+| `web/backend` | serial link (this project's firmware, or a G-code machine's controller), job import (and again for another bit), the Plot page's operations, markers, streaming, probing (grid or pads), dispensing, the cameras through pcbv and the list of those attached, alignment, the parts of a board, the tools a language model gets (the Auto tab's agent, and `spinny-mcp` for any MCP client), an installed release's update from GitHub's releases and its machine files offered against the operator's copies, API, serves the page | `uv run spinny-web`, `uv run spinny-mcp` |
 | `web/frontend` | the page | `cd web/frontend && bun run build` |
 | `toolpath` | `spinny_laser`: polar kinematics, copper clearing and deposition, paste stencils, centering patterns, pads and holes of a layer, the alignment fit, simple milling operations, machine configs, gcode tools | `uv run pytest toolpath/tests` |
 | `machines` | machine configurations in TOML, one per axis setup, with the pins and the page's controls; or a G-code machine's port, dialect, heights, vacuum sensor, cameras and feeders; edited on the page's Config tab | `docs/MACHINES.md` |
@@ -60,6 +60,7 @@ flowchart LR
         BE --> PLP[placing_part: Backend's placing with the G-code machine: references, the cameras' places, lights and vacuum, feeders, a run, kept per machine]
         PLP --> OPNP
         ST[stores: one TOML store for machines/ and cam/: read, checked, saved whole, a value at a time] --> BE
+        SHIP[shipped: a release's machine files merged into the operator's copies, three-way from var/shipped/machines] --> BE
         BE --> CAM[spinny_laser.cam, camjob, post: a design through a profile's operations, gcode for another controller]
         BE --> AL[alignment: marks from the tool or the camera, a turn and a shift fitted and applied to the job]
         BE --> MILL[mill: the Plot page's jobs of operations, drill, holes, line, face, pocket, profile with square or rounded corners, applied in place, and a job made again for another width]
@@ -83,7 +84,7 @@ flowchart LR
         BE --> PNP[pick and place: a board's parts and fiducials from its KiCad file, those kept out of the position files marked, the nozzle centered over the bottom camera, its runout, a part's offset, size and angle on it]
         PF[parts: the parts filter, a regular expression over the reference, value or footprint, kept in config.json] --> PNP
         PNP --> OPNP[openpnp: a G-code machine file's own tables read, the board fitted from references, the program as planned, a goto's lines]
-        OPI[page openpnp.ts: OpenPnP's machine.xml and a job read into a G-code machine file and references] -->|the file saved, references taken| BE
+        OPI[page openpnp.ts: OpenPnP's machine.xml, a job, parts.xml and packages.xml read into a G-code machine file and references] -->|the file saved, references taken| BE
         OPNP --> PLC[placer: a run part by part, from the cameras' looks and the vacuum's reads, failed picks retried]
         PNP --> PLC
         TOPC[topcam: a G-code machine's top camera, its offset from a mark, fiducials, feeder marks, pockets] --> PLC
@@ -115,7 +116,7 @@ flowchart LR
         FIND --> V4L[v4l2-ctl: a camera's controls listed and set, kept per camera and set at each start]
         FIND -.-> VID
         FIND -.-> UST
-        MF[machines/*.toml: axes, pins, kinematics, tool, servos and the PCA9685, camera, the page's controls; a G-code machine's port, dialect, heights, cameras, feeders] <--> BE
+        MF[machines/*.toml: axes, pins, kinematics, tool, servos and the PCA9685, camera, the page's controls; a G-code machine's port, dialect, heights, cameras and their devices, feeders] <--> BE
         MF --> OPNP
         CF[cam/*.toml: axes, tools, materials, operations, post] --> CAM
         CF --> CLI[spinny-cam]
