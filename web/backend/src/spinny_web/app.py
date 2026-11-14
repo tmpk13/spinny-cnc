@@ -793,7 +793,9 @@ class TopSettingsBody(Finite):
     side: str | None = None
     finish: str | None = None
     paste: bool | None = None
-    # The settings to take back to none: mark_at, offset.
+    # Where the nozzle shows in the picture: x0 y0 x1 y1, shares of its width and height.
+    nozzle_box: tuple[float, float, float, float] | None = None
+    # The settings to take back to none: mark_at, offset, nozzle_box.
     clear: list[str] = Field(default_factory=list)
 
 

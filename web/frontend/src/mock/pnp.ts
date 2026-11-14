@@ -52,6 +52,7 @@ export const TOP_DEFAULTS: TopSettings = {
     paste: false,
     lens: null,
     colors: {},
+    nozzle_box: null,
 };
 
 /** The top camera settings checked as the backend checks a PUT; throws with its words. */
@@ -84,6 +85,10 @@ export function checkTopSettings(settings: TopSettings): void {
     }
     if (!(Number.isFinite(settings.roll) && Math.abs(settings.roll) <= 360)) {
         throw new Error("the top camera roll must be within 360 degrees");
+    }
+    const box = settings.nozzle_box ?? null;
+    if (box !== null && (box.length !== 4 || !box.every((v) => Number.isFinite(v) && v >= 0 && v <= 1) || box[0] >= box[2] || box[1] >= box[3])) {
+        throw new Error("the nozzle box must be x0 y0 x1 y1 within the picture, 0 to 1, the first corner left of and above the second");
     }
     checkLook(settings);
 }

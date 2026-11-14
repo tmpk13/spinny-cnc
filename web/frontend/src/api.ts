@@ -411,8 +411,8 @@ export interface Api {
     pnpRunout(): Promise<PlacingState>;
     /** The top camera finds the job's fiducials where the references put them, and keeps them as its references. */
     pnpFiducials(job: string): Promise<PlacingState>;
-    /** Keeps the top camera's settings; `clear` takes the mark's place or the offset back to none. */
-    topSettings(patch: Partial<TopSettings> & { clear?: ("mark_at" | "offset")[] }): Promise<PlacingState>;
+    /** Keeps the top camera's settings; `clear` takes the mark's place, the offset or the nozzle box back to none. */
+    topSettings(patch: Partial<TopSettings> & { clear?: ("mark_at" | "offset" | "nozzle_box")[] }): Promise<PlacingState>;
     topStart(): Promise<PlacingState>;
     topStop(): Promise<PlacingState>;
     /** The top camera's picture. */
@@ -1280,7 +1280,7 @@ export class HttpApi implements Api {
         return this.request<PlacingState>("POST", "/api/pnp/fiducials", { job });
     }
 
-    topSettings(patch: Partial<TopSettings> & { clear?: ("mark_at" | "offset")[] }): Promise<PlacingState> {
+    topSettings(patch: Partial<TopSettings> & { clear?: ("mark_at" | "offset" | "nozzle_box")[] }): Promise<PlacingState> {
         return this.request<PlacingState>("PUT", "/api/pnp/top", patch);
     }
 

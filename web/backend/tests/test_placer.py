@@ -825,6 +825,18 @@ def test_the_top_camera_scans_the_whole_board_from_a_rough_place_and_keeps_a_mos
     assert records[0]["kind"] == "scan" and records[0]["result"] == "found"
 
 
+def test_the_top_cameras_nozzle_box_is_kept_in_shares_of_the_picture_checked_and_cleared(client):
+    rig(client, profile(rest=TOP))
+    response = client.put("/api/pnp/top", json={"nozzle_box": [0.1, 0.6, 0.3, 0.9]})
+    assert response.status_code == 200, response.text
+    assert response.json()["top"]["nozzle_box"] == [0.1, 0.6, 0.3, 0.9]
+    for bad in ([0.3, 0.6, 0.1, 0.9], [0.1, 0.6, 0.3, 1.5], [0.1, 0.6, 0.1, 0.9]):
+        refused = client.put("/api/pnp/top", json={"nozzle_box": bad})
+        assert refused.status_code == 400 and "nozzle box" in refused.json()["detail"]
+    assert client.get("/api/pnp/placing").json()["top"]["nozzle_box"] == [0.1, 0.6, 0.3, 0.9]
+    assert client.put("/api/pnp/top", json={"clear": ["nozzle_box"]}).json()["top"]["nozzle_box"] is None
+
+
 def test_the_top_cameras_corner_by_edges_is_kept_with_its_picture_in_the_camera_log(client):
     rig(client, profile(rest=TOP))
     job_id = outlined_job(client)

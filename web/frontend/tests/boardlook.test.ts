@@ -72,6 +72,10 @@ describe("looking for a board in the mock", () => {
         expect(loaded.top?.board_look).toMatchObject({ job: job.id, looks: 0, found: false });
         await expect(backend.topSearch(null)).rejects.toMatchObject({ status: 400 });
         await backend.topSettings({ offset: [...TOP_TRUTH.offset], mm_per_px: TOP_TRUTH.mmPerPx, roll: TOP_TRUTH.roll });
+        // The nozzle's box in the picture is kept, checked and cleared as the backend does.
+        expect((await backend.topSettings({ nozzle_box: [0.1, 0.6, 0.3, 0.9] })).top?.nozzle_box).toEqual([0.1, 0.6, 0.3, 0.9]);
+        await expect(backend.topSettings({ nozzle_box: [0.3, 0.6, 0.1, 0.9] })).rejects.toMatchObject({ status: 400 });
+        expect((await backend.topSettings({ clear: ["nozzle_box"] })).top?.nozzle_box).toBeNull();
         // The board lies at the mock's own place with no references.
         const stored = (await backend.job(job.id));
         const { middle } = jobSize(stored);

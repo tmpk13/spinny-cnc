@@ -1555,6 +1555,8 @@ export interface TopSettings {
     paste?: boolean;
     lens?: CameraLens | null;
     colors?: CameraColors;
+    /** Where the nozzle generally shows in the picture, as drawn on it: x0, y0, x1, y1 in shares of its width and height from the top left; null until drawn. */
+    nozzle_box?: [number, number, number, number] | null;
 }
 
 export type TopStep = "lifting" | "moving" | "lowering" | "scale" | "centering" | "fitting" | "done" | string;

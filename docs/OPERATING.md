@@ -966,7 +966,12 @@ below it and never brings it down. The Bottom camera view and Top
 camera view panels show the two pictures (stack them, or put them side
 by side, from the panels' menus); a drag on a picture moves the head so
 the picture follows the pointer, a double-click brings a point to the
-crosshair, and Ctrl and the wheel zoom. The dashed circle is how far from
+crosshair, and Ctrl and the wheel zoom. *Nozzle box* under the top
+camera's picture, then a drag on it, draws a box where the nozzle
+generally shows in that picture: the nozzle rides on the head with the
+camera, so the box stays put there and is drawn dashed orange with the
+word *nozzle*, kept with the top camera's settings (*Clear nozzle box*
+forgets it). The dashed circle is how far from
 the center a part is looked for (`[up_camera] crop`, or a feeder's `crop`).
 Every look a routine takes waits for a picture taken a quarter of a
 second after the head stopped, and *Center nozzle* refuses a measure

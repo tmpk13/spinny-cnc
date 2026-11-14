@@ -98,10 +98,20 @@ class TopCameraSettings(BaseModel):
     # (vision.COLOR_ITEMS): spots of that color instead of a shade, the
     # board's pads, a blank board's edges.
     colors: dict[str, list[int]] = Field(default_factory=dict)
+    # Where the nozzle generally shows in the picture, as drawn on it: a
+    # box x0, y0, x1, y1 in shares of the picture's width and height from
+    # its top left (0 to 1), so another capture size keeps it. The nozzle
+    # rides on the head with the camera, so the box stays put in the
+    # picture wherever the head goes. None until drawn.
+    nozzle_box: tuple[float, float, float, float] | None = None
 
     def check(self) -> None:
         if not self.device.strip():
             raise ValueError("the top camera device must be named")
+        if self.nozzle_box is not None:
+            x0, y0, x1, y1 = self.nozzle_box
+            if not all(math.isfinite(v) and 0.0 <= v <= 1.0 for v in self.nozzle_box) or x0 >= x1 or y0 >= y1:
+                raise ValueError("the nozzle box must be x0 y0 x1 y1 within the picture, 0 to 1, the first corner left of and above the second")
         check_lens(self.lens)
         check_colors(self.colors)
         if self.side not in machine_files.CAMERA_SIDES:
@@ -140,8 +150,8 @@ class TopCamera(PickCamera):
     log_name = "top"
     key = "top"
     Settings = TopCameraSettings
-    places = ("mark_at", "offset")
-    clearable = ("mark_at", "offset")
+    places = ("mark_at", "offset", "nozzle_box")
+    clearable = ("mark_at", "offset", "nozzle_box")
     routines = {
         "offset": "measuring the top camera's offset", "fiducials": "finding the fiducials", "search": "looking for the board",
         "scan": "scanning the board", "home": "homing by the fiducial",

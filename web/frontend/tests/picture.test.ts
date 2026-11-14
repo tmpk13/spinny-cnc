@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { boardMarks, frameSize, reachMark, shownSpots } from "../src/views/camview.ts";
-import { addTurn, armedPick, armPick, clampZoom, crosshairMarks, disarmPick, dragMove, followShift, frameRequestWidth, growBox, keptMarks, levelText, machineToPicture, MAX_KEPT_SPOTS, mountPicture, pictureToMachine, readCrosshair, readQuarters, shiftMark, type ShownSpot, spotMarks, stepZoom, takeSpots, turnTransform, UNTURNED, unturnOffset, uprightTurn, zoomText } from "../src/views/picture.ts";
+import { boardMarks, boxShares, frameSize, nozzleBoxMarks, reachMark, shownSpots } from "../src/views/camview.ts";
+import { addTurn, armBox, armedPick, armPick, clampZoom, crosshairMarks, disarmPick, dragMove, followShift, frameRequestWidth, growBox, keptMarks, levelText, machineToPicture, MAX_KEPT_SPOTS, mountPicture, pictureToMachine, readCrosshair, readQuarters, shiftMark, type ShownSpot, spotMarks, stepZoom, takeSpots, turnTransform, UNTURNED, unturnOffset, uprightTurn, zoomText } from "../src/views/picture.ts";
 import { click, setup, settle } from "./harness.ts";
 
 /** A CSS or SVG transform list applied to a point: rotate (degrees, clockwise on a y-down screen), scaleX, scale and translate; the last one listed acts first. */
@@ -201,6 +201,19 @@ describe("picture geometry", () => {
         expect(reachMark(2, { mmPerPx: 0.02, roll: 0, mirror: false }, [1280, 720], "")[0]).toMatchObject({ r: 100 });
     });
 
+    test("the nozzle box is kept in shares of the picture and drawn with its word at its corner", () => {
+        expect(boxShares([128, 72, 384, 360], [1280, 720])).toEqual([0.1, 0.1, 0.3, 0.5]);
+        // Past the picture's edge it is held to it; a box with no width is none.
+        expect(boxShares([-20, 0, 640, 900], [1280, 720])).toEqual([0, 0, 0.5, 1]);
+        expect(boxShares([10, 10, 10, 50], [1280, 720])).toBeNull();
+        const shown = { size: [1000, 500] as [number, number], region: [0, 0, 1000, 500] as [number, number, number, number], scale: 0.5, rem: 16 };
+        const [outline, word] = nozzleBoxMarks([0.1, 0.2, 0.3, 0.4], shown);
+        expect(outline).toMatchObject({ kind: "line", closed: true, tone: "nozzle", points: [[100, 100], [300, 100], [300, 200], [100, 200]] });
+        // 0.75 rem at 0.5 screen px a picture px: 24 px of the picture.
+        expect(word).toMatchObject({ kind: "text", text: "nozzle", size: 24 });
+        expect(nozzleBoxMarks(null, shown)).toEqual([]);
+    });
+
     test("the board's outline lands in the picture where the estimate puts it", () => {
         const job = { outline: [[[0, 0], [10, 0]]] } as never;
         // The board turned a quarter and shifted to 100, 50; the picture's center sees 100, 50.
@@ -319,6 +332,27 @@ describe("the picture view", () => {
         pointer(stage, "pointerdown", 100, 100);
         pointer(stage, "pointerup", 100, 100);
         expect(picked).toHaveLength(1);
+        view.stop();
+    });
+
+    test("a box pick takes the next drag as a box of the full size picture, not a move; a click leaves it armed", async () => {
+        const { view, stage, moves } = mounted();
+        const boxes: [number, number, number, number][] = [];
+        armBox("test-true", "the nozzle", (box) => boxes.push(box));
+        expect(view.root.querySelector(".picture-pick")?.textContent).toBe("Drag a box on the picture around the nozzle.");
+        pointer(stage, "pointerdown", 100, 100);
+        pointer(stage, "pointerup", 101, 100);
+        expect(boxes).toHaveLength(0);
+        expect(armedPick("test-true")).toBe("the nozzle");
+        // Dragged up and left: the box comes corner first, up and left.
+        pointer(stage, "pointerdown", 300, 150);
+        pointer(stage, "pointermove", 200, 50);
+        expect(view.root.querySelector(".mark-box")).not.toBeNull();
+        pointer(stage, "pointerup", 200, 50);
+        await settle();
+        expect(boxes).toEqual([[400, 100, 600, 300]]);
+        expect(moves).toHaveLength(0);
+        expect(armedPick("test-true")).toBeNull();
         view.stop();
     });
 

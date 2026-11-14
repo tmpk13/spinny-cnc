@@ -7832,7 +7832,7 @@ export class MockBackend implements Api, EventFeed {
         return this.topConfig.offset !== null && this.topConfig.mm_per_px > 0;
     }
 
-    async topSettings(patch: Partial<TopSettings> & { clear?: ("mark_at" | "offset")[] }): Promise<PlacingState> {
+    async topSettings(patch: Partial<TopSettings> & { clear?: ("mark_at" | "offset" | "nozzle_box")[] }): Promise<PlacingState> {
         // Kept with what the tab keeps of a G-code machine: there must be one.
         this.placingDevice();
         const { clear, ...rest } = patch;

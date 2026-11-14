@@ -11,13 +11,14 @@
 // to line the part up with (partshape.ts). A drag moves the head
 // (picture.ts). The pictures are asked for only while the page shows.
 
-import { activePage, el } from "../dom.ts";
+import { activePage, button, el, lockFor } from "../dom.ts";
 import type { AppState } from "../state.ts";
 import type { BoardCorners, BoardEstimate, Job, RoutineSpot, SpotLook } from "../types.ts";
 import type { Ctx } from "./context.ts";
-import { bottomHead, bottomKnown, knownMarks, topKnown } from "./known.ts";
+import { bottomHead, bottomKnown, knownMarks, LABEL_REM, topKnown } from "./known.ts";
 import { boardTurn, partShapes, readShowShape, shapeMarks } from "./partshape.ts";
-import { type Calibration, type Mark, machineToPicturePoints, mountPicture, type PictureView, type ShownSpot } from "./picture.ts";
+import { armBox, type Calibration, machineToPicturePoints, type Mark, mountPicture, type PictureShown, type PictureView, type ShownSpot } from "./picture.ts";
+import { type Ctx, into } from "./context.ts";
 import { gcodePlacing } from "./placing.ts";
 
 export { dragMove, pictureToMachine } from "./picture.ts";
@@ -86,6 +87,31 @@ export function boardMarks(
 /** The rough place the corners taken of the job drawn give, when they are of that job. */
 export function roughOf(job: Job | null, corners: BoardCorners | null | undefined): BoardEstimate | null {
     return job !== null && corners && corners.job === job.id ? corners.rough : null;
+}
+
+/**
+ * The box drawn where the nozzle shows in the top camera's picture (shares
+ * of its width and height), as marks over the picture `shown`: the box
+ * and the word "nozzle" in its top left corner, one size on the screen.
+ */
+export function nozzleBoxMarks(box: [number, number, number, number] | null | undefined, shown: PictureShown): Mark[] {
+    if (!box) {
+        return [];
+    }
+    const [width, height] = shown.size;
+    const [x0, y0, x1, y1] = [box[0] * width, box[1] * height, box[2] * width, box[3] * height];
+    const font = shown.scale > 0 ? (LABEL_REM * shown.rem) / shown.scale : height / 40;
+    return [
+        { kind: "line", points: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], closed: true, tone: "nozzle", title: "where the nozzle shows in the picture, as drawn" },
+        { kind: "text", x: x0 + font / 3, y: y0 + font * 1.1, text: "nozzle", size: font, anchor: "start", tone: "nozzle" },
+    ];
+}
+
+/** A box drawn on a picture of `size` px, as shares of its width and height within it, to hundred-thousandths; null for one with no width or height. */
+export function boxShares(box: [number, number, number, number], size: [number, number]): [number, number, number, number] | null {
+    const clamp = (value: number): number => Math.round(Math.max(0, Math.min(1, value)) * 100000) / 100000;
+    const shares: [number, number, number, number] = [clamp(box[0] / size[0]), clamp(box[1] / size[1]), clamp(box[2] / size[0]), clamp(box[3] / size[1])];
+    return shares[0] < shares[2] && shares[1] < shares[3] ? shares : null;
 }
 
 /** The bottom camera's calibration on the machine its routines move. */
@@ -222,6 +248,7 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
                 ...boardMarks(job, look?.estimate ?? null, topCenter(state), calibration, size),
                 ...knownMarks(topKnown(state), topCenter(state), calibration, shown),
                 ...shapeOf(state, calibration, size),
+                ...nozzleBoxMarks(topState?.nozzle_box, shown),
             ];
         },
         spots: (state) => (state.placing?.top ? shownSpots(state.placing.top.routine, state.placing.top.look) : null),
@@ -232,18 +259,40 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
         boxes: true,
     }, ctx);
     const topEmpty = el("p", { class: "muted camera-view-empty" }, "The top camera is not running: start it in its panel.");
+    // The nozzle's place in the top camera's picture, drawn by hand: the
+    // nozzle rides on the head with the camera, so it stays put there.
+    const nozzleBox = button("Nozzle box", () => armBox("top", "the nozzle", (box) => void keepNozzleBox(box)), "btn btn-quiet btn-small",
+        "drag a box on the picture around where the nozzle generally shows; it stays drawn there, kept with the top camera");
+    const clearNozzle = button("Clear nozzle box", () => into(ctx, "placing", ctx.api.topSettings({ clear: ["nozzle_box"] })), "btn btn-quiet btn-small",
+        "forget the nozzle's box");
+    top.caption.append(nozzleBox, clearNozzle);
+
+    async function keepNozzleBox(box: [number, number, number, number]): Promise<void> {
+        const topState = ctx.store.get().placing?.top;
+        const size = frameSize(topState?.frame, topState?.size) ?? [1280, 720];
+        const shares = boxShares(box, size);
+        if (shares === null) {
+            ctx.toast("info", "the box has no width or height inside the picture: drag across the nozzle");
+            return;
+        }
+        await into(ctx, "placing", ctx.api.topSettings({ nozzle_box: shares }));
+    }
+
     roots.top.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Top camera view")),
         el("div", { class: "panel-body" },
             top.root,
             topEmpty,
-            el("p", { class: "muted hint" }, "Drag the picture to move the head; double-click a point to bring it to the crosshair; Ctrl and the wheel zoom; Shift and a drag draw the box a board search keeps to."),
+            el("p", { class: "muted hint" }, "Drag the picture to move the head; double-click a point to bring it to the crosshair; Ctrl and the wheel zoom; Shift and a drag draw the box a board search keeps to; Nozzle box, then a drag, marks where the nozzle shows."),
         ),
     );
 
     function render(state: AppState): void {
         bottom.render(state);
         top.render(state);
+        const topState = state.placing?.top;
+        lockFor(nozzleBox, [topState?.running !== true, "start the top camera first"]);
+        clearNozzle.classList.toggle("hidden", !topState?.nozzle_box);
         bottomEmpty.classList.toggle("hidden", state.pnp?.running === true);
         topEmpty.classList.toggle("hidden", state.placing?.top?.running === true);
         // The top camera is a G-code machine's: its panel shows with one.
