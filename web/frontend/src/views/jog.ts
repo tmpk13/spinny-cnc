@@ -1,8 +1,10 @@
 // Jog panel, drawn from the machine's controls (controls.ts): one bar per
 // axis, each with where the axis is now, its steps (the choices, and a step
-// typed in beside them), its minus and plus buttons and its zero button. The board's X and
-// Y bars come first on a machine with a pad, and the arrow keys drive
-// them. Below: the feed field, goto fields, Center, motors and unlock; the
+// typed in beside them), its minus and plus buttons and its zero button. On
+// a machine with a board pad, the pad comes first: eight arrows around where
+// the head is on the board, the corners moving X and Y together, each by
+// its bar's step; the board's X and Y bars under it hold those steps, and
+// the arrow keys drive them. Below: the feed field, goto fields, Center, motors and unlock; the
 // cancel button sits in the panel's head, away from every move. Which
 // joints there are, what they are called, how they step and whether the
 // feed applies is the machine file's; the panel only draws it, and draws
@@ -17,7 +19,7 @@
 
 import { askConfirm } from "../confirm.ts";
 import { controlOf, controlsOf, sameControls, unitOf } from "../controls.ts";
-import { activePage, button, el, inputHasFocus, labeled, lockFieldset, modalOpen, numberField, onEnter, readStored, replace, setLocked, writeStored } from "../dom.ts";
+import { activePage, button, el, inputHasFocus, labeled, lockFieldset, modalOpen, numberField, onEnter, readStored, replace, setLocked, svgIcon, writeStored } from "../dom.ts";
 import { formatDeg, formatMm, parseNumber } from "../format.ts";
 import { gotoPlanText, type PlanInput, type PlanWant } from "../gotoplan.ts";
 import { profileOf } from "../profile.ts";
@@ -68,10 +70,29 @@ export function keyAction(key: string, controls: Controls): KeyAction {
  * Where a bar's axis is now, in its unit: the board's X or Y, or a joint;
  * blank numbers when no machine reports, or the machine has no such joint.
  */
-export function barPlace(id: BarId, unit: "mm" | "deg", machine: Machine | null): string {
+export function barPlace(id: BarId, unit: "mm" | "deg", machine: Machine | null, withUnit = true): string {
     const value = machine === null ? null : id === "x" ? machine.board.x : id === "y" ? machine.board.y : machine.joint[id];
-    return `${unit === "deg" ? formatDeg(value) : formatMm(value)} ${unit}`;
+    const number = unit === "deg" ? formatDeg(value) : formatMm(value);
+    return withUnit ? `${number} ${unit}` : number;
 }
+
+/** An arrow pointing right in a box 16 units square, turned for each move of the pad. */
+const ARROW = "M2 7.25H9.5V3.75L14 8L9.5 12.25V8.75H2Z";
+
+/** A move of the board pad: which way in X and in Y, and its name, which is its button's text. */
+export interface PadMove {
+    dx: -1 | 0 | 1;
+    dy: -1 | 0 | 1;
+    name: string;
+}
+
+/** The pad's cells row by row, top left first; null is the middle, where the head's place is. */
+export const PAD: (PadMove | null)[] = ([[-1, 1], [0, 1], [1, 1], [-1, 0], null, [1, 0], [-1, -1], [0, -1], [1, -1]] as ([-1 | 0 | 1, -1 | 0 | 1] | null)[])
+    .map((cell) => cell === null ? null : {
+        dx: cell[0],
+        dy: cell[1],
+        name: [cell[0] !== 0 ? `X${cell[0] > 0 ? "+" : "-"}` : "", cell[1] !== 0 ? `Y${cell[1] > 0 ? "+" : "-"}` : ""].filter((part) => part !== "").join(" "),
+    });
 
 /** "r", "r and/or a", "r, a and/or h": the fields a goto row wants at least one of. */
 export function anyOf(names: string[]): string {
@@ -169,8 +190,9 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
     // The servos the bars were drawn for, and each one's angle readout.
     let drawnServos = "";
     const servoAngles = new Map<number, HTMLElement>();
-    // Each bar's place readout and the unit it reads in, by bar.
-    const places = new Map<BarId, { node: HTMLElement; unit: "mm" | "deg" }>();
+    // Each bar's place readout, the unit it reads in, and whether it says
+    // the unit (the pad's middle does not: its tooltip does), by bar.
+    const places = new Map<BarId, { node: HTMLElement; unit: "mm" | "deg"; bare?: boolean }>();
     let motors: HTMLButtonElement | null = null;
     let home: HTMLButtonElement | null = null;
     // The travel height, a host value: written when the field changes, and
@@ -252,12 +274,21 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
             stopHold();
         }
     });
-    /** A held piece of a board jog: the step per second, at that feed where the feed applies. */
+    /**
+     * A held piece of a board jog: X and Y each at its own bar's step per
+     * second (a corner of the pad moves both), at the speed of the two
+     * together where the feed applies.
+     */
     const holdBoard = (dx: number, dy: number) => (seconds: number): Promise<unknown> => {
-        const rate = stepOf(dx !== 0 ? "x" : "y");
-        const step = holdPiece(rate, seconds);
+        const rateX = dx !== 0 ? stepOf("x") : 0;
+        const rateY = dy !== 0 ? stepOf("y") : 0;
         const gcode = profileOf(ctx.store.get().snapshot).controller === "gcode";
-        return ctx.api.jog({ kind: "board", dx: dx * step, dy: dy * step, feed: gcode || controls.feed ? rate * 60 : null });
+        return ctx.api.jog({
+            kind: "board",
+            dx: dx === 0 ? 0 : dx * holdPiece(rateX, seconds),
+            dy: dy === 0 ? 0 : dy * holdPiece(rateY, seconds),
+            feed: gcode || controls.feed ? Math.hypot(rateX, rateY) * 60 : null,
+        });
     };
     /** A held piece of a joint jog; an axis the feed does not apply to runs at its jog rate, and the cancel at the release stops it. */
     const holdAxis = (axis: AxisControl, sign: 1 | -1) => (seconds: number): Promise<unknown> => {
@@ -327,7 +358,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
         note: string,
         unit: string,
         axis: AxisControl | undefined,
-        buttons: [string, string],
+        buttons: [string, string] | null,
         onMove: (sign: 1 | -1) => Promise<unknown>,
         onHold: (sign: 1 | -1) => (seconds: number) => Promise<unknown>,
         zero: HTMLButtonElement | null,
@@ -356,8 +387,13 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
                 setPressed(row, format(pickOf(id, axis)));
             }
         });
-        const place = el("span", { class: "axis-bar-at", title: `where ${title} is now` }, barPlace(id, unit === "deg" ? "deg" : "mm", null));
-        places.set(id, { node: place, unit: unit === "deg" ? "deg" : "mm" });
+        // A bar whose moves are the pad's (the board's X and Y) says its
+        // place in the pad's middle, beside the arrows.
+        let place: HTMLElement | null = null;
+        if (buttons !== null) {
+            place = el("span", { class: "axis-bar-at", title: `where ${title} is now` }, barPlace(id, unit === "deg" ? "deg" : "mm", null));
+            places.set(id, { node: place, unit: unit === "deg" ? "deg" : "mm" });
+        }
         return el("div", { class: "axis-bar", "data-axis": id },
             el("div", { class: "axis-bar-head" },
                 el("span", { class: "axis-bar-letter" }, letter),
@@ -366,12 +402,40 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
                 note ? el("span", { class: "axis-bar-note" }, note) : null,
             ),
             el("div", { class: "axis-bar-steps" }, row, custom),
-            el("div", { class: "axis-bar-buttons" },
+            buttons === null ? null : el("div", { class: "axis-bar-buttons" },
                 jogButton(buttons[0], () => onMove(-1), onHold(-1), `${title}: back by the step`),
                 jogButton(buttons[1], () => onMove(1), onHold(1), `${title}: on by the step`),
             ),
             zero,
         );
+    }
+
+    /**
+     * The board's moves as a pad of arrows around where the head is: up,
+     * down, left, right, and the corners, which move X and Y together, X by
+     * the X bar's step and Y by the Y bar's. Every arrow holds under Hold
+     * to move as the bars' buttons do.
+     */
+    function boardPad(): HTMLDivElement {
+        const cells = PAD.map((move) => {
+            if (move === null) {
+                const x = el("span", { class: "jog-pad-value" }, barPlace("x", "mm", null, false));
+                const y = el("span", { class: "jog-pad-value" }, barPlace("y", "mm", null, false));
+                places.set("x", { node: x, unit: "mm", bare: true });
+                places.set("y", { node: y, unit: "mm", bare: true });
+                return el("div", { class: "jog-pad-here", title: "where the head is on the board, mm" },
+                    el("span", { class: "jog-pad-letter" }, "X"), x, el("span", { class: "jog-pad-letter" }, "Y"), y);
+            }
+            const corner = move.dx !== 0 && move.dy !== 0;
+            const press = jogButton(move.name, () => jogBoard(move.dx * stepOf("x"), move.dy * stepOf("y")), holdBoard(move.dx, move.dy),
+                corner ? `board ${move.name}: X and Y together, each by its bar's step` : `board ${move.name} by the ${move.dx !== 0 ? "X" : "Y"} bar's step`);
+            press.classList.add("jog-pad-move");
+            const arrow = svgIcon(ARROW);
+            arrow.style.setProperty("--turn", `${(Math.atan2(-move.dy, move.dx) * 180) / Math.PI}deg`);
+            press.prepend(arrow);
+            return press;
+        });
+        return el("div", { class: "jog-pad", "data-axis": "board" }, ...cells);
     }
 
     /** The servos the state fits, as their bars. */
@@ -624,9 +688,11 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
         const bars = el("div", { class: "axis-bars" });
         places.clear();
         if (controls.pad) {
+            // The pad moves the board; the bars under it hold its steps.
             bars.append(
-                bar("x", "X", "Board X", "Left and right arrow keys", "mm", undefined, ["X-", "X+"], (sign) => jogBoard(sign * stepOf("x"), 0), (sign) => holdBoard(sign, 0), null),
-                bar("y", "Y", "Board Y", "Up and down arrow keys", "mm", undefined, ["Y-", "Y+"], (sign) => jogBoard(0, sign * stepOf("y")), (sign) => holdBoard(0, sign), null),
+                boardPad(),
+                bar("x", "X", "Board X", "Left and right arrow keys", "mm", undefined, null, (sign) => jogBoard(sign * stepOf("x"), 0), (sign) => holdBoard(sign, 0), null),
+                bar("y", "Y", "Board Y", "Up and down arrow keys", "mm", undefined, null, (sign) => jogBoard(0, sign * stepOf("y")), (sign) => holdBoard(0, sign), null),
             );
         }
         for (const axis of controls.axes) {
@@ -688,8 +754,8 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () 
             home.classList.toggle("hidden", typeof state.snapshot.machine?.homed !== "string" && profileOf(state.snapshot).controller !== "gcode");
         }
         const machine = state.snapshot.connected ? state.snapshot.machine : null;
-        for (const [id, { node, unit }] of places) {
-            const text = barPlace(id, unit, machine);
+        for (const [id, { node, unit, bare }] of places) {
+            const text = barPlace(id, unit, machine, bare !== true);
             if (node.textContent !== text) {
                 node.textContent = text;
             }

@@ -1727,6 +1727,60 @@ button.badge.state {
     font-weight: 600;
 }
 
+/* The board pad: eight arrows around where the head is, the corners
+   moving X and Y together. Each arrow is turned its way (--turn, set by
+   the page), its name under it; the middle holds the head's X and Y. */
+.jog-pad {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.4rem;
+    padding: 0.5rem 0.7rem;
+    background: var(--panel-2);
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+}
+
+.jog-pad .btn-axis {
+    flex-direction: column;
+    gap: 0.1rem;
+    padding: 0.3rem 0.25rem;
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+
+.jog-pad-move .icon {
+    width: 1.3rem;
+    height: 1.3rem;
+    transform: rotate(var(--turn, 0deg));
+}
+
+.jog-pad-here {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-content: center;
+    gap: 0.1rem 0.4rem;
+    min-width: 0;
+    padding: 0.3rem 0.5rem;
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--strong);
+    border: thin dashed var(--border-strong);
+    border-radius: var(--radius);
+}
+
+.jog-pad-letter {
+    font-family: var(--font);
+    font-weight: 700;
+    color: var(--accent);
+}
+
+.jog-pad-value {
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 /* Where a servo is, beside its name: the angle it holds, or off. */
 .servo-angle {
     color: var(--muted);

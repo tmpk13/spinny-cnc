@@ -355,6 +355,48 @@ describe("jog", () => {
         expect(cancel.disabled).toBe(true);
     });
 
+    test("the pad's corners move X and Y together, each by its bar's step, around where the head is", async () => {
+        localStorage.removeItem("spinny.jog.smooth");
+        const { store, ctx, root, calls, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountJog(root, ctx);
+        const pad = root.querySelector('.jog-pad[data-axis="board"]')!;
+        expect(Array.from(pad.querySelectorAll("button")).map((node) => node.textContent)).toEqual(["X- Y+", "Y+", "X+ Y+", "X-", "X+", "X- Y-", "Y-", "X+ Y-"]);
+        for (const node of Array.from(pad.querySelectorAll<HTMLButtonElement>("button"))) {
+            expect(node.title).not.toBe("");
+        }
+        // The board's bars hold the steps; their moves are the pad's.
+        expect(root.querySelector('[data-axis="x"] .axis-bar-buttons')).toBeNull();
+        click(root.querySelector('[data-axis="x"]')!, "10 mm");
+        click(pad, "X+ Y-");
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 10, dy: -1, feed: null });
+        calls.length = 0;
+        click(pad, "Y+");
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 0, dy: 1, feed: null });
+        // The middle is where the head is on the board.
+        const here = (): string[] => Array.from(pad.querySelectorAll(".jog-pad-value")).map((node) => node.textContent ?? "");
+        store.set({ snapshot: connected({ board: { x: 4.5, y: -2 } }) });
+        expect(here()).toEqual(["4.500", "-2.000"]);
+        // Held, a corner sends pieces of both, each at its own step a second.
+        findButton(root, "Hold to move").click();
+        calls.length = 0;
+        const corner = findButton(pad as HTMLElement, "X- Y+");
+        corner.dispatchEvent(new PointerEvent("pointerdown", { button: 0, bubbles: true, pointerId: 1 }));
+        await new Promise((resolve) => setTimeout(resolve, 1.5 * HOLD_TICK_MS));
+        corner.dispatchEvent(new PointerEvent("pointerup", { button: 0, bubbles: true, pointerId: 1 }));
+        await settle();
+        const piece = calls.find((c) => c.name === "jog")?.args[0] as { dx: number; dy: number; feed: number | null };
+        expect(piece.dx).toBeLessThan(0);
+        expect(piece.dy).toBeGreaterThan(0);
+        // Ten times the X step as the Y's, so ten times as far.
+        expect(piece.dx / piece.dy).toBeCloseTo(-10, 6);
+        findButton(root, "Hold to move").click();
+        localStorage.removeItem("spinny.jog.smooth");
+    });
+
     test("each bar says where its axis is now, and follows the machine", () => {
         const { store, ctx, root } = setup();
         mountJog(root, ctx);
@@ -382,7 +424,7 @@ describe("jog", () => {
         custom.value = "2.5";
         custom.dispatchEvent(new Event("input", { bubbles: true }));
         expect(Array.from(x.querySelectorAll(".btn-choice")).every((b) => b.getAttribute("aria-pressed") === "false")).toBe(true);
-        click(x, "X+");
+        click(root, "X+");
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 2.5, dy: 0, feed: null });
         calls.length = 0;
@@ -398,7 +440,7 @@ describe("jog", () => {
         // A choice pressed clears the typed step.
         click(x, "10 mm");
         expect(custom.value).toBe("");
-        click(x, "X-");
+        click(root, "X-");
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: -10, dy: 0, feed: null });
         calls.length = 0;
@@ -406,7 +448,7 @@ describe("jog", () => {
         custom.value = "0";
         custom.dispatchEvent(new Event("input", { bubbles: true }));
         expect(x.querySelector('.btn-choice[aria-pressed="true"]')?.textContent).toBe("10 mm");
-        click(x, "X+");
+        click(root, "X+");
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 10, dy: 0, feed: null });
     });
