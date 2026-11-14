@@ -1087,6 +1087,17 @@ with where the machine finds them, and turns and shifts the job to match
   agree on the board (Looking for the board, above), *Capture* takes
   their agreed place and turn instead of the newest picture's.
 
+With three marks or more the fit line also gives the board's stretch:
+its X and Y scale and its shear (degrees off square), each with how sure
+the marks make it, fitted as the probability over the board's pose fits
+them (a fab's tolerance as the starting doubt, so a few marks cannot
+claim a large stretch). A mark far off the rest is taken as a wrong one
+and counts for nothing; the line says how many. The stretch is reported,
+never applied. With the head camera's look on *Probability over the
+pose*, the marks made with the tool and the features *Center features*
+centered are evidence the look weighs too (the camera's own captures are
+not, being the look's own place).
+
 *Apply* moves the job and clears the marks. Check the result in the
 preview, and probe the pads or tie the height map after a large move,
 since the map is in board coordinates too.

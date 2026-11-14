@@ -1941,6 +1941,14 @@ export interface AlignFit {
     rms: number;
     residuals: number[];
     marks: number;
+    /**
+     * With three marks or more, the board's stretch they show (fitted as
+     * the posterior's places are, the fab's tolerance as prior): X and Y
+     * scale and shear with their standard deviations, that fit's rms, and
+     * each mark's weight (near 0 for one far off, taken as wrong). Reported,
+     * never applied; null when it could not be fitted.
+     */
+    stretch?: (BoardStretch & { rms: number; weights: number[] }) | null;
 }
 
 export interface AlignState {

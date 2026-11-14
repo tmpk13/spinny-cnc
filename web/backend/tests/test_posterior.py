@@ -444,3 +444,54 @@ def test_a_full_scan_looks_at_every_picture_keeps_each_for_the_mosaic_and_finds_
     assert tile["center"] == pytest.approx(list(stops[0]))
     assert state["estimate"]["center"] == pytest.approx(list(found.center), abs=1e-3)
     assert look_.mosaic.picture(0) == b"\xff\xd8 picture \xff\xd9" and look_.mosaic.picture(len(stops)) is None
+
+
+def test_marks_give_the_boards_stretch_and_one_mark_far_off_is_weighed_down_not_followed():
+    from spinny_web.posterior import fit_marks
+
+    truth = (1.003, 0.998)
+    designs = [(2.0, 2.0), (38.0, 2.0), (38.0, 28.0), (2.0, 28.0), (20.0, 15.0), (30.0, 10.0)]
+    pairs = [(d, machine_of(d, stretch=truth)) for d in designs]
+    fit = fit_marks(pairs)
+    assert fit.scale_x == pytest.approx(truth[0], abs=3.0 * fit.scale_x_sd + 1e-6)
+    assert fit.scale_y == pytest.approx(truth[1], abs=3.0 * fit.scale_y_sd + 1e-6)
+    assert fit.scale_x > 1.0015 and fit.scale_y < 0.999
+    assert abs(fit.shear_deg) < 3.0 * fit.shear_deg_sd + 1e-6 and fit.rotation == pytest.approx(TRUTH_TURN, abs=0.02)
+    # The fab tolerance prior holds the scale a little short of exact marks: a few hundredths left over.
+    assert all(weight > 0.99 for weight in fit.weights) and fit.rms < 0.03
+    # One mark 2 mm off: weighed down, the turn and scale stay.
+    wrong = list(pairs)
+    wrong[2] = (wrong[2][0], (wrong[2][1][0] + 2.0, wrong[2][1][1]))
+    robust = fit_marks(wrong)
+    assert robust.weights[2] < 0.01 and min(robust.weights[:2] + robust.weights[3:]) > 0.99
+    assert robust.rotation == pytest.approx(TRUTH_TURN, abs=0.05) and robust.residuals[2] > 1.5
+    assert abs(robust.scale_x - fit.scale_x) < 0.002
+    with pytest.raises(ValueError, match="three marks"):
+        fit_marks(pairs[:2])
+
+
+def test_align_shows_the_stretch_of_three_marks_or_more_and_the_posterior_weighs_its_measured_marks():
+    from types import SimpleNamespace
+
+    from spinny_web.align import Alignment
+
+    alignment = Alignment()
+    job = SimpleNamespace(id="j1", pads=[], holes=[])
+    for design in ((2.0, 2.0), (38.0, 2.0)):
+        alignment.mark_tool(job, machine_of(design), design, None, 1.0)
+    assert "stretch" not in alignment.state()["fit"]
+    alignment.mark_tool(job, machine_of((38.0, 28.0)), (38.0, 28.0), None, 1.0)
+    stretch = alignment.state()["fit"]["stretch"]
+    assert stretch["scale_x"] == pytest.approx(1.0, abs=0.001) and min(stretch["weights"]) > 0.99
+    assert alignment.fit_dict("j1")["stretch"] == stretch
+    # The camera's capture of a look's own place is no measurement of its own.
+    alignment.mark_camera(job, (20.0, 15.0), machine_of((20.0, 15.0)), TRUTH_TURN)
+    assert len(alignment.stretch_pairs("j1")) == 3 and alignment.stretch_pairs("other") == []
+    # Marks pin the place: a pitch-off candidate alone is ruled out by them.
+    middle = truth_middle()
+    box = (middle[0] - 25.0, middle[1] - 25.0, middle[0] + 25.0, middle[1] + 25.0)
+    posterior = Posterior(board(), box, sessions=1, marks=alignment.stretch_pairs("j1"))
+    pcbv = FakePcbv(pitch=2.54, ratio=1.0)
+    look(posterior, pcbv, machine_of((20.0, 15.0)))
+    lead = posterior.lead
+    assert lead is not None and math.dist(lead.estimate.center, middle) < 0.05 and lead.probability > 0.99

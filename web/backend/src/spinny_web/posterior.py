@@ -364,8 +364,15 @@ class Posterior(Consensus):
         agree_deg: float | None = None,
         diffuse: int = DIFFUSE,
         seed: int = 1,
+        marks: list[tuple[Point, Point]] | None = None,
     ) -> None:
         self.board = board
+        # Marks measured for the board (a pad under the tool, a feature the
+        # camera centered): evidence as corners are, to a twentieth of a
+        # millimeter. Their fit is then no prior of its own.
+        self.marks = [Corner("mark", (float(d[0]), float(d[1])), (float(m[0]), float(m[1])), None, "mark") for d, m in (marks or [])]
+        if self.marks and known is not None and known.source == "align":
+            known = None
         self.layout = Layout(stretch=stretch, delay=delay is not None)
         self.delay_prior = delay or (DELAY_S, DELAY_SIGMA_S)
         self.scale = float(scale) if scale and scale > 0.0 else 0.0
@@ -424,10 +431,10 @@ class Posterior(Consensus):
             rest *= 1.0 - KNOWN_SHARE
         parts.append((rest, "box", (box, None)))
         parts.append((FAR, "box", (far, None)))
-        if for_drawing and self.corners:
+        if for_drawing and self._anchors():
             from .boardlook import corners_known
 
-            rough = corners_known(self.corners, self.board.middle, self.corner_mm, self.board.diagonal)
+            rough = corners_known(self._anchors(), self.board.middle, self.corner_mm, self.board.diagonal)
             if rough is not None:
                 sigma = max(rough.within_mm / 2.0, 0.05)
                 turn = (math.radians(rough.place.rotation), math.radians(rough.within_deg / 2.0)) if rough.within_deg is not None else None
@@ -595,7 +602,7 @@ class Posterior(Consensus):
         """A corner taken as a measurement: where the state puts it on the
         machine (and the board's turn, from a corner by its edges), what was
         taken, and the noise."""
-        sigma = max(self.corner_mm / 2.0, 0.01)
+        sigma = self._sigma(corner)
         middle = np.asarray(self.board.middle)
         job = np.asarray(corner.job)
         edges = corner.angle is not None
@@ -612,18 +619,29 @@ class Posterior(Consensus):
             noise = np.diag([sigma * sigma, sigma * sigma])
         return place, z, noise
 
+    def _anchors(self) -> list[Corner]:
+        """The points measured on the board besides the pictures: corners
+        taken, then marks."""
+        return self.corners + self.marks
+
+    def _sigma(self, anchor: Corner) -> float:
+        """How well a corner (half the camera's corner_mm) or a mark places its point, mm."""
+        return MARK_MM if anchor.by == "mark" else max(self.corner_mm / 2.0, 0.01)
+
     def _corner_log(self, state: np.ndarray, area: float) -> tuple[float, float, list[int]]:
-        """The corners' log factor at a state (each a Gaussian about where it
-        was taken, or wrong), the furthest the state puts one from where it
-        was taken (mm), and which corners are within the gate."""
+        """The corners' and marks' log factor at a state (each a Gaussian
+        about where it was taken, or wrong), the furthest the state puts a
+        corner from where it was taken (mm), and which of them (indices
+        into _anchors) are within the gate."""
         total, furthest, used = 0.0, 0.0, []
-        for index, corner in enumerate(self.corners):
+        for index, corner in enumerate(self._anchors()):
             place, z, noise = self._corner_terms(corner)
             predicted = place(state)
             r = z - predicted
             if len(r) == 3:
                 r[2] = _wrap_rad(r[2])
-            furthest = max(furthest, float(math.hypot(r[0], r[1])))
+            if corner.by != "mark":
+                furthest = max(furthest, float(math.hypot(r[0], r[1])))
             d2 = float(r @ np.linalg.solve(noise, r))
             log_gauss = -0.5 * (d2 + len(r) * LOG_2PI + math.log(np.linalg.det(noise)))
             wrong = math.log(CORNER_WRONG / area) - (math.log(2.0 * math.pi) if len(r) == 3 else 0.0)
@@ -651,10 +669,11 @@ class Posterior(Consensus):
                 weight = 1.0 / np.sqrt(np.diag(noise))
                 rows.append(jac * weight[:, None])
                 residuals.append(self._residual(z, predicted) * weight)
-            if self.corners:
+            anchors = self._anchors()
+            if anchors:
                 _, _, used = self._corner_log(state, self._box_area())
                 for index in used:
-                    place, z, noise = self._corner_terms(self.corners[index])
+                    place, z, noise = self._corner_terms(anchors[index])
                     predicted = place(state)
                     r = z - predicted
                     if len(r) == 3:
@@ -779,11 +798,11 @@ class Posterior(Consensus):
             r = self._residual(z, self.predict(mean, view))
             log_kernel = -0.5 * (float(r @ np.linalg.solve(noise, r)) + 3.0 * LOG_2PI + math.log(np.linalg.det(noise)))
             total += math.log(p) + math.log(max(candidate.strength, 1e-12)) - math.log(clutter) + log_kernel
-        if self.corners:
+        if self._anchors():
             corner_log, furthest, _ = self._corner_log(mean, self._box_area())
             total += corner_log
-            hypothesis.corner_mm = furthest
-            hypothesis.ruled_out = furthest > self.corner_mm
+            hypothesis.corner_mm = furthest if self.corners else None
+            hypothesis.ruled_out = bool(self.corners) and furthest > self.corner_mm
         else:
             hypothesis.corner_mm = None
             hypothesis.ruled_out = False
@@ -802,9 +821,9 @@ class Posterior(Consensus):
         if self._diffuse is None or self._diffuse_log is None or self._miss_total is None:
             return 0.0
         logs = self._diffuse_log + self._miss_total
-        if self.corners:
+        if self._anchors():
             area = self._box_area()
-            for corner in self.corners:
+            for corner in self._anchors():
                 logs = logs + self._diffuse_corner(corner, area)
         top = float(np.max(logs))
         if not math.isfinite(top):
@@ -817,7 +836,7 @@ class Posterior(Consensus):
         jx, jy = corner.job[0] - self.board.middle[0], corner.job[1] - self.board.middle[1]
         px = np.cos(theta) * jx - np.sin(theta) * jy + x
         py = np.sin(theta) * jx + np.cos(theta) * jy + y
-        sigma = max(self.corner_mm / 2.0, 0.01)
+        sigma = self._sigma(corner)
         d2 = ((px - corner.machine[0]) ** 2 + (py - corner.machine[1]) ** 2) / (sigma * sigma)
         log_gauss = -0.5 * d2 - math.log(2.0 * math.pi * sigma * sigma)
         wrong = math.log(CORNER_WRONG / area)
@@ -956,6 +975,19 @@ class Posterior(Consensus):
                 for hypothesis in self.hypotheses:
                     self._fit(hypothesis)
             self._weigh_all()
+
+    def set_marks(self, marks: list[tuple[Point, Point]]) -> None:
+        """Other marks measured for the board: the probability is weighed again with them."""
+        with self._mutex:
+            self.marks = [Corner("mark", (float(d[0]), float(d[1])), (float(m[0]), float(m[1])), None, "mark") for d, m in marks]
+            if self._box is not None:
+                self._draw()
+            for hypothesis in self.hypotheses:
+                self._fit(hypothesis)
+            self._weigh_all()
+
+    def mark_pairs(self) -> list[tuple[Point, Point]]:
+        return [(mark.job, mark.machine) for mark in self.marks]
 
     def see(self, state: str | None, estimate: Estimate | None, problem: str | None) -> None:
         """An estimate with nothing else (a record from before pcbv's
@@ -1199,6 +1231,117 @@ class Posterior(Consensus):
             if score > best_score + 1e-12 or (abs(score - best_score) <= 1e-12 and math.dist(stop, here) < math.dist(stops[best_index], here)):
                 best_index, best_score = index, score
         return best_index
+
+
+# Marks (a pad or hole under the tool, a feature centered by the camera)
+# place their design point on the machine to this, one standard deviation,
+# mm. A mark is wrong this often (a pad mistaken for its neighbor, a slip),
+# anywhere within MARK_REACH_MM of where it belongs: a mark far off the fit
+# is that, more likely than the tail of a good one, and counts for nothing
+# instead of bending the fit.
+MARK_MM = 0.05
+MARK_WRONG = 0.02
+MARK_REACH_MM = 10.0
+
+
+@dataclass
+class MarksFit:
+    """Marks fitted with the board's stretch: the turn (degrees) and shift
+    of the job's frame about its origin as a rigid fit gives them, the X
+    and Y scale and the shear (degrees off square) with their standard
+    deviations, the fit's rms (mm), each mark's residual (mm) and the
+    weight it was given (1 trusted, less for one far off)."""
+
+    rotation: float
+    shift: Point
+    scale_x: float
+    scale_x_sd: float
+    scale_y: float
+    scale_y_sd: float
+    shear_deg: float
+    shear_deg_sd: float
+    rms: float
+    residuals: list[float]
+    weights: list[float]
+
+    def stretch(self) -> dict:
+        return {
+            "scale_x": round(self.scale_x, 6), "scale_x_sd": round(self.scale_x_sd, 6),
+            "scale_y": round(self.scale_y, 6), "scale_y_sd": round(self.scale_y_sd, 6),
+            "shear_deg": round(self.shear_deg, 4), "shear_deg_sd": round(self.shear_deg_sd, 4),
+            "rms": round(self.rms, 4), "weights": [round(w, 3) for w in self.weights],
+        }
+
+
+def fit_marks(pairs: list[tuple[Point, Point]], sigma: float = MARK_MM) -> MarksFit:
+    """The board's turn, place and stretch from marks (design point,
+    machine point), three or more: the same state and priors as the
+    posterior's hypotheses with stretch on (X and Y scale within the fab's
+    tolerance of 1, shear near 0), fitted by least squares about the marks'
+    middle, each mark weighed by how likely it is a good one rather than a
+    wrong one (MARK_WRONG), so one far off counts for nothing. A ValueError
+    with fewer than three marks."""
+    from spinny_laser.align import fit_rigid
+
+    if len(pairs) < 3:
+        raise ValueError("the board's stretch needs three marks or more")
+    rigid = fit_rigid(pairs)
+    designs = np.array([p[0] for p in pairs], dtype=float)
+    machines = np.array([p[1] for p in pairs], dtype=float)
+    middle = designs.mean(axis=0)
+    start = rigid.apply((float(middle[0]), float(middle[1])))
+    layout = Layout(stretch=True)
+    state = layout.start(math.radians(rigid.rotation), start)
+    means, sigmas, indices = layout.extra_prior()
+    weights = np.ones(len(pairs))
+    cov = np.eye(len(state))
+
+    def place(s: np.ndarray) -> np.ndarray:
+        return (layout.matrix(s) @ (designs - middle).T).T + s[1:3]
+
+    for _ in range(30):
+        predicted = place(state)
+        residual = machines - predicted
+        distance = np.hypot(residual[:, 0], residual[:, 1]) / sigma
+        # How likely each mark is a good one, given how far off it lies.
+        good = (1.0 - MARK_WRONG) * np.exp(-0.5 * distance ** 2) / (2.0 * math.pi * sigma * sigma)
+        wrong = MARK_WRONG / (math.pi * MARK_REACH_MM * MARK_REACH_MM)
+        weights = good / (good + wrong)
+        rows, values = [], []
+        steps = np.array([1e-7, 1e-5, 1e-5, 1e-7, 1e-7, 1e-7])
+        jac = np.zeros((2 * len(pairs), len(state)))
+        for i, step in enumerate(steps):
+            up, down = state.copy(), state.copy()
+            up[i] += step
+            down[i] -= step
+            jac[:, i] = ((place(up) - place(down)) / (2.0 * step)).reshape(-1)
+        w = np.repeat(np.sqrt(weights), 2) / sigma
+        rows.append(jac * w[:, None])
+        values.append(residual.reshape(-1) * w)
+        for mean, spread, index in zip(means, sigmas, indices):
+            row = np.zeros(len(state))
+            row[index] = 1.0 / spread
+            rows.append(row[None, :])
+            values.append(np.array([(mean - state[index]) / spread]))
+        a = np.concatenate(rows, axis=0)
+        b = np.concatenate(values)
+        normal = a.T @ a
+        step = np.linalg.solve(normal, a.T @ b)
+        state = state + step
+        cov = np.linalg.inv(normal)
+        if np.all(np.abs(step) < 1e-10):
+            break
+    residual = machines - place(state)
+    distances = np.hypot(residual[:, 0], residual[:, 1])
+    sd = np.sqrt(np.maximum(np.diag(cov), 0.0))
+    turn_deg = math.degrees(float(state[0]))
+    matrix = layout.matrix(state)
+    shift = state[1:3] - matrix @ middle
+    return MarksFit(
+        turn_deg, (float(shift[0]), float(shift[1])),
+        float(state[3]), float(sd[3]), float(state[4]), float(sd[4]), math.degrees(float(state[5])), math.degrees(float(sd[5])),
+        float(math.sqrt(float(np.mean(distances ** 2)))), [float(d) for d in distances], [float(w) for w in weights],
+    )
 
 
 def posterior_fields(consensus) -> dict:

@@ -902,7 +902,10 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         # them itself.
         self.head_look = BoardLook(
             lambda: self.camera.client, self.publish_camera, paused=lambda: self.camera.routine_active,
-            tuning=lambda: _look_tuning(self.camera.settings()), options=lambda: _look_options(self.camera.settings()),
+            tuning=lambda: _look_tuning(self.camera.settings()),
+            # The Align marks measured for the board looked for (a pad under
+            # the tool, a feature centered) are evidence of the posterior's.
+            options=lambda: {**_look_options(self.camera.settings()), "marks": self.alignment.stretch_pairs(self.head_look.job) if self.head_look.job else []},
         )
         self.top_look = BoardLook(
             lambda: self.top.client, self.publish_placing, paused=lambda: self.top.routine_active,
@@ -3964,7 +3967,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
 
     def align_fit(self, job_id: str) -> dict:
         self._job(job_id)
-        return self.alignment.fit(job_id).to_dict()
+        return self.alignment.fit_dict(job_id)
 
     @editing_job
     def align_apply(self, job_id: str) -> dict:

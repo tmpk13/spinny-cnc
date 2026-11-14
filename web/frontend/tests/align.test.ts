@@ -195,6 +195,10 @@ describe("the align panel", () => {
         expect(fitText(null)).toContain("no fit yet");
         expect(fitText(null, "the marks are for job a, not b")).toBe("the marks are for job a, not b");
         expect(fitText({ rotation: 0.5, shift: [1, 2], scale: 1, rms: 0.01, residuals: [], marks: 2 })).toContain("rotation 0.5000 deg");
+        // Three marks or more show the board's stretch, and a mark taken as wrong.
+        const stretch = { scale_x: 1.0021, scale_x_sd: 0.0008, scale_y: 0.9994, scale_y_sd: 0.0009, shear_deg: 0.012, shear_deg_sd: 0.04, rms: 0.02, weights: [1, 1, 0.001, 1] };
+        const text = fitText({ rotation: 0.5, shift: [1, 2], scale: 1, rms: 0.01, residuals: [], marks: 4, stretch });
+        expect(text).toContain("Board stretch: X scale 1.0021 +- 0.0008, Y scale 0.9994 +- 0.0009, shear 0.012 +- 0.040 deg off square (not applied); 1 mark far off taken as wrong");
         const job = { id: "a1" } as never;
         const base = { running: true, board: "a1", pose: { state: "locked" as const } };
         expect(canCapture({ ...base } as never, job)).toBe(true);

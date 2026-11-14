@@ -54,7 +54,36 @@ class Alignment:
     def state(self) -> dict:
         with self._lock:
             fit = self._fit()
-            return {"job": self.job, "marks": [mark.to_dict() for mark in self.marks], "fit": fit.to_dict() if fit else None}
+            return {"job": self.job, "marks": [mark.to_dict() for mark in self.marks], "fit": self._fit_dict(fit) if fit else None}
+
+    def _fit_dict(self, fit: fitting.Fit) -> dict:
+        """A fit for the page: with three marks or more, also the board's
+        stretch they show (posterior.fit_marks: X and Y scale and shear,
+        a mark far off weighed down), reported and never applied."""
+        data = fit.to_dict()
+        if len(self.marks) >= 3:
+            from .posterior import fit_marks
+
+            try:
+                data["stretch"] = fit_marks([(mark.design, mark.machine) for mark in self.marks]).stretch()
+            except (ValueError, ArithmeticError):
+                data["stretch"] = None
+        return data
+
+    def fit_dict(self, job_id: str) -> dict:
+        """The fit of a job's marks with the stretch they show; a ValueError with none."""
+        fit = self.fit(job_id)
+        with self._lock:
+            return self._fit_dict(fit)
+
+    def stretch_pairs(self, job_id: str) -> list[tuple[Point, Point]]:
+        """The job's marks a look may weigh as evidence of its own: the
+        tool's and the features the camera centered, not the camera's
+        captures of a look's own place."""
+        with self._lock:
+            if self.job != job_id:
+                return []
+            return [(mark.design, mark.machine) for mark in self.marks if mark.source == TOOL or mark.kind == "feature"]
 
     def _solve(self) -> fitting.Fit:
         """The fit of the marks, each mark's residual kept: a turn and a

@@ -1046,6 +1046,7 @@ class BoardLook:
             return Posterior(
                 board, box, prior, threshold=threshold, corner_mm=corner_mm, corners=self.corners_of(job_id),
                 scale=float(scale) if isinstance(scale, (int, float)) else None, stretch=bool(options.get("stretch")),
+                marks=list(options.get("marks") or []),
             )
         return Consensus(middle, threshold=threshold, corner_mm=corner_mm, corners=self.corners_of(job_id))
 
@@ -1073,6 +1074,10 @@ class BoardLook:
             if record is not None:
                 record.event("settings", method=method, stretch=stretch, **tuning_fields(self.consensus))
             return
+        marks = [tuple(map(tuple, pair)) for pair in options.get("marks") or []]
+        if method == "posterior" and hasattr(consensus, "mark_pairs") and marks != consensus.mark_pairs():
+            consensus.set_marks(marks)
+            self._changed = True
         if (threshold, corner_mm, corners) == (consensus.threshold, consensus.corner_mm, consensus.corners):
             return
         consensus.tune(threshold, corner_mm, corners)

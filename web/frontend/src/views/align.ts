@@ -11,6 +11,7 @@ import { countText, formatFixed, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { AlignFit, AlignMark, AlignMarkRequest, CameraState, Job } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
+import { stretchText } from "./findboard.ts";
 
 /** One line on a fit; what a refused fit said when there is none. */
 export function fitText(fit: AlignFit | null, problem: string | null = null): string {
@@ -21,8 +22,15 @@ export function fitText(fit: AlignFit | null, problem: string | null = null): st
         return "no fit yet: add a mark";
     }
     const what = fit.marks === 1 ? "one mark: a shift" : `${fit.marks} marks`;
-    return `${what}: rotation ${formatFixed(fit.rotation, 4)} deg, shift X ${formatFixed(fit.shift[0], 3)} Y ${formatFixed(fit.shift[1], 3)} mm,`
+    const rigid = `${what}: rotation ${formatFixed(fit.rotation, 4)} deg, shift X ${formatFixed(fit.shift[0], 3)} Y ${formatFixed(fit.shift[1], 3)} mm,`
         + ` scale ${formatFixed(fit.scale, 5)} (not applied), rms ${formatFixed(fit.rms, 3)} mm`;
+    const stretch = fit.stretch;
+    if (!stretch) {
+        return rigid;
+    }
+    const doubted = stretch.weights.filter((weight) => weight < 0.5).length;
+    const off = doubted > 0 ? `; ${doubted} ${doubted === 1 ? "mark" : "marks"} far off taken as wrong` : "";
+    return `${rigid}. ${stretchText(stretch)} (not applied)${off}`;
 }
 
 /** A capture needs a running camera with this job's board loaded and locked. */
