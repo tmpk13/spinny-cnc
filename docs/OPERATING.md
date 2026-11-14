@@ -662,6 +662,17 @@ pictures are laid side by side under the panel's *Full scan* heading as a
 mosaic, each where the head took it, with the board's outline dashed where
 the scan found it.
 
+With the head camera, *Scan* beside the buttons picks *At rest* (the
+default) or *On the move*: the head then runs along each row without
+stopping, and each picture is placed where the machine's position reports
+put the head the moment it was taken. Set the camera's exposure by hand
+first (its picture controls): the head goes no faster than keeps a small
+pad's blur under a quarter of it over that exposure. A camera hands its
+pictures over a little late; that delay moves the board one way on rows
+run left to right and the other way on rows run back, so with *Probability
+over the pose* the scan measures it, and the scan's line says it. A
+G-code machine reports its place only at rest, so its scans always stop.
+
 *Use as board place* keeps where the found board lies: with the top camera
 as the job's references (two parts far apart; *Find fiducials* then makes
 them exact), with the head camera as marks in the Align panel.

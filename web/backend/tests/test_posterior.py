@@ -495,3 +495,146 @@ def test_align_shows_the_stretch_of_three_marks_or_more_and_the_posterior_weighs
     look(posterior, pcbv, machine_of((20.0, 15.0)))
     lead = posterior.lead
     assert lead is not None and math.dist(lead.estimate.center, middle) < 0.05 and lead.probability > 0.99
+
+
+def test_the_heads_place_between_reports_its_speed_rows_to_fly_and_the_exposure():
+    from spinny_web.app import exposure_seconds
+    from spinny_web.boardlook import PlaceHistory, fly_rows, fly_speed
+
+    history = PlaceHistory()
+    history.add(1.0, (0.0, 0.0))
+    history.add(1.1, (2.0, 0.0))
+    history.add(1.1, (9.0, 9.0))  # no newer than the last: ignored
+    history.add(1.2, (4.0, 1.0))
+    point, velocity = history.at(1.15)
+    assert point == pytest.approx((3.0, 0.5)) and velocity == pytest.approx((20.0, 10.0))
+    assert history.at(0.5) is None and history.at(1.3) is None
+    history.add(2.0, (4.0, 1.0))
+    assert history.at(1.5) is None, "no place across a gap between reports"
+    rows = fly_rows([(0.0, 0.0), (10.0, 0.0), (10.0, 5.0), (0.0, 5.0)], 4.0)
+    assert rows == [((-2.0, 0.0), (12.0, 0.0)), ((12.0, 5.0), (-2.0, 5.0))]
+    # A 0.5 mm pad at 5 ms: a quarter of it blurs at 25 mm/s, held to the most.
+    assert fly_speed(0.005, 0.5, 25.6) == pytest.approx(20.0)
+    assert fly_speed(0.02, 0.5, 25.6) == pytest.approx(6.25)
+    with pytest.raises(ValueError, match="exposure set by hand"):
+        fly_speed(0.0, 0.5, 25.6)
+    assert exposure_seconds({"auto_exposure": 1, "exposure_time_absolute": 50}) == pytest.approx(0.005)
+    assert exposure_seconds({"auto_exposure": 3, "exposure_time_absolute": 50}) is None
+    assert exposure_seconds({}) is None
+
+
+def test_rows_flown_both_ways_measure_the_cameras_delay_and_place_the_board():
+    from spinny_web.posterior import DELAY_S
+
+    middle = truth_middle()
+    box = (middle[0] - 25.0, middle[1] - 25.0, middle[0] + 25.0, middle[1] + 25.0)
+    posterior = Posterior(board(), box, sessions=1, scale=SCALE, delay=(DELAY_S, 0.06))
+    pcbv = FakePcbv()
+    true_delay, speed = 0.13, 15.0
+    # Two rows along the board's middle third, one each way, a frame every 0.1 s.
+    for direction, y in ((1.0, 10.0), (-1.0, 20.0)):
+        for step in range(12):
+            x = 8.0 + 2.0 * step if direction > 0 else 32.0 - 2.0 * step
+            seen_at = machine_of((x, y))
+            velocity = turn((direction * speed, 0.0), TRUTH_TURN)
+            # The head was where the picture shows the delay before the
+            # frame's time; the backend places it for the delay first guessed.
+            placed = (seen_at[0] + velocity[0] * (true_delay - DELAY_S), seen_at[1] + velocity[1] * (true_delay - DELAY_S))
+            raw = pcbv.pose(seen_at)
+            raw["frame"] = pcbv.searches
+            feed(posterior, raw, PictureFrame(placed, 0.0, False, velocity))
+    delay = posterior.delay
+    assert delay is not None and delay["seconds"] == pytest.approx(true_delay, abs=0.015) and delay["sd"] < 0.02
+    lead = posterior.lead
+    assert lead is not None and math.dist(lead.estimate.center, middle) < 0.1
+    assert len(posterior.views) == 24, "every frame on the move is a view of its own"
+
+
+class FlyMover:
+    """A head that goes at once to a row's start and then along the row at
+    a steady speed in real time, its places reported into a history every
+    20 ms, as the link's status reports would be."""
+
+    def __init__(self, history) -> None:
+        import threading
+        import time
+
+        self.time = time
+        self.history = history
+        self.start = (0.0, 0.0)
+        self.end = (0.0, 0.0)
+        self.began = time.monotonic()
+        self.seconds = 0.0
+        self.rows = 0
+        self.running = True
+        self._thread = threading.Thread(target=self._report, daemon=True)
+        self._thread.start()
+
+    def where(self, moment: float):
+        share = min(max((moment - self.began) / self.seconds, 0.0), 1.0) if self.seconds > 0 else 1.0
+        return (self.start[0] + (self.end[0] - self.start[0]) * share, self.start[1] + (self.end[1] - self.start[1]) * share)
+
+    def _report(self) -> None:
+        while self.running:
+            now = self.time.monotonic()
+            self.history.add(now, self.where(now))
+            self.time.sleep(0.02)
+
+    def go(self, point) -> None:
+        self.start = self.end = point
+        self.seconds = 0.0
+
+    def fly(self, point, speed: float) -> None:
+        self.end = point
+        self.seconds = math.dist(self.start, point) / speed
+        self.began = self.time.monotonic()
+        self.rows += 1
+
+    def arrived(self) -> bool:
+        return self.time.monotonic() >= self.began + self.seconds + 0.05
+
+
+class FlyCamera(SearchCamera):
+    """The fake pcbv seeing where the flying head was its delay ago."""
+
+    def __init__(self, pcbv: FakePcbv, mover: FlyMover, delay: float) -> None:
+        super().__init__(pcbv)
+        self.mover = mover
+        self.delay = delay
+
+    def pose(self) -> dict:
+        import time
+
+        raw = self.pcbv.pose(self.mover.where(time.monotonic() - self.delay))
+        raw["frame"] = self.pcbv.searches
+        return raw
+
+
+def test_a_flying_scan_places_its_frames_by_the_heads_reports_and_fits_the_delay(quick):
+    from spinny_web.boardlook import PlaceHistory, fly_rows, fly_scan, rough_box, scan_stops
+    from spinny_web.boardlook import Estimate as Place
+
+    middle = truth_middle()
+    history = PlaceHistory()
+    mover = FlyMover(history)
+    camera = FlyCamera(FakePcbv(), mover, delay=0.12)
+    look_ = BoardLook(lambda: camera, publish=lambda: None, paused=lambda: True, options=lambda: {"method": "posterior", "scale": SCALE})
+    look_.start("j1", DESIGN.board_to_job, MIDDLE, lambda captured: "the watcher is held off", features=PADS, outline=OUTLINE)
+    rough = Place(TRUTH_TURN, (TRUTH_SHIFT[0] + 1.0, TRUTH_SHIFT[1]), middle, 0.0)
+    box = rough_box(rough, OUTLINE, 1.0)
+    rows = fly_rows(scan_stops(box, (SIZE[0] * SCALE, SIZE[1] * SCALE)), SIZE[0] * SCALE)
+    try:
+        found = fly_scan(
+            look_, mover, rows, (0.0, 0.0), 0.0, history, 30.0, lambda: False, lambda index, count: None, RuntimeError,
+            box=box, picture=(SIZE[0], SIZE[1], SCALE), outline=OUTLINE,
+        )
+        delay = look_.consensus.delay
+    finally:
+        mover.running = False
+        look_.stop()
+    assert mover.rows == len(rows) >= 2
+    # Rows both ways: the delay measured, the board where it lies.
+    assert found is not None and math.dist(found.center, middle) < 0.1
+    state = look_.mosaic.state()
+    assert state["motion"] == "fly" and len(state["pictures"]) >= len(rows)
+    assert delay is not None and delay["seconds"] == pytest.approx(0.12, abs=0.02)

@@ -523,10 +523,13 @@ class Posterior(Consensus):
         if layout.delay and states.shape[1] > layout.size - 1:
             delay = states[:, layout.size - 1]
         else:
-            delay = np.full(len(states), self.delay_prior[0] if layout.delay else 0.0)
-        vx, vy = getattr(view.frame, "velocity", (0.0, 0.0))
-        ox = mx - (cx - vx * delay)[:, None]
-        oy = my - (cy - vy * delay)[:, None]
+            delay = np.full(len(states), self.delay_prior[0])
+        # A picture taken on the move was placed for the delay first
+        # guessed; another delay puts it back or on along the head's way.
+        vx, vy = view.frame.velocity
+        late = delay - self.delay_prior[0]
+        ox = mx - (cx - vx * late)[:, None]
+        oy = my - (cy - vy * late)[:, None]
         roll = math.radians(view.frame.roll)
         cr, sr = math.cos(roll), math.sin(roll)
         u = (ox * cr + oy * sr) / view.scale
@@ -557,9 +560,9 @@ class Posterior(Consensus):
         job's point under the picture's center and the board's turn."""
         layout = self.layout
         matrix = layout.matrix(state)
-        delay = layout.delay_of(state, self.delay_prior[0] if layout.delay else 0.0)
-        vx, vy = getattr(view.frame, "velocity", (0.0, 0.0))
-        center = np.array([view.frame.center[0] - vx * delay, view.frame.center[1] - vy * delay])
+        late = layout.delay_of(state, self.delay_prior[0]) - self.delay_prior[0]
+        vx, vy = view.frame.velocity
+        center = np.array([view.frame.center[0] - vx * late, view.frame.center[1] - vy * late])
         seen = np.linalg.solve(matrix, center - state[1:3]) + np.asarray(self.board.middle)
         return np.array([seen[0], seen[1], state[0]])
 
@@ -1024,7 +1027,8 @@ class Posterior(Consensus):
                 self.locked += 1
                 self.view = estimate
                 self.estimates.append(estimate)
-            search, listed = self._search_of(raw, estimate, session)
+            moving = isinstance(where, PictureFrame) and where.velocity != (0.0, 0.0)
+            search, listed = self._search_of(raw, estimate, session, moving)
             if search is None:
                 return
             place = searched_where if listed and searched_where is not None else where
@@ -1057,13 +1061,23 @@ class Posterior(Consensus):
             self._merge()
             self._weigh_all()
 
-    def _search_of(self, raw: dict, estimate: Estimate | None, session: int | None) -> tuple[tuple | None, bool]:
+    def _search_of(self, raw: dict, estimate: Estimate | None, session: int | None, moving: bool = False) -> tuple[tuple | None, bool]:
         """Which pcbv search a pose's evidence comes from, and whether the
         pose lists that search's candidates; None for a pose that brings
         nothing new (tracked from a search already read). pcbv numbers its
         searches (`search`) and says which one its candidates are from; a
         pcbv before candidates says only whether the frame searched and the
         lock it holds."""
+        frame = raw.get("frame")
+        if moving and _number(frame):
+            # On the move every frame is another picture of another place:
+            # its pose is evidence of its own, tracked or searched.
+            key = ("moving", int(frame))
+            if key in self._acquisitions:
+                return None, False
+            self._acquisitions.add(key)
+            listed = isinstance(raw.get("candidates"), list) and raw.get("candidates_search") == raw.get("search") and raw.get("searched") is True
+            return key, listed
         number = raw.get("search")
         if _number(number):
             key = ("search", int(number))
@@ -1085,7 +1099,7 @@ class Posterior(Consensus):
         return None, False
 
     def _view_of(self, frame: PictureFrame, raw: dict, captured: float) -> View:
-        moving = getattr(frame, "velocity", (0.0, 0.0)) != (0.0, 0.0)
+        moving = frame.velocity != (0.0, 0.0)
         key = None if moving else (round(frame.center[0] / VIEW_MM), round(frame.center[1] / VIEW_MM), round(frame.roll / VIEW_DEG), frame.mirror)
         index = self._view_keys.get(key) if key is not None else None
         if index is None:

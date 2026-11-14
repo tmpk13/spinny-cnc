@@ -69,6 +69,11 @@ from .boardlook import (
     search,
     search_box,
     search_extra,
+    FLY_PAD_MM,
+    PlaceHistory,
+    fly_rows,
+    fly_scan,
+    fly_speed,
     scan,
     scan_stops,
     scan_text,
@@ -3583,8 +3588,70 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
 
     def _camera_fly_scan(self, job, settings, body: BoardScanBody) -> dict:
         """A full scan with the head moving along each row (scan_motion
-        fly)."""
-        raise ValueError("a flying scan is not built yet: set the scan's motion to stop")
+        fly): pictures placed by the head's reported places at the moments
+        they were taken, the speed held so a small pad blurs little over
+        the camera's exposure, which must be set by hand
+        (boardlook.fly_scan)."""
+        width, height, scale = self._look_scale(self.camera.client, settings.mm_per_px)
+        exposure = exposure_seconds(settings.controls)
+        if exposure is None:
+            raise ValueError("a flying scan needs the camera's exposure set by hand (manual exposure in its picture controls): the speed is held to it")
+        known = self._head_known(job, settings.corner_mm)
+        box, stops, outline = self._scan_plan(self.head_look, job, known, (width * scale, height * scale), body.margin)
+        rows = fly_rows(stops, width * scale)
+        pads = sorted(2.0 * math.sqrt(max(float(p[2]), 0.0) / math.pi) for p in job.pads if len(p) > 2 and float(p[2]) > 0.0)
+        pad = pads[len(pads) // 10] if pads else FLY_PAD_MM
+        speed = fly_speed(exposure, pad, width * scale)
+        prior = self._head_known(job, settings.corner_mm, corners=False)
+        offset = settings.offset
+        with self._owner_lock:
+            link = self._movable()
+            values = self._values(force=True)
+            status = link.status_now(1.0, routine=True)
+            access = MachineAccess(
+                link=link,
+                streamer=self.streamer(status),
+                lift=self.lift_height(),
+                has_focus_axis=bool(values.get("h_axis")),
+                head_point=lambda report: head_board(report.r, self.table_angle(report), report.z, self.cartesian),
+            )
+            tool = head_board(status.r, self.table_angle(status), status.z, self.cartesian)
+            here = (tool[0] + offset[0], tool[1] + offset[1])
+            mover = BoardMover(access, self.camera.aborting, CameraError, lambda: self.camera._halt(link))
+            look = self.head_look
+            history = PlaceHistory()
+
+            def heard(event) -> None:
+                if event.kind == "status":
+                    report = event.data
+                    history.add(time.monotonic(), head_board(report.r, self.table_angle(report), report.z, self.cartesian))
+
+            def run(progress) -> None:
+                mover.begin()
+                mover.lift()
+                progress.step = "scanning"
+
+                def on_row(index: int, count: int) -> None:
+                    progress.done = index + 1
+                    self.publish_camera()
+
+                record = self._board_record(
+                    "scan", "head", job, self.camera.client, self.camera.board_settings(),
+                    {**self._head_picture(), "width": width, "height": height, "mm_per_px_used": scale, "exposure_s": exposure},
+                    {**search_extra(box, here, stops, width * scale, height * scale, known), "motion": "fly", "speed": speed, "rows": len(rows)},
+                )
+                link.subscribe(heard)
+                try:
+                    found = fly_scan(
+                        look, mover, rows, offset, settings.roll, history, speed, mover.stopped, on_row, CameraError, record,
+                        box=box, prior=prior, picture=(width, height, scale), outline=outline,
+                    )
+                finally:
+                    link.unsubscribe(heard)
+                self.publish_message("info", scan_text(found, look.consensus, len(look.mosaic.tiles)))
+
+            self.camera.run_routine("scan", len(rows), "scanning the board on the move", link, run)
+        return self.camera_state()
 
     def _head_known(self, job, corner_mm: float, corners: bool = True) -> KnownPlace | None:
         """Where the head camera's search expects the job's board: where
@@ -4134,6 +4201,20 @@ def mosaic_picture(mosaic, index: int) -> Response:
     if data is None:
         raise HTTPException(404, f"no picture {index} in the scan")
     return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+def exposure_seconds(controls: dict) -> float | None:
+    """A camera's exposure from its V4L2 controls, seconds, when it is set
+    by hand: the absolute exposure (in 100 microsecond units) with any auto
+    exposure control at its manual setting (1); None otherwise."""
+    for auto in ("auto_exposure", "exposure_auto"):
+        if auto in controls and int(controls[auto]) != 1:
+            return None
+    for name in ("exposure_time_absolute", "exposure_absolute"):
+        value = controls.get(name)
+        if isinstance(value, (int, float)) and value > 0:
+            return float(value) * 1e-4
+    return None
 
 
 def _look_options(settings) -> dict:

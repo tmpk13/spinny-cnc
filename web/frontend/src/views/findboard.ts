@@ -414,6 +414,13 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
     const tracked = new Tracked([within]);
     // The newest full scan's pictures, fetched again when its version moves.
     const scanHead = el("h3", { class: "hidden" }, "Full scan");
+    // How the head camera's scan takes its pictures: at rest, or on the move
+    // (this project's firmware reports the head's place while it moves).
+    const motion = el("select", { class: "field", "aria-label": "Scan motion" },
+        el("option", { value: "stop" }, "At rest"), el("option", { value: "fly" }, "On the move")) as HTMLSelectElement;
+    motion.title = "how a full scan takes its pictures: the head at rest for each, or moving along each row at a speed the camera's exposure allows (set the exposure by hand), the camera's delay measured from rows run both ways";
+    motion.addEventListener("change", () => void into(ctx, "camera", ctx.api.cameraSettings({ scan_motion: motion.value === "fly" ? "fly" : "stop" })));
+    const motionField = labeled("Scan", motion, "labeled inline");
     const scanLine = el("p", { class: "muted find-scan hidden" });
     const mosaic = mountMosaic();
     let scanShown: { camera: LookCamera; version: number } | null = null;
@@ -425,7 +432,7 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
         el("fieldset", { class: "panel-body" },
             el("div", { class: "button-row" }, labeled("Camera", pick, "labeled inline")),
             note,
-            el("div", { class: "button-row" }, lookButton, searchButton, scanButton, placeButton, unloadButton),
+            el("div", { class: "button-row" }, lookButton, searchButton, scanButton, placeButton, unloadButton, motionField),
             lookLine,
             knownLine,
             el("h3", {}, "Guesses"),
@@ -753,6 +760,12 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             [!machineFree, chosen === "top" ? "the machine is busy" : "the machine must be Idle"],
             [busy, "a routine is under way"],
             [!scaled, "the camera's scale is not measured"]);
+        // A G-code machine reports its place only at rest: its scans stop.
+        motionField.classList.toggle("hidden", chosen !== "head");
+        if (document.activeElement !== motion) {
+            motion.value = state.camera?.scan_motion === "fly" ? "fly" : "stop";
+        }
+        motion.disabled = busy;
         const scanned = look?.scan ?? null;
         scanHead.classList.toggle("hidden", scanned === null);
         scanLine.classList.toggle("hidden", scanned === null);
@@ -760,8 +773,9 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             mosaic.render(null, () => "");
         } else {
             const where = scanned.job === job?.id ? "" : ` of ${state.jobs.find((entry) => entry.id === scanned.job)?.name ?? scanned.job}`;
+            const delay = look?.delay ? `; the camera's delay ${formatFixed(look.delay.seconds * 1000, 0)} +- ${formatFixed(look.delay.sd * 1000, 0)} ms` : "";
             scanLine.textContent = `${src.scanning(state) ? "Scanning" : "The newest scan"}${where}: ${scanned.pictures} ${scanned.pictures === 1 ? "picture" : "pictures"}`
-                + ` taken ${scanned.motion === "fly" ? "on the move" : "at rest"}${scanned.found ? ", the board found (dashed)" : ""}.`;
+                + ` taken ${scanned.motion === "fly" ? "on the move" : "at rest"}${scanned.found ? ", the board found (dashed)" : ""}${delay}.`;
             void showScan(chosen, scanned.version);
         }
         const name = look?.job ? state.jobs.find((entry) => entry.id === look.job)?.name ?? null : null;

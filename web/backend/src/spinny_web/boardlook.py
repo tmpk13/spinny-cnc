@@ -146,6 +146,10 @@ class PictureFrame:
     center: Point
     roll: float
     mirror: bool = False
+    # The head's velocity when the frame was taken (mm/s; nothing at rest):
+    # the place is the head's for the camera's delay first guessed, and a
+    # posterior on a flying scan fits the delay along it.
+    velocity: Point = (0.0, 0.0)
 
 
 @dataclass
@@ -1001,12 +1005,13 @@ class BoardLook:
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=2.0)
 
-    def restart(self, box: Box | None = None, prior: KnownPlace | None = None) -> None:
+    def restart(self, box: Box | None = None, prior: KnownPlace | None = None, flying: bool = False) -> None:
         """A fresh consensus for the board loaded: a search starts over, the
         posterior's prior over `box` (the search's) and about `prior` (a
-        place known before, corners aside)."""
+        place known before, corners aside); `flying` (a scan on the move)
+        adds the camera's delay to the posterior's state."""
         with self._lock:
-            self.consensus = self._consensus(self.consensus.middle, self.job, box, prior)
+            self.consensus = self._consensus(self.consensus.middle, self.job, box, prior, flying)
             self._frame = None
             self._recheck_at = None
             self._forget_known()
@@ -1035,18 +1040,18 @@ class BoardLook:
             return None
         return {**known.to_dict(), "guided": self.guided, "unguided": self.unguided}
 
-    def _consensus(self, middle: Point, job_id: str | None, box: Box | None = None, prior: KnownPlace | None = None) -> Consensus:
+    def _consensus(self, middle: Point, job_id: str | None, box: Box | None = None, prior: KnownPlace | None = None, flying: bool = False) -> Consensus:
         threshold, corner_mm = self.tuning()
         options = self.options()
         if options.get("method") == "posterior" and job_id is not None:
-            from .posterior import Board, Posterior
+            from .posterior import DELAY_S, DELAY_SIGMA_S, Board, Posterior
 
             board = Board.of(middle, self._outline, self._features)
             scale = options.get("scale")
             return Posterior(
                 board, box, prior, threshold=threshold, corner_mm=corner_mm, corners=self.corners_of(job_id),
                 scale=float(scale) if isinstance(scale, (int, float)) else None, stretch=bool(options.get("stretch")),
-                marks=list(options.get("marks") or []),
+                marks=list(options.get("marks") or []), delay=(DELAY_S, DELAY_SIGMA_S) if flying else None,
             )
         return Consensus(middle, threshold=threshold, corner_mm=corner_mm, corners=self.corners_of(job_id))
 
@@ -1634,6 +1639,192 @@ def scan(
         look._stop_near = None
 
 
+# --- the full scan on the move ----------------------------------------------------------
+
+# A flying scan's pictures blur less than this share of a small pad (the
+# job's tenth percentile, else FLY_PAD_MM) over the camera's exposure, and
+# the head never goes faster than FLY_MAX_MM_S, nor so fast that pcbv's
+# looks (FLY_LOOKS_HZ) fall further apart than a third of a picture.
+BLUR_SHARE = 0.25
+FLY_PAD_MM = 0.5
+FLY_MAX_MM_S = 20.0
+FLY_LOOKS_HZ = 5.0
+# The head's place is known between two reports at most this far apart, s.
+HISTORY_GAP = 0.5
+# A picture for the mosaic every this share of a picture's width along a row.
+FLY_TILE_SHARE = 0.6
+
+
+def fly_speed(exposure_s: float, pad_mm: float, view_width_mm: float) -> float:
+    """The head's speed along a flying scan's rows, mm/s: blur within
+    BLUR_SHARE of a pad over the exposure, pcbv's looks a third of a
+    picture apart at most, and FLY_MAX_MM_S."""
+    if not (exposure_s > 0.0):
+        raise ValueError("a flying scan needs the camera's exposure set by hand: set it in the camera's picture controls")
+    return max(min(BLUR_SHARE * pad_mm / exposure_s, view_width_mm / 3.0 * FLY_LOOKS_HZ, FLY_MAX_MM_S), 0.5)
+
+
+class PlaceHistory:
+    """The head's board points as the status reports gave them, with when
+    each came: where the head was at a moment between two reports, and how
+    fast it went there."""
+
+    def __init__(self, keep: int = 6000) -> None:
+        self._points: deque[tuple[float, Point]] = deque(maxlen=keep)
+        self._lock = threading.Lock()
+
+    def add(self, moment: float, point: Point) -> None:
+        with self._lock:
+            if self._points and moment <= self._points[-1][0]:
+                return
+            self._points.append((moment, point))
+
+    def latest(self) -> Point | None:
+        with self._lock:
+            return self._points[-1][1] if self._points else None
+
+    def at(self, moment: float) -> tuple[Point, Point] | None:
+        """The head's point and velocity (mm/s) at `moment`, between the two
+        reports about it; None outside them, or across a gap of more than
+        HISTORY_GAP."""
+        with self._lock:
+            points = list(self._points)
+        for (t0, p0), (t1, p1) in zip(points, points[1:]):
+            if t0 <= moment <= t1:
+                if t1 - t0 > HISTORY_GAP:
+                    return None
+                share = (moment - t0) / (t1 - t0) if t1 > t0 else 0.0
+                point = (p0[0] + (p1[0] - p0[0]) * share, p0[1] + (p1[1] - p0[1]) * share)
+                span = max(t1 - t0, 1e-6)
+                return point, ((p1[0] - p0[0]) / span, (p1[1] - p0[1]) / span)
+        return None
+
+
+def fly_rows(stops: list[Point], view_width: float) -> list[tuple[Point, Point]]:
+    """A scan's stops (scan_stops, row by row) as rows to fly: each from
+    half a picture before its first stop to half a picture past its last,
+    so the pictures at its ends cover the box at speed."""
+    rows: list[list[Point]] = []
+    for stop in stops:
+        if rows and abs(rows[-1][0][1] - stop[1]) < 1e-9:
+            rows[-1].append(stop)
+        else:
+            rows.append([stop])
+    out = []
+    for row in rows:
+        first, last = row[0], row[-1]
+        direction = 1.0 if last[0] >= first[0] else -1.0
+        out.append(((first[0] - direction * view_width / 2.0, first[1]), (last[0] + direction * view_width / 2.0, last[1])))
+    return out
+
+
+def fly_scan(
+    look: BoardLook,
+    mover,
+    rows: list[tuple[Point, Point]],
+    offset: Point,
+    roll: float,
+    history: PlaceHistory,
+    speed: float,
+    stopped: Callable[[], bool],
+    on_row: Callable[[int, int], None],
+    error: type[Exception],
+    record=None,
+    box: Box | None = None,
+    prior: KnownPlace | None = None,
+    picture: tuple[float, float, float] | None = None,
+    outline: Box | None = None,
+    delay: float | None = None,
+) -> Estimate | None:
+    """A full scan with the head moving at `speed` (mm/s) along each row
+    (`mover.go` to its start, at rest; `mover.fly(end, speed)` begun, the
+    head going on its own; `mover.arrived()` once there). Each frame is
+    placed where `history` (the head's reported places) puts the head when
+    it was taken, less the camera's delay first guessed (`delay`, else the
+    posterior's DELAY_S), with the head's velocity, for the posterior to
+    fit the delay; the mosaic gets a picture every FLY_TILE_SHARE of a
+    picture's width. The place found once every row was flown, or None."""
+    from .posterior import DELAY_S
+
+    late = DELAY_S if delay is None else delay
+    look.begin_record(record)
+    look.restart(box, prior, flying=True)
+    look.searching = True
+    if look.job is not None:
+        look.mosaic.begin(look.job, [round(v, 4) for v in outline] if outline is not None else None, "fly")
+    spacing = FLY_TILE_SHARE * picture[0] * picture[2] if picture is not None else math.inf
+    # When the head set off along the row now flown: a frame from before is
+    # of the move to the row's start, at rapid speed and blurred.
+    flying_since: float | None = None
+
+    def place(captured: float) -> PictureFrame | str:
+        moment = captured - late
+        if flying_since is None or moment < flying_since:
+            return "the head was not on a row yet"
+        found = history.at(moment)
+        if found is None:
+            return "the head's place is not known for that moment"
+        point, velocity = found
+        if math.hypot(*velocity) > 1.5 * speed:
+            return "the head went faster than the row's speed"
+        return PictureFrame((point[0] + offset[0], point[1] + offset[1]), roll, False, velocity)
+
+    flown = 0
+    try:
+        for index, (start, end) in enumerate(rows):
+            on_row(index, len(rows))
+            head_start = (start[0] - offset[0], start[1] - offset[1])
+            head_end = (end[0] - offset[0], end[1] - offset[1])
+            if record is not None:
+                record.stop = index
+                record.event("row", index=index, start=_rounded(start), end=_rounded(end), speed=round(speed, 3))
+            flying_since = None
+            mover.go(head_start)
+            _reset(look, None)
+            mover.fly(head_end, speed)
+            flying_since = time.monotonic()
+            last_tile: Point | None = None
+            while True:
+                if stopped():
+                    raise error("stopped")
+                look.sample(place)
+                look.publish()
+                if picture is not None:
+                    latest = history.latest()
+                    if latest is not None and (last_tile is None or math.dist(latest, last_tile) >= spacing):
+                        try:
+                            meta, jpeg = look.client.frame(width=640, overlay=False, quality=75)
+                        except Exception:  # a picture never stops a scan
+                            meta, jpeg = {}, b""
+                        age = meta.get("age_ms")
+                        where = place(time.monotonic() - (float(age) / 1000.0 if _number(age) else 0.0))
+                        width, height = meta.get("width"), meta.get("height")
+                        if jpeg and isinstance(where, PictureFrame) and isinstance(width, int) and isinstance(height, int) and width > 0:
+                            look.mosaic.add_jpeg(jpeg, width, height, where.center, roll, False, picture[2], picture[0])
+                            last_tile = latest
+                if mover.arrived():
+                    break
+                time.sleep(SAMPLE_SECONDS / 2.0)
+            flown = index + 1
+            if record is not None:
+                record.event("row_end", index=index)
+        consensus = look.consensus
+        found = consensus.best if consensus.found else None
+        look.mosaic.finish(found.to_dict() if found is not None else None)
+        if found is not None:
+            look.remember_found(found)
+        look.publish(force=True)
+        extra = {"delay": consensus.delay} if getattr(consensus, "delay", None) is not None else {}
+        look.end_record("found" if found is not None else "not found", only=record, estimate=found.to_dict() if found is not None else None, visited=flown, scan=True, **extra)
+        return found
+    except BaseException as exc:
+        look.end_record("stopped" if stopped() else "error", only=record, message=str(exc) or type(exc).__name__, visited=flown, scan=True)
+        raise
+    finally:
+        look.searching = False
+        look._stop_near = None
+
+
 # --- features to center once the board is found -------------------------------------
 
 # A feature to center stands at least this far clear of every other one,
@@ -1901,6 +2092,34 @@ class BoardMover:
             seconds += streamer._rapid_seconds(start, joint)
             start = joint
         self._status = self._settle(seconds)
+
+    def fly(self, point: Point, speed: float) -> None:
+        """Begins a straight board line to `point` at `speed` mm/s, the
+        beam off (`cut` at S0), and returns while the head moves: a flying
+        scan's row. `arrived` says when the head stands there."""
+        streamer = self.access.streamer
+        joint = streamer.start_of(self._status)
+        here = streamer.board_of(joint)
+        lines = []
+        for kind, _, to_joint, _, _ in streamer._path_moves([here, point], joint):
+            lines.append(streamer.cut_line(to_joint, speed * 60.0, 0, None) if kind == "cut" else f"go {streamer.words(to_joint)}")
+        for line in lines:
+            self._line(line)
+        self._target = point
+        self._flying = time.monotonic()
+
+    def arrived(self) -> bool:
+        """The head stands at the end of the row `fly` began (the machine
+        Idle there, a moment after the lines went out)."""
+        if time.monotonic() - getattr(self, "_flying", 0.0) < 0.3:
+            return False
+        status = self.access.link.status
+        if status is None or status.state != "Idle":
+            return False
+        head_point = self.access.head_point
+        assert head_point is not None
+        self._status = status
+        return math.dist(head_point(status), self._target) < 0.1
 
     def halt(self) -> None:
         self._halt()

@@ -8154,6 +8154,9 @@ export class MockBackend implements Api, EventFeed {
         const scale = this.cameraConfig.mm_per_px > 0 ? this.cameraConfig.mm_per_px : CAMERA_TRUTH.mmPerPx;
         const [width, height] = parseSize(this.cameraConfig.size);
         this.scanWith(this.headLook, this.requireJob(jobId), [width * scale, height * scale], margin, this.cameraConfig.roll, false);
+        if (this.headLook.scan) {
+            this.headLook.scan.motion = this.cameraConfig.scan_motion ?? "stop";
+        }
         this.message("info", `scan done: ${this.headLook.scan?.pictures.length ?? 0} pictures of the board`);
         this.emitCamera();
         return this.cameraStateOf();
