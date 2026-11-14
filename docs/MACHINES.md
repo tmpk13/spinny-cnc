@@ -351,7 +351,12 @@ Up to four servos, `[servo.1]` to `[servo.4]`, each on a pin of the board
 (`pin`), whose PWM slice gives it a pulse every 20 ms, or on a channel of
 a PCA9685 PWM driver on the board's I2C bus (`channel`), never both. A
 servo the file leaves out has no output (`servoN_out` 0), so a file with
-none takes them all off. The pulse runs from `min_us` at 0 degrees to
+none takes them all off, and the file says how many the machine has by
+the sections it gives: the jog panel draws a bar for those only. The
+slots are fixed because the firmware keeps each one's seven settings in
+its stored settings record, whose layout is fixed; four were picked as
+enough for a pen, a shutter, a probe and a gate while keeping that record
+and the settings list short (a slot no file fits costs only its settings). The pulse runs from `min_us` at 0 degrees to
 `max_us` at `range` degrees in a straight line; a servo that turns the
 other way gets the longer pulse as `min_us`. `start` is the angle the
 board drives it to at power on; left out, it gets no pulse until it is
