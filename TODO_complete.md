@@ -801,3 +801,10 @@
 - Plugins: a Plugins tab of page modules with a switch each; Auto can write them but never turn one on.
 - mise run shots: screenshots of the page over its mock from a list of shots.
 - Servos: up to four, on the board's pins (PWM at 50 Hz) or a PCA9685 over I2C, set in machine files ([servo.N], [pca9685]), moved from the jog panel or with servo N A; STOP header pins refused for every output.
+- Probabilistic board search (docs/PROBABILISTIC_SEARCH.md, 2026-11-14): a camera's look method picks the vote or a probability over the board's pose that every picture updates, those without a lock too, with a column for where nothing has looked yet.
+- pcbv lists each search's candidate poses with their matches (pcb-vision 5885ddc); the posterior takes them, placed by their own frame's time.
+- The search report replays every record through the vote and the posterior side by side (`sweep --method both`).
+- A posterior search goes to the stop that narrows the probability most for its travel and look time.
+- Full scan: rows over the whole board from a rough place, every picture weighed, laid out as a mosaic with the board found; at rest, or on the move with the camera's delay measured from rows run both ways.
+- Board stretch: the posterior fits the board's X and Y scale and shear; Align shows the stretch of three marks or more, a mark far off taken as wrong.
+- Machine skew: learned from boards found at different turns, shown with its uncertainty, written into a cartesian machine file's steps per mm on request.
