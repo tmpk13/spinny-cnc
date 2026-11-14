@@ -241,6 +241,19 @@ export function numberField(options: NumberFieldOptions = {}): HTMLInputElement 
     return input;
 }
 
+/**
+ * A number field between a minus and a plus button, drawn as one box: the
+ * buttons are its ends, the field its middle, and `unit`, when given,
+ * sits inside it after the number. The buttons keep their own handlers;
+ * this only puts them together.
+ */
+export function stepperBox(field: HTMLInputElement, minus: HTMLButtonElement, plus: HTMLButtonElement, unit?: string): HTMLDivElement {
+    minus.classList.add("stepper-end");
+    plus.classList.add("stepper-end");
+    const middle = el("label", { class: "stepper-middle" }, field, unit ? el("span", { class: "stepper-unit" }, unit) : null);
+    return el("div", { class: "stepper" }, minus, middle, plus);
+}
+
 export function labeled(label: string, control: HTMLElement, className = "labeled"): HTMLLabelElement {
     return el("label", { class: className }, el("span", { class: "labeled-text" }, label), control);
 }

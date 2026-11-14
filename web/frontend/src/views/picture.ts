@@ -19,7 +19,7 @@
 // words kept level, and the pointer is turned back into the picture's own
 // pixels.
 
-import { button, el, numberField, readStored, writeStored } from "../dom.ts";
+import { button, el, numberField, readStored, stepperBox, writeStored } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { Ctx } from "./context.ts";
@@ -401,11 +401,13 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     const zoomField = numberField({ value: 1, min: ZOOMS[0], max: ZOOMS[ZOOMS.length - 1], step: 0.5, width: "3.5rem" });
     zoomField.setAttribute("aria-label", `${options.label} zoom`);
     zoomField.title = `zoom, ${ZOOMS[0]} to ${ZOOMS[ZOOMS.length - 1]} times: type one and press Enter`;
-    const zoomLine = el("label", { class: "picture-zoom" }, zoomField, el("span", { class: "muted" }, "x"));
     const out = button("-", () => step(-1), "btn btn-quiet btn-small");
     out.title = "zoom out (or Ctrl and the wheel)";
     const into = button("+", () => step(1), "btn btn-quiet btn-small");
     into.title = "zoom in (or Ctrl and the wheel)";
+    // The field and its - and + as one box, the zoom's x inside it.
+    const zoomLine = stepperBox(zoomField, out, into, "x");
+    zoomLine.classList.add("picture-zoom");
     const overlay = button("Overlay", () => {
         overlayOn = !overlayOn;
         writeStored(overlayKey, overlayOn ? "1" : "0");
@@ -434,7 +436,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     const cancelPick = button("Cancel", () => disarmPick(options.key), "btn btn-quiet btn-small");
     cancelPick.title = "pick nothing";
     const pickRow = el("div", { class: "button-row picture-pick-row hidden" }, pickLine, cancelPick);
-    const caption = el("div", { class: "button-row picture-caption" }, out, zoomLine, into, overlay);
+    const caption = el("div", { class: "button-row picture-caption" }, zoomLine, overlay);
     if (options.orientation) {
         caption.append(upright);
     }

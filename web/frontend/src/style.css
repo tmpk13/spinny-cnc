@@ -1040,6 +1040,79 @@ input.num.field {
     text-align: center;
 }
 
+/* A number field between its - and + (dom.ts stepperBox): one box, the
+   buttons its ends, ruled off from the field in its middle; the box takes
+   the field's focus ring and its invalid mark. */
+.stepper {
+    display: inline-flex;
+    align-items: stretch;
+    min-height: 2.25rem;
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+    background-color: var(--field);
+    transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.stepper:hover {
+    border-color: var(--border-strong);
+}
+
+.stepper:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 0.1875rem var(--ring);
+}
+
+.stepper:has(.field.invalid) {
+    border-color: var(--danger);
+}
+
+.stepper > .btn.stepper-end {
+    min-height: 0;
+    min-width: 2rem;
+    padding: 0 0.55rem;
+    font-weight: 700;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.stepper > .btn.stepper-end:hover:not(:disabled) {
+    background: var(--btn-hover);
+}
+
+.stepper > .btn.stepper-end:first-child {
+    border-right: thin solid var(--border);
+    border-radius: calc(var(--radius) - 0.0625rem) 0 0 calc(var(--radius) - 0.0625rem);
+}
+
+.stepper > .btn.stepper-end:last-child {
+    border-left: thin solid var(--border);
+    border-radius: 0 calc(var(--radius) - 0.0625rem) calc(var(--radius) - 0.0625rem) 0;
+}
+
+.stepper-middle {
+    display: inline-flex;
+    align-items: center;
+    padding-right: 0.45rem;
+}
+
+.stepper-middle > .field,
+.stepper-middle > .field:hover,
+.stepper-middle > .field:focus,
+.stepper-middle > input.num.field.invalid {
+    min-height: 0;
+    padding: 0.2rem 0.3rem;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.stepper-unit {
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
 /* A number field whose text reads as no number nor any arithmetic. */
 input.num.field.invalid {
     border-color: var(--danger);
@@ -3522,20 +3595,6 @@ table.pnp-parts tr.dnp td {
 
 .color-swatch.none {
     background: repeating-linear-gradient(45deg, transparent 0 0.2em, var(--border) 0.2em 0.3em);
-}
-
-/* The zoom typed in under a camera's picture, between its - and +, as
-   tall as the small buttons beside it. */
-.picture-zoom {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.2rem;
-}
-
-.picture-zoom input.num.field {
-    min-height: 2.25rem;
-    padding: 0.2rem 0.4rem;
-    text-align: right;
 }
 
 /* A point whose place is known, ringed on a camera's picture, and its

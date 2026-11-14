@@ -334,6 +334,10 @@ describe("the picture view", () => {
         expect(view.zoom()).toBe(8);
         expect(field.value).toBe("8");
         expect(field.classList.contains("invalid")).toBe(false);
+        // The - and + are the ends of the field's own box, the x inside it.
+        const box = field.closest(".stepper")!;
+        expect(Array.from(box.querySelectorAll("button")).map((node) => node.textContent)).toEqual(["-", "+"]);
+        expect(box.querySelector(".stepper-unit")?.textContent).toBe("x");
         // The buttons go to the step beside a zoom typed in, and say it in the field.
         view.setZoom(2.5);
         click(view.root, "-");
