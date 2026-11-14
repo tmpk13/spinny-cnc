@@ -21,8 +21,11 @@
 // camera). The marks turn with it, their words kept level, and the pointer
 // is turned back into the picture's own pixels. The View menu sets the
 // crosshair's shape (a cross, a circle, both) and reach, kept per camera.
+// A spot a routine or a look found stays over the picture until Clear
+// marks, moving with the machine so it stays over what it marked (or, the
+// View menu's Marks follow the machine off, where it was drawn).
 
-import { button, el, numberField, readStored, stepperBox, writeStored } from "../dom.ts";
+import { button, el, numberField, readStored, setLocked, stepperBox, writeStored } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import { openMenu } from "../menu.ts";
 import type { AppState } from "../state.ts";
@@ -287,20 +290,34 @@ export interface PictureShown {
     rem: number;
 }
 
-/** The marks of a spot the finder found, about the picture's center: its ellipse, its rectangle, its center, and the circle it was looked for within; a miss draws only that circle. */
-export function spotMarks(
-    spot: { dx?: number; dy?: number; major?: number; minor?: number; angle?: number; rect?: { length: number; width: number; angle: number }; found?: boolean; radius?: number | null } | null | undefined,
-    size: [number, number],
-    tone: Tone,
-): Mark[] {
+/** What the finder said of a spot, as far as a mark needs it: its place from the picture's center, its ellipse and rectangle, whether it was found and how far it was looked for. */
+export interface SpotLike {
+    dx?: number;
+    dy?: number;
+    major?: number;
+    minor?: number;
+    angle?: number;
+    rect?: { length: number; width: number; angle: number };
+    found?: boolean;
+    radius?: number | null;
+}
+
+/**
+ * The marks of a spot the finder found, about the picture's center: its
+ * ellipse, its rectangle, its center, and the circle it was looked for
+ * within with the line from the center to it; a miss draws only that
+ * circle. `reach` false leaves out the circle and the line, which say how
+ * the newest look went and would crowd the picture for older ones.
+ */
+export function spotMarks(spot: SpotLike | null | undefined, size: [number, number], tone: Tone, reach = true): Mark[] {
     if (!spot) {
         return [];
     }
     const [width, height] = size;
     const cx = width / 2;
     const cy = height / 2;
-    const reach = spot.radius ?? height / 3;
-    const marks: Mark[] = [{ kind: "circle", x: cx, y: cy, r: reach, tone: "ring", title: `looked for within ${formatFixed(reach, 0)} px of the center` }];
+    const within = spot.radius ?? height / 3;
+    const marks: Mark[] = reach ? [{ kind: "circle", x: cx, y: cy, r: within, tone: "ring", title: `looked for within ${formatFixed(within, 0)} px of the center` }] : [];
     if (spot.found === false || spot.dx === undefined || spot.dy === undefined) {
         marks.push({ kind: "circle", x: cx, y: cy, r: Math.min(width, height) / 40, tone: "miss", title: "nothing found" });
         return marks;
@@ -316,8 +333,88 @@ export function spotMarks(
     const arm = Math.max(4, (spot.minor ?? 8) / 4);
     marks.push({ kind: "line", points: [[x - arm, y], [x + arm, y]], tone });
     marks.push({ kind: "line", points: [[x, y - arm], [x, y + arm]], tone });
-    marks.push({ kind: "line", points: [[cx, cy], [x, y]], tone });
+    if (reach) {
+        marks.push({ kind: "line", points: [[cx, cy], [x, y]], tone });
+    }
     return marks;
+}
+
+/** A mark moved by `dx`, `dy` px of the picture. */
+export function shiftMark(mark: Mark, dx: number, dy: number): Mark {
+    if (mark.kind === "line") {
+        return { ...mark, points: mark.points.map(([x, y]) => [x + dx, y + dy] as [number, number]) };
+    }
+    return { ...mark, x: mark.x + dx, y: mark.y + dy };
+}
+
+/**
+ * How far, px of the picture, what a picture showed has moved in it since
+ * the machine place that carries it was `then` and now is `now`: a camera
+ * on the head (`rides`) sees the machine move against the head, so the
+ * point under its center going from `then` to `now` moves everything seen
+ * the other way; a fixed camera sees the nozzle, which moves with the head.
+ */
+export function followShift(rides: boolean, then: [number, number], now: [number, number], calibration: Calibration): [number, number] {
+    const mx = rides ? then[0] - now[0] : now[0] - then[0];
+    const my = rides ? then[1] - now[1] : now[1] - then[1];
+    return machineToPicture(mx, my, calibration.mmPerPx, calibration.roll, calibration.mirror);
+}
+
+/**
+ * A spot a camera's state shows now (a routine's newest, a Look once):
+ * `key` tells it from every other (a new look gives a new key), `live`
+ * says the routine that found it is under way.
+ */
+export interface ShownSpot {
+    key: string;
+    spot: SpotLike;
+    tone: Tone;
+    live?: boolean;
+}
+
+/**
+ * A spot kept over the picture until Clear marks, with the place that
+ * carried what the picture showed when it was found (`at`, null when not
+ * known, which keeps it fixed to the picture).
+ */
+export interface KeptSpot extends ShownSpot {
+    at: [number, number] | null;
+}
+
+/** Spots a picture keeps at most; the oldest go past it. */
+export const MAX_KEPT_SPOTS = 40;
+
+/**
+ * The spots kept once the ones a state shows now are taken in: those not
+ * seen before join the kept ones, each with the place `at` carries now.
+ * With `primed` false (the first state the camera's state is known in)
+ * only a routine under way is taken, the rest being looks from before the
+ * picture was shown. `seen` gains every key.
+ */
+export function takeSpots(kept: KeptSpot[], shown: ShownSpot[], seen: Set<string>, primed: boolean, at: [number, number] | null): KeptSpot[] {
+    const fresh = shown.filter((entry) => !seen.has(entry.key) && (primed || entry.live === true));
+    shown.forEach((entry) => seen.add(entry.key));
+    if (fresh.length === 0) {
+        return kept;
+    }
+    const next = [...kept, ...fresh.map((entry) => ({ ...entry, at }))];
+    return next.length > MAX_KEPT_SPOTS ? next.slice(next.length - MAX_KEPT_SPOTS) : next;
+}
+
+/**
+ * The marks of the spots kept, the newest with how it was looked for, each
+ * moved by how far what it marks has moved since (`follow`: the place now
+ * and the calibration; null keeps them where they were drawn).
+ */
+export function keptMarks(kept: KeptSpot[], size: [number, number], rides: boolean, follow: { now: [number, number]; calibration: Calibration } | null): Mark[] {
+    return kept.flatMap((entry, index) => {
+        const marks = spotMarks(entry.spot, size, entry.tone, index === kept.length - 1);
+        if (follow === null || entry.at === null) {
+            return marks;
+        }
+        const [dx, dy] = followShift(rides, entry.at, follow.now, follow.calibration);
+        return marks.map((mark) => shiftMark(mark, dx, dy));
+    });
 }
 
 /** Machine points as picture points, the picture's center seeing `center`. */
@@ -397,8 +494,21 @@ export interface PictureOptions {
     orientation?(state: AppState): { roll: number; mirror: boolean } | null;
     /** The machine point under the picture's center now; null when not known. */
     center(state: AppState): [number, number] | null;
-    /** The page's marks over the picture besides the crosshair, the box and a drag; `shown` is what the picture shows now. */
+    /** The page's marks over the picture besides the crosshair, the box, a drag and the spots kept; `shown` is what the picture shows now. */
     marks(state: AppState, shown: PictureShown): Mark[];
+    /**
+     * The spots the camera's state shows now (its routine's newest, its
+     * last Look once), each kept over the picture from when it first shows
+     * until Clear marks; null while the camera's state is not known.
+     */
+    spots?(state: AppState): ShownSpot[] | null;
+    /**
+     * The machine place that carries what the picture shows, for marks
+     * that follow the machine: for a camera on the head the point under the
+     * picture's center (`center`, the default), for a fixed camera the
+     * head's place (it sees the nozzle); null when not known.
+     */
+    follow?(state: AppState): [number, number] | null;
     /** Moves the head by a step on the machine, mm. */
     move(mm: [number, number]): Promise<void>;
     /** Said when a drag or a double-click needs the scale and there is none. */
@@ -459,9 +569,18 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     const turnKey = `spinny.picture.${options.key}.turn`;
     const crosshairKey = `spinny.picture.${options.key}.crosshair`;
     const crosshairSizeKey = `spinny.picture.${options.key}.crosshair.size`;
+    const followKey = `spinny.picture.${options.key}.follow`;
     let zoom = 1;
     let overlayOn = readStored(overlayKey) !== "0";
     let uprightOn = readStored(uprightKey) !== "0";
+    // Marks of what was found move with the machine, staying over what
+    // they mark, unless switched off (then they stay where they were drawn).
+    let followOn = readStored(followKey) !== "0";
+    // The spots found and kept until Clear marks, and every spot's key
+    // seen, so one cleared does not come back with the next state.
+    let kept: KeptSpot[] = [];
+    const seen = new Set<string>();
+    let primed = false;
     // Quarters the picture is turned by hand, counterclockwise, over Upright's turn.
     let byHand = readQuarters(readStored(turnKey));
     let crosshair = readCrosshair(readStored(crosshairKey), readStored(crosshairSizeKey));
@@ -511,8 +630,12 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     upright.title = "show the picture turned by the camera's roll so the machine's +X points right and +Y up";
     const reset = button("Reset view", () => setZoom(1), "btn btn-quiet btn-small", "back to the whole picture filling its box (zoom 1)");
     const turnButton = button("Turn", () => turnBy(-1), "btn btn-quiet btn-small");
-    const view = button("View", () => openView(), "btn btn-quiet btn-small", "the crosshair's shape and size");
+    const view = button("View", () => openView(), "btn btn-quiet btn-small", "the crosshair's shape and size, and whether marks follow the machine");
     view.setAttribute("aria-haspopup", "menu");
+    const clearMarks = button("Clear marks", () => {
+        kept = [];
+        draw(ctx.store.get());
+    }, "btn btn-quiet btn-small", "take away the spots routines and Look once found: they stay over the picture until this");
     const boxLine = el("span", { class: "muted picture-box-line" });
     const clearBox = button("Clear box", () => setBox(null), "btn btn-quiet btn-small");
     clearBox.title = "forget the box: a search then covers the board's size about where the picture is";
@@ -526,7 +649,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     if (options.orientation) {
         caption.append(upright);
     }
-    caption.append(overlay, view);
+    caption.append(overlay, clearMarks, view);
     /** The picture waits for a pick: a crosshair, and a line saying what for. */
     const showPick = (): void => {
         const label = armedPick(options.key);
@@ -599,7 +722,32 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
             ...CROSSHAIR_SHAPES.map((entry) => ({ label: entry.label, run: pickShape(entry.value), checked: crosshair.shape === entry.value })),
             "-",
             ...CROSSHAIR_SIZES.map((entry) => ({ label: entry.label, run: pickSize(entry.value), checked: crosshair.size === entry.value })),
+            "-",
+            {
+                label: "Marks follow the machine",
+                run: () => {
+                    followOn = !followOn;
+                    writeStored(followKey, followOn ? "1" : "0");
+                    draw(ctx.store.get());
+                },
+                checked: followOn,
+            },
         ], view, `${options.label} view`);
+    }
+
+    /** The place that carries what the picture shows now. */
+    function followPlace(state: AppState): [number, number] | null {
+        return options.follow ? options.follow(state) : options.center(state);
+    }
+
+    /** Takes in the spots the state shows that were not seen before, with the place that carries them now. */
+    function takeShown(state: AppState): void {
+        const shown = options.spots?.(state) ?? null;
+        if (shown === null) {
+            return;
+        }
+        kept = takeSpots(kept, shown, seen, primed, followPlace(state));
+        primed = true;
     }
 
     /**
@@ -889,6 +1037,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     }
 
     function draw(state: AppState): void {
+        takeShown(state);
         const [width, height] = fullSize(state);
         // The view box is the part of the picture the zoom shows, so a mark
         // lands where the zoomed picture shows its point.
@@ -908,7 +1057,11 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
                 rem: rem || (rem = remPx()),
             };
             marks.push(...options.marks(state, shown));
+            const now = followPlace(state);
+            const calibrated = options.calibration(state);
+            marks.push(...keptMarks(kept, [width, height], options.rides, followOn && now !== null && calibrated !== null ? { now, calibration: calibrated } : null));
         }
+        setLocked(clearMarks, kept.length === 0, "no spots found are kept over the picture");
         const calibration = options.calibration(state);
         const center = options.center(state);
         if (searchBox !== null && calibration !== null && center !== null) {

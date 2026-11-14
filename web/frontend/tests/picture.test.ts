@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { boardMarks, foundMarks, frameSize, reachMark } from "../src/views/camview.ts";
-import { addTurn, armedPick, armPick, clampZoom, crosshairMarks, disarmPick, dragMove, frameRequestWidth, growBox, levelText, machineToPicture, mountPicture, pictureToMachine, readCrosshair, readQuarters, spotMarks, stepZoom, turnTransform, UNTURNED, unturnOffset, uprightTurn, zoomText } from "../src/views/picture.ts";
+import { boardMarks, frameSize, reachMark, shownSpots } from "../src/views/camview.ts";
+import { addTurn, armedPick, armPick, clampZoom, crosshairMarks, disarmPick, dragMove, followShift, frameRequestWidth, growBox, keptMarks, levelText, machineToPicture, MAX_KEPT_SPOTS, mountPicture, pictureToMachine, readCrosshair, readQuarters, shiftMark, type ShownSpot, spotMarks, stepZoom, takeSpots, turnTransform, UNTURNED, unturnOffset, uprightTurn, zoomText } from "../src/views/picture.ts";
 import { click, setup, settle } from "./harness.ts";
 
 /** A CSS or SVG transform list applied to a point: rotate (degrees, clockwise on a y-down screen), scaleX, scale and translate; the last one listed acts first. */
@@ -133,6 +133,44 @@ describe("picture geometry", () => {
         expect(readCrosshair("square", null)).toEqual({ shape: "cross", size: "small" });
     });
 
+    test("spots are kept from when they first show; at the start only a routine under way's", () => {
+        const seen = new Set<string>();
+        const old = { key: "look a", spot: { dx: 1, dy: 1 }, tone: "look" as const };
+        const live = { key: "routine b", spot: { dx: 2, dy: 2 }, tone: "spot" as const, live: true };
+        let kept = takeSpots([], [old, live], seen, false, [5, 6]);
+        expect(kept.map((entry) => entry.key)).toEqual(["routine b"]);
+        expect(kept[0]!.at).toEqual([5, 6]);
+        // Shown again, nothing is taken twice; a new one joins at the place now.
+        kept = takeSpots(kept, [old, live, { key: "look c", spot: {}, tone: "look" }], seen, true, [7, 8]);
+        expect(kept.map((entry) => [entry.key, entry.at])).toEqual([["routine b", [5, 6]], ["look c", [7, 8]]]);
+        // At most MAX_KEPT_SPOTS, the oldest going.
+        for (let index = 0; index < MAX_KEPT_SPOTS; index++) {
+            kept = takeSpots(kept, [{ key: `n${index}`, spot: {}, tone: "look" }], seen, true, null);
+        }
+        expect(kept).toHaveLength(MAX_KEPT_SPOTS);
+        expect(kept[0]!.key).toBe("n0");
+    });
+
+    test("kept spots follow what they mark as the machine moves: against a riding camera's moves, with a fixed camera's head", () => {
+        const calibration = { mmPerPx: 0.1, roll: 0, mirror: false };
+        // The point under a riding camera's center went 1 mm to +X: what it saw moves 10 px left.
+        expect(followShift(true, [50, 20], [51, 20], calibration)).toEqual([-10, -0]);
+        // A fixed camera's head went 1 mm to +Y: the nozzle it sees goes up the picture.
+        const [, up] = followShift(false, [0, 0], [0, 1], calibration);
+        expect(up).toBeCloseTo(-10, 9);
+        const kept = [
+            { key: "a", spot: { found: true, dx: 10, dy: 0, major: 20, minor: 10 }, tone: "spot" as const, at: [50, 20] as [number, number] },
+            { key: "b", spot: { found: true, dx: -10, dy: 0, major: 20, minor: 10 }, tone: "look" as const, at: null },
+        ];
+        const marks = keptMarks(kept, [1000, 500], true, { now: [51, 20], calibration });
+        const ellipses = marks.filter((mark) => mark.kind === "ellipse") as { x: number }[];
+        // The first moved with the machine; the second, its place not known, stays where it was drawn.
+        expect(ellipses.map((mark) => mark.x)).toEqual([500, 490]);
+        // Only the newest says how it was looked for: one ring.
+        expect(marks.filter((mark) => mark.tone === "ring")).toHaveLength(1);
+        expect(shiftMark({ kind: "line", points: [[1, 2]], tone: "spot" }, 3, 4)).toMatchObject({ points: [[4, 6]] });
+    });
+
     test("a turn by hand adds quarters to Upright's and keeps its flip", () => {
         expect(addTurn({ quarter: 3, flip: true }, 2)).toEqual({ quarter: 1, flip: true });
         expect(addTurn(UNTURNED, -1)).toEqual({ quarter: 3, flip: false });
@@ -151,12 +189,13 @@ describe("picture geometry", () => {
         expect(miss[0]).toMatchObject({ r: 100 });
     });
 
-    test("a running or failed routine's spot is shown before a look once, a look once before an old routine's", () => {
+    test("a camera's state shows its routine's spot and its look once, each keyed by what it says", () => {
         const spot = { dx: 1, dy: 2, mm: 0.1 };
         const look = { found: true, polarity: "dark" as const, radius: null, dx: 3, dy: 4 };
-        expect(foundMarks({ state: "running", spot }, look, [100, 100]).some((mark) => mark.tone === "spot")).toBe(true);
-        expect(foundMarks({ state: "done", spot }, look, [100, 100]).some((mark) => mark.tone === "look")).toBe(true);
-        expect(foundMarks(null, null, [100, 100])).toEqual([]);
+        const shown = shownSpots({ state: "running", spot }, look);
+        expect(shown.map((entry) => [entry.tone, entry.live === true])).toEqual([["spot", true], ["look", false]]);
+        expect(shownSpots({ state: "done", spot: { ...spot, dx: 5 } }, null)[0]!.key).not.toBe(shown[0]!.key);
+        expect(shownSpots(null, null)).toEqual([]);
         expect(frameSize(null, "640x480")).toEqual([640, 480]);
         expect(frameSize({ width: 1920, height: 1080 }, "640x480")).toEqual([1920, 1080]);
         expect(reachMark(2, { mmPerPx: 0.02, roll: 0, mirror: false }, [1280, 720], "")[0]).toMatchObject({ r: 100 });
@@ -380,6 +419,61 @@ describe("the picture view", () => {
         click(view.root, "Reset view");
         expect(view.zoom()).toBe(1);
         expect(Number((marks.getAttribute("viewBox") ?? "").split(" ")[2])).toBeCloseTo(1000, 2);
+        view.stop();
+    });
+
+    test("spots found stay over the picture, following the machine, until Clear marks; one cleared does not come back", () => {
+        const { ctx } = setup();
+        let spots: ShownSpot[] | null = null;
+        let center: [number, number] = [50, 20];
+        const view = mountPicture({
+            key: "test-kept",
+            label: "Test camera",
+            rides: true,
+            running: () => true,
+            frameUrl: (width) => `data:image/svg+xml,w=${width}`,
+            pcbvOverlay: () => false,
+            size: () => [1000, 500],
+            calibration: () => ({ mmPerPx: 0.1, roll: 0, mirror: false }),
+            center: () => center,
+            marks: () => [],
+            spots: () => spots,
+            move: async () => undefined,
+            noScale: "no scale",
+            visible: () => true,
+        }, ctx);
+        document.body.append(view.root);
+        const layer = view.root.querySelector(".picture-marks") as SVGElement;
+        const ellipses = (): number[] => [...layer.querySelectorAll("ellipse")].map((node) => Number(node.getAttribute("cx")));
+        const clear = [...view.root.querySelectorAll("button")].find((node) => node.textContent === "Clear marks")!;
+        const spot = (dx: number) => ({ found: true, dx, dy: 0, major: 20, minor: 10 });
+        // A look from before the picture showed is not drawn; a routine under way is.
+        spots = [{ key: "look old", spot: spot(-100), tone: "look" }];
+        view.render(ctx.store.get());
+        expect(ellipses()).toEqual([]);
+        expect(clear.disabled).toBe(true);
+        spots = [{ key: "look old", spot: spot(-100), tone: "look" }, { key: "routine a", spot: spot(10), tone: "spot", live: true }];
+        view.render(ctx.store.get());
+        expect(ellipses()).toEqual([510]);
+        expect(clear.disabled).toBe(false);
+        // The head moves 1 mm to +X: the spot keeps over what it marks, 10 px to the left.
+        center = [51, 20];
+        view.render(ctx.store.get());
+        expect(ellipses()).toEqual([500]);
+        // Switched to stay with the picture, it is drawn where it was found.
+        click(view.root, "View");
+        [...document.querySelectorAll<HTMLButtonElement>(".menu-item")].find((node) => node.textContent === "Marks follow the machine")!.click();
+        expect(ellipses()).toEqual([510]);
+        expect(localStorage.getItem("spinny.picture.test-kept.follow")).toBe("0");
+        // The routine's next look joins it; the state no longer showing the first takes nothing away.
+        spots = [{ key: "routine b", spot: spot(20), tone: "spot" }];
+        view.render(ctx.store.get());
+        expect(ellipses()).toEqual([510, 520]);
+        clear.click();
+        expect(ellipses()).toEqual([]);
+        view.render(ctx.store.get());
+        expect(ellipses()).toEqual([]);
+        localStorage.removeItem("spinny.picture.test-kept.follow");
         view.stop();
     });
 

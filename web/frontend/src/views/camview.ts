@@ -2,22 +2,22 @@
 // layout can put them side by side, stack them as tabs or size them apart:
 // the bottom camera's (fixed to the machine, looking up at the nozzle) and,
 // with a G-code machine, its top camera's (on the head, looking down). Each
-// shows what its routines and Look once found (the circle looked within,
-// the spot's ellipse and rectangle), the circle a part or a mark is looked
-// for within, and for the top camera the box a board search keeps to and
-// the board where its looks put it; each rings the points whose place is
-// known (known.ts), and the top camera draws the picked part's pads and
-// body about its crosshair to line the part up with (partshape.ts). A
-// drag moves the head (picture.ts). The pictures are asked for only while
-// the page shows.
+// keeps what its routines and Look once found (the circle looked within,
+// the spot's ellipse and rectangle) until Clear marks, following the
+// machine; shows the circle a part or a mark is looked for within, and for
+// the top camera the box a board search keeps to and the board where its
+// looks put it; each rings the points whose place is known (known.ts), and
+// the top camera draws the picked part's pads and body about its crosshair
+// to line the part up with (partshape.ts). A drag moves the head
+// (picture.ts). The pictures are asked for only while the page shows.
 
 import { activePage, el } from "../dom.ts";
 import type { AppState } from "../state.ts";
 import type { BoardCorners, BoardEstimate, Job, RoutineSpot, SpotLook } from "../types.ts";
 import type { Ctx } from "./context.ts";
-import { bottomKnown, knownMarks, topKnown } from "./known.ts";
+import { bottomHead, bottomKnown, knownMarks, topKnown } from "./known.ts";
 import { boardTurn, partShapes, readShowShape, shapeMarks } from "./partshape.ts";
-import { type Calibration, type Mark, machineToPicturePoints, mountPicture, type PictureView, spotMarks } from "./picture.ts";
+import { type Calibration, type Mark, machineToPicturePoints, mountPicture, type PictureView, type ShownSpot } from "./picture.ts";
 import { gcodePlacing } from "./placing.ts";
 
 export { dragMove, pictureToMachine } from "./picture.ts";
@@ -31,15 +31,20 @@ export function frameSize(frame: { width: number; height: number } | null | unde
     return match ? [Number(match[1]), Number(match[2])] : null;
 }
 
-/** The marks of the spot a routine found while it runs or after it failed, else of the last Look once. */
-export function foundMarks(routine: { state: string; spot: RoutineSpot | null } | null | undefined, look: SpotLook | null | undefined, size: [number, number]): Mark[] {
-    if (routine && routine.spot && (routine.state === "running" || routine.state === "error")) {
-        return spotMarks(routine.spot, size, "spot");
+/**
+ * The spots a camera's state shows: its routine's newest (live while the
+ * routine runs) and its last Look once, each keyed by what it says, so a
+ * picture keeps every new one until Clear marks.
+ */
+export function shownSpots(routine: { state: string; spot: RoutineSpot | null } | null | undefined, look: SpotLook | null | undefined): ShownSpot[] {
+    const spots: ShownSpot[] = [];
+    if (routine?.spot) {
+        spots.push({ key: `routine ${JSON.stringify(routine.spot)}`, spot: routine.spot, tone: "spot", live: routine.state === "running" });
     }
     if (look) {
-        return spotMarks(look, size, "look");
+        spots.push({ key: `look ${JSON.stringify(look)}`, spot: look, tone: "look" });
     }
-    return routine?.spot ? spotMarks(routine.spot, size, "spot") : [];
+    return spots;
 }
 
 /** A circle about the picture's center `mm` wide on either side, in the picture's px. */
@@ -161,10 +166,12 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
             const known = bottomKnown(state, gcode);
             return [
                 ...reachMark(crop, bottomCalibration(state), size, "parts are looked for within this circle"),
-                ...foundMarks(state.pnp?.routine, state.pnp?.look, size),
                 ...knownMarks(known.points, known.center, bottomCalibration(state), shown),
             ];
         },
+        spots: (state) => (state.pnp ? shownSpots(state.pnp.routine, state.pnp.look) : null),
+        // Fixed to the machine, the camera sees the nozzle: what it found moves with the head.
+        follow: (state) => bottomHead(state, gcodePlacing(state)),
         move: jog,
         noScale: "the bottom camera's scale is not measured yet: Center nozzle first",
         visible,
@@ -210,13 +217,13 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
             const job = look?.job && state.job?.id === look.job ? state.job : null;
             return [
                 ...reachMark(state.placing?.document?.top?.within ?? null, calibration, size, "marks and fiducials are looked for within this circle"),
-                ...foundMarks(topState?.routine, topState?.look, size),
                 ...boardMarks(state.job, roughOf(state.job, look?.corners), topCenter(state), calibration, size, "rough"),
                 ...boardMarks(job, look?.estimate ?? null, topCenter(state), calibration, size),
                 ...knownMarks(topKnown(state), topCenter(state), calibration, shown),
                 ...shapeOf(state, calibration, size),
             ];
         },
+        spots: (state) => (state.placing?.top ? shownSpots(state.placing.top.routine, state.placing.top.look) : null),
         move: jog,
         noScale: "the top camera's scale is not measured yet: Measure offset first",
         visible: () => visible() && gcodePlacing(ctx.store.get()),

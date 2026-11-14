@@ -548,7 +548,13 @@ its own shape back. *Overlay* switches the page's marks over it (the
 crosshair, the circle a spot is looked for within, a spot found with its
 ellipse and box, a search box, the board where the looks put it, the
 known points below) and pcbv's pose of a loaded board; the marks keep
-thin lines at any zoom. *Upright* (on unless switched off, kept per
+thin lines at any zoom. A spot a routine or *Look once* finds stays over
+the picture until *Clear marks*, each newer one joining the older (only
+the newest keeps the circle it was looked for within and the line from
+the center); by default they follow the machine, staying over what they
+marked as the head moves (the head's place for the bottom camera, which
+sees the nozzle), and *Marks follow the machine* in *View* switched off
+keeps them where they were drawn. *Upright* (on unless switched off, kept per
 camera) shows the picture turned by the camera's roll to the nearest
 quarter turn, and flipped when the camera sees the machine mirrored (the
 bottom camera looking up), so the machine's +X points right and +Y up as

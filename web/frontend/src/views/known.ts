@@ -212,21 +212,18 @@ export function topKnown(state: AppState): KnownPoint[] {
  * or this project's rail and cross slide joints.
  */
 export function bottomKnown(state: AppState, gcode: boolean): { center: [number, number] | null; points: KnownPoint[] } {
-    let center: [number, number] | null;
-    let head: [number, number] | null = null;
-    if (gcode) {
-        center = state.placing?.camera?.position ?? null;
-        const position = state.placing?.position;
-        if (position?.x !== undefined && position.y !== undefined) {
-            head = [position.x, position.y];
-        }
-    } else {
-        center = state.pnp?.position ?? null;
-        const joint = state.snapshot.connected ? state.snapshot.machine?.joint : undefined;
-        if (joint) {
-            head = [joint.r, joint.z];
-        }
-    }
+    const center = gcode ? state.placing?.camera?.position ?? null : state.pnp?.position ?? null;
+    const head = bottomHead(state, gcode);
     const points: KnownPoint[] = head ? [{ at: head, label: "nozzle", title: "the nozzle's tip where the head's place puts it" }] : [];
     return { center, points };
+}
+
+/** The head's place the bottom camera sees the nozzle at: a G-code machine's X and Y, or this project's rail and cross slide joints; null when not known. */
+export function bottomHead(state: AppState, gcode: boolean): [number, number] | null {
+    if (gcode) {
+        const position = state.placing?.position;
+        return position?.x !== undefined && position.y !== undefined ? [position.x, position.y] : null;
+    }
+    const joint = state.snapshot.connected ? state.snapshot.machine?.joint : undefined;
+    return joint ? [joint.r, joint.z] : null;
 }

@@ -20,7 +20,7 @@ import { mountCameraControls, placeFolds, type CameraFolds } from "./cameracontr
 import { mountCameraSight } from "./camerasight.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
-import { boardMarks, foundMarks, frameSize, roughOf } from "./camview.ts";
+import { boardMarks, frameSize, roughOf, shownSpots } from "./camview.ts";
 import { into, type Ctx } from "./context.ts";
 import { headKnown, knownMarks } from "./known.ts";
 import { type Calibration, mountPicture, type PictureView } from "./picture.ts";
@@ -169,12 +169,12 @@ export function mountVisionView(root: HTMLElement, ctx: Ctx, visible: () => bool
             const look = camera?.board_look;
             const job = look?.job && state.job?.id === look.job ? state.job : null;
             return [
-                ...foundMarks(camera?.routine, null, size),
                 ...boardMarks(state.job, roughOf(state.job, look?.corners), headCenter(state), headCalibration(state), size, "rough"),
                 ...boardMarks(job, look?.estimate ?? null, headCenter(state), headCalibration(state), size),
                 ...knownMarks(headKnown(state), headCenter(state), headCalibration(state), shown),
             ];
         },
+        spots: (state) => (state.camera ? shownSpots(state.camera.routine, null) : null),
         move: async (mm) => {
             if (Math.hypot(mm[0], mm[1]) >= 0.001) {
                 await ctx.call(ctx.api.jog({ kind: "board", dx: Number(mm[0].toFixed(4)), dy: Number(mm[1].toFixed(4)) }));
