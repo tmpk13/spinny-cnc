@@ -493,7 +493,8 @@ class PlacingPart:
         middle, diagonal = self._board_size(job)
         references = None
         try:
-            fit = self._board_fit(job.id, self.job_parts(job.id)["components"])
+            # The corners are weighed on their own (taken), not again as references.
+            fit = self._board_fit(job.id, self.job_parts(job.id)["components"], corners=False)
             references = measured_known("references", fit.rotation, fit.shift, fit.rms, fit.marks, middle)
         except Exception:  # no references, or none of the job's parts: nothing known from them
             references = None
@@ -529,9 +530,11 @@ class PlacingPart:
         with self._config_lock:
             config = self._placing_config()
             refs = {part["ref"] for part in pair}
+            # This place takes over from the places a look or corners gave
+            # before, the corners taken as references among them.
             kept = [
                 entry for entry in config.get("references", [])
-                if not (entry.get("job") == body.job and (entry.get("ref") in refs or entry.get("by") in ("look", "corners")))
+                if not (entry.get("job") == body.job and (entry.get("ref") in refs or entry.get("by") in ("look", "corners", "corner")))
             ]
             for part in pair:
                 at = best.apply((float(part["x"]), float(part["y"])))
@@ -543,15 +546,35 @@ class PlacingPart:
     def top_corner(self, body: BoardCornerBody) -> dict:
         """The top camera's picture's center is on a corner of the job's
         board: the machine point under it is kept for that corner, the
-        guesses weighed against it and a rough place made (boardlook.py)."""
+        guesses weighed against it and a rough place made (boardlook.py),
+        and kept as one of the job's references, which Go to part, Find
+        fiducials and a plan place the board by."""
         machine = self._placing_idle()
         job = self._job(body.job)
         point = self._corner_point(job, body.corner)
         here = self._here(machine)
         offset = self._top_offset(machine)
         middle, _ = self._board_size(job)
-        self.top_look.add_corner(job.id, body.corner, point, (float(here["x"]) + offset[0], float(here["y"]) + offset[1]), middle)
+        at = (float(here["x"]) + offset[0], float(here["y"]) + offset[1])
+        self.top_look.add_corner(job.id, body.corner, point, at, middle)
+        self._keep_corner(job.id, body.corner, point, at, None)
         return self.publish_placing()
+
+    def _keep_corner(self, job_id: str, name: str, point: tuple[float, float], at: tuple[float, float], angle: float | None) -> None:
+        """A corner taken of the job's board kept as one of its references
+        (`by` corner): its place in the job's frame (`point`) paired with
+        where it lies on the machine, in place of one taken of that corner
+        before; a corner found by its edges keeps the board's turn they
+        showed, which a lone reference is turned by."""
+        ref = f"corner {name}"
+        entry: dict = {"job": job_id, "ref": ref, "at": [round(at[0], 4), round(at[1], 4)], "by": "corner", "point": [round(point[0], 4), round(point[1], 4)]}
+        if angle is not None:
+            entry["angle"] = round(angle, 4)
+        with self._config_lock:
+            config = self._placing_config()
+            kept = [item for item in config.get("references", []) if not (item.get("job") == job_id and item.get("ref") == ref)]
+            config["references"] = [*kept, entry]
+        self._save_config()
 
     def top_edge_corner(self, body: BoardCornerBody) -> dict:
         """The top camera sees a corner of the job's (blank) board against
@@ -571,11 +594,19 @@ class PlacingPart:
         corner, rotation = self._edge_corner(self.top.client, body.corner, frame, settings)
         middle, _ = self._board_size(job)
         self.top_look.add_corner(job.id, body.corner, point, corner, middle, rotation, "edges")
+        self._keep_corner(job.id, body.corner, point, corner, rotation)
         self.publish_message("info", f"{body.corner} corner found by its edges at {corner[0]:.3f}, {corner[1]:.3f} mm, the board turned {rotation:+.3f} degrees")
         return self.publish_placing()
 
     def top_corners_clear(self) -> dict:
+        """The corners taken forgotten, the references they were kept as too."""
+        job = self.top_look.corners_job
         self.top_look.clear_corners()
+        if job is not None:
+            with self._config_lock:
+                config = self._placing_config()
+                config["references"] = [entry for entry in config.get("references", []) if not (entry.get("job") == job and entry.get("by") == "corner")]
+            self._save_config()
         return self.publish_placing()
 
     def top_frame(self, width: int, overlay: bool) -> bytes:
@@ -752,17 +783,40 @@ class PlacingPart:
         self._save_config()
         return self.publish_placing()
 
-    def _board_fit(self, job_id: str, parts: list[dict]):
+    def _board_fit(self, job_id: str, parts: list[dict], corners: bool = True):
+        """Where the job's board lies on the machine, from its references:
+        parts taken by hand, the fiducials found (two or more outdo the
+        rest), and the corners taken of its board (each a reference of its
+        own, `point` its place in the job; left out with `corners` false).
+        One reference alone is turned by the typed angle, else by the turn
+        a corner's edges showed."""
         by_ref = {part["ref"]: part for part in parts}
-        entries = [entry for entry in self._placing_config().get("references", []) if entry.get("job") == job_id and entry.get("ref") in by_ref]
-        # Two fiducials or more the top camera found outdo places given by hand.
-        found = [entry for entry in entries if entry.get("by") == "fiducial"]
         pairs = []
+        turns = []
+        entries = [entry for entry in self._placing_config().get("references", []) if entry.get("job") == job_id]
+        found = [entry for entry in entries if entry.get("by") == "fiducial" and entry.get("ref") in by_ref]
         for entry in found if len(found) > 1 else entries:
-            part = by_ref[entry["ref"]]
-            pairs.append(((float(part["x"]), float(part["y"])), (float(entry["at"][0]), float(entry["at"][1]))))
+            try:
+                at = (float(entry["at"][0]), float(entry["at"][1]))
+                if entry.get("by") == "corner":
+                    if not corners:
+                        continue
+                    point = (float(entry["point"][0]), float(entry["point"][1]))
+                    turns.append(entry.get("angle"))
+                elif entry.get("ref") in by_ref:
+                    part = by_ref[entry["ref"]]
+                    point = (float(part["x"]), float(part["y"]))
+                    turns.append(None)
+                else:
+                    continue
+            except (KeyError, TypeError, ValueError, IndexError):
+                continue
+            pairs.append((point, at))
         angle = self._placing_config().get("angle")
-        return board_fit(pairs, float(angle) if isinstance(angle, (int, float)) and not isinstance(angle, bool) else None)
+        typed = float(angle) if isinstance(angle, (int, float)) and not isinstance(angle, bool) else None
+        if typed is None and len(pairs) == 1 and isinstance(turns[0], (int, float)):
+            typed = float(turns[0])
+        return board_fit(pairs, typed)
 
     def gcode_goto_part(self, body: PnpGotoBody) -> dict:
         """The nozzle, or the top camera's picture center, over a part's place

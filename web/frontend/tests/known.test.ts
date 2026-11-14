@@ -125,6 +125,12 @@ describe("which points each camera rings", () => {
         });
         const points = topKnown(state);
         expect(points.map((entry) => entry.label)).toEqual(["FID1", "FID2", "R1", "U1", "mark", "home"]);
+        // A corner kept as a reference that the look no longer holds is ringed by its name.
+        const withCorner = topKnown(withState({
+            ...state,
+            placing: { ...state.placing!, references: [...state.placing!.references, { job: "a1", ref: "corner top left", at: [5, 6], by: "corner", point: [0, 30] }] },
+        }));
+        expect(withCorner.find((entry) => entry.label === "top left")?.at).toEqual([5, 6]);
         expect(points[0]!.at).toEqual([20, 20]);
         expect(points[1]!.at).toEqual([110, 0]);
         expect(points[5]!.at).toEqual([1, 2]);

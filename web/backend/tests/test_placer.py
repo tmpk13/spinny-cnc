@@ -865,6 +865,55 @@ def test_corners_taken_with_the_top_camera_give_a_rough_place_a_search_box_and_r
     assert known.source == "references" and known.place.rotation == pytest.approx(2.0, abs=0.01)
 
 
+def test_a_corner_taken_is_a_reference_go_to_part_and_a_plan_place_the_board_by(client):
+    rig(client, profile(rest=TOP))
+    job_id = outlined_job(client)
+    client.put("/api/pnp/top", json={"offset": [34.0, -9.0], "mm_per_px": 0.02, "roll": 0.0, "mirror": False})
+    # No reference yet: nowhere to go.
+    assert client.post("/api/pnp/goto", json={"job": job_id, "ref": "R1"}).status_code == 400
+
+    def take(corner: str, at: tuple[float, float]) -> list[dict]:
+        # The picture's center on the corner: the head there less the offset.
+        client.post("/api/goto", json={"kind": "joint", "r": at[0] - 34.0, "z": at[1] + 9.0})
+        response = client.post("/api/pnp/top/corner", json={"job": job_id, "corner": corner})
+        assert response.status_code == 200, response.text
+        return [entry for entry in response.json()["references"] if entry["job"] == job_id]
+
+    refs = take("bottom left", (150.0, 80.0))
+    assert refs == [{"job": job_id, "ref": "corner bottom left", "at": [150.0, 80.0], "by": "corner", "point": [0.0, 0.0]}]
+    # One corner: the board shifted, not turned. R1 lies 1 mm along X from it.
+    client.post("/api/pnp/goto", json={"job": job_id, "ref": "R1"})
+    assert client.fake.position[:2] == pytest.approx((151.0, 80.0), abs=1e-6)
+    # A second corner gives the turn; taken again, a corner replaces itself.
+    far = turn((40.0, 30.0), 2.0)
+    take("top right", (far[0] + 150.0 + 3.0, far[1] + 80.0))
+    refs = take("top right", (far[0] + 150.0, far[1] + 80.0))
+    assert [entry["ref"] for entry in refs] == ["corner bottom left", "corner top right"]
+    planned = client.post("/api/pnp/plan", json={"job": job_id, "refs": ["R1"]}).json()
+    # The head's place is read to a hundredth of a mm.
+    assert planned["fit"]["rotation"] == pytest.approx(2.0, abs=0.01) and planned["fit"]["marks"] == 2
+    client.post("/api/pnp/goto", json={"job": job_id, "ref": "R2"})
+    r2 = turn((11.0, 0.0), 2.0)
+    assert client.fake.position[:2] == pytest.approx((r2[0] + 150.0, r2[1] + 80.0), abs=0.01)
+    # The posterior's prior leaves the corners out: they are weighed on their own.
+    job = client.backend._job(job_id)
+    parts = client.backend.job_parts(job_id)["components"]
+    with pytest.raises(ValueError):
+        client.backend._board_fit(job_id, parts, corners=False)
+    # A corner found by its edges turns a lone reference by the turn they showed.
+    client.backend.top_look.clear_corners()
+    client.backend._keep_corner(job_id, "top right", (40.0, 30.0), (190.0, 110.0), 5.0)
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [0.0, 0.0]})
+    client.delete(f"/api/pnp/references?job={job_id}&ref=R1")
+    client.delete(f"/api/pnp/references?job={job_id}&ref=corner%20bottom%20left")
+    assert client.backend._board_fit(job_id, parts).rotation == pytest.approx(5.0)
+    # Clear corners forgets the corners kept as references too.
+    take("bottom left", (150.0, 80.0))
+    client.delete("/api/pnp/top/corners")
+    assert [entry for entry in client.get("/api/pnp/placing").json()["references"] if entry["job"] == job_id and entry["by"] == "corner"] == []
+    assert job.id == job_id
+
+
 def test_a_search_that_covers_its_box_without_the_board_ends_as_not_found(client, quick_search):
     rig(client, profile(rest=TOP))
     job_id = outlined_job(client)

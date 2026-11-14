@@ -8407,7 +8407,8 @@ export class MockBackend implements Api, EventFeed {
         }
         const refs = new Set(pair.map((part) => part.ref));
         const placing = this.placing();
-        placing.references = placing.references.filter((entry) => !(entry.job === jobId && (refs.has(entry.ref) || entry.by === "look" || entry.by === "corners")));
+        // This place takes over from the places a look or corners gave before, the corners taken among them.
+        placing.references = placing.references.filter((entry) => !(entry.job === jobId && (refs.has(entry.ref) || entry.by === "look" || entry.by === "corners" || entry.by === "corner")));
         for (const part of pair) {
             const at = applyEstimate(best, { x: part.x, y: part.y });
             placing.references.push({ job: jobId, ref: part.ref, at: [round4(at.x), round4(at.y)], by });
@@ -8425,13 +8426,31 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, "the top camera's offset is not known: give [top_camera] offset in the machine file, or Measure offset");
         }
         const head = this.deviceHere(device);
-        this.topBoardLook.addCorner(job.id, corner, point, [head.x + offset[0], head.y + offset[1]], jobSize(job).middle);
+        const at: [number, number] = [head.x + offset[0], head.y + offset[1]];
+        this.topBoardLook.addCorner(job.id, corner, point, at, jobSize(job).middle);
+        this.keepCorner(job.id, corner, point, at, null);
         this.emitPlacing();
         return this.placingStateOf();
     }
 
+    /** A corner taken kept as one of the job's references, in place of one of that corner before: the backend's _keep_corner. */
+    private keepCorner(jobId: string, corner: CornerName, point: [number, number], at: [number, number], angle: number | null): void {
+        const ref = `corner ${corner}`;
+        const placing = this.placing();
+        placing.references = placing.references.filter((entry) => !(entry.job === jobId && entry.ref === ref));
+        placing.references.push({
+            job: jobId, ref, at: [round4(at[0]), round4(at[1])], by: "corner", point: [round4(point[0]), round4(point[1])],
+            ...(angle !== null ? { angle: round4(angle) } : {}),
+        });
+    }
+
     async topCornersClear(): Promise<PlacingState> {
+        // The corners kept as references go with them.
+        const job = this.topBoardLook.cornersJob();
         this.topBoardLook.clearCorners();
+        if (job !== null) {
+            this.placing().references = this.placing().references.filter((entry) => !(entry.job === job && entry.by === "corner"));
+        }
         this.emitPlacing();
         return this.placingStateOf();
     }
@@ -8472,6 +8491,7 @@ export class MockBackend implements Api, EventFeed {
         const taken = this.topBoardLook.cornersOf(jobId).find((entry) => entry.corner === corner)!;
         const job = this.requireJob(jobId);
         this.topBoardLook.addCorner(job.id, corner, taken.job, taken.machine, jobSize(job).middle, 0);
+        this.keepCorner(job.id, corner, taken.job, taken.machine, 0);
         this.emitPlacing();
         return this.placingStateOf();
     }
@@ -8873,17 +8893,28 @@ export class MockBackend implements Api, EventFeed {
         return this.placingStateOf();
     }
 
-    /** Where the board lies on the device: two fiducials or more found by the top camera outdo the references given by hand. */
+    /**
+     * Where the board lies on the device: two fiducials or more found by the
+     * top camera outdo the references given by hand; a corner taken is a
+     * reference of its own, and turns a lone one by its edges' turn. The
+     * backend's _board_fit.
+     */
     private deviceFitOf(jobId: string, parts: Component[]): AlignFit {
         const byRef = new Map(parts.map((part) => [part.ref, part]));
-        const entries = this.placing().references.filter((entry) => entry.job === jobId && byRef.has(entry.ref));
+        const designOf = (entry: PnpReference): [number, number] | null => {
+            if (entry.by === "corner") {
+                return entry.point ?? null;
+            }
+            const part = byRef.get(entry.ref);
+            return part ? [part.x, part.y] : null;
+        };
+        const entries = this.placing().references.filter((entry) => entry.job === jobId && designOf(entry) !== null);
         const found = entries.filter((entry) => entry.by === "fiducial");
-        const pairs: [[number, number], [number, number]][] = (found.length > 1 ? found : entries).map((entry) => {
-            const part = byRef.get(entry.ref)!;
-            return [[part.x, part.y], [entry.at[0], entry.at[1]]];
-        });
+        const used = found.length > 1 ? found : entries;
+        const pairs: [[number, number], [number, number]][] = used.map((entry) => [designOf(entry)!, [entry.at[0], entry.at[1]]]);
+        const angle = this.placing().angle ?? (used.length === 1 ? used[0]!.angle ?? null : null);
         try {
-            return deviceFit(pairs, this.placing().angle);
+            return deviceFit(pairs, angle);
         } catch (error) {
             throw new ApiError(400, errorText(error));
         }

@@ -439,6 +439,11 @@ export class MockBoardLook {
         this.corners = null;
     }
 
+    /** The job whose board the corners taken are of; null with none. */
+    cornersJob(): string | null {
+        return this.corners?.job ?? null;
+    }
+
     /** The corners taken of a job's board. */
     cornersOf(job: string | null): BoardCorners["points"] {
         return this.corners !== null && job !== null && this.corners.job === job ? this.corners.points : [];

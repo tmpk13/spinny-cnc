@@ -5,6 +5,7 @@ import { blockLines, deviceFit, planDevice, planSummary, VISION_NOTE } from "../
 import type { Component } from "../src/types.ts";
 import { nothingText, PLACING_SETUP, placingBadge, placingRunText, planText, referencesOf } from "../src/views/placing.ts";
 import { mountPnp } from "../src/views/pnp.ts";
+import { referenceFit } from "../src/views/pnprefs.ts";
 import { parseDevice } from "./gcoderig.ts";
 import { click, dialogButton, settle, setup, pnpRoots } from "./harness.ts";
 
@@ -208,6 +209,38 @@ describe("a G-code machine in the mock", () => {
         const settings = await backend.settings();
         expect(settings.controller).toBe("gcode");
         expect(settings.controls?.axes.map((axis) => axis.letter)).toEqual(["X", "Y", "Z", "A"]);
+    });
+});
+
+describe("a corner taken with the top camera", () => {
+    test("is a reference of its own: the fit, a plan and Go to part place the board by it", async () => {
+        const backend = new MockBackend({ timers: false });
+        const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
+        await marlinRig(backend, "\n[top_camera]\noffset = [20.0, 0.0]\n");
+        await backend.connect("/dev/ttyACM1", "openpnp-marlin");
+        const { components } = await backend.components(job.id);
+        const part = components.find((entry) => !entry.fiducial)!;
+        // The picture's center on the board's bottom left corner: the head 20 mm short of it.
+        await backend.command("G0 X80 Y30");
+        let state = await backend.topCorner(job.id, "bottom left");
+        const corner = state.references.find((entry) => entry.by === "corner")!;
+        expect(corner.ref).toBe("corner bottom left");
+        expect(corner.at).toEqual([100, 30]);
+        // Its place in the job is the outline's corner: Go to part goes there by it.
+        const shift = [100 - corner.point![0], 30 - corner.point![1]];
+        await backend.pnpGoto({ job: job.id, ref: part.ref });
+        const board = (await backend.state()).machine!.board;
+        expect(board.x).toBeCloseTo(part.x + shift[0]!, 3);
+        expect(board.y).toBeCloseTo(part.y + shift[1]!, 3);
+        expect((await backend.pnpPlan(job.id)).fit.marks).toBe(1);
+        // The page's fit is the backend's: one corner shifts the board, unturned.
+        const fit = referenceFit(state, job.id, components)!;
+        expect(fit.rotation).toBe(0);
+        expect(fit.shift[0]).toBeCloseTo(shift[0]!, 6);
+        // Clear corners takes it out of the references too.
+        state = await backend.topCornersClear();
+        expect(state.references.filter((entry) => entry.by === "corner")).toEqual([]);
+        await expect(backend.pnpGoto({ job: job.id, ref: part.ref })).rejects.toMatchObject({ status: 400 });
     });
 });
 

@@ -157,8 +157,8 @@ export function headKnown(state: AppState): KnownPoint[] {
  * its center is in: the selected job's fiducials where Find fiducials
  * found them, the others where a look that found the board puts them, the
  * parts taken with the nozzle or the camera, the corners taken of its
- * board, the mark the offset is measured from, and the fiducial Home by
- * fiducial finds.
+ * board (and those kept as its references), the mark the offset is
+ * measured from, and the fiducial Home by fiducial finds.
  */
 export function topKnown(state: AppState): KnownPoint[] {
     const placing = state.placing;
@@ -178,12 +178,22 @@ export function topKnown(state: AppState): KnownPoint[] {
         }
         // The parts taken by hand; those a fiducial, a look or the corners
         // gave are shown as those are.
-        for (const reference of (placing?.references ?? []).filter((entry) => entry.job === job.id)) {
+        const references = (placing?.references ?? []).filter((entry) => entry.job === job.id);
+        for (const reference of references) {
             if (reference.by === undefined || reference.by === "nozzle" || reference.by === "camera") {
                 points.push({ at: reference.at, label: reference.ref, title: `${reference.ref} as taken with the ${reference.by === "camera" ? "top camera" : "nozzle"}` });
             }
         }
-        points.push(...cornerPoints(top?.board_look?.corners, job.id));
+        const corners = cornerPoints(top?.board_look?.corners, job.id);
+        points.push(...corners);
+        // A corner kept as a reference that the look no longer holds (taken
+        // before the backend started again, say) is ringed as well.
+        for (const reference of references.filter((entry) => entry.by === "corner")) {
+            const name = reference.ref.replace(/^corner /, "");
+            if (!corners.some((point) => point.label === name)) {
+                points.push({ at: reference.at, label: name, title: `the board's ${name} corner, kept as a reference` });
+            }
+        }
     }
     if (top?.mark_at) {
         points.push({ at: top.mark_at, label: "mark", title: "the mark the top camera's offset is measured from" });

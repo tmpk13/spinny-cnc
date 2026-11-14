@@ -1112,7 +1112,11 @@ references, a part of the job paired with where it is on the machine: one
 gives a shift, turned by the typed `angle`; two or more a turn and a
 shift. Two or more fiducials the top camera found (`"by": "fiducial"`)
 outdo references given by hand (`"nozzle"`, or `"camera"` for Camera
-here) and taken from the top camera's board look (`"look"`). A fiducial is a footprint whose reference starts with FID or whose
+here), taken from the top camera's board look (`"look"`), and the corners
+of the board taken with the top camera (`"corner"`: `ref` is `"corner
+bottom left"`, `point` the corner's place in the job, and for one found by
+its edges `angle`, the board's turn, which a lone reference is turned by
+when no angle is typed). A fiducial is a footprint whose reference starts with FID or whose
 name holds "fiducial", kept whatever its position-file flags; the
 components list marks it (`fiducial`, with its largest pad as `diameter`)
 and gives every part's `body` (its F.Fab extent, longer side first, or
@@ -1169,10 +1173,10 @@ reference, the angle, a count) needs a G-code machine to keep it for.
 | `POST /api/pnp/top/scan`, `GET /api/pnp/top/scan`, `GET /api/pnp/top/scan/{index}.jpg` | the top camera's full scan and its mosaic, as the head camera's (`/api/camera/scan`), the rough place from corners, a place found or the references, its pictures placed in the machine's X and Y; a G-code machine's scan always stops for each picture. On the top camera's routine thread (`top.routine.kind` `scan`, a step per picture) |
 | `POST /api/pnp/top/board` | `{"job": "a1b2"}`: pcbv looks for the job's board (front, masked) and the backend reads its poses into `top.board_look` (Board look, under Camera) until unloaded, the camera stopped or started again; `{"job": null}` unloads it. 400 with the camera stopped or a job without its board file |
 | `POST /api/pnp/top/search` | `{"box": [x0, y0, x1, y1]}`, machine X and Y for the picture's center, or `{}` for a square the board's diagonal on a side about where it is now: the head rises to the safe height, goes to `[top_camera] z`, and visits the box in camera-sized steps nearest first; pcbv is told to `reset` at each stop, and a stop is left when no lock comes within 2.5 s or after 5 s; ends `done` once enough looks agree (the picture's center put over the board's middle), `error` once every stop was looked at. Kind `search`, steps `lifting`, `stop 1` ... `stop N`. 400 as for the head camera's search |
-| `POST /api/pnp/top/place` | `{"job": "a1b2"}`: the place the look found (else the rough place the corners taken of the board give) becomes the job's references: the two parts furthest apart (fiducials when there are two) where it puts them, `by: "look"` (or `"corners"`), replacing earlier ones by look or by corners; 400 until the look has found this job's board or a corner of it is taken |
-| `POST /api/pnp/top/corner` | `{"job": "a1b2", "corner": "top right"}`: as the head camera's corner, the head's place plus the top camera's offset kept for it; 400 without the offset measured, 409 while the machine is busy |
-| `POST /api/pnp/top/edge-corner` | as `POST /api/camera/edge-corner`, with the top camera's picture (its roll and mirror) about the head's place plus its offset; the placing state |
-| `DELETE /api/pnp/top/corners` | the top camera's corners are forgotten; the placing state |
+| `POST /api/pnp/top/place` | `{"job": "a1b2"}`: the place the look found (else the rough place the corners taken of the board give) becomes the job's references: the two parts furthest apart (fiducials when there are two) where it puts them, `by: "look"` (or `"corners"`), replacing earlier ones by look, by corners and the corners taken (`"corner"`); 400 until the look has found this job's board or a corner of it is taken |
+| `POST /api/pnp/top/corner` | `{"job": "a1b2", "corner": "top right"}`: as the head camera's corner, the head's place plus the top camera's offset kept for it, and kept as one of the job's references (`by: "corner"`, in place of one of that corner taken before); 400 without the offset measured, 409 while the machine is busy |
+| `POST /api/pnp/top/edge-corner` | as `POST /api/camera/edge-corner`, with the top camera's picture (its roll and mirror) about the head's place plus its offset, kept as a reference with the board's turn its edges show; the placing state |
+| `DELETE /api/pnp/top/corners` | the top camera's corners are forgotten, the references they were kept as too; the placing state |
 | `POST /api/pnp/top/abort` | ends the top camera's routine and sends the stop command |
 
 A feeder bus (`[bus]`) carries packets to smart feeders through the

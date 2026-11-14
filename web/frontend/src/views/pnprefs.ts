@@ -12,26 +12,39 @@ import { fitRigid, type RigidFit } from "../align.ts";
 import { button, el, labeled, lockFor, numberField, replace, setLocked } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
-import type { Component, PlacingState } from "../types.ts";
+import type { Component, PlacingState, PnpReference } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
 import { fiducialText, referencesOf } from "./placing.ts";
 import { infoTip } from "./infotip.ts";
 
-/** The fit the references make of a job's board, as the backend makes it, and how far each one used sits off it; null without a reference. */
+/** A reference's place in the job's frame: a corner's own point, else its part's; null for a part the board lacks. */
+function designOf(entry: PnpReference, byRef: Map<string, Component>): [number, number] | null {
+    if (entry.by === "corner") {
+        return entry.point ?? null;
+    }
+    const part = byRef.get(entry.ref);
+    return part ? [part.x, part.y] : null;
+}
+
+/**
+ * The fit the references make of a job's board, as the backend makes it
+ * (two fiducials found or more outdo the rest; a corner taken is a
+ * reference of its own; a lone one is turned by the typed angle, else by
+ * its edges' turn), and how far each one used sits off it; null without
+ * a reference.
+ */
 export function referenceFit(device: PlacingState | null, jobId: string | null, parts: Component[]): (RigidFit & { off: Map<string, number> }) | null {
     const byRef = new Map(parts.map((part) => [part.ref, part]));
-    const entries = referencesOf(device, jobId).filter((entry) => byRef.has(entry.ref));
+    const entries = referencesOf(device, jobId).filter((entry) => designOf(entry, byRef) !== null);
     const found = entries.filter((entry) => entry.by === "fiducial");
     const used = found.length > 1 ? found : entries;
     if (used.length === 0) {
         return null;
     }
-    const pairs = used.map((entry) => {
-        const part = byRef.get(entry.ref)!;
-        return { design: [part.x, part.y] as [number, number], machine: [entry.at[0], entry.at[1]] as [number, number] };
-    });
+    const pairs = used.map((entry) => ({ design: designOf(entry, byRef)!, machine: [entry.at[0], entry.at[1]] as [number, number] }));
+    const lone = used.length === 1 ? device?.angle ?? used[0]!.angle ?? 0 : null;
     try {
-        const fit = fitRigid(pairs, used.length === 1 ? device?.angle ?? 0 : null);
+        const fit = fitRigid(pairs, lone);
         return { ...fit, off: new Map(used.map((entry, index) => [entry.ref, fit.residuals[index] ?? 0])) };
     } catch {
         return null;
@@ -69,7 +82,8 @@ export function mountPnpRefs(root: HTMLElement, ctx: Ctx): void {
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Board on the machine"), infoTip("references")),
         el("div", { class: "panel-body" },
-            el("p", { class: "muted hint" }, "Pick a part, put the nozzle or the top camera over it, and press Here. The references are kept and map the whole board."),
+            el("p", { class: "muted hint" }, "Pick a part, put the nozzle or the top camera over it, and press Here. The references are kept and map the whole board;"
+                + " a corner taken with the top camera (Corner here, Find board panel) is a reference too."),
             el("div", { class: "button-row" }, nozzleHere, cameraHere),
             el("div", { class: "button-row" }, labeled("Turned deg", angle, "labeled inline"), clear),
             fitLine,

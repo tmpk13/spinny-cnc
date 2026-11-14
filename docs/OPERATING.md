@@ -895,7 +895,11 @@ come from the board's KiCad file, not from OpenPnP. Its setup steps:
    *Camera here* in Board on the machine. The references are kept per job
    and map the whole board: one gives the shift (with *Turned deg*), two
    or more the turn too, and the panel says how far each one sits off the
-   fit.
+   fit. A corner of the board taken with the top camera (*Corner here* or
+   *Corner by edges* in the Find board panel) is a reference too, listed
+   as "corner bottom left", so *Go to part* works from it at once; one
+   found by its edges also gives the board's turn. *Clear corners*
+   forgets them.
 4. *Plan* makes the placement program from the references and the
    feeders and shows it; nothing moves (it works with the machine
    disconnected too, for the one last connected). *Run* places the

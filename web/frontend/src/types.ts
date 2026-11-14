@@ -1476,8 +1476,17 @@ export interface PnpReference {
     job: string;
     ref: string;
     at: [number, number];
-    /** How the place was read: the nozzle over it, the top camera over it, a fiducial found, the top camera's board look, or the board's corners taken by hand. */
-    by?: "nozzle" | "camera" | "fiducial" | "look" | "corners";
+    /**
+     * How the place was read: the nozzle over it, the top camera over it, a
+     * fiducial found, the top camera's board look, the rough place the
+     * corners taken give (`corners`, two parts' places), or a corner of the
+     * board taken itself (`corner`: `ref` is "corner bottom left").
+     */
+    by?: "nozzle" | "camera" | "fiducial" | "look" | "corners" | "corner";
+    /** A corner's place in the job's frame, which a part's reference takes from the part. */
+    point?: [number, number];
+    /** The board's turn a corner's edges showed, degrees: a lone reference is turned by it. */
+    angle?: number;
 }
 
 export interface PlacingRun {

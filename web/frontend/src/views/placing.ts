@@ -186,7 +186,7 @@ export const PLACING_SETUP: Setup = {
             {
                 label: "Reference",
                 done: referencesOf(placing, jobId).length > 0,
-                hint: "Pick a part, put the nozzle or the top camera over it, and press Nozzle here or Camera here.",
+                hint: "Pick a part, put the nozzle or the top camera over it, and press Nozzle here or Camera here; or take a corner of the board with the top camera (Corner here in the Find board panel).",
                 panel: "pnp-refs",
             },
             { label: "Place", done: placing?.progress?.state === "done", hint: "Press Plan, check it, then Run.", panel: "pnp-run" },
