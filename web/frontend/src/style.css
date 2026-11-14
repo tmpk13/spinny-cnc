@@ -711,6 +711,34 @@ table.settings-list td {
     font-size: 0.85rem;
 }
 
+/* A release's machine files offered against the operator's copies. */
+.machine-updates {
+    padding: 0.5rem 0.75rem;
+    border: thin solid var(--hold);
+    border-radius: var(--radius);
+    background: color-mix(in oklab, var(--hold) 8%, var(--panel));
+}
+
+.machine-offer > summary {
+    cursor: pointer;
+}
+
+.config-diff {
+    margin: 0;
+    padding: 0.4rem 0.6rem;
+    max-height: 16rem;
+    overflow: auto;
+    border-radius: var(--radius);
+    background: var(--field);
+    font-family: var(--mono);
+    font-size: 0.8rem;
+}
+
+.diff-add { color: var(--green); }
+.diff-del { color: var(--red); }
+.diff-hunk { color: var(--cyan); }
+.diff-same { color: var(--muted); }
+
 /* Finding a word in the machine file, or in every one. */
 .config-find {
     flex: 1 1 10rem;

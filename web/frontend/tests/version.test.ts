@@ -33,7 +33,8 @@ describe("version panel", () => {
         const done = versionLines({ ...RELEASE, latest, status: "newer", checked: "now", state: "done", installed: "spinny-0.2.0-x86_64-linux", previous: "spinny-0.1.0-x86_64-linux" });
         expect(done.lines.at(-1)).toBe(
             "Installed spinny-0.2.0-x86_64-linux beside this one, and /opt/spinny/spinny points at it; spinny-0.1.0-x86_64-linux stays for a rollback"
-            + " (spinny-web --rollback). Restart from /opt/spinny/spinny/bin/spinny-web to finish.",
+            + " (spinny-web --rollback). Restart from /opt/spinny/spinny/bin/spinny-web to finish;"
+            + " the machine file panel then offers the release's changes to your machine files.",
         );
         expect(versionLines({ ...RELEASE, error: "no release is published at github.com/tmpk13/spinny-cnc yet" }).problem).toBe("no release is published at github.com/tmpk13/spinny-cnc yet");
         // Pre-releases followed: the check says so, and a pre-release is named one.
@@ -94,7 +95,7 @@ describe("version panel", () => {
         // The panel asks again while the update goes on.
         await new Promise((resolve) => setTimeout(resolve, 600));
         await settle();
-        expect(root.textContent).toContain("Restart from /opt/spinny/spinny/bin/spinny-web to finish.");
+        expect(root.textContent).toContain("Restart from /opt/spinny/spinny/bin/spinny-web to finish;");
         expect(install.dataset["reason"]).toBe("installed: restart from the link to finish");
         await expect(backend.updateInstall()).rejects.toMatchObject({
             status: 400, message: "spinny-0.2.0-x86_64-linux is installed beside this one: restart from /opt/spinny/spinny/bin/spinny-web to run it",

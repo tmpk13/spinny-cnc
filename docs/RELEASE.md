@@ -48,9 +48,11 @@ directory `SPINNY_HOME` names), with:
 `machines/` (a G-code pick and place machine's files among them) and
 `cam/` start as copies of the ones the release
 ships; once a directory exists it is yours and a later release leaves it
-alone. To pick up the files of a newer release, delete or rename the
-directory before starting it, or copy single files from
-`python/lib/python3.12/site-packages/spinny_web/defaults/`.
+alone. A newer release's machine files are offered on the Config tab
+instead ([MACHINES.md](MACHINES.md#a-releases-machine-files)): each of your
+copies with the release's changes merged in, your values kept, to take or
+leave. CAM profiles are not offered: to pick up a newer release's, copy
+single files from `python/lib/python3.12/site-packages/spinny_web/defaults/`.
 `bin/spinny-web --help` lists options that point each directory
 elsewhere.
 

@@ -570,6 +570,30 @@ settings, the head camera's routines) answers that the machine is a G-code
 one. The PNP tab places with it (see OPERATING.md), and the Config page
 imports one from OpenPnP's `machine.xml`.
 
+## A release's machine files
+
+A release ships these files inside its package, and its first start copies
+them into your machines directory, which from then on is yours: nothing
+writes it unasked. When a later release ships a file changed (a key added,
+a value corrected) or a file you have no copy of, the Config tab offers it
+under the file pick: each offer lists its changes and shows the
+difference it makes to your copy; *Take* writes it, *Keep mine* leaves your
+copy as it is, and neither is offered again for that release.
+
+The offer is your copy with the release's changes merged in. What each
+copy was made from (the file as shipped when it was copied in, or when you
+last took or left a release's) is kept in `var/shipped/machines/`, so a
+value only the release changed becomes the release's, a value you changed
+stays yours, also when the release changed it too (listed as kept), a key
+the release added goes in with its own lines and comments, and one it took
+out goes unless you changed it. An array of tables (`[[feeder]]`,
+`[[controls.axes]]`) is one value: the release's tables replace yours only
+where you left them as shipped. A copy made before a release kept that
+record is merged two-way: what the release adds goes in, and every value of
+yours stays, the ones that differ listed. A merge the backend would refuse
+is shown with why, to leave or to mend your copy first. A checkout of the
+repository updates its files with git and is offered nothing.
+
 ## How a load works
 
 The backend reads the file, maps it onto every firmware setting and writes the

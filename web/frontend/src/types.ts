@@ -411,6 +411,28 @@ export interface MachineResponse {
     text: string;
 }
 
+/** A machine file a release ships, offered against the operator's copy: a file not there yet, the copy with the release's changes merged in, or one that could not be merged. */
+export interface MachineOffer {
+    id: string;
+    name: string;
+    status: "new" | "merged" | "problem";
+    /** One line per change the merge makes, or value of the operator's kept against the release. */
+    changes: string[];
+    /** What taking it writes. */
+    text: string;
+    /** The operator's copy against `text`, as a unified diff. */
+    diff: string;
+    problem: string | null;
+    /** What the copy was made from is known: the merge was three-way. */
+    known: boolean;
+}
+
+export interface MachineUpdates {
+    /** The release ships machine files: false for a checkout, whose files are the repository's. */
+    shipped: boolean;
+    files: MachineOffer[];
+}
+
 /** A text checked as a machine file, without being written. */
 export interface MachineCheck {
     document: MachineDocument | null;

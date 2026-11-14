@@ -23,6 +23,7 @@ import type { MachineDocument, MachineProblem, MachineResponse, MachineSummary }
 import { boardPort, connectTo, disconnectFrom } from "./connection.ts";
 import { into, type Ctx } from "./context.ts";
 import { codeEditor } from "./editor.ts";
+import { mountMachineUpdates } from "./machineupdates.ts";
 import { keyAt, keyTip, mountSettingsList, settingRows, type SettingRow } from "./settingslist.ts";
 
 /** Settings the firmware reads at boot: a change takes effect after a save to flash and a restart. */
@@ -90,6 +91,9 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
     const useButton = button("Use this machine", () => useMachine(), "btn btn-primary");
     useButton.title = "make this file the machine in use: connect its machine, or write it to the board";
     const inUse = el("p", { class: "config-in-use" });
+    // What a release updated to offers of its machine files.
+    const offersBox = el("div", {});
+    const offers = mountMachineUpdates(offersBox, ctx, () => ctx.refreshMachines());
     const newId = el("input", { type: "text", class: "field", placeholder: "new id", "aria-label": "New machine id", autocomplete: "off" });
     newId.style.width = "8rem";
     const create = button("New", () => createFile(), "btn", "start a new machine file");
@@ -131,6 +135,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         el("div", { class: "panel-head" }, el("h2", {}, "Machine file"), el("div", { class: "button-row" }, reload)),
         el("div", { class: "button-row" }, labeled("Machine", pick, "labeled inline"), useButton, newId, create, remove),
         inUse,
+        offersBox,
         note,
         el("div", { class: "button-row" }, load, read, flash),
         loadNote,
@@ -484,6 +489,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
     }
 
     async function refresh(): Promise<void> {
+        void offers.refresh();
         listing = true;
         try {
             await ctx.refreshMachines();

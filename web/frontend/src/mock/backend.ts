@@ -230,6 +230,7 @@ import type {
     MachineProblem,
     MachineResponse,
     MachinesResponse,
+    MachineUpdates,
     MachineState,
     MapMode,
     Marker,
@@ -3721,6 +3722,15 @@ export class MockBackend implements Api, EventFeed {
             used: used !== null && this.machineTexts.has(used) ? used : null,
             problems,
         };
+    }
+
+    /** The mock is no release: it ships no machine files to offer. */
+    async machineUpdates(): Promise<MachineUpdates> {
+        return { shipped: false, files: [] };
+    }
+
+    async takeMachineUpdate(id: string, _take: boolean): Promise<MachineUpdates> {
+        throw new ApiError(404, `this release offers nothing for '${id}'`);
     }
 
     /** A file made the machine in use without touching a machine, as the backend's use_machine. */

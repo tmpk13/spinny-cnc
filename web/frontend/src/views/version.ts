@@ -47,7 +47,8 @@ export function versionLines(state: UpdateState): { lines: string[]; problem: st
     } else if (state.state === "done") {
         lines.push(
             `Installed ${state.installed} beside this one, and ${state.link} points at it; ${state.previous} stays for a rollback`
-            + ` (spinny-web --rollback). Restart from ${state.link}/bin/spinny-web to finish.`,
+            + ` (spinny-web --rollback). Restart from ${state.link}/bin/spinny-web to finish;`
+            + " the machine file panel then offers the release's changes to your machine files.",
         );
     }
     return { lines, problem: state.error };

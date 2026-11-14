@@ -47,6 +47,7 @@ import type {
     MachineFromBoard,
     MachineResponse,
     MachinesResponse,
+    MachineUpdates,
     Marker,
     MarkersResponse,
     MarkRequest,
@@ -167,6 +168,10 @@ export interface Api {
     applyMachine(id: string, save?: boolean): Promise<SettingsResponse>;
     /** Makes a file the machine in use from this host without touching a machine; answers the files as they are then. */
     useMachine(id: string): Promise<MachinesResponse>;
+    /** The machine files this release ships that have something for the operator's copies. */
+    machineUpdates(): Promise<MachineUpdates>;
+    /** A release's machine file taken (written) or left; the offers as they are then. */
+    takeMachineUpdate(id: string, take: boolean): Promise<MachineUpdates>;
 
     /** A machine file as written, with what it reads as or why it does not. */
     machineFile(id: string): Promise<MachineResponse>;
@@ -632,6 +637,14 @@ export class HttpApi implements Api {
 
     useMachine(id: string): Promise<MachinesResponse> {
         return this.request<MachinesResponse>("POST", `/api/machines/${encodeURIComponent(id)}/use`);
+    }
+
+    machineUpdates(): Promise<MachineUpdates> {
+        return this.request<MachineUpdates>("GET", "/api/update/machines");
+    }
+
+    takeMachineUpdate(id: string, take: boolean): Promise<MachineUpdates> {
+        return this.request<MachineUpdates>("POST", `/api/update/machines/${encodeURIComponent(id)}`, { take });
     }
 
     machineFile(id: string): Promise<MachineResponse> {

@@ -39,7 +39,7 @@ from spinny_laser import machine_keys
 from spinny_laser import machines as machine_files
 from spinny_laser.controls import default_controls
 
-from . import __version__, calibration, center, update
+from . import __version__, calibration, center, shipped, update
 from .align import Alignment
 from .auto import Agent, AutoBusy, AutoMessageBody, AutoSettingsBody
 from .cam import NotFound, ProfileStore, build_job, gcode_of
@@ -479,6 +479,11 @@ class UpdateSettingsBody(BaseModel):
     prereleases: bool
 
 
+class TakeUpdateBody(BaseModel):
+    # A release's machine file offer: taken (written) or left.
+    take: bool
+
+
 class RunBody(BaseModel):
     # How the run follows the board's height: off, auto (the focus axis
     # when one is fitted, else power), focus or power.
@@ -881,6 +886,10 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         # probing and routine threads take turns.
         self._config_lock = threading.Lock()
         self.machine_store = MachineStore(machines_dir if machines_dir is not None else MACHINES_DIR)
+        # The machine files this release ships, and what each of the
+        # operator's copies was made from (spinny_web.shipped).
+        self.shipped_dir = SHIPPED_DIR / "machines"
+        self.shipped_base = (config_path or root / "config.json").parent / "shipped" / "machines"
         self.cam = ProfileStore(cam_dir if cam_dir is not None else CAM_DIR)
         self.config_path = config_path or root / "config.json"
         self.config = self._load_config()
@@ -2431,6 +2440,29 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         if machine.controller == machine_files.GCODE:
             self.publish_placing()
         return self.machines()
+
+    def machine_updates(self) -> dict:
+        """The machine files this release ships that have something for the
+        operator: a file not in their directory, or their copy with the
+        release's changes merged in (spinny_web.shipped); none for a
+        checkout, whose machine files are the repository's."""
+        found = shipped.offers(self.shipped_dir, self.shipped_base, self.machine_store.directory, self.machine_store.parse)
+        return {"shipped": self.shipped_dir.is_dir(), "files": [offer.to_dict() for offer in found]}
+
+    def take_machine_update(self, machine_id: str, take: bool) -> dict:
+        """An offer taken (the merged text, or the new file, written) or left
+        (the operator's copy as it is); either way the release's file is
+        kept as what the copy is made from, so it is not offered again."""
+        self.machine_store.check_id(machine_id)
+        offer = next((entry for entry in shipped.offers(self.shipped_dir, self.shipped_base, self.machine_store.directory, self.machine_store.parse) if entry.id == machine_id), None)
+        if offer is None:
+            raise HTTPException(status_code=404, detail=f"this release offers nothing for {machine_id!r}")
+        if take:
+            if offer.status == "problem":
+                raise ValueError(f"{machine_id}.toml cannot be merged ({offer.problem}): leave it, or mend your copy first")
+            self.machine_store.save(machine_id, offer.text)
+        shipped.remember(self.shipped_dir, self.shipped_base, machine_id)
+        return self.machine_updates()
 
     def machine_from_board(self, machine_id: str, text: str) -> dict:
         """The text with every key whose value differs from the connected
@@ -4822,6 +4854,14 @@ def create_app(
     def update_state():
         return backend.updater.snapshot()
 
+    @app.get("/api/update/machines")
+    def machine_updates():
+        return guarded(backend.machine_updates)
+
+    @app.post("/api/update/machines/{machine_id}")
+    def take_machine_update(machine_id: str, body: TakeUpdateBody):
+        return guarded(lambda: backend.take_machine_update(machine_id, body.take))
+
     @app.post("/api/update/check")
     def update_check():
         return updating(backend.updater.check)
@@ -5576,6 +5616,9 @@ def main(argv: list[str] | None = None) -> int:
     for directory, name in ((args.machines, "machines"), (args.cam, "cam")):
         if home.seed(directory, SHIPPED_DIR / name):
             log.info("%s: the shipped %s files copied in", directory, name)
+            if name == "machines":
+                # What the copies are made from, for merging a later release's.
+                shipped.remember_all(SHIPPED_DIR / name, Path(args.data) / "shipped" / "machines")
     for moved in move_device_profiles(HOME / "pnp", args.machines):
         log.info("%s", moved)
     backend = Backend(root=args.data, machines_dir=args.machines, cam_dir=args.cam)
