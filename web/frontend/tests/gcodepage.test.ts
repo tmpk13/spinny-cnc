@@ -106,7 +106,7 @@ describe("a G-code machine's file on the Config page", () => {
         expect(root.querySelector(".config-note")?.textContent).toContain("a G-code machine (its own controller), a port named lumen, safe Z 31.5");
         const write = findButton(root, "Write to board");
         expect(write.getAttribute("aria-disabled") === "true" || write.disabled).toBe(true);
-        expect(root.querySelector(".config-board")?.textContent).toContain("connect it from the top bar");
+        expect(root.querySelector(".config-board")?.textContent).toContain("Use this machine connects it");
         localStorage.removeItem("spinny.machine");
     });
 });

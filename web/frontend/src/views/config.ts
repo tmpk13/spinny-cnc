@@ -463,7 +463,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         if (gcodeFile) {
             text = state.snapshot.connected && current === picked
                 ? "this G-code machine is the one connected; its controller keeps its own settings"
-                : "a G-code machine: its controller keeps its own settings; connect it from the top bar (its port is named after this file)";
+                : "a G-code machine: its controller keeps its own settings; Use this machine connects it on the port its file claims";
         }
         loadNote.textContent = text;
         // The machine file in use, said where the files are picked.
