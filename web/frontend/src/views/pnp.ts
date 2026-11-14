@@ -58,6 +58,36 @@ export function filterParts(parts: Component[], text: string, side: Side): Compo
     });
 }
 
+/**
+ * The parts the list shows: those the words and the side keep, and the
+ * picked one as well when the words alone leave it out, so a part picked
+ * on the drawing always has its row to light.
+ */
+export function listedParts(parts: Component[], text: string, side: Side, picked: string | null): Component[] {
+    const kept = filterParts(parts, text, side);
+    if (picked === null || kept.some((part) => part.ref === picked)) {
+        return kept;
+    }
+    const extra = filterParts(parts, "", side).find((part) => part.ref === picked);
+    return extra ? [...kept, extra] : kept;
+}
+
+/**
+ * The scroll top that brings a row into a scrolled box's view: the same
+ * when the row shows whole, else just enough that it does, clear of the
+ * box's sticky head (`head` px tall). Places are the screen's, as
+ * getBoundingClientRect gives them.
+ */
+export function scrollToShow(scrollTop: number, view: { top: number; bottom: number }, row: { top: number; bottom: number }, head = 0): number {
+    if (row.top < view.top + head) {
+        return scrollTop - (view.top + head - row.top);
+    }
+    if (row.bottom > view.bottom) {
+        return scrollTop + (row.bottom - view.bottom);
+    }
+    return scrollTop;
+}
+
 /** A footprint's name without its library. */
 export function footprintName(footprint: string): string {
     const at = footprint.indexOf(":");
@@ -558,6 +588,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     });
     const partsNote = el("p", { class: "muted hint pnp-parts-note" });
     const table = el("table", { class: "pnp-parts" });
+    const partsBox = el("div", { class: "pnp-parts-box", title: "drag the lower right corner to size the list" }, table);
     const correct = el("input", { type: "checkbox", "aria-label": "Correct by the part on the nozzle" }) as HTMLInputElement;
     const correctLabel = el("label", { class: "muted" }, correct, " part center over the place");
     const withCamera = el("input", { type: "checkbox", "aria-label": "Go with the top camera" }) as HTMLInputElement;
@@ -574,7 +605,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
             el("div", { class: "button-row" }, gotoButton, correctLabel, withCameraLabel),
             chosenLine,
             partsNote,
-            resizableBox(el("div", { class: "pnp-parts-box", title: "drag the lower right corner to size the list" }, table), "spinny.pnp.parts.height"),
+            resizableBox(partsBox, "spinny.pnp.parts.height"),
         ),
     );
     jobPick.addEventListener("change", () => {
@@ -608,7 +639,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     const boardSearch = mountBoardSearch({
         parts: () => sideParts(ctx.store.get()),
         onPick: (ref) => {
-            choose(ref);
+            choose(ref, true);
             bringIntoView(ref);
         },
         onChange: () => {
@@ -924,16 +955,25 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         }
     }
 
-    function pick(ref: string): void {
+    /**
+     * Picks a part, or lets it go when it was the one picked. `reveal`
+     * (a pick on the drawing or by the search) brings its row into the
+     * list's view, its group unfolded.
+     */
+    function pick(ref: string, reveal = false): void {
         selected = selected === ref ? null : ref;
+        revealPick = reveal && selected !== null;
         ctx.store.set({ pnpPart: selected });
         renderAll();
     }
 
     /** Picks a part, whether or not it was picked before. */
-    function choose(ref: string): void {
+    function choose(ref: string, reveal = false): void {
         if (selected !== ref) {
-            pick(ref);
+            pick(ref, reveal);
+        } else if (reveal) {
+            revealPick = true;
+            renderParts(ctx.store.get());
         }
     }
 
@@ -975,6 +1015,9 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     // again only when that changes, so a press on a row or a dot is not
     // lost to a rebuild under the pointer.
     let tableKey = "";
+    // A part just picked on the drawing or by the search, whose row the
+    // list brings into view once it is drawn.
+    let revealPick = false;
     let boardKey = "";
     let drawn: { root: SVGElement; box: Box } | null = null;
     let view: Box | null = null;
@@ -1015,7 +1058,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     }
 
     function row(part: Component, hidden = false): HTMLTableRowElement {
-        return el("tr", { class: `${part.ref === selected ? "selected" : ""}${part.dnp ? " dnp" : ""}${keptOut(part) ? " kept-out" : ""}${hidden ? " hidden" : ""}`, onclick: () => pick(part.ref) },
+        return el("tr", { class: `${part.ref === selected ? "selected" : ""}${part.dnp ? " dnp" : ""}${keptOut(part) ? " kept-out" : ""}${hidden ? " hidden" : ""}`, "data-ref": part.ref, onclick: () => pick(part.ref) },
             el("td", { class: "mono" }, part.ref),
             el("td", {}, part.value, part.dnp ? el("span", { class: "muted" }, " dnp") : null, keptOut(part) ? placePick(part) : null),
             el("td", { class: "muted", title: part.footprint }, footprintName(part.footprint)),
@@ -1034,12 +1077,29 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         }
         renderActions(state);
         partsFilter.render(all);
-        const key = JSON.stringify([state.job?.id ?? null, state.components, filter.value, sidePick.value, showKeptOut.checked, selected, sortKey, sortDown, grouped.checked, [...folded], loading]);
-        if (key === tableKey) {
-            return;
+        const picked = all.find((part) => part.ref === selected) ?? null;
+        if (revealPick && picked !== null && grouped.checked) {
+            // The picked part's group is unfolded, so its row shows.
+            folded.delete(JSON.stringify([picked.value, picked.footprint]));
         }
-        tableKey = key;
-        const shown = sortParts(shownParts(filterParts(all, filter.value, sidePick.value as Side), showKeptOut.checked), sortKey, sortDown);
+        const key = JSON.stringify([state.job?.id ?? null, state.components, filter.value, sidePick.value, showKeptOut.checked, selected, sortKey, sortDown, grouped.checked, [...folded], loading]);
+        if (key !== tableKey) {
+            tableKey = key;
+            drawTable(state, all);
+        }
+        if (revealPick) {
+            revealPick = false;
+            const shownRow = Array.from(table.querySelectorAll<HTMLElement>("tbody tr")).find((each) => each.getAttribute("data-ref") === selected);
+            if (shownRow) {
+                const head = table.querySelector("thead")?.getBoundingClientRect().height ?? 0;
+                partsBox.scrollTop = scrollToShow(partsBox.scrollTop, partsBox.getBoundingClientRect(), shownRow.getBoundingClientRect(), head);
+            }
+        }
+    }
+
+    /** The parts list drawn again: the parts the filter, the side and the picked one give, sorted, grouped or not. */
+    function drawTable(state: AppState, all: Component[]): void {
+        const shown = sortParts(shownParts(listedParts(all, filter.value, sidePick.value as Side, selected), showKeptOut.checked), sortKey, sortDown);
         const note = state.components !== null && state.components.job === state.job?.id ? state.components.note : null;
         partsNote.textContent = !state.job
             ? "Pick a board job, or upload a .kicad_pcb, to list its parts."
@@ -1137,7 +1197,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
             boardKey = key;
             boardSearch.refresh();
             const before = drawn?.box ?? null;
-            drawn = boardSvg({ job: state.job, parts, selected, camera }, pick);
+            drawn = boardSvg({ job: state.job, parts, selected, camera }, (ref) => pick(ref, true));
             replace(drawing, drawn?.root ?? (loading ? el("p", { class: "muted loading" }, "Loading the board...") : noBoard(state)));
             // A pick keeps the zoom; another board starts whole.
             if (drawn && view && before && JSON.stringify(before) === JSON.stringify(drawn.box)) {

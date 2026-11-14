@@ -3461,8 +3461,15 @@ table.pnp-parts tbody tr:hover td {
     background: var(--panel-2);
 }
 
+/* The part picked, in the board drawing's color for it: a tint and a bar
+   at its start, so a part picked on the drawing stands out in the list. */
 table.pnp-parts tr.selected td {
-    background: color-mix(in oklab, var(--accent) 14%, var(--panel));
+    background: color-mix(in oklab, var(--magenta) 20%, var(--panel));
+}
+
+table.pnp-parts tr.selected td:first-child {
+    box-shadow: inset 0.25rem 0 0 var(--magenta);
+    font-weight: 700;
 }
 
 table.pnp-parts tr.dnp td {

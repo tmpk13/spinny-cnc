@@ -9,11 +9,13 @@ import {
     drawingBox,
     filterParts,
     footprintName,
+    listedParts,
     mountPnp,
     partOffsetText,
     placeHead,
     boardSvg,
     pnpRoutineText,
+    scrollToShow,
 } from "../src/views/pnp.ts";
 import { click, connected, runUntilIdle, settle, setup, pnpRoots } from "./harness.ts";
 
@@ -51,6 +53,20 @@ describe("pnp helpers", () => {
         expect(filterParts(parts, "", "back").map((p) => p.ref)).toEqual(["C1"]);
         expect(footprintName("Resistor_SMD:R_0603")).toBe("R_0603");
         expect(footprintName("bare")).toBe("bare");
+    });
+
+    test("the list keeps the picked part when the words would leave it out, and scrolls just enough to show a row", () => {
+        const parts = [part("R1"), part("C1", { value: "100n" }), part("U1", { value: "STM32", side: "back" })];
+        expect(listedParts(parts, "10k", "front", null).map((p) => p.ref)).toEqual(["R1"]);
+        expect(listedParts(parts, "10k", "front", "C1").map((p) => p.ref)).toEqual(["R1", "C1"]);
+        // A part on the side not shown is not listed for being picked.
+        expect(listedParts(parts, "10k", "front", "U1").map((p) => p.ref)).toEqual(["R1"]);
+        const view = { top: 100, bottom: 300 };
+        // A row that shows whole leaves the scroll alone; one under the
+        // sticky head or past the bottom moves it just enough.
+        expect(scrollToShow(50, view, { top: 150, bottom: 170 }, 20)).toBe(50);
+        expect(scrollToShow(50, view, { top: 110, bottom: 130 }, 20)).toBe(40);
+        expect(scrollToShow(50, view, { top: 380, bottom: 400 }, 20)).toBe(150);
     });
 
     test("the bottom camera's place turns with the table, and the drawing's box takes in everything", () => {
@@ -187,6 +203,59 @@ describe("the pnp page", () => {
         click(roots.parts, "Go to part");
         await settle();
         expect(backend.machine.queue.length + (backend.machine.state === "Jog" ? 1 : 0)).toBeGreaterThan(0);
+    });
+
+    test("a part picked on the drawing is lit in the list and scrolled to, its group unfolded and the filter's words aside", async () => {
+        localStorage.removeItem("spinny.pnp.target");
+        const { store, ctx, backend } = setup();
+        const roots = pnpRoots();
+        await backend.connect("/dev/ttyACM0");
+        await backend.applyMachine("cartesian-mill");
+        const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
+        store.set({ snapshot: connected({}, { profile: { kinematics: "cartesian", tool: "spindle", h_axis: true, r_max: 0, z_max: 0 } }) });
+        mountPnp(roots, ctx);
+        await ctx.refreshJobs();
+        await ctx.selectJob(job.id);
+        await settle();
+        await settle();
+        const refs = Array.from(roots.board.querySelectorAll(".pnp-part")).map((node) => node.getAttribute("data-ref")!);
+        const target = refs[refs.length - 1]!;
+        // Grouped, every group folded, and words that match nothing.
+        const grouped = roots.parts.querySelector('input[aria-label="Group by value and footprint"]') as HTMLInputElement;
+        grouped.checked = true;
+        grouped.dispatchEvent(new Event("change"));
+        for (const head of Array.from(roots.parts.querySelectorAll<HTMLElement>("tr.pnp-group"))) {
+            head.click();
+        }
+        const filter = roots.parts.querySelector('input[aria-label="Filter parts"]') as HTMLInputElement;
+        filter.value = "no part has these words";
+        filter.dispatchEvent(new Event("input"));
+        expect(roots.parts.querySelectorAll("tbody tr[data-ref]").length).toBe(0);
+        // The list's box shows 100 px under a 20 px head; the row lies past it.
+        const box = roots.parts.querySelector(".pnp-parts-box") as HTMLElement;
+        box.getBoundingClientRect = () => ({ top: 0, bottom: 100, left: 0, right: 100, width: 100, height: 100 }) as DOMRect;
+        const realRect = HTMLElement.prototype.getBoundingClientRect;
+        HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+            if (this.tagName === "TR" && this.getAttribute("data-ref") === target) {
+                return { top: 400, bottom: 420, left: 0, right: 100, width: 100, height: 20 } as DOMRect;
+            }
+            if (this.tagName === "THEAD") {
+                return { top: 0, bottom: 20, left: 0, right: 100, width: 100, height: 20 } as DOMRect;
+            }
+            return realRect.call(this);
+        };
+        try {
+            (roots.board.querySelector(`.pnp-part[data-ref="${target}"]`) as SVGElement).dispatchEvent(new Event("click"));
+            await settle();
+        } finally {
+            HTMLElement.prototype.getBoundingClientRect = realRect;
+        }
+        const row = roots.parts.querySelector(`tbody tr[data-ref="${target}"]`) as HTMLElement;
+        expect(row).not.toBeNull();
+        expect(row.classList.contains("selected")).toBe(true);
+        expect(row.classList.contains("hidden")).toBe(false);
+        expect(box.scrollTop).toBe(320);
+        expect(store.get().pnpPart).toBe(target);
     });
 
     test("with no board picked, the drawing offers to open a board file or pick a board job", async () => {
