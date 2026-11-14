@@ -505,6 +505,36 @@ def test_finding_the_mark_measures_the_offset_the_roll_and_the_scale(client, fak
     assert state["routine"]["state"] == "done" and state["offset"] == pytest.approx(list(truth), abs=0.02)
 
 
+def test_a_find_asked_to_confirm_holds_what_it_measured_until_kept_or_discarded(client, fake):
+    truth = (12.5, -3.25)
+    mark = (30.0, 20.0)
+    client.backend.camera.set_mark(mark)
+    client.backend.camera.client = StandInClient(fake, mark, truth, 0.0, 0.02)
+    client.put("/api/camera/settings", json={"offset": [11.0, -2.0], "roll": 0.0, "mm_per_px": 0.0})
+    # Nothing waits to be answered yet.
+    assert client.post("/api/cameras/finding", json={"camera": "head", "keep": True}).status_code == 400
+    assert client.post("/api/camera/find", json={"step": 2.0, "confirm": True}).status_code == 200
+    state = wait_routine(client)
+    assert state["routine"]["state"] == "done", state["routine"]
+    # Measured, held, not kept: the settings are as they were, the finding says what it found.
+    assert state["offset"] == [11.0, -2.0] and state["mm_per_px"] == 0.0
+    finding = state["finding"]
+    assert finding["kind"] == "offset" and "camera offset measured: X +12.5" in finding["text"]
+    assert finding["spot"]["mm"] < 0.03
+    response = client.post("/api/cameras/finding", json={"camera": "head", "keep": True})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["kept"] is True and body["state"]["finding"] is None
+    assert body["state"]["offset"] == pytest.approx(list(truth), abs=0.02) and body["state"]["mm_per_px"] == pytest.approx(0.02, rel=0.01)
+    # Discarded, the offset kept before stays.
+    client.put("/api/camera/settings", json={"offset": [11.0, -2.0]})
+    assert client.post("/api/camera/find", json={"step": 0, "confirm": True}).status_code == 200
+    assert wait_routine(client)["finding"]["kind"] == "offset"
+    discarded = client.post("/api/cameras/finding", json={"camera": "head", "keep": False}).json()
+    assert discarded["kept"] is False and discarded["state"]["offset"] == [11.0, -2.0] and discarded["state"]["finding"] is None
+    assert client.post("/api/cameras/finding", json={"camera": "side", "keep": True}).status_code == 422
+
+
 def test_a_find_without_the_mark_in_view_ends_as_an_error(client, fake):
     # The camera is sent 30 mm from where the mark really is: out of its picture.
     client.backend.camera.set_mark((40.0, 0.0))
@@ -939,6 +969,15 @@ def test_the_head_camera_centers_holes_far_apart_and_makes_them_the_alignment_ma
 
     take("bottom left", (0.0, 0.0))
     take("top right", (40.0, 30.0))
+    # Asked to confirm: the features centered are held, the Align marks untouched until kept.
+    assert client.post("/api/camera/refine", json={"job": job.id, "count": 3, "confirm": True}).status_code == 200
+    state = wait_routine(client)
+    assert state["routine"]["state"] == "done" and state["finding"]["kind"] == "features", state
+    assert len(state["finding"]["points"]) == 3 and "to be the job's camera marks in Align" in state["finding"]["text"]
+    assert client.get("/api/align").json()["marks"] == []
+    kept = client.post("/api/cameras/finding", json={"camera": "head", "keep": True})
+    assert kept.status_code == 200 and len(client.get("/api/align").json()["marks"]) == 3
+    client.delete("/api/align")
     response = client.post("/api/camera/refine", json={"job": job.id, "count": 3})
     assert response.status_code == 200, response.text
     state = wait_routine(client)
@@ -1162,6 +1201,15 @@ def test_a_blank_boards_corner_is_taken_by_its_edges_and_colors_are_picked_per_i
     assert "the board turned +2.000 degrees" in entry["note"]
     drawn = client.get(f"/api/camlog/{entry['files']['overlay']}").text
     assert "2 straight edges, numbered strongest first; their corner at x 540.0 y 435.0 px" in drawn
+    # Asked to confirm: the corner is held with the edges and where they meet, not taken until kept.
+    held = client.post("/api/camera/edge-corner", json={"job": job.id, "corner": "top right", "confirm": True})
+    assert held.status_code == 200, held.text
+    finding = held.json()["finding"]
+    assert finding["kind"] == "corner" and len(finding["lines"]) == 2 and finding["size"] == [1280.0, 720.0]
+    assert finding["points"][0]["label"] == "top right" and finding["corner"] == pytest.approx([540.0, 435.0], abs=0.01)
+    assert [point["corner"] for point in held.json()["board_look"]["corners"]["points"]] == ["bottom left"]
+    kept = client.post("/api/cameras/finding", json={"camera": "head", "keep": True}).json()["state"]
+    assert [point["corner"] for point in kept["board_look"]["corners"]["points"]] == ["bottom left", "top right"]
     # A picture with no corner in it: refused, and kept in the log as the one to see.
     stand_in.blank = True
     refused = client.post("/api/camera/edge-corner", json={"job": job.id, "corner": "top left"})

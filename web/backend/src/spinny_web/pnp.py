@@ -37,6 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from spinny_laser import machines as machine_files
 
 from .cameras import apply_kept, check_controls
+from .findings import Findings
 from .camera import CAPTURE_KEYS, DONE, ERROR, RUNNING, STOPPED, MachineAccess, Spot, look_dict, picture_to_machine, spot_of, wait_settled
 from .kinematics import FOCUS_DECIMALS, coord
 from .link import LinkError, idle_status, settle
@@ -825,6 +826,8 @@ class PickCamera:
         # The last look taken by hand (Look once): what was asked for and
         # what was found, for the page to draw over the picture.
         self.look: dict | None = None
+        # What a routine found and holds for the operator to keep or discard.
+        self.findings = Findings()
         self._thread: threading.Thread | None = None
         self._abort = threading.Event()
         self._lock = threading.Lock()
@@ -939,6 +942,7 @@ class PickCamera:
             "frame": frame,
             "routine": progress.to_dict() if progress is not None else None,
             "look": self.look,
+            "finding": self.findings.state(),
         }
 
     def look_once(self, polarity: str, radius: float | None = None) -> dict:

@@ -1289,6 +1289,8 @@ export interface PnpState extends PnpSettings {
     /** The last Look once; null before any. */
     look?: SpotLook | null;
     controls?: Record<string, number>;
+    /** What a routine found and holds to be kept or discarded; null with none. */
+    finding?: CameraFinding | null;
 }
 
 /** A part of a board job: its footprint's place and angle in the job's frame. */
@@ -1594,6 +1596,8 @@ export interface TopState extends TopSettings {
     /** The look for the board loaded. */
     board_look?: BoardLook;
     controls?: Record<string, number>;
+    /** What a routine found and holds to be kept or discarded; null with none. */
+    finding?: CameraFinding | null;
 }
 
 /**
@@ -1975,6 +1979,23 @@ export interface CameraEdge {
     contrast?: number;
 }
 
+/**
+ * What a routine found and holds for the operator to keep or discard
+ * (spinny_web.findings): what kind and what it says, and its marks: the
+ * spot it centered (px from the picture's center), straight edges and the
+ * corner they made (full size px of a picture `size` big), and points on
+ * the machine with a label.
+ */
+export interface CameraFinding {
+    kind: "offset" | "fiducials" | "corner" | "features" | string;
+    text: string;
+    spot?: RoutineSpot | null;
+    lines?: CameraEdge[];
+    corner?: [number, number] | null;
+    size?: [number, number];
+    points?: { at: [number, number]; label: string }[];
+}
+
 /** The straight edges in a camera's newest picture, strongest first, and the picture's full size. */
 export interface CameraEdges {
     camera: ControlledCamera;
@@ -2023,6 +2044,8 @@ export interface CameraState extends CameraSettings {
     board_look?: BoardLook;
     /** V4L2 control values set at each start. */
     controls?: Record<string, number>;
+    /** What a routine found and holds to be kept or discarded; null with none. */
+    finding?: CameraFinding | null;
 }
 
 /** Make a mark with the tool where it stands (a spindle machine), or only record the tool's point as the mark. */

@@ -303,7 +303,7 @@ export interface Api {
     /** Makes a mark with the tool where it stands, or with `here` only records the tool's point as the mark. */
     cameraMark(request: MarkRequest): Promise<CameraState>;
     /** Finds the mark in the picture and centers the picture on it, measuring the offset, the scale and the roll; on its own thread. */
-    cameraFind(step: number): Promise<CameraState>;
+    cameraFind(step: number, confirm?: boolean): Promise<CameraState>;
     cameraAbort(): Promise<CameraState>;
     /** Moves the head camera over a box (board frame mm; null: where the corners taken put the board, else the board's size about where it looks now) until a guess of the board loaded is likely enough. */
     cameraSearch(box: [number, number, number, number] | null): Promise<CameraState>;
@@ -321,9 +321,9 @@ export interface Api {
     /** The head camera's corners taken are forgotten. */
     cameraCornersClear(): Promise<CameraState>;
     /** The head camera sees a corner of the job's blank board on the bed: where its edges meet is kept as that corner, with the board's turn. */
-    cameraEdgeCorner(jobId: string, corner: CornerName): Promise<CameraState>;
+    cameraEdgeCorner(jobId: string, corner: CornerName, confirm?: boolean): Promise<CameraState>;
     /** The head camera centers features far apart on the board found (fiducials, holes or pads) and makes them the job's camera marks in Align. */
-    cameraRefine(jobId: string, use: RefineUse, count: number): Promise<CameraState>;
+    cameraRefine(jobId: string, use: RefineUse, count: number, confirm?: boolean): Promise<CameraState>;
     /** A camera's lens measured from the dot grid in its picture now, kept and applied. */
     cameraLens(camera: ControlledCamera, polarity: SpotPolarity, pitch: number): Promise<{ camera: ControlledCamera; measured: LensMeasured | null }>;
     /** A camera's lens correction forgotten. */
@@ -334,6 +334,8 @@ export interface Api {
     cameraControls(camera: ControlledCamera): Promise<CameraControls>;
     /** The straight edges pcbv finds in the camera's newest picture, strongest first: what Corner by edges reads. */
     cameraEdges(camera: ControlledCamera): Promise<CameraEdges>;
+    /** What a routine of the camera found and holds (asked with `confirm`), kept or discarded; the camera's state after. */
+    cameraFinding(camera: ControlledCamera, keep: boolean): Promise<{ camera: ControlledCamera; kept: boolean; state: unknown }>;
     /** Sets control values now and keeps them, to be set at each start; null forgets a kept one. */
     setCameraControls(camera: ControlledCamera, values: Record<string, number | null>): Promise<CameraControls>;
 
@@ -410,7 +412,7 @@ export interface Api {
     /** Measures how far the nozzle tip runs off its turning axis, over the up camera. */
     pnpRunout(): Promise<PlacingState>;
     /** The top camera finds the job's fiducials where the references put them, and keeps them as its references. */
-    pnpFiducials(job: string): Promise<PlacingState>;
+    pnpFiducials(job: string, confirm?: boolean): Promise<PlacingState>;
     /** Keeps the top camera's settings; `clear` takes the mark's place, the offset or the nozzle box back to none. */
     topSettings(patch: Partial<TopSettings> & { clear?: ("mark_at" | "offset" | "nozzle_box")[] }): Promise<PlacingState>;
     topStart(): Promise<PlacingState>;
@@ -420,7 +422,7 @@ export interface Api {
     /** The nozzle's tip is over a mark: the head's place is kept for Measure offset. */
     topMark(): Promise<PlacingState>;
     /** Measures where the top camera looks from the nozzle, from the mark; `step` 0 keeps the scale. */
-    topOffset(step: number): Promise<PlacingState>;
+    topOffset(step: number, confirm?: boolean): Promise<PlacingState>;
     /** Homes, then finds the bed's homing fiducial with the top camera and declares where the head is from it. */
     /** Home by fiducial: the machine homed, then the bed's homing fiducial found and the numbers tied to it; with `home` false, found from where the head is with no home first. */
     topHome(home?: boolean): Promise<PlacingState>;
@@ -441,7 +443,7 @@ export interface Api {
     /** The top camera's corners taken are forgotten. */
     topCornersClear(): Promise<PlacingState>;
     /** The top camera sees a corner of the job's blank board on the bed: where its edges meet is kept as that corner, with the board's turn. */
-    topEdgeCorner(jobId: string, corner: CornerName): Promise<PlacingState>;
+    topEdgeCorner(jobId: string, corner: CornerName, confirm?: boolean): Promise<PlacingState>;
 
     /** The Auto tab's provider, its model and address, and whether each provider's key is set where the backend runs. */
     autoSettings(): Promise<AutoSettings>;
@@ -1038,8 +1040,8 @@ export class HttpApi implements Api {
         return this.request<CameraState>("POST", "/api/camera/mark", request);
     }
 
-    cameraFind(step: number): Promise<CameraState> {
-        return this.request<CameraState>("POST", "/api/camera/find", { step });
+    cameraFind(step: number, confirm?: boolean): Promise<CameraState> {
+        return this.request<CameraState>("POST", "/api/camera/find", { step, ...(confirm ? { confirm } : {}) });
     }
 
     cameraAbort(): Promise<CameraState> {
@@ -1082,12 +1084,12 @@ export class HttpApi implements Api {
         return this.request<CameraState>("DELETE", "/api/camera/corners");
     }
 
-    cameraEdgeCorner(jobId: string, corner: CornerName): Promise<CameraState> {
-        return this.request<CameraState>("POST", "/api/camera/edge-corner", { job: jobId, corner });
+    cameraEdgeCorner(jobId: string, corner: CornerName, confirm?: boolean): Promise<CameraState> {
+        return this.request<CameraState>("POST", "/api/camera/edge-corner", { job: jobId, corner, ...(confirm ? { confirm } : {}) });
     }
 
-    cameraRefine(jobId: string, use: RefineUse, count: number): Promise<CameraState> {
-        return this.request<CameraState>("POST", "/api/camera/refine", { job: jobId, use, count });
+    cameraRefine(jobId: string, use: RefineUse, count: number, confirm?: boolean): Promise<CameraState> {
+        return this.request<CameraState>("POST", "/api/camera/refine", { job: jobId, use, count, ...(confirm ? { confirm } : {}) });
     }
 
     cameraLens(camera: ControlledCamera, polarity: SpotPolarity, pitch: number): Promise<{ camera: ControlledCamera; measured: LensMeasured | null }> {
@@ -1108,6 +1110,10 @@ export class HttpApi implements Api {
 
     cameraEdges(camera: ControlledCamera): Promise<CameraEdges> {
         return this.request<CameraEdges>("GET", `/api/cameras/edges?camera=${encodeURIComponent(camera)}`);
+    }
+
+    cameraFinding(camera: ControlledCamera, keep: boolean): Promise<{ camera: ControlledCamera; kept: boolean; state: unknown }> {
+        return this.request<{ camera: ControlledCamera; kept: boolean; state: unknown }>("POST", "/api/cameras/finding", { camera, keep });
     }
 
     setCameraControls(camera: ControlledCamera, values: Record<string, number | null>): Promise<CameraControls> {
@@ -1276,8 +1282,8 @@ export class HttpApi implements Api {
         return this.request<PlacingState>("POST", "/api/pnp/runout");
     }
 
-    pnpFiducials(job: string): Promise<PlacingState> {
-        return this.request<PlacingState>("POST", "/api/pnp/fiducials", { job });
+    pnpFiducials(job: string, confirm?: boolean): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/fiducials", { job, ...(confirm ? { confirm } : {}) });
     }
 
     topSettings(patch: Partial<TopSettings> & { clear?: ("mark_at" | "offset" | "nozzle_box")[] }): Promise<PlacingState> {
@@ -1300,8 +1306,8 @@ export class HttpApi implements Api {
         return this.request<PlacingState>("POST", "/api/pnp/top/mark");
     }
 
-    topOffset(step: number): Promise<PlacingState> {
-        return this.request<PlacingState>("POST", "/api/pnp/top/offset", { step });
+    topOffset(step: number, confirm?: boolean): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/top/offset", { step, ...(confirm ? { confirm } : {}) });
     }
 
     topHome(home = true): Promise<PlacingState> {
@@ -1348,8 +1354,8 @@ export class HttpApi implements Api {
         return this.request<PlacingState>("DELETE", "/api/pnp/top/corners");
     }
 
-    topEdgeCorner(jobId: string, corner: CornerName): Promise<PlacingState> {
-        return this.request<PlacingState>("POST", "/api/pnp/top/edge-corner", { job: jobId, corner });
+    topEdgeCorner(jobId: string, corner: CornerName, confirm?: boolean): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/top/edge-corner", { job: jobId, corner, ...(confirm ? { confirm } : {}) });
     }
 
     autoSettings(): Promise<AutoSettings> {

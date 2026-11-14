@@ -145,6 +145,16 @@ describe("the mock camera", () => {
         expect(head.x + done.offset[0]).toBeCloseTo(10, 2);
         expect(head.y + done.offset[1]).toBeCloseTo(14, 2);
         expect(backend.machine.h).toBeCloseTo(2, 9);
+        // Asked to confirm, the offset measured waits: kept only on Keep.
+        await backend.cameraSettings({ offset: [CAMERA_TRUTH.offset[0] + 0.3, CAMERA_TRUTH.offset[1]] });
+        await backend.cameraFind(0, true);
+        await finished(backend);
+        const held = await backend.camera();
+        expect(held.finding?.kind).toBe("offset");
+        expect(held.offset[0]).toBeCloseTo(CAMERA_TRUTH.offset[0] + 0.3, 6);
+        const kept = (await backend.cameraFinding("head", true)).state as typeof held;
+        expect(kept.finding).toBeNull();
+        expect(kept.offset[0]).toBeCloseTo(CAMERA_TRUTH.offset[0], 2);
         // An abort ends a routine as stopped; none running is 409.
         await backend.cameraFind(0);
         const aborted = await backend.cameraAbort();

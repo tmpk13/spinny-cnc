@@ -157,9 +157,18 @@ describe("the cameras and the vacuum on the mock's G-code machine", () => {
         await backend.topStart();
         await backend.command("G0 X120 Y80");
         expect((await backend.topMark()).top?.mark_at).toEqual([120, 80]);
-        await backend.topOffset(2);
+        // Asked to confirm, what it measured waits: nothing kept until Keep.
+        await backend.topOffset(2, true);
         await routines(backend);
+        const held = (await backend.placingState()).top!;
+        expect(held.offset).toBeNull();
+        expect(held.finding?.kind).toBe("offset");
+        expect(held.finding?.text).toContain("the top camera looks from X +35.000");
+        const kept = await backend.cameraFinding("top", true);
+        expect(kept.kept).toBe(true);
+        await expect(backend.cameraFinding("top", true)).rejects.toMatchObject({ status: 400 });
         const top = (await backend.placingState()).top!;
+        expect(top.finding).toBeNull();
         expect(top.offset).toEqual(TOP_TRUTH.offset);
         expect(topCameraText(top)).toContain("Top camera looks from X 35.000 Y -10.000");
         // Home by fiducial needs the file's fiducial; with one, it homes and declares the place.

@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from spinny_laser import machines as machine_files
 
 from .camera import CORNER_MM, LOOK_THRESHOLD, Spot, check_look, feature_limits, picture_to_machine, round_problem, spot_of
+from .findings import Finding
 from .cameras import check_controls
 from .openpnp import SHADES
 from .pnp import Mover, PickCamera, PnpError, RoutineProgress, calibrate
@@ -267,15 +268,16 @@ class TopCamera(PickCamera):
 
     # --- the routines ---------------------------------------------------------------
 
-    def measure_offset(self, mover: Mover, step: float, z: float | None, guess: Point | None) -> None:
+    def measure_offset(self, mover: Mover, step: float, z: float | None, guess: Point | None, confirm: bool = False) -> None:
         """Starts the offset routine on its own thread. `z` is the height
         the head looks from, `guess` the profile's offset, used until one is
-        measured."""
+        measured. With `confirm` what it measures is held as a finding to
+        keep or discard rather than kept."""
         if not (math.isfinite(step) and 0.0 <= step <= MAX_STEP):
             raise ValueError(f"the step must be 0 to {MAX_STEP:g} mm")
         if self.settings().mark_at is None:
             raise ValueError("put the nozzle's tip over a mark and press Nozzle on mark first")
-        self._begin("offset", OFFSET_STEPS, mover, lambda progress: self._offset(mover, progress, step, z, guess))
+        self._begin("offset", OFFSET_STEPS, mover, lambda progress: self._offset(mover, progress, step, z, guess, confirm))
 
     def find_fiducials(
         self,
@@ -286,9 +288,13 @@ class TopCamera(PickCamera):
         within: float,
         z: float | None,
         done: Callable[[list[Found]], str],
+        confirm: bool = False,
+        describe: Callable[[list[Found]], str] | None = None,
     ) -> None:
         """Starts the fiducial routine on its own thread; `done` hears what
-        was found, keeps it and answers the line to say of it."""
+        was found, keeps it and answers the line to say of it. With
+        `confirm` what was found is held as a finding (in `describe`'s
+        words) for the operator to keep, `done` running then."""
         if not fiducials:
             raise ValueError("the board has no fiducials: footprints whose reference starts FID or whose name says Fiducial")
         if not self.settings().measured:
@@ -300,7 +306,13 @@ class TopCamera(PickCamera):
             self._step(progress, "lifting")
             found = self.locate_fiducials(mover, fiducials, guess, shade, within, z, progress)
             self._step(progress, "fitting")
-            self._message("info", done(found))
+            if confirm:
+                words = describe(found) if describe is not None else f"{len(found)} fiducials found"
+                points = [{"at": list(entry.seen), "label": entry.ref} for entry in found]
+                self.findings.hold(Finding("fiducials", words, lambda: done(found), {"points": points}))
+                self._message("info", f"{words}: keep or discard them under the picture")
+            else:
+                self._message("info", done(found))
 
         self._begin("fiducials", steps, mover, body)
 
@@ -348,7 +360,7 @@ class TopCamera(PickCamera):
         steps = ("homing", "looking", "declaring", "done") if home is not None else ("looking", "declaring", "done")
         self._begin("home", steps, mover, body)
 
-    def _offset(self, mover: Mover, progress: RoutineProgress, step: float, z: float | None, guess: Point | None) -> None:
+    def _offset(self, mover: Mover, progress: RoutineProgress, step: float, z: float | None, guess: Point | None, confirm: bool = False) -> None:
         settings = self.settings()
         mark_at = settings.mark_at
         if mark_at is None:
@@ -393,12 +405,21 @@ class TopCamera(PickCamera):
         offset = (round(mark_at[0] - here[0] - off[0], 4), round(mark_at[1] - here[1] - off[1], 4))
         if any(abs(v) > OFFSET_LIMIT for v in offset):
             raise PnpError(f"the offset came out {offset[0]:.1f}, {offset[1]:.1f} mm: is the mark the one the nozzle was put on?")
-        self.update({"offset": offset, "mm_per_px": scale, "roll": roll, "mirror": mirror})
-        self._message(
-            "info",
+        words = (
             f"the top camera looks from X {offset[0]:+.3f} Y {offset[1]:+.3f} mm off the nozzle,"
-            f" {scale * 1000.0:.1f} um per pixel, roll {roll:+.2f} degrees{', mirrored' if mirror else ''}",
+            f" {scale * 1000.0:.1f} um per pixel, roll {roll:+.2f} degrees{', mirrored' if mirror else ''}"
         )
+
+        def keep() -> str:
+            self.update({"offset": offset, "mm_per_px": scale, "roll": roll, "mirror": mirror})
+            return words
+
+        if confirm:
+            # The mark centered in the picture is what it measured.
+            self.findings.hold(Finding("offset", words, keep, {"spot": spot.to_dict()}))
+            self._message("info", f"{words}: keep or discard it under the picture")
+        else:
+            self._message("info", keep())
 
     def _spot(self, mover: Mover, progress: RoutineProgress, shade: str, scale: float, roll: float, mirror: bool, missing: str) -> Spot:
         if mover.stopped():

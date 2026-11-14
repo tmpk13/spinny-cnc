@@ -3789,6 +3789,19 @@ table.pnp-parts tr.dnp td {
 .picture-marks .mark-drag { stroke: var(--orange); stroke-width: 2; }
 .picture-marks .mark-edge { stroke: var(--yellow); stroke-width: 2; }
 .picture-marks .mark-nozzle { stroke: var(--orange); stroke-dasharray: 4 3; stroke-width: 2; }
+.picture-marks .mark-finding { stroke: var(--magenta); stroke-dasharray: 5 3; stroke-width: 2.5; }
+
+/* What a routine found and holds under its picture, with Keep and Discard. */
+.picture-finding {
+    padding: 0.4rem 0.6rem;
+    border: thin solid var(--magenta);
+    border-radius: var(--radius);
+    background: var(--panel-2);
+}
+
+.picture-finding-text {
+    flex: 1 1 14rem;
+}
 
 /* The grip under a picture: drag it to make the picture's box taller or
    shorter. */

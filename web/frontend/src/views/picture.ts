@@ -25,14 +25,18 @@
 // marks, moving with the machine so it stays over what it marked (or, the
 // View menu's Marks follow the machine off, where it was drawn). Edges
 // (kept per camera) draws the straight edges pcbv finds, asked once a
-// second while on and shown.
+// second while on and shown. What a routine found and holds for the
+// operator (spinny_web.findings) is drawn dashed in magenta with a row of
+// its words, Keep and Discard; the View menu says whether the camera's
+// routines ask first.
 
 import { button, el, numberField, readStored, setLocked, stepperBox, writeStored } from "../dom.ts";
 import { errorText } from "../api.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import { openMenu } from "../menu.ts";
+import { knownMarks } from "./known.ts";
 import type { AppState } from "../state.ts";
-import type { CameraEdges } from "../types.ts";
+import type { CameraEdges, CameraFinding } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
 /** How often a picture is asked for while it shows, ms. */
@@ -269,7 +273,7 @@ export function growBox(box: MachineBox | null, by: MachineBox): MachineBox {
 }
 
 /** What a mark is: its color and line follow the tone. */
-export type Tone = "center" | "ring" | "spot" | "look" | "box" | "board" | "rough" | "drag" | "miss" | "known" | "part" | "edge" | "nozzle";
+export type Tone = "center" | "ring" | "spot" | "look" | "box" | "board" | "rough" | "drag" | "miss" | "known" | "part" | "edge" | "nozzle" | "finding";
 
 /**
  * A mark over the picture, in its full size px from the top left (y down);
@@ -365,6 +369,39 @@ export function edgeMarks(edges: CameraEdges, size: [number, number]): Mark[] {
                 title: `edge ${index + 1} of ${edges.lines.length}, the strongest first: ${formatFixed(length, 0)} px${contrast}`,
             };
         });
+}
+
+/**
+ * The marks of what a routine found and holds, in a picture `size` px: the
+ * spot it centered (with how it was looked for), the straight edges and
+ * the corner they made (scaled from the size of the picture they were
+ * found in). Its points on the machine are drawn as known points are.
+ */
+export function findingMarks(finding: CameraFinding, size: [number, number]): Mark[] {
+    const marks: Mark[] = [];
+    if (finding.spot) {
+        marks.push(...spotMarks(finding.spot, size, "finding"));
+    }
+    const sx = finding.size && finding.size[0] > 0 ? size[0] / finding.size[0] : 1;
+    const sy = finding.size && finding.size[1] > 0 ? size[1] / finding.size[1] : 1;
+    for (const line of finding.lines ?? []) {
+        if ([line.x0, line.y0, line.x1, line.y1].every((value) => Number.isFinite(value))) {
+            marks.push({ kind: "line", points: [[line.x0 * sx, line.y0 * sy], [line.x1 * sx, line.y1 * sy]], tone: "finding", title: "an edge the corner was found from" });
+        }
+    }
+    if (finding.corner) {
+        const [x, y] = [finding.corner[0] * sx, finding.corner[1] * sy];
+        const arm = Math.min(size[0], size[1]) / 30;
+        marks.push({ kind: "circle", x, y, r: arm, tone: "finding", title: "where the edges meet" });
+        marks.push({ kind: "line", points: [[x - arm, y], [x + arm, y]], tone: "finding" });
+        marks.push({ kind: "line", points: [[x, y - arm], [x, y + arm]], tone: "finding" });
+    }
+    return marks;
+}
+
+/** Whether routines started from a camera's panels hold what they find for the operator to keep (the View menu's setting, on unless switched off, kept per camera). */
+export function confirmFindings(key: string): boolean {
+    return readStored(`spinny.picture.${key}.confirm`) !== "0";
 }
 
 /** A mark moved by `dx`, `dy` px of the picture. */
@@ -550,6 +587,14 @@ export interface PictureOptions {
     follow?(state: AppState): [number, number] | null;
     /** The straight edges pcbv finds in the camera's newest picture; given, an Edges switch draws them over the picture while it is on. */
     edges?(): Promise<CameraEdges>;
+    /**
+     * What a routine of the camera found and holds for the operator, null
+     * with none; given with `answer`, the picture draws it and offers Keep
+     * and Discard, and the View menu whether routines ask first.
+     */
+    finding?(state: AppState): CameraFinding | null;
+    /** Keeps (true) or discards what was found; its points are on the machine, ringed about `center`. */
+    answer?(keep: boolean): Promise<void>;
     /** Moves the head by a step on the machine, mm. */
     move(mm: [number, number]): Promise<void>;
     /** Said when a drag or a double-click needs the scale and there is none. */
@@ -611,6 +656,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     const crosshairKey = `spinny.picture.${options.key}.crosshair`;
     const crosshairSizeKey = `spinny.picture.${options.key}.crosshair.size`;
     const followKey = `spinny.picture.${options.key}.follow`;
+    const confirmKey = `spinny.picture.${options.key}.confirm`;
     const edgesKey = `spinny.picture.${options.key}.edges`;
     let zoom = 1;
     // The edge view: on when switched on (kept per camera), the edges last
@@ -704,6 +750,13 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     const cancelPick = button("Cancel", () => disarmPick(options.key), "btn btn-quiet btn-small");
     cancelPick.title = "pick nothing";
     const pickRow = el("div", { class: "button-row picture-pick-row hidden" }, pickLine, cancelPick);
+    // What a routine found and holds: its words, Keep and Discard.
+    const findingLine = el("span", { class: "picture-finding-text" });
+    const keepFinding = button("Keep", () => answerFinding(true), "btn btn-primary btn-small", "keep what was found, as the routine would have without asking");
+    const discardFinding = button("Discard", () => answerFinding(false), "btn btn-quiet btn-small", "drop what was found: nothing is kept");
+    const findingRow = el("div", { class: "button-row picture-finding hidden" }, findingLine, keepFinding, discardFinding);
+    // Where the finding shown first showed, by its words and marks, for its marks to follow the machine.
+    let findingSeen: { key: string; at: [number, number] | null } | null = null;
     const caption = el("div", { class: "button-row picture-caption" }, zoomLine, reset, turnButton);
     if (options.orientation) {
         caption.append(upright);
@@ -725,7 +778,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     if (options.boxes) {
         caption.append(growView, clearBox, boxLine);
     }
-    const root = el("figure", { class: "picture-view" }, box, grip, pickRow, caption);
+    const root = el("figure", { class: "picture-view" }, box, grip, pickRow, findingRow, caption);
 
     // --- sizing ------------------------------------------------------------------
 
@@ -795,12 +848,53 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
                 },
                 checked: followOn,
             },
+            ...(options.finding ? [{
+                label: "Ask before keeping what routines find",
+                run: () => writeStored(confirmKey, confirmFindings(options.key) ? "0" : "1"),
+                checked: confirmFindings(options.key),
+            }] : []),
         ], view, `${options.label} view`);
+    }
+
+    /** Keeps or discards what was found, then draws what is left. */
+    async function answerFinding(keep: boolean): Promise<void> {
+        await options.answer?.(keep);
+        draw(ctx.store.get());
     }
 
     /** The place that carries what the picture shows now. */
     function followPlace(state: AppState): [number, number] | null {
         return options.follow ? options.follow(state) : options.center(state);
+    }
+
+    /** The row offering Keep and Discard for what a routine found, with its words, shown while it waits; the place that carries the picture kept from when it first showed. */
+    function showFinding(state: AppState): void {
+        const finding = options.finding?.(state) ?? null;
+        findingRow.classList.toggle("hidden", finding === null);
+        if (finding === null) {
+            findingSeen = null;
+            return;
+        }
+        findingLine.textContent = `Found: ${finding.text}. Keep it?`;
+        const key = JSON.stringify(finding);
+        if (findingSeen === null || findingSeen.key !== key) {
+            findingSeen = { key, at: followPlace(state) };
+        }
+    }
+
+    /** The marks of what a routine found and holds, moved with the machine as the spots kept are, its points ringed where they are on it. */
+    function shownFinding(state: AppState, shown: PictureShown, now: [number, number] | null, calibration: Calibration | null): Mark[] {
+        const finding = options.finding?.(state) ?? null;
+        if (finding === null || findingSeen === null) {
+            return [];
+        }
+        let marks = findingMarks(finding, shown.size);
+        if (followOn && findingSeen.at !== null && now !== null && calibration !== null) {
+            const [dx, dy] = followShift(options.rides, findingSeen.at, now, calibration);
+            marks = marks.map((mark) => shiftMark(mark, dx, dy));
+        }
+        const points = (finding.points ?? []).map((point) => ({ at: point.at, label: point.label, title: `${point.label}, as found: Keep takes it` }));
+        return [...marks, ...knownMarks(points, options.center(state), calibration, shown, "finding")];
     }
 
     /** Takes in the spots the state shows that were not seen before, with the place that carries them now. */
@@ -1109,6 +1203,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
 
     function draw(state: AppState): void {
         takeShown(state);
+        showFinding(state);
         const [width, height] = fullSize(state);
         // The view box is the part of the picture the zoom shows, so a mark
         // lands where the zoomed picture shows its point.
@@ -1131,6 +1226,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
             const now = followPlace(state);
             const calibrated = options.calibration(state);
             marks.push(...keptMarks(kept, [width, height], options.rides, followOn && now !== null && calibrated !== null ? { now, calibration: calibrated } : null));
+            marks.push(...shownFinding(state, shown, now, calibrated));
         }
         setLocked(clearMarks, kept.length === 0, "no spots found are kept over the picture");
         if (edgesOn && edgesSeen !== null && options.running(state)) {

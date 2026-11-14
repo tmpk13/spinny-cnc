@@ -20,6 +20,7 @@ import { into, type Ctx } from "./context.ts";
 import { topCameraText, topRoutineText } from "./placing.ts";
 import { explain, termsFold } from "../terms.ts";
 import { infoTip } from "./infotip.ts";
+import { confirmFindings } from "./picture.ts";
 import { lookOnceText, polaritySelect } from "./pnp.ts";
 
 export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boolean, folds?: CameraFolds): void {
@@ -157,7 +158,7 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
             ctx.toast("error", "step: 0 to 20 mm");
             return;
         }
-        await into(ctx, "placing", ctx.api.topOffset(value));
+        await into(ctx, "placing", ctx.api.topOffset(value, confirmFindings("top")));
     }
 
     function render(state: AppState): void {

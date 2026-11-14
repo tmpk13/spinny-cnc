@@ -25,7 +25,7 @@ import type { AppState } from "../state.ts";
 import type { BoardCorners, BoardGuess, BoardKnown, BoardLook, BoardStretch, CornerName, LookMethod, RefineUse, ScanMosaic, SkewState } from "../types.ts";
 import { explain, termsFold } from "../terms.ts";
 import { into, type Ctx } from "./context.ts";
-import type { MachineBox } from "./picture.ts";
+import { confirmFindings, type MachineBox } from "./picture.ts";
 import { gcodePlacing } from "./placing.ts";
 import { mountMosaic } from "./mosaic.ts";
 import { lookText } from "./vision.ts";
@@ -665,9 +665,9 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
         }
         const name = corner.value as CornerName;
         if (chosen === "top") {
-            await into(ctx, "placing", ctx.api.topEdgeCorner(job.id, name));
+            await into(ctx, "placing", ctx.api.topEdgeCorner(job.id, name, confirmFindings("top")));
         } else {
-            await into(ctx, "camera", ctx.api.cameraEdgeCorner(job.id, name));
+            await into(ctx, "camera", ctx.api.cameraEdgeCorner(job.id, name, confirmFindings("head")));
         }
     }
 
@@ -676,7 +676,7 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
         if (!job) {
             return;
         }
-        await into(ctx, "camera", ctx.api.cameraRefine(job.id, use.value as RefineUse, 3));
+        await into(ctx, "camera", ctx.api.cameraRefine(job.id, use.value as RefineUse, 3, confirmFindings("head")));
     }
 
     async function clearCorners(): Promise<void> {

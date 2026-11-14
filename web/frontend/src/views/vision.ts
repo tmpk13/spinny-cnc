@@ -24,7 +24,7 @@ import { boardMarks, frameSize, roughOf, shownSpots } from "./camview.ts";
 import { into, type Ctx } from "./context.ts";
 import { explain, termsFold } from "../terms.ts";
 import { headKnown, knownMarks } from "./known.ts";
-import { type Calibration, mountPicture, type PictureView } from "./picture.ts";
+import { type Calibration, confirmFindings, mountPicture, type PictureView } from "./picture.ts";
 
 export { FRAME_INTERVAL_MS } from "./picture.ts";
 /** How often this panel asks for the camera's state while it shows, ms. */
@@ -177,6 +177,13 @@ export function mountVisionView(root: HTMLElement, ctx: Ctx, visible: () => bool
         },
         spots: (state) => (state.camera ? shownSpots(state.camera.routine, null) : null),
         edges: () => ctx.api.cameraEdges("head"),
+        finding: (state) => state.camera?.finding ?? null,
+        answer: async (keep) => {
+            const reply = await ctx.call(ctx.api.cameraFinding("head", keep));
+            if (reply) {
+                ctx.store.set({ camera: reply.state as CameraState });
+            }
+        },
         move: async (mm) => {
             if (Math.hypot(mm[0], mm[1]) >= 0.001) {
                 await ctx.call(ctx.api.jog({ kind: "board", dx: Number(mm[0].toFixed(4)), dy: Number(mm[1].toFixed(4)) }));
@@ -431,7 +438,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
             ctx.toast("error", "step: 0 mm or more");
             return;
         }
-        await into(ctx, "camera", ctx.api.cameraFind(s));
+        await into(ctx, "camera", ctx.api.cameraFind(s, confirmFindings("head")));
     }
 
     /** The panel is in view: the Jobs page is up, the fold open and the tab shown. */

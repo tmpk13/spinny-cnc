@@ -28,6 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from spinny_laser import machines as machine_files
 
 from .cameras import apply_kept, check_controls
+from .findings import Finding, Findings
 from .kinematics import FOCUS_DECIMALS, coord
 from .link import Link, LinkError, idle_status, settle
 from .log import log
@@ -359,6 +360,8 @@ class Camera:
         self._publish = publish
         self._message = message
         self.client = VisionClient()
+        # What a routine found and holds for the operator to keep or discard.
+        self.findings = Findings()
         # The job whose board pcbv looks for, and the path it was loaded from.
         self.board_job: str | None = None
         self._board_path: str | None = None
@@ -535,6 +538,7 @@ class Camera:
             "frame": frame,
             "pose": pose,
             "routine": progress.to_dict() if progress is not None else None,
+            "finding": self.findings.state(),
         }
 
     def shutdown(self) -> None:
@@ -546,9 +550,10 @@ class Camera:
 
     # --- the find routine -----------------------------------------------------
 
-    def find(self, access: MachineAccess, step: float) -> None:
+    def find(self, access: MachineAccess, step: float, confirm: bool = False) -> None:
         """Starts the routine on its own thread; the caller has checked
-        that nothing else owns the machine."""
+        that nothing else owns the machine. With `confirm` what it measures
+        is held as a finding to keep or discard rather than kept."""
         if not (math.isfinite(step) and 0.0 <= step <= MAX_STEP):
             raise ValueError(f"the step must be 0 to {MAX_STEP:g} mm")
         mark = self.mark
@@ -563,7 +568,7 @@ class Camera:
             self._looks = 0
             self.progress = RoutineProgress()
             progress = self.progress
-            self._thread = threading.Thread(target=self._find, args=(access, mark, step, progress), name="camera-find", daemon=True)
+            self._thread = threading.Thread(target=self._find, args=(access, mark, step, progress, confirm), name="camera-find", daemon=True)
             self._thread.start()
         self._publish()
 
@@ -614,7 +619,7 @@ class Camera:
         finally:
             self._publish()
 
-    def _find(self, access: MachineAccess, mark: Point, step: float, progress: RoutineProgress) -> None:
+    def _find(self, access: MachineAccess, mark: Point, step: float, progress: RoutineProgress, confirm: bool = False) -> None:
         link = access.link
         restarts = link.restarts
         settings = self.settings()
@@ -656,14 +661,22 @@ class Camera:
             head = head_point(status)
             delta = picture_to_machine(spot.dx, spot.dy, mm_per_px, roll)
             found = (mark[0] - head[0] - delta[0], mark[1] - head[1] - delta[1])
-            self.update({"offset": found, "roll": roll, "mm_per_px": mm_per_px})
+            words = (
+                f"camera offset measured: X {found[0]:+.3f} Y {found[1]:+.3f} mm from the tool,"
+                f" {mm_per_px * 1000.0:.1f} um per pixel, roll {roll:+.2f} degrees"
+            )
+
+            def keep(found=found, roll=roll, mm_per_px=mm_per_px) -> str:
+                self.update({"offset": found, "roll": roll, "mm_per_px": mm_per_px})
+                return words
+
+            if confirm:
+                # The mark centered in the picture is what it measured.
+                self.findings.hold(Finding("offset", words, keep, {"spot": spot.to_dict()}))
+            said = f"{words}: keep or discard it under the picture" if confirm else keep()
             self._step(progress, "done", progress.total)
             progress.state = DONE
-            self._message(
-                "info",
-                f"camera offset measured: X {found[0]:+.3f} Y {found[1]:+.3f} mm from the tool,"
-                f" {mm_per_px * 1000.0:.1f} um per pixel, roll {roll:+.2f} degrees",
-            )
+            self._message("info", said)
         except (LinkError, VisionError, CameraError, ValueError) as exc:
             if self._abort.is_set():
                 progress.state = STOPPED

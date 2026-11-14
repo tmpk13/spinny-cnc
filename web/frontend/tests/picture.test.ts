@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
 import { boardMarks, boxShares, frameSize, nozzleBoxMarks, reachMark, shownSpots } from "../src/views/camview.ts";
-import { addTurn, armBox, armedPick, armPick, clampZoom, crosshairMarks, disarmPick, dragMove, followShift, frameRequestWidth, growBox, keptMarks, levelText, machineToPicture, MAX_KEPT_SPOTS, mountPicture, pictureToMachine, readCrosshair, readQuarters, shiftMark, type ShownSpot, spotMarks, stepZoom, takeSpots, turnTransform, UNTURNED, unturnOffset, uprightTurn, zoomText } from "../src/views/picture.ts";
+import { addTurn, armBox, armedPick, armPick, clampZoom, confirmFindings, crosshairMarks, disarmPick, dragMove, followShift, frameRequestWidth, growBox, keptMarks, levelText, machineToPicture, MAX_KEPT_SPOTS, mountPicture, pictureToMachine, readCrosshair, readQuarters, shiftMark, type ShownSpot, spotMarks, stepZoom, takeSpots, turnTransform, UNTURNED, unturnOffset, uprightTurn, zoomText } from "../src/views/picture.ts";
+import type { CameraFinding } from "../src/types.ts";
 import { click, setup, settle } from "./harness.ts";
 
 /** A CSS or SVG transform list applied to a point: rotate (degrees, clockwise on a y-down screen), scaleX, scale and translate; the last one listed acts first. */
@@ -564,6 +565,67 @@ describe("the picture view", () => {
         expect(edges.title).toContain("the camera is busy");
         expect(layer.querySelector(".mark-edge")).toBeNull();
         localStorage.removeItem("spinny.picture.test-edges.edges");
+        view.stop();
+    });
+
+    test("what a routine found waits under the picture, drawn with its edges, corner and points, until Keep or Discard", async () => {
+        const { ctx } = setup();
+        let finding: CameraFinding | null = null;
+        const answers: boolean[] = [];
+        const view = mountPicture({
+            key: "test-finding",
+            label: "Test camera",
+            rides: true,
+            running: () => true,
+            frameUrl: (width) => `data:image/svg+xml,w=${width}`,
+            pcbvOverlay: () => false,
+            size: () => [1000, 500],
+            calibration: () => ({ mmPerPx: 0.1, roll: 0, mirror: false }),
+            center: () => [50, 20],
+            marks: () => [],
+            finding: () => finding,
+            answer: async (keep) => {
+                answers.push(keep);
+                finding = null;
+            },
+            move: async () => undefined,
+            noScale: "no scale",
+            visible: () => true,
+        }, ctx);
+        document.body.append(view.root);
+        view.render(ctx.store.get());
+        const row = view.root.querySelector(".picture-finding") as HTMLElement;
+        const layer = view.root.querySelector(".picture-marks") as SVGElement;
+        expect(row.classList.contains("hidden")).toBe(true);
+        finding = {
+            kind: "corner",
+            text: "bottom left corner found by its edges",
+            lines: [{ x0: 250, y0: 125, x1: 400, y1: 125 }],
+            corner: [250, 125],
+            size: [500, 250],
+            points: [{ at: [51, 20], label: "bottom left" }],
+        };
+        view.render(ctx.store.get());
+        expect(row.classList.contains("hidden")).toBe(false);
+        expect(row.textContent).toContain("Found: bottom left corner found by its edges. Keep it?");
+        // The edge and the corner scaled from the picture they were found in; the point ringed 10 px right of the center.
+        const lines = [...layer.querySelectorAll("polyline.mark-finding")].map((node) => node.getAttribute("points"));
+        expect(lines).toContain("500.00,250.00 800.00,250.00");
+        expect(layer.querySelector("circle.mark-finding")?.getAttribute("cx")).toBe("500");
+        const rings = [...layer.querySelectorAll("circle.mark-finding")].map((node) => Number(node.getAttribute("cx")));
+        expect(rings).toContain(510);
+        expect([...layer.querySelectorAll("text.mark-label-finding")].map((node) => node.textContent)).toEqual(["bottom left"]);
+        click(view.root, "Keep");
+        await settle();
+        expect(answers).toEqual([true]);
+        expect(row.classList.contains("hidden")).toBe(true);
+        expect(layer.querySelector(".mark-finding")).toBeNull();
+        // Routines started from this camera's panels ask first unless the View menu says not to.
+        expect(confirmFindings("test-finding")).toBe(true);
+        click(view.root, "View");
+        [...document.querySelectorAll<HTMLButtonElement>(".menu-item")].find((node) => node.textContent === "Ask before keeping what routines find")!.click();
+        expect(confirmFindings("test-finding")).toBe(false);
+        localStorage.removeItem("spinny.picture.test-finding.confirm");
         view.stop();
     });
 

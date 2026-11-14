@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { turned } from "../src/kinematics.ts";
 import { estimateOf, jobSize } from "../src/mock/boardlook.ts";
 import { TOP_TRUTH } from "../src/mock/pnp.ts";
-import type { BoardGuess, BoardLook } from "../src/types.ts";
+import type { BoardGuess, BoardLook, CameraState } from "../src/types.ts";
 import { cornersText, knownText, mountFindBoard, mountGuessGraph, pickedCamera, shownGuesses, stretchText } from "../src/views/findboard.ts";
 import { lookText } from "../src/views/vision.ts";
 import { click, findButton, runUntilIdle, settle, setup } from "./harness.ts";
@@ -206,6 +206,13 @@ describe("the Find board panel", () => {
         expect(findButton(root, "Corner by edges").disabled).toBe(false);
         click(root, "Corner by edges");
         await twice();
+        // The page asks first: the corner found waits to be kept, drawn on the picture.
+        const held = store.get().camera?.finding;
+        expect(held?.kind).toBe("corner");
+        expect(held?.points?.map((point) => point.label)).toEqual(["bottom left"]);
+        expect(store.get().camera?.board_look?.corners).toBeNull();
+        expect(calls.find((call) => call.name === "cameraEdgeCorner")?.args).toEqual([job.id, "bottom left", true]);
+        store.set({ camera: (await api.cameraFinding("head", true)).state as CameraState });
         const edged = store.get().camera?.board_look?.corners;
         expect(edged?.points.map((point) => [point.corner, point.by])).toEqual([["bottom left", "edges"]]);
         expect(root.querySelector(".find-corners")?.textContent).toContain("bottom left by its edges at");
@@ -216,7 +223,9 @@ describe("the Find board panel", () => {
         expect(findButton(root, "Center features").disabled).toBe(false);
         click(root, "Center features");
         await twice();
-        expect(calls.find((call) => call.name === "cameraRefine")?.args).toEqual([job.id, "auto", 3]);
+        expect(calls.find((call) => call.name === "cameraRefine")?.args).toEqual([job.id, "auto", 3, true]);
+        // The features centered wait to be kept as the Align marks.
+        expect(store.get().camera?.finding?.kind).toBe("features");
     });
 
     test("the locks a guess came from show in the table, and an ambiguous place is said", () => {

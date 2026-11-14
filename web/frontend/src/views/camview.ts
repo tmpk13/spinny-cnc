@@ -14,12 +14,11 @@
 import { activePage, button, el, labeled, lockFor, readStored, writeStored } from "../dom.ts";
 import { formatFixed } from "../format.ts";
 import type { AppState } from "../state.ts";
-import type { BoardCorners, BoardEstimate, Job, RoutineSpot, SpotLook } from "../types.ts";
-import type { Ctx } from "./context.ts";
+import type { BoardCorners, BoardEstimate, Job, PlacingState, RoutineSpot, SpotLook } from "../types.ts";
+import { type Ctx, into } from "./context.ts";
 import { bottomHead, bottomKnown, knownMarks, LABEL_REM, topKnown } from "./known.ts";
 import { boardTurn, partShapes, readShowShape, shapeMarks } from "./partshape.ts";
 import { armBox, type Calibration, machineToPicturePoints, type Mark, mountPicture, type PictureShown, type PictureView, type ShownSpot } from "./picture.ts";
-import { type Ctx, into } from "./context.ts";
 import { gcodePlacing } from "./placing.ts";
 
 export { dragMove, pictureToMachine } from "./picture.ts";
@@ -310,6 +309,13 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
         },
         spots: (state) => (state.placing?.top ? shownSpots(state.placing.top.routine, state.placing.top.look) : null),
         edges: () => ctx.api.cameraEdges("top"),
+        finding: (state) => state.placing?.top?.finding ?? null,
+        answer: async (keep) => {
+            const reply = await ctx.call(ctx.api.cameraFinding("top", keep));
+            if (reply) {
+                ctx.store.set({ placing: reply.state as PlacingState });
+            }
+        },
         move: jog,
         noScale: "the top camera's scale is not measured yet: Measure offset first",
         visible: () => visible() && gcodePlacing(ctx.store.get()),

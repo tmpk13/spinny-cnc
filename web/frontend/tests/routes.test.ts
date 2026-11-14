@@ -301,6 +301,12 @@ describe("HttpApi board finding routes", () => {
         await api.cameraColor("head", "board", [640, 360]);
         await api.cameraColor("head", "board", null);
         await api.cameraEdges("top");
+        await api.cameraEdgeCorner("j1", "top left", true);
+        await api.cameraRefine("j1", "pads", 3, true);
+        await api.cameraFind(2, true);
+        await api.topOffset(1, true);
+        await api.pnpFiducials("j1", true);
+        await api.cameraFinding("head", false);
         expect(calls.map((call) => [call.method, call.url.replace("http://host", ""), call.body])).toEqual([
             ["POST", "/api/camera/edge-corner", { job: "j1", corner: "top left" }],
             ["POST", "/api/pnp/top/edge-corner", { job: "j1", corner: "bottom right" }],
@@ -310,6 +316,12 @@ describe("HttpApi board finding routes", () => {
             ["POST", "/api/cameras/color", { camera: "head", item: "board", x: 640, y: 360 }],
             ["POST", "/api/cameras/color", { camera: "head", item: "board", clear: true }],
             ["GET", "/api/cameras/edges?camera=top", null],
+            ["POST", "/api/camera/edge-corner", { job: "j1", corner: "top left", confirm: true }],
+            ["POST", "/api/camera/refine", { job: "j1", use: "pads", count: 3, confirm: true }],
+            ["POST", "/api/camera/find", { step: 2, confirm: true }],
+            ["POST", "/api/pnp/top/offset", { step: 1, confirm: true }],
+            ["POST", "/api/pnp/fiducials", { job: "j1", confirm: true }],
+            ["POST", "/api/cameras/finding", { camera: "head", keep: false }],
         ]);
     });
 });

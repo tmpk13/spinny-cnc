@@ -95,6 +95,7 @@ from .camera import (
     wait_settled,
 )
 from .camlog import CAMERAS, CameraLog
+from .findings import Finding, Findings
 from .searchlog import SearchLog, SearchRecord, affine_of, record_features
 from .skew import SkewStore
 from . import searchreport
@@ -609,6 +610,8 @@ class CamLogPhotoBody(Finite):
 
 class CameraFindBody(Finite):
     step: float = 2.0
+    # Hold what it measures for the operator to keep or discard (findings.py).
+    confirm: bool = False
 
 
 class BoardSearchBody(Finite):
@@ -641,6 +644,8 @@ class CameraRefineBody(Finite):
     job: str
     use: Literal["auto", "fiducials", "holes", "pads"] = "auto"
     count: int = Field(default=3, ge=2, le=6)
+    # Hold the features centered for the operator to keep or discard.
+    confirm: bool = False
 
 
 class BoardCornerBody(Finite):
@@ -648,6 +653,14 @@ class BoardCornerBody(Finite):
     # box, by name (boardlook.CORNERS).
     job: str
     corner: str
+    # Corner by edges: hold the corner for the operator to keep or discard.
+    confirm: bool = False
+
+
+class CameraFindingBody(Finite):
+    # Which camera's finding (findings.py), and whether it is kept or discarded.
+    camera: Literal["head", "up", "top"]
+    keep: bool
 
 
 class CameraLensBody(Finite):
@@ -776,6 +789,8 @@ class PnpPlanBody(BaseModel):
 
 class PnpFiducialsBody(BaseModel):
     job: str
+    # Hold the fiducials found for the operator to keep or discard.
+    confirm: bool = False
 
 
 class TopSettingsBody(Finite):
@@ -806,6 +821,8 @@ class TopOffsetBody(Finite):
     # How far the head moves along X and Y to measure the picture; 0 keeps
     # the scale, roll and mirror measured before.
     step: float = 2.0
+    # Hold what it measures for the operator to keep or discard.
+    confirm: bool = False
 
 
 class TopHomeBody(BaseModel):
@@ -3443,11 +3460,34 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             raise ValueError("the camera is not running: start it first")
         head = head_board(status.r, self.table_angle(status), status.z, self.cartesian)
         frame = PictureFrame((head[0] + settings.offset[0], head[1] + settings.offset[1]), settings.roll, False)
-        machine, rotation = self._edge_corner(self.camera.client, "head", self.head_look, body.corner, frame, settings)
+        machine, rotation, marks = self._edge_corner(self.camera.client, "head", self.head_look, body.corner, frame, settings)
         middle, _ = self._board_size(job)
-        self.head_look.add_corner(job.id, body.corner, point, machine, middle, rotation, "edges")
-        self.publish_message("info", f"{body.corner} corner found by its edges at {machine[0]:.3f}, {machine[1]:.3f} mm, the board turned {rotation:+.3f} degrees")
+        words = f"{body.corner} corner found by its edges at {machine[0]:.3f}, {machine[1]:.3f} mm, the board turned {rotation:+.3f} degrees"
+
+        def keep() -> str:
+            self.head_look.add_corner(job.id, body.corner, point, machine, middle, rotation, "edges")
+            self.publish_camera()
+            return words
+
+        self.publish_message("info", self._found(self.camera.findings, body.confirm, Finding("corner", words, keep, {**marks, "points": [{"at": list(machine), "label": body.corner}]})))
         return self.publish_camera()
+
+    def _found(self, findings: Findings, confirm: bool, finding: Finding) -> str:
+        """A finding held for the operator when `confirm`, else kept at
+        once: the words to say of it."""
+        if confirm:
+            findings.hold(finding)
+            return f"{finding.text}: keep or discard it under the picture"
+        return finding.keep()
+
+    def camera_finding(self, body: CameraFindingBody) -> dict:
+        """What a routine of a camera found and holds (findings.py), kept
+        (what keeping it says goes out as a message) or discarded."""
+        owner, publish = self._controlled(body.camera)
+        said = owner.findings.answer(body.keep, busy=owner.routine_active)
+        if said:
+            self.publish_message("info", said)
+        return {"camera": body.camera, "kept": body.keep, "state": publish()}
 
     def camera_edges(self, camera: str) -> dict:
         """The straight edges pcbv finds in a camera's newest picture,
@@ -3460,12 +3500,14 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         reply = owner.client.edges(EDGE_LINES, owner.settings().colors.get("edges"))
         return {"camera": camera, "lines": reply.get("lines") or [], "width": reply.get("width"), "height": reply.get("height")}
 
-    def _edge_corner(self, client, camera: str, look: BoardLook, corner: str, frame: PictureFrame, settings) -> tuple[tuple[float, float], float]:
+    def _edge_corner(self, client, camera: str, look: BoardLook, corner: str, frame: PictureFrame, settings) -> tuple[tuple[float, float], float, dict]:
         """Where a board's corner is in a camera's picture now, and its turn,
         from the straight edges pcbv finds (on the edges' picked color when
-        there is one). The picture, the edges and the corner they made (or
-        why none) go into the camera log while it logs, and the edges and
-        the corner into the board look's search record when one is open."""
+        there is one), with the marks a finding of it draws (the edges, the
+        corner in the picture and the picture's size). The picture, the
+        edges and the corner they made (or why none) go into the camera log
+        while it logs, and the edges and the corner into the board look's
+        search record when one is open."""
         wait_settled(client)
         reply = client.edges(EDGE_LINES, settings.colors.get("edges"))
         width, height = reply.get("width"), reply.get("height")
@@ -3486,7 +3528,8 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         self.camlog.look(client, camera, "corner by edges", corner, note=note, edges=lines, corner=seen)
         if record is not None:
             record.event("edges", corner=corner, lines=lines, found=[round(point[0], 4), round(point[1], 4)], angle=round(rotation, 4), picture=[round(seen[0], 2), round(seen[1], 2)])
-        return point, rotation
+        marks = {"lines": lines, "corner": [round(seen[0], 2), round(seen[1], 2)], "size": [float(width), float(height)]}
+        return point, rotation, marks
 
     def camera_lens_clear(self, camera: str) -> dict:
         """The camera's lens correction forgotten."""
@@ -3951,17 +3994,22 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
                     self.publish_camera()
                     machine = self._center_feature(mover, place.apply(feature.job), feature, settings, progress)
                     seen.append((feature.job, machine))
-                state = self.alignment.replace_camera(job, seen)
-                self.publish_align()
-                fit = state.get("fit") or {}
-                rms = fit.get("rms")
-                self.publish_message(
-                    "info",
-                    f"{len(seen)} {chosen[0].kind}s centered, {max(math.dist(a[0], b[0]) for a in seen for b in seen):.1f} mm apart at most:"
-                    f" the board turned {fit.get('rotation', 0.0):+.3f} degrees"
-                    + (f", {rms * 1000.0:.0f} um rms" if isinstance(rms, (int, float)) else "")
-                    + "; Apply in Align moves the job",
-                )
+                apart = f"{len(seen)} {chosen[0].kind}s centered, {max(math.dist(a[0], b[0]) for a in seen for b in seen):.1f} mm apart at most"
+
+                def keep() -> str:
+                    state = self.alignment.replace_camera(job, seen)
+                    self.publish_align()
+                    fit = state.get("fit") or {}
+                    rms = fit.get("rms")
+                    return (
+                        f"{apart}: the board turned {fit.get('rotation', 0.0):+.3f} degrees"
+                        + (f", {rms * 1000.0:.0f} um rms" if isinstance(rms, (int, float)) else "")
+                        + "; Apply in Align moves the job"
+                    )
+
+                points = [{"at": [round(machine[0], 4), round(machine[1], 4)], "label": feature.name} for feature, (_, machine) in zip(chosen, seen)]
+                finding = Finding("features", f"{apart}, to be the job's camera marks in Align", keep, {"points": points})
+                self.publish_message("info", self._found(self.camera.findings, body.confirm, finding))
 
             self.camera.run_routine("refine", len(chosen) + 1, "centering features", link, run)
         return self.camera_state()
@@ -4041,7 +4089,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             self._run_job(job.id, OFF)
         return self.publish_camera()
 
-    def camera_find(self, step: float) -> dict:
+    def camera_find(self, step: float, confirm: bool = False) -> dict:
         with self._owner_lock:
             link = self._movable()
             values = self._values(force=True)
@@ -4054,7 +4102,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
                 has_focus_axis=bool(values.get("h_axis")),
                 head_point=lambda report: head_board(report.r, self.table_angle(report), report.z, self.cartesian),
             )
-            self.camera.find(access, step)
+            self.camera.find(access, step, confirm)
         return self.camera_state()
 
     def camera_abort(self) -> dict:
@@ -5136,6 +5184,10 @@ def create_app(
     def camera_edges(camera: Literal["head", "up", "top"] = "head"):
         return guarded(lambda: backend.camera_edges(camera))
 
+    @app.post("/api/cameras/finding")
+    def camera_finding(body: CameraFindingBody):
+        return guarded(lambda: backend.camera_finding(body))
+
     @app.post("/api/cameras/color")
     def camera_color(body: CameraColorBody):
         return guarded(lambda: backend.camera_color(body))
@@ -5258,7 +5310,8 @@ def create_app(
 
     @app.post("/api/camera/find")
     def camera_find(body: CameraFindBody | None = None):
-        return guarded(lambda: backend.camera_find((body or CameraFindBody()).step))
+        find = body or CameraFindBody()
+        return guarded(lambda: backend.camera_find(find.step, find.confirm))
 
     @app.post("/api/camera/search")
     def camera_search(body: BoardSearchBody | None = None):
@@ -5465,7 +5518,8 @@ def create_app(
 
     @app.post("/api/pnp/top/offset")
     def top_offset(body: TopOffsetBody | None = None):
-        return guarded(lambda: backend.top_offset((body or TopOffsetBody()).step))
+        offset = body or TopOffsetBody()
+        return guarded(lambda: backend.top_offset(offset.step, offset.confirm))
 
     @app.post("/api/pnp/top/look")
     def top_look():

@@ -38,6 +38,7 @@ from .boardlook import (
     search_stops,
 )
 from .feederbus import BusError, FeederBus, slot_place
+from .findings import Finding
 from .gcode_link import GcodeLinkError, GcodeMover
 from .gcode_part import HOME_TIMEOUTS
 from .kinematics import num
@@ -594,11 +595,18 @@ class PlacingPart:
         here = self._here(machine)
         offset = self._top_offset(machine)
         frame = PictureFrame((float(here["x"]) + offset[0], float(here["y"]) + offset[1]), self._top_roll(machine), settings.mirror)
-        corner, rotation = self._edge_corner(self.top.client, "top", self.top_look, body.corner, frame, settings)
+        corner, rotation, marks = self._edge_corner(self.top.client, "top", self.top_look, body.corner, frame, settings)
         middle, _ = self._board_size(job)
-        self.top_look.add_corner(job.id, body.corner, point, corner, middle, rotation, "edges")
-        self._keep_corner(job.id, body.corner, point, corner, rotation)
-        self.publish_message("info", f"{body.corner} corner found by its edges at {corner[0]:.3f}, {corner[1]:.3f} mm, the board turned {rotation:+.3f} degrees")
+        words = f"{body.corner} corner found by its edges at {corner[0]:.3f}, {corner[1]:.3f} mm, the board turned {rotation:+.3f} degrees"
+
+        def keep() -> str:
+            self.top_look.add_corner(job.id, body.corner, point, corner, middle, rotation, "edges")
+            # A corner taken is also one of the board's references.
+            self._keep_corner(job.id, body.corner, point, corner, rotation)
+            self.publish_placing()
+            return words
+
+        self.publish_message("info", self._found(self.top.findings, body.confirm, Finding("corner", words, keep, {**marks, "points": [{"at": list(corner), "label": body.corner}]})))
         return self.publish_placing()
 
     def top_corners_clear(self) -> dict:
@@ -624,11 +632,11 @@ class PlacingPart:
         self.top.update({"mark_at": (float(here["x"]), float(here["y"]))})
         return self.publish_placing()
 
-    def top_offset(self, step: float) -> dict:
+    def top_offset(self, step: float, confirm: bool = False) -> dict:
         machine = self._placing_idle()
         mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
         profile = machine.top
-        self.top.measure_offset(mover, step, profile.z if profile is not None else None, profile.offset if profile is not None else None)
+        self.top.measure_offset(mover, step, profile.z if profile is not None else None, profile.offset if profile is not None else None, confirm)
         return self.placing_state()
 
     def top_home(self, home: bool = True) -> dict:
@@ -702,13 +710,17 @@ class PlacingPart:
         guess = self._board_fit(body.job, parts)
         mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
 
-        def done(found: list[Found]) -> str:
+        def said(found: list[Found]):
             fit = fiducial_fit(found, guess.rotation)
-            self._keep_fiducials(body.job, found, fit)
             rms = f", {fit.rms * 1000.0:.0f} um rms" if len(found) > 1 else ""
-            return f"{len(found)} fiducials found: the board is turned {fit.rotation:+.3f} degrees on the machine{rms}"
+            return fit, f"{len(found)} fiducials found: the board is turned {fit.rotation:+.3f} degrees on the machine{rms}"
 
-        self.top.find_fiducials(mover, fiducials, guess.apply, top.fiducial, top.within, top.z, done)
+        def done(found: list[Found]) -> str:
+            fit, words = said(found)
+            self._keep_fiducials(body.job, found, fit)
+            return words
+
+        self.top.find_fiducials(mover, fiducials, guess.apply, top.fiducial, top.within, top.z, done, confirm=body.confirm, describe=lambda found: said(found)[1])
         return self.placing_state()
 
     def _keep_fiducials(self, job_id: str, found: list[Found], fit) -> None:

@@ -19,6 +19,7 @@ import { into, type Ctx } from "./context.ts";
 import { fiducialText, referencesOf } from "./placing.ts";
 import { infoTip } from "./infotip.ts";
 import { readAlignCount, readAlignSet, readShowShape, spreadParts, writeAlignCount, writeAlignSet, writeShowShape } from "./partshape.ts";
+import { confirmFindings } from "./picture.ts";
 
 /** A reference's place in the job's frame: a corner's own point, else its part's; null for a part the board lacks. */
 function designOf(entry: PnpReference, byRef: Map<string, Component>): [number, number] | null {
@@ -261,7 +262,7 @@ export function mountPnpRefs(root: HTMLElement, ctx: Ctx, onShape: () => void = 
             ctx.toast("error", "pick a board job first");
             return;
         }
-        await into(ctx, "placing", ctx.api.pnpFiducials(job.id));
+        await into(ctx, "placing", ctx.api.pnpFiducials(job.id, confirmFindings("top")));
     }
 
     let listKey = "";

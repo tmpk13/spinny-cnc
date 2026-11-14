@@ -90,6 +90,8 @@ flowchart LR
         TOPC[topcam: a G-code machine's top camera, its offset from a mark, fiducials, feeder marks, pockets] --> PLC
         PCAM[pnp PickCamera: one base for the up and top cameras: settings, pcbv, a routine at a time] --> TOPC
         PCAM --> PNP
+        PCAM --> FNDG[findings: what a camera routine found, an offset, fiducials, a corner or features, held for the operator's Keep or Discard before it is kept]
+        BE --> FNDG
         PLC --> GD[gcode_link: a line at a time, each answered ok, a poll only when nothing else is in flight]
         PLC --> FBUS[feederbus: packets to feeders on a bus, framed as the machine file's bus says: a feeder found by its id, initialized, advanced, waited for]
         FBUS -->|the bus's send line, its reply read back| GD
@@ -116,7 +118,7 @@ flowchart LR
         FIND --> V4L[v4l2-ctl: a camera's controls listed and set, kept per camera and set at each start]
         FIND -.-> VID
         FIND -.-> UST
-        MF[machines/*.toml: axes, pins, kinematics, tool, servos and the PCA9685, camera, the page's controls; a G-code machine's port, dialect, heights, cameras and their devices, feeders] <--> BE
+        MF[machines/*.toml: axes, pins, kinematics, tool, servos and the PCA9685, camera, the page's controls; a G-code machine's port, dialect, heights, cameras and their devices, feeders, part classes] <--> BE
         MF --> OPNP
         CF[cam/*.toml: axes, tools, materials, operations, post] --> CAM
         CF --> CLI[spinny-cam]

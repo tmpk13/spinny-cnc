@@ -191,6 +191,7 @@ import type {
     CameraControls,
     CameraEdge,
     CameraEdges,
+    CameraFinding,
     CameraLens,
     CameraPose,
     CameraRoutine,
@@ -1673,6 +1674,8 @@ interface ProbeSession {
 interface FindSession {
     /** The mark's board point. */
     mark: Board;
+    /** What it measures is held as a finding to keep or discard. */
+    confirm?: boolean;
     /** How far the head is moved along +X to measure the scale; 0 skips it. */
     step: number;
     phase: RoutineStep;
@@ -2249,7 +2252,9 @@ export class MockBackend implements Api, EventFeed {
     private topConfig: TopSettings = { ...TOP_DEFAULTS };
     private topRunning = false;
     private topRoutine: TopRoutine | null = null;
-    private topSession: { kind: "offset" | "fiducials" | "search" | "home"; steps: string[]; elapsed: number; device: MockDevice; job: string | null; progress: TopRoutine } | null = null;
+    private topSession: { kind: "offset" | "fiducials" | "search" | "home"; steps: string[]; elapsed: number; device: MockDevice; job: string | null; progress: TopRoutine; confirm?: boolean } | null = null;
+    /** What a routine of each camera found and holds for the operator, with what keeping it does (spinny_web.findings). */
+    private findings: Record<ControlledCamera, (CameraFinding & { keep: () => string }) | null> = { head: null, up: null, top: null };
     private topFiducials: TopState["fiducials"] = null;
     /** The alignment marks, kept for one job at a time. */
     private alignJob: string | null = null;
@@ -6304,6 +6309,7 @@ export class MockBackend implements Api, EventFeed {
             routine: this.routine ? structuredClone(this.routine) : null,
             board_look: this.headLook.state(),
             controls: { ...this.keptControls.head },
+            finding: this.findingState("head"),
         };
     }
 
@@ -6520,7 +6526,7 @@ export class MockBackend implements Api, EventFeed {
         return this.cameraStateOf();
     }
 
-    async cameraFind(step: number): Promise<CameraState> {
+    async cameraFind(step: number, confirm?: boolean): Promise<CameraState> {
         this.requireConnected();
         if (!this.cameraRunning) {
             throw new ApiError(400, "the camera is not running: start it first");
@@ -6540,7 +6546,7 @@ export class MockBackend implements Api, EventFeed {
         const total = (focus ? 1 : 0) + 1 + (scale ? 1 : 0) + CENTERING_MOVES;
         const progress: CameraRoutine = { state: "running", step: focus ? "lifting" : "moving", done: 0, total, error: null, spot: null };
         this.routine = progress;
-        this.finding = { mark: { ...this.cameraMarkPoint }, step: scale ? (step > 0 ? step : DEFAULT_FIND_STEP) : 0, phase: progress.step, centered: 0, elapsed: 0, progress };
+        this.finding = { mark: { ...this.cameraMarkPoint }, step: scale ? (step > 0 ? step : DEFAULT_FIND_STEP) : 0, phase: progress.step, centered: 0, elapsed: 0, progress, confirm };
         this.jogTracked = false;
         this.emitCamera();
         return this.cameraStateOf();
@@ -6705,10 +6711,20 @@ export class MockBackend implements Api, EventFeed {
                     // The picture's center is on the mark: the offset is the
                     // mark less the tool's point.
                     const tool = this.machine.headBoard();
-                    config.offset = [round4(session.mark.x - tool.x), round4(session.mark.y - tool.y)];
+                    const offset: [number, number] = [round4(session.mark.x - tool.x), round4(session.mark.y - tool.y)];
+                    const words = `camera offset measured: X ${gnum(offset[0])} Y ${gnum(offset[1])}, roll ${gnum(config.roll, 4)} deg, ${gnum(config.mm_per_px, 6)} mm/px`;
                     progress.done = progress.total;
                     progress.step = "done";
-                    this.message("info", `camera offset measured: X ${gnum(config.offset[0])} Y ${gnum(config.offset[1])}, roll ${gnum(config.roll, 4)} deg, ${gnum(config.mm_per_px, 6)} mm/px`);
+                    this.message("info", this.found("head", session.confirm, {
+                        kind: "offset",
+                        text: words,
+                        spot: { ...spot },
+                        keep: () => {
+                            this.cameraConfig.offset = offset;
+                            this.emitCamera();
+                            return words;
+                        },
+                    }));
                     this.findFinish(session, "done", null);
                     return;
                 }
@@ -6973,6 +6989,7 @@ export class MockBackend implements Api, EventFeed {
             part_offset: this.pnpPartOffset ? { ...this.pnpPartOffset } : null,
             look: this.upLookOnce ? { ...this.upLookOnce } : null,
             controls: { ...this.keptControls.up },
+            finding: this.findingState("up"),
         };
     }
 
@@ -7821,6 +7838,7 @@ export class MockBackend implements Api, EventFeed {
             running: this.topRunning,
             frame: this.topRunning ? { width, height, age_ms: POSE_AGE_MS, fps: POSE_FPS } : null,
             routine: this.topRoutine ? { ...this.topRoutine } : null,
+            finding: this.findingState("top"),
             fiducials: this.topFiducials,
             look: this.topLookOnce ? { ...this.topLookOnce } : null,
             board_look: this.topBoardLook.state(),
@@ -7889,7 +7907,7 @@ export class MockBackend implements Api, EventFeed {
         return this.placingStateOf();
     }
 
-    private beginTop(kind: "offset" | "fiducials" | "search" | "home", steps: string[], device: MockDevice, job: string | null): void {
+    private beginTop(kind: "offset" | "fiducials" | "search" | "home", steps: string[], device: MockDevice, job: string | null, confirm?: boolean): void {
         if (!this.deviceLink.connected) {
             throw new ApiError(400, "no G-code machine is connected: connect one from the top bar");
         }
@@ -7901,11 +7919,11 @@ export class MockBackend implements Api, EventFeed {
         }
         const progress: TopRoutine = { kind, target: "gcode", state: "running", step: steps[0]!, done: 0, total: steps.length - 1, error: null, spot: null, seconds: 0 };
         this.topRoutine = progress;
-        this.topSession = { kind, steps, elapsed: 0, device, job, progress };
+        this.topSession = { kind, steps, elapsed: 0, device, job, progress, confirm };
         this.emitPlacing();
     }
 
-    async topOffset(step: number): Promise<PlacingState> {
+    async topOffset(step: number, confirm?: boolean): Promise<PlacingState> {
         const device = this.gcodeIdle();
         if (!(Number.isFinite(step) && step >= 0 && step <= 20)) {
             throw new ApiError(400, "the step must be 0 to 20 mm");
@@ -7913,7 +7931,7 @@ export class MockBackend implements Api, EventFeed {
         if (this.topConfig.mark_at === null) {
             throw new ApiError(400, "put the nozzle's tip over a mark and press Nozzle on mark first");
         }
-        this.beginTop("offset", ["lifting", "moving", "lowering", "scale", "centering", "done"], device, null);
+        this.beginTop("offset", ["lifting", "moving", "lowering", "scale", "centering", "done"], device, null, confirm);
         return this.placingStateOf();
     }
 
@@ -7934,7 +7952,7 @@ export class MockBackend implements Api, EventFeed {
         return this.placingStateOf();
     }
 
-    async pnpFiducials(job: string): Promise<PlacingState> {
+    async pnpFiducials(job: string, confirm?: boolean): Promise<PlacingState> {
         const device = this.gcodeIdle();
         if (!device.top) {
             throw new ApiError(400, "the machine file has no [top_camera] section");
@@ -7948,7 +7966,7 @@ export class MockBackend implements Api, EventFeed {
         if (!this.topMeasured()) {
             throw new ApiError(400, "the top camera's offset is not measured: put the nozzle on a mark, then Measure offset");
         }
-        this.beginTop("fiducials", ["lifting", ...fiducials.map((entry) => entry.ref), "fitting", "done"], device, job);
+        this.beginTop("fiducials", ["lifting", ...fiducials.map((entry) => entry.ref), "fitting", "done"], device, job, confirm);
         return this.placingStateOf();
     }
 
@@ -8495,28 +8513,78 @@ export class MockBackend implements Api, EventFeed {
         return this.cameraStateOf();
     }
 
-    async cameraEdgeCorner(jobId: string, corner: CornerName): Promise<CameraState> {
+    async cameraEdgeCorner(jobId: string, corner: CornerName, confirm?: boolean): Promise<CameraState> {
         // The mock's blank board shows its corner under the picture's
         // center, its edges turned as the board lies.
-        await this.cameraCorner(jobId, corner);
-        const taken = this.headLook.cornersOf(jobId).find((entry) => entry.corner === corner)!;
+        this.requireConnected();
         const job = this.requireJob(jobId);
-        this.headLook.addCorner(job.id, corner, taken.job, taken.machine, jobSize(job).middle, this.placement?.rotation ?? 0);
+        const point = this.cornerPoint(job, corner);
+        if (this.machine.state !== "Idle") {
+            throw new ApiError(400, `the machine is ${this.machine.state}: take a corner with the head at rest`);
+        }
+        const tool = this.machine.headBoard();
+        const offset = this.cameraConfig.offset;
+        const machine: [number, number] = [round4(tool.x + offset[0]), round4(tool.y + offset[1])];
+        const turn = this.placement?.rotation ?? 0;
+        const [width, height] = parseSize(this.cameraConfig.size);
+        this.message("info", this.found("head", confirm, {
+            ...this.edgeCornerFinding(corner, machine, turn, [width, height]),
+            keep: () => {
+                this.headLook.addCorner(job.id, corner, point, machine, jobSize(job).middle, turn);
+                this.emitCamera();
+                return this.edgeCornerWords(corner, machine, turn);
+            },
+        }));
         this.emitCamera();
         return this.cameraStateOf();
     }
 
-    async topEdgeCorner(jobId: string, corner: CornerName): Promise<PlacingState> {
-        await this.topCorner(jobId, corner);
-        const taken = this.topBoardLook.cornersOf(jobId).find((entry) => entry.corner === corner)!;
+    async topEdgeCorner(jobId: string, corner: CornerName, confirm?: boolean): Promise<PlacingState> {
+        const device = this.gcodeIdle();
         const job = this.requireJob(jobId);
-        this.topBoardLook.addCorner(job.id, corner, taken.job, taken.machine, jobSize(job).middle, 0);
-        this.keepCorner(job.id, corner, taken.job, taken.machine, 0);
+        const point = this.cornerPoint(job, corner);
+        const offset = this.topConfig.offset ?? device.top?.offset ?? null;
+        if (offset === null) {
+            throw new ApiError(400, "the top camera's offset is not known: give [top_camera] offset in the machine file, or Measure offset");
+        }
+        const at = this.deviceHere(device);
+        const machine: [number, number] = [round4(at.x + offset[0]), round4(at.y + offset[1])];
+        const [width, height] = parseSize(this.topConfig.size);
+        this.message("info", this.found("top", confirm, {
+            ...this.edgeCornerFinding(corner, machine, 0, [width, height]),
+            keep: () => {
+                this.topBoardLook.addCorner(job.id, corner, point, machine, jobSize(job).middle, 0);
+                // A corner taken is also one of the board's references.
+                this.keepCorner(job.id, corner, point, machine, 0);
+                this.emitPlacing();
+                return this.edgeCornerWords(corner, machine, 0);
+            },
+        }));
         this.emitPlacing();
         return this.placingStateOf();
     }
 
-    async cameraRefine(jobId: string, use: RefineUse, count: number): Promise<CameraState> {
+    private edgeCornerWords(corner: CornerName, machine: [number, number], turn: number): string {
+        return `${corner} corner found by its edges at ${machine[0].toFixed(3)}, ${machine[1].toFixed(3)} mm, the board turned ${turn >= 0 ? "+" : ""}${turn.toFixed(3)} degrees (mock)`;
+    }
+
+    /** A corner found by its edges under the picture's center, as a finding draws it: two sides leaving the center square, the corner, the point. */
+    private edgeCornerFinding(corner: CornerName, machine: [number, number], turn: number, size: [number, number]): CameraFinding {
+        const [cx, cy] = [size[0] / 2, size[1] / 2];
+        const reach = size[1] / 3;
+        const radians = (turn * Math.PI) / 180;
+        const side = (angle: number): CameraEdge => ({ x0: cx, y0: cy, x1: round4(cx + reach * Math.cos(angle)), y1: round4(cy - reach * Math.sin(angle)) });
+        return {
+            kind: "corner",
+            text: this.edgeCornerWords(corner, machine, turn),
+            lines: [side(radians), side(radians + Math.PI / 2)],
+            corner: [cx, cy],
+            size,
+            points: [{ at: machine, label: corner }],
+        };
+    }
+
+    async cameraRefine(jobId: string, use: RefineUse, count: number, confirm?: boolean): Promise<CameraState> {
         this.requireConnected();
         const job = this.requireJob(jobId);
         const look = this.headLook;
@@ -8547,15 +8615,27 @@ export class MockBackend implements Api, EventFeed {
             const next = pool.filter((p) => !taken.includes(p)).reduce((a, b) => (Math.min(...taken.map((t) => Math.hypot(a[0] - t[0], a[1] - t[1]))) >= Math.min(...taken.map((t) => Math.hypot(b[0] - t[0], b[1] - t[1]))) ? a : b));
             taken.push(next);
         }
-        this.takeMarksFor(job.id);
-        this.alignMarks = this.alignMarks.filter((mark) => mark.source !== "camera");
-        for (const point of taken) {
+        const centered = taken.map((point) => {
             const at = applyEstimate(place, { x: point[0], y: point[1] });
-            this.alignMarks.push({ design: [point[0], point[1]], machine: [round4(at.x), round4(at.y)], source: "camera", kind: "feature", distance: 0, angle: null, residual: null });
-        }
-        this.refit();
-        this.emitAlign();
-        this.message("info", `${taken.length} features centered: their places are the job's camera marks in Align`);
+            return { design: point, machine: [round4(at.x), round4(at.y)] as [number, number] };
+        });
+        const words = `${taken.length} features centered`;
+        this.message("info", this.found("head", confirm, {
+            kind: "features",
+            text: `${words}, to be the job's camera marks in Align`,
+            points: centered.map((entry, index) => ({ at: entry.machine, label: `F${index + 1}` })),
+            keep: () => {
+                this.takeMarksFor(job.id);
+                this.alignMarks = this.alignMarks.filter((mark) => mark.source !== "camera");
+                for (const entry of centered) {
+                    this.alignMarks.push({ design: [entry.design[0], entry.design[1]], machine: entry.machine, source: "camera", kind: "feature", distance: 0, angle: null, residual: null });
+                }
+                this.refit();
+                this.emitAlign();
+                return `${words}: their places are the job's camera marks in Align`;
+            },
+        }));
+        this.emitCamera();
         return this.cameraStateOf();
     }
 
@@ -8726,6 +8806,44 @@ export class MockBackend implements Api, EventFeed {
         return { camera, lines: lines.slice(0, 8), width, height };
     }
 
+    /** A camera's finding as its state shows it: what it is and its marks, not what keeping it does. */
+    private findingState(camera: ControlledCamera): CameraFinding | null {
+        const finding = this.findings[camera];
+        if (!finding) {
+            return null;
+        }
+        const { keep: _keep, ...shown } = finding;
+        return structuredClone(shown);
+    }
+
+    /** Holds what a routine found when asked to confirm, else keeps it at once: the words to say of it. */
+    private found(camera: ControlledCamera, confirm: boolean | undefined, finding: CameraFinding & { keep: () => string }): string {
+        if (confirm) {
+            this.findings[camera] = finding;
+            return `${finding.text}: keep or discard it under the picture`;
+        }
+        return finding.keep();
+    }
+
+    async cameraFinding(camera: ControlledCamera, keep: boolean): Promise<{ camera: ControlledCamera; kept: boolean; state: unknown }> {
+        this.controlledDevice(camera);
+        const finding = this.findings[camera];
+        if (!finding) {
+            throw new ApiError(400, "nothing found waits to be kept or discarded");
+        }
+        const busy = camera === "head" ? this.finding !== null || this.headSearch !== null : camera === "up" ? this.pnpRoutine?.state === "running" : this.topSession !== null;
+        if (keep && busy) {
+            throw new ApiError(400, "a routine of this camera is under way: keep what was found once it ends, or discard it");
+        }
+        this.findings[camera] = null;
+        if (keep) {
+            this.message("info", finding.keep());
+        }
+        this.emitOf(camera);
+        const state = camera === "head" ? this.cameraStateOf() : camera === "up" ? this.pnpStateOf() : this.placingStateOf();
+        return { camera, kept: keep, state };
+    }
+
     async cameraControls(camera: ControlledCamera): Promise<CameraControls> {
         const device = this.controlledDevice(camera);
         const note = controlsNote(device);
@@ -8776,14 +8894,7 @@ export class MockBackend implements Api, EventFeed {
      * were found, and what the run and the panel show of them is kept.
      */
     private keepFiducials(job: string): string {
-        const parts = mockComponents(this.requireJob(job));
-        const fiducials = parts.filter((entry) => entry.fiducial);
-        const fit = this.deviceFitOf(job, parts);
-        const [tx, ty] = [fit.shift[0], fit.shift[1]];
-        const found = fiducials.map((entry) => {
-            const [x, y] = turnPoint([entry.x, entry.y], fit.rotation);
-            return { ref: entry.ref, at: [round4(x + tx), round4(y + ty)] as [number, number] };
-        });
+        const { found, fit, words } = this.fiducialsSeen(job);
         const refs = new Set(found.map((entry) => entry.ref));
         this.placing().references = this.placing().references.filter(
             (entry) => !(entry.job === job && (refs.has(entry.ref) || (found.length > 1 && entry.by !== "fiducial"))),
@@ -8792,7 +8903,22 @@ export class MockBackend implements Api, EventFeed {
             this.placing().references.push({ job, ref: entry.ref, at: entry.at, by: "fiducial" });
         }
         this.topFiducials = { job, found, fit: { ...fit, marks: found.length } };
-        return `${found.length} fiducials found: the board is turned ${fit.rotation >= 0 ? "+" : ""}${fit.rotation.toFixed(3)} degrees on the machine (mock)`;
+        this.emitPlacing();
+        return words;
+    }
+
+    /** Where the mock's top camera finds a job's fiducials (where the references put the board), the fit and the words for it. */
+    private fiducialsSeen(job: string): { found: { ref: string; at: [number, number] }[]; fit: AlignFit; words: string } {
+        const parts = mockComponents(this.requireJob(job));
+        const fiducials = parts.filter((entry) => entry.fiducial);
+        const fit = this.deviceFitOf(job, parts);
+        const [tx, ty] = [fit.shift[0], fit.shift[1]];
+        const found = fiducials.map((entry) => {
+            const [x, y] = turnPoint([entry.x, entry.y], fit.rotation);
+            return { ref: entry.ref, at: [round4(x + tx), round4(y + ty)] as [number, number] };
+        });
+        const words = `${found.length} fiducials found: the board is turned ${fit.rotation >= 0 ? "+" : ""}${fit.rotation.toFixed(3)} degrees on the machine (mock)`;
+        return { found, fit, words };
     }
 
     /** The top camera's routine on the mock's clock, a step at a time. */
@@ -8833,10 +8959,26 @@ export class MockBackend implements Api, EventFeed {
                 const mark = this.topConfig.mark_at ?? [0, 0];
                 const [ox, oy] = TOP_TRUTH.offset;
                 this.deviceLine(session.device, xyLine(session.device, mark[0] - ox, mark[1] - oy));
-                this.topConfig = { ...this.topConfig, offset: [ox, oy], mm_per_px: TOP_TRUTH.mmPerPx, roll: TOP_TRUTH.roll, mirror: TOP_TRUTH.mirror };
-                this.message("info", `the top camera looks from X ${ox >= 0 ? "+" : ""}${ox.toFixed(3)} Y ${oy >= 0 ? "+" : ""}${oy.toFixed(3)} mm off the nozzle (mock)`);
+                const words = `the top camera looks from X ${ox >= 0 ? "+" : ""}${ox.toFixed(3)} Y ${oy >= 0 ? "+" : ""}${oy.toFixed(3)} mm off the nozzle (mock)`;
+                this.message("info", this.found("top", session.confirm, {
+                    kind: "offset",
+                    text: words,
+                    spot: { dx: 0, dy: 0, mm: 0, major: 24, minor: 22 },
+                    keep: () => {
+                        this.topConfig = { ...this.topConfig, offset: [ox, oy], mm_per_px: TOP_TRUTH.mmPerPx, roll: TOP_TRUTH.roll, mirror: TOP_TRUTH.mirror };
+                        this.emitPlacing();
+                        return words;
+                    },
+                }));
             } else if (session.job !== null) {
-                this.message("info", this.keepFiducials(session.job));
+                const job = session.job;
+                const seen = this.fiducialsSeen(job);
+                this.message("info", this.found("top", session.confirm, {
+                    kind: "fiducials",
+                    text: seen.words,
+                    points: seen.found.map((entry) => ({ at: [entry.at[0], entry.at[1]] as [number, number], label: entry.ref })),
+                    keep: () => this.keepFiducials(job),
+                }));
             }
         }
         this.emitPlacing();

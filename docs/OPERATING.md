@@ -559,7 +559,14 @@ yellow the straight edges pcbv finds in the picture, strongest first,
 asked once a second while it is on and the picture shows: what *Corner by
 edges* reads, so a blank board's sides can be checked (and a color picked
 for them) before a corner is taken; its tooltip says why when they could
-not be had. *Upright* (on unless switched off, kept per
+not be had. *Find mark*, *Measure offset*, *Find fiducials*, *Corner by
+edges* and *Center features* ask first: what they found waits under the
+camera's picture, drawn dashed magenta (the spot centered, the edges and
+their corner, the points found ringed and named), with what it is in words
+and *Keep* and *Discard*; nothing (no offset, reference, corner or Align
+mark) is kept until *Keep*, and a newer finding takes the place of one not
+answered. *Ask before keeping what routines find* in *View* (kept per
+camera) switched off keeps at once, as before. *Upright* (on unless switched off, kept per
 camera) shows the picture turned by the camera's roll to the nearest
 quarter turn, and flipped when the camera sees the machine mirrored (the
 bottom camera looking up), so the machine's +X points right and +Y up as

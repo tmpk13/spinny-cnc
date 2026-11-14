@@ -40,7 +40,7 @@ function overlaps(a: Box, b: Box): boolean {
  * beside its ring on the right, else on the left, where that keeps inside
  * the view and off every other ring and the labels already placed.
  */
-export function knownMarks(points: KnownPoint[], center: [number, number] | null, calibration: Calibration | null, shown: PictureShown): Mark[] {
+export function knownMarks(points: KnownPoint[], center: [number, number] | null, calibration: Calibration | null, shown: PictureShown, tone: "known" | "finding" = "known"): Mark[] {
     if (center === null || calibration === null || points.length === 0 || !(shown.scale > 0)) {
         return [];
     }
@@ -52,7 +52,7 @@ export function knownMarks(points: KnownPoint[], center: [number, number] | null
     const seen = points
         .map((point, index) => ({ point, x: places[index]![0], y: places[index]![1] }))
         .filter(({ x, y }) => Number.isFinite(x) && Number.isFinite(y) && x >= x0 - r && x <= x0 + width + r && y >= y0 - r && y <= y0 + height + r);
-    const marks: Mark[] = seen.map(({ point, x, y }) => ({ kind: "circle", x, y, r, tone: "known", title: point.title }));
+    const marks: Mark[] = seen.map(({ point, x, y }) => ({ kind: "circle", x, y, r, tone, title: point.title }));
     const rings: Box[] = seen.map(({ x, y }) => [x - r, y - r, x + r, y + r]);
     const kept: Box[] = [];
     seen.forEach(({ point, x, y }, index) => {
@@ -75,7 +75,7 @@ export function knownMarks(points: KnownPoint[], center: [number, number] | null
             kept.push(side.box);
             // The baseline a third of the font under the ring's middle
             // puts the letters' middle on it.
-            marks.push({ kind: "text", x: side.x, y: y + font / 3, text: point.label, size: font, anchor: side.anchor, tone: "known" });
+            marks.push({ kind: "text", x: side.x, y: y + font / 3, text: point.label, size: font, anchor: side.anchor, tone });
             return;
         }
     });

@@ -612,6 +612,39 @@ def test_the_top_camera_measures_its_offset_and_finds_the_fiducials(client):
     assert r2["at"] == pytest.approx(list(rough), abs=0.01) and r2["by"] == "camera"
 
 
+def test_the_top_cameras_offset_and_fiducials_asked_to_confirm_wait_to_be_kept(client):
+    job_id = rig(client, profile(rest=TOP))
+    with_top_camera(client, job_id)
+    client.post("/api/command", json={"line": "G0 X120 Y80"})
+    client.post("/api/pnp/top/mark")
+    assert client.post("/api/pnp/top/offset", json={"step": 1.0, "confirm": True}).status_code == 200
+    assert routine_done(client, "/api/pnp/placing")["state"] == "done"
+    top = client.get("/api/pnp/placing").json()["top"]
+    # Measured and held: no offset kept yet, the finding says it and shows the mark found.
+    assert top["offset"] is None and top["mm_per_px"] == 0.0
+    assert top["finding"]["kind"] == "offset" and "the top camera looks from" in top["finding"]["text"] and "dx" in top["finding"]["spot"]
+    kept = client.post("/api/cameras/finding", json={"camera": "top", "keep": True})
+    assert kept.status_code == 200, kept.text
+    top = kept.json()["state"]["top"]
+    assert top["finding"] is None and top["offset"] == pytest.approx(list(CAMERA_OFFSET), abs=0.01)
+    # The fiducials found are held as points on the machine, the references untouched until kept.
+    rough = true_place(job_places(client, job_id)["R1"])
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [rough[0] + 0.4, rough[1] - 0.3]})
+    assert client.post("/api/pnp/fiducials", json={"job": job_id, "confirm": True}).status_code == 200
+    assert routine_done(client, "/api/pnp/placing")["state"] == "done"
+    state = client.get("/api/pnp/placing").json()
+    assert [entry["label"] for entry in state["top"]["finding"]["points"]] == ["FID1", "FID2"]
+    assert "2 fiducials found" in state["top"]["finding"]["text"]
+    assert not any(entry.get("by") == "fiducial" for entry in state["references"])
+    state = client.post("/api/cameras/finding", json={"camera": "top", "keep": True}).json()["state"]
+    assert {entry["ref"] for entry in state["references"] if entry.get("by") == "fiducial"} == {"FID1", "FID2"}
+    # Discarded, nothing is kept and nothing waits.
+    assert client.post("/api/pnp/fiducials", json={"job": job_id, "confirm": True}).status_code == 200
+    assert routine_done(client, "/api/pnp/placing")["state"] == "done"
+    assert client.post("/api/cameras/finding", json={"camera": "top", "keep": False}).json()["state"]["top"]["finding"] is None
+    assert client.post("/api/cameras/finding", json={"camera": "top", "keep": False}).status_code == 400
+
+
 def test_home_by_fiducial_homes_then_ties_the_numbers_to_the_bed(client):
     fiducial = (60.0, 170.0)
     job_id = rig(client, profile(rest=TOP + f"home_fiducial = [{fiducial[0]}, {fiducial[1]}]\n"))
