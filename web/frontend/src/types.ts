@@ -1951,6 +1951,25 @@ export interface CameraControl {
 /** Which camera's controls: the head camera, the up camera, or a G-code machine's top camera. */
 export type ControlledCamera = "head" | "up" | "top";
 
+/** A straight edge pcbv found in a picture: its ends, full size px (through the lens correction), and as far as pcbv said them its length, its direction (degrees from the picture's +x toward its +y, the brighter side on its right), and its contrast. */
+export interface CameraEdge {
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+    length?: number;
+    angle?: number;
+    contrast?: number;
+}
+
+/** The straight edges in a camera's newest picture, strongest first, and the picture's full size. */
+export interface CameraEdges {
+    camera: ControlledCamera;
+    lines: CameraEdge[];
+    width: number | null;
+    height: number | null;
+}
+
 export interface CameraControls {
     camera: ControlledCamera;
     device: string;

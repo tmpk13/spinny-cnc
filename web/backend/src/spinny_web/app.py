@@ -338,6 +338,10 @@ PAD_MIN_AREA = 0.5
 PAD_MAX_POINTS = 100
 # The widest picture the page asks for, px.
 FRAME_DEFAULT_WIDTH = 640
+# The straight edges asked of pcbv, strongest first: Corner by edges takes
+# the strongest two square to each other that meet among them, and the
+# page's edge view draws them all.
+EDGE_LINES = 8
 
 NO_FRONTEND = """<!doctype html>
 <html><head><meta charset="utf-8"><title>spinny</title></head>
@@ -3439,12 +3443,23 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         self.publish_message("info", f"{body.corner} corner found by its edges at {machine[0]:.3f}, {machine[1]:.3f} mm, the board turned {rotation:+.3f} degrees")
         return self.publish_camera()
 
+    def camera_edges(self, camera: str) -> dict:
+        """The straight edges pcbv finds in a camera's newest picture,
+        strongest first and on the edges' picked color when there is one:
+        what Corner by edges reads, for the page to draw over the picture
+        (its ends in full size px, through the lens correction)."""
+        owner, _ = self._controlled(camera)
+        if not owner.client.running:
+            raise ValueError("the camera is not running: start it first")
+        reply = owner.client.edges(EDGE_LINES, owner.settings().colors.get("edges"))
+        return {"camera": camera, "lines": reply.get("lines") or [], "width": reply.get("width"), "height": reply.get("height")}
+
     def _edge_corner(self, client, corner: str, frame: PictureFrame, settings) -> tuple[tuple[float, float], float]:
         """Where a board's corner is in a camera's picture now, and its turn,
         from the straight edges pcbv finds (on the edges' picked color when
         there is one)."""
         wait_settled(client)
-        reply = client.edges(8, settings.colors.get("edges"))
+        reply = client.edges(EDGE_LINES, settings.colors.get("edges"))
         width, height = reply.get("width"), reply.get("height")
         if not isinstance(width, (int, float)) or not isinstance(height, (int, float)):
             raise VisionError("pcbv's edges came without the picture's size")
@@ -5092,6 +5107,10 @@ def create_app(
     @app.get("/api/cameras/controls")
     def camera_controls(camera: Literal["head", "up", "top"] = "head"):
         return guarded(lambda: backend.camera_controls(camera))
+
+    @app.get("/api/cameras/edges")
+    def camera_edges(camera: Literal["head", "up", "top"] = "head"):
+        return guarded(lambda: backend.camera_edges(camera))
 
     @app.post("/api/cameras/color")
     def camera_color(body: CameraColorBody):

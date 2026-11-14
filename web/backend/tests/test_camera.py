@@ -1153,6 +1153,18 @@ def test_a_blank_boards_corner_is_taken_by_its_edges_and_colors_are_picked_per_i
     assert client.post("/api/cameras/color", json={"camera": "head", "item": "edges", "clear": True}).json()["state"]["colors"] == {}
     assert client.post("/api/cameras/color", json={"camera": "head", "item": "spots"}).status_code == 400
     assert client.post("/api/cameras/color", json={"camera": "head", "item": "nozzle", "x": 1, "y": 1}).status_code == 422
+    # The edge view: the lines pcbv finds now, in the picture's px, for the page to draw.
+    response = client.get("/api/cameras/edges", params={"camera": "head"})
+    assert response.status_code == 200, response.text
+    edges = response.json()
+    assert edges["camera"] == "head" and (edges["width"], edges["height"]) == (1280, 720)
+    assert len(edges["lines"]) == 2 and set(edges["lines"][0]) == {"x0", "y0", "x1", "y1"}
+    assert client.get("/api/cameras/edges", params={"camera": "side"}).status_code == 422
+
+
+def test_the_edge_view_needs_a_running_camera(client):
+    response = client.get("/api/cameras/edges", params={"camera": "head"})
+    assert response.status_code == 400 and "not running" in response.json()["detail"]
 
 
 def test_a_real_pcbv_lists_its_search_candidates_and_the_posterior_takes_them(tmp_path):

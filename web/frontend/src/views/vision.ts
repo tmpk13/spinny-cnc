@@ -175,6 +175,7 @@ export function mountVisionView(root: HTMLElement, ctx: Ctx, visible: () => bool
             ];
         },
         spots: (state) => (state.camera ? shownSpots(state.camera.routine, null) : null),
+        edges: () => ctx.api.cameraEdges("head"),
         move: async (mm) => {
             if (Math.hypot(mm[0], mm[1]) >= 0.001) {
                 await ctx.call(ctx.api.jog({ kind: "board", dx: Number(mm[0].toFixed(4)), dy: Number(mm[1].toFixed(4)) }));

@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { MockBackend } from "../src/mock/backend.ts";
 import { estimateOf, jobSize, LOOK_NEED, searchStops } from "../src/mock/boardlook.ts";
 import { TOP_TRUTH } from "../src/mock/pnp.ts";
+import { BOARD_MISPLACEMENT, CAMERA_TRUTH, clipSegment, designPoint, jobPlacement, placedPoint } from "../src/mock/vision.ts";
 import { turned } from "../src/kinematics.ts";
 import { lookOnceText, uncrowded } from "../src/views/pnp.ts";
 import { cameraBadge, lookText } from "../src/views/vision.ts";
@@ -136,6 +137,43 @@ describe("looking for a board in the mock", () => {
         }
         await backend.cameraBoard(null);
         expect((await backend.camera()).board_look).toMatchObject({ job: null, threshold: 0.5, corner_mm: 2, corners: null });
+    });
+
+    test("the mock's head camera sees the loaded board's sides as edges, cut to the picture", async () => {
+        const backend = new MockBackend({ timers: false });
+        await backend.connect("/dev/ttyACM0");
+        await backend.applyMachine("cartesian-mill");
+        const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
+        await expect(backend.cameraEdges("head")).rejects.toMatchObject({ status: 400 });
+        await backend.cameraStart();
+        expect((await backend.cameraEdges("head")).lines).toEqual([]);
+        await backend.cameraBoard(job.id);
+        // The picture's center a little inside the board's bottom left corner, where it really lies.
+        const design = jobPlacement(job);
+        const real = { shift: [design.shift[0] + BOARD_MISPLACEMENT.shift[0], design.shift[1] + BOARD_MISPLACEMENT.shift[1]] as [number, number], rotation: design.rotation + BOARD_MISPLACEMENT.rotation };
+        const xs = job.outline.flat().map(([x]) => x);
+        const ys = job.outline.flat().map(([, y]) => y);
+        const corner = placedPoint(designPoint({ x: Math.min(...xs) + 3, y: Math.min(...ys) + 2 }, design), real);
+        const tool = (await backend.state()).machine!.board!;
+        await backend.jog({ kind: "board", dx: corner.x - CAMERA_TRUTH.offset[0] - tool.x, dy: corner.y - CAMERA_TRUTH.offset[1] - tool.y });
+        await until(backend, async () => (await backend.state()).machine?.state === "Idle");
+        const edges = await backend.cameraEdges("head");
+        expect([edges.width, edges.height]).toEqual([1280, 720]);
+        // The two sides meeting at the corner, nearly square, each cut to the picture.
+        expect(edges.lines.length).toBe(2);
+        for (const line of edges.lines) {
+            for (const [x, y] of [[line.x0, line.y0], [line.x1, line.y1]] as [number, number][]) {
+                expect(x).toBeGreaterThanOrEqual(-1e-6);
+                expect(x).toBeLessThanOrEqual(1280 + 1e-6);
+                expect(y).toBeGreaterThanOrEqual(-1e-6);
+                expect(y).toBeLessThanOrEqual(720 + 1e-6);
+            }
+        }
+        // The strongest (longest) first.
+        const lengths = edges.lines.map((line) => line.length ?? 0);
+        expect(lengths).toEqual([...lengths].sort((a, b) => b - a));
+        expect(clipSegment([-10, 5], [20, 5], 10, 10)).toEqual([[0, 5], [10, 5]]);
+        expect(clipSegment([-10, -5], [20, -5], 10, 10)).toBeNull();
     });
 
     test("a camera's controls are listed, set and kept; a bridge Pi's camera has none here", async () => {

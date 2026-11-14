@@ -160,6 +160,7 @@ import {
     boardPose,
     boardVector,
     checkCameraSettings,
+    clipSegment,
     designPoint,
     frameSvg,
     inPicture,
@@ -188,6 +189,8 @@ import type {
     CalibrateResponse,
     CameraColors,
     CameraControls,
+    CameraEdge,
+    CameraEdges,
     CameraLens,
     CameraPose,
     CameraRoutine,
@@ -8680,6 +8683,41 @@ export class MockBackend implements Api, EventFeed {
         }
         this.placingDevice();
         return this.topConfig.device;
+    }
+
+    /**
+     * The straight edges in a camera's picture, as pcbv would find them:
+     * the mock's head camera sees the loaded board's outline where it
+     * really lies, each side cut to the picture; the bottom and top
+     * cameras' pictures hold no board, so no edges.
+     */
+    async cameraEdges(camera: ControlledCamera): Promise<CameraEdges> {
+        this.controlledDevice(camera);
+        const running = camera === "head" ? this.cameraRunning : camera === "up" ? this.pnpRunning : this.topRunning;
+        if (!running) {
+            throw new ApiError(400, "the camera is not running: start it first");
+        }
+        const [width, height] = parseSize((this.settingsOf(camera) as { size: string }).size);
+        const job = camera === "head" && this.cameraJob ? this.jobStore.get(this.cameraJob) : undefined;
+        const placement = this.placement;
+        const lines: CameraEdge[] = [];
+        if (job && placement) {
+            const center = this.pictureCenter();
+            const seen = (point: [number, number]): [number, number] => {
+                const p = picturePoint(placedPoint(designPoint({ x: point[0], y: point[1] }, jobPlacement(job)), placement), center, CAMERA_TRUTH.roll, CAMERA_TRUTH.mmPerPx);
+                return [width / 2 + p.px, height / 2 + p.py];
+            };
+            for (const path of job.outline) {
+                for (let index = 1; index < path.length; index++) {
+                    const cut = clipSegment(seen(path[index - 1]!), seen(path[index]!), width, height);
+                    if (cut && Math.hypot(cut[1][0] - cut[0][0], cut[1][1] - cut[0][1]) >= height / 10) {
+                        lines.push({ x0: round4(cut[0][0]), y0: round4(cut[0][1]), x1: round4(cut[1][0]), y1: round4(cut[1][1]), length: round4(Math.hypot(cut[1][0] - cut[0][0], cut[1][1] - cut[0][1])) });
+                    }
+                }
+            }
+        }
+        lines.sort((a, b) => (b.length ?? 0) - (a.length ?? 0));
+        return { camera, lines: lines.slice(0, 8), width, height };
     }
 
     async cameraControls(camera: ControlledCamera): Promise<CameraControls> {

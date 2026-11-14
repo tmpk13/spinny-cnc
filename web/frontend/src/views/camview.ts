@@ -170,6 +170,7 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
             ];
         },
         spots: (state) => (state.pnp ? shownSpots(state.pnp.routine, state.pnp.look) : null),
+        edges: () => ctx.api.cameraEdges("up"),
         // Fixed to the machine, the camera sees the nozzle: what it found moves with the head.
         follow: (state) => bottomHead(state, gcodePlacing(state)),
         move: jog,
@@ -224,6 +225,7 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
             ];
         },
         spots: (state) => (state.placing?.top ? shownSpots(state.placing.top.routine, state.placing.top.look) : null),
+        edges: () => ctx.api.cameraEdges("top"),
         move: jog,
         noScale: "the top camera's scale is not measured yet: Measure offset first",
         visible: () => visible() && gcodePlacing(ctx.store.get()),

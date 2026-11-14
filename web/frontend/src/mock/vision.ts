@@ -203,6 +203,32 @@ export function boardPose(center: Board, job: Job, placement: Placement, truth: 
     };
 }
 
+/** The part of the segment from `a` to `b` inside the picture 0 to `width` by 0 to `height` (Liang and Barsky's clip); null when none of it is. */
+export function clipSegment(a: [number, number], b: [number, number], width: number, height: number): [[number, number], [number, number]] | null {
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    let low = 0;
+    let high = 1;
+    for (const [p, q] of [[-dx, a[0]], [dx, width - a[0]], [-dy, a[1]], [dy, height - a[1]]] as [number, number][]) {
+        if (p === 0) {
+            if (q < 0) {
+                return null;
+            }
+            continue;
+        }
+        const t = q / p;
+        if (p < 0) {
+            low = Math.max(low, t);
+        } else {
+            high = Math.min(high, t);
+        }
+        if (low > high) {
+            return null;
+        }
+    }
+    return [[a[0] + low * dx, a[1] + low * dy], [a[0] + high * dx, a[1] + high * dy]];
+}
+
 export interface PictureScene {
     /** The picture's center on the board, and how the camera sits. */
     center: Board;

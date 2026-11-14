@@ -23,16 +23,22 @@
 // crosshair's shape (a cross, a circle, both) and reach, kept per camera.
 // A spot a routine or a look found stays over the picture until Clear
 // marks, moving with the machine so it stays over what it marked (or, the
-// View menu's Marks follow the machine off, where it was drawn).
+// View menu's Marks follow the machine off, where it was drawn). Edges
+// (kept per camera) draws the straight edges pcbv finds, asked once a
+// second while on and shown.
 
 import { button, el, numberField, readStored, setLocked, stepperBox, writeStored } from "../dom.ts";
+import { errorText } from "../api.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import { openMenu } from "../menu.ts";
 import type { AppState } from "../state.ts";
+import type { CameraEdges } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
 /** How often a picture is asked for while it shows, ms. */
 export const FRAME_INTERVAL_MS = 250;
+/** How often the edge view asks for the straight edges in the picture while it is on and the picture shows, ms. */
+export const EDGES_INTERVAL_MS = 1000;
 /**
  * The zooms the buttons and the wheel step through; a zoom typed in may lie
  * anywhere from the first to the last. Under 1 the picture shows smaller
@@ -263,7 +269,7 @@ export function growBox(box: MachineBox | null, by: MachineBox): MachineBox {
 }
 
 /** What a mark is: its color and line follow the tone. */
-export type Tone = "center" | "ring" | "spot" | "look" | "box" | "board" | "rough" | "drag" | "miss" | "known" | "part";
+export type Tone = "center" | "ring" | "spot" | "look" | "box" | "board" | "rough" | "drag" | "miss" | "known" | "part" | "edge";
 
 /**
  * A mark over the picture, in its full size px from the top left (y down);
@@ -337,6 +343,28 @@ export function spotMarks(spot: SpotLike | null | undefined, size: [number, numb
         marks.push({ kind: "line", points: [[cx, cy], [x, y]], tone });
     }
     return marks;
+}
+
+/**
+ * The straight edges pcbv found, as marks over a picture `size` px: each
+ * from end to end, scaled from the size of the picture pcbv measured when
+ * that is another, the strongest first.
+ */
+export function edgeMarks(edges: CameraEdges, size: [number, number]): Mark[] {
+    const sx = edges.width && edges.width > 0 ? size[0] / edges.width : 1;
+    const sy = edges.height && edges.height > 0 ? size[1] / edges.height : 1;
+    return edges.lines
+        .filter((line) => [line.x0, line.y0, line.x1, line.y1].every((value) => Number.isFinite(value)))
+        .map((line, index) => {
+            const length = line.length ?? Math.hypot(line.x1 - line.x0, line.y1 - line.y0);
+            const contrast = line.contrast !== undefined ? `, contrast ${formatFixed(line.contrast, 0)}` : "";
+            return {
+                kind: "line" as const,
+                points: [[line.x0 * sx, line.y0 * sy], [line.x1 * sx, line.y1 * sy]] as [number, number][],
+                tone: "edge" as const,
+                title: `edge ${index + 1} of ${edges.lines.length}, the strongest first: ${formatFixed(length, 0)} px${contrast}`,
+            };
+        });
 }
 
 /** A mark moved by `dx`, `dy` px of the picture. */
@@ -509,6 +537,8 @@ export interface PictureOptions {
      * head's place (it sees the nozzle); null when not known.
      */
     follow?(state: AppState): [number, number] | null;
+    /** The straight edges pcbv finds in the camera's newest picture; given, an Edges switch draws them over the picture while it is on. */
+    edges?(): Promise<CameraEdges>;
     /** Moves the head by a step on the machine, mm. */
     move(mm: [number, number]): Promise<void>;
     /** Said when a drag or a double-click needs the scale and there is none. */
@@ -570,7 +600,14 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     const crosshairKey = `spinny.picture.${options.key}.crosshair`;
     const crosshairSizeKey = `spinny.picture.${options.key}.crosshair.size`;
     const followKey = `spinny.picture.${options.key}.follow`;
+    const edgesKey = `spinny.picture.${options.key}.edges`;
     let zoom = 1;
+    // The edge view: on when switched on (kept per camera), the edges last
+    // read and when, and whether a request is out.
+    let edgesOn = options.edges !== undefined && readStored(edgesKey) === "1";
+    let edgesSeen: CameraEdges | null = null;
+    let edgesAsked = 0;
+    let edgesOut = false;
     let overlayOn = readStored(overlayKey) !== "0";
     let uprightOn = readStored(uprightKey) !== "0";
     // Marks of what was found move with the machine, staying over what
@@ -636,6 +673,17 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         kept = [];
         draw(ctx.store.get());
     }, "btn btn-quiet btn-small", "take away the spots routines and Look once found: they stay over the picture until this");
+    const EDGES_TITLE = "draw the straight edges pcbv finds in the picture (what Corner by edges reads), asked once a second while on";
+    const edgesButton = button("Edges", () => {
+        edgesOn = !edgesOn;
+        writeStored(edgesKey, edgesOn ? "1" : "0");
+        edgesButton.setAttribute("aria-pressed", edgesOn ? "true" : "false");
+        edgesSeen = null;
+        edgesButton.title = EDGES_TITLE;
+        draw(ctx.store.get());
+        askEdges(true);
+    }, "btn btn-quiet btn-small btn-toggle", EDGES_TITLE);
+    edgesButton.setAttribute("aria-pressed", edgesOn ? "true" : "false");
     const boxLine = el("span", { class: "muted picture-box-line" });
     const clearBox = button("Clear box", () => setBox(null), "btn btn-quiet btn-small");
     clearBox.title = "forget the box: a search then covers the board's size about where the picture is";
@@ -649,7 +697,11 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     if (options.orientation) {
         caption.append(upright);
     }
-    caption.append(overlay, clearMarks, view);
+    caption.append(overlay);
+    if (options.edges) {
+        caption.append(edgesButton);
+    }
+    caption.append(clearMarks, view);
     /** The picture waits for a pick: a crosshair, and a line saying what for. */
     const showPick = (): void => {
         const label = armedPick(options.key);
@@ -1062,6 +1114,9 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
             marks.push(...keptMarks(kept, [width, height], options.rides, followOn && now !== null && calibrated !== null ? { now, calibration: calibrated } : null));
         }
         setLocked(clearMarks, kept.length === 0, "no spots found are kept over the picture");
+        if (edgesOn && edgesSeen !== null && options.running(state)) {
+            marks.push(...edgeMarks(edgesSeen, [width, height]));
+        }
         const calibration = options.calibration(state);
         const center = options.center(state);
         if (searchBox !== null && calibration !== null && center !== null) {
@@ -1106,6 +1161,31 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         const width = frameRequestWidth(shown, globalThis.devicePixelRatio ?? 1, zoom, size ? size[0] : null);
         marked = overlayOn && options.pcbvOverlay(state);
         picture.src = options.frameUrl(width, marked);
+        askEdges();
+    }
+
+    /** Asks for the edges in the picture now, at most once an interval and one at a time, while the edge view is on and the picture shows. */
+    function askEdges(force = false): void {
+        const state = ctx.store.get();
+        if (!edgesOn || !options.edges || edgesOut || !options.visible() || !options.running(state)) {
+            return;
+        }
+        const now = Date.now();
+        if (!force && now - edgesAsked < EDGES_INTERVAL_MS - 10) {
+            return;
+        }
+        edgesAsked = now;
+        edgesOut = true;
+        options.edges().then((edges) => {
+            edgesSeen = edgesOn ? edges : null;
+            edgesButton.title = EDGES_TITLE;
+        }, (error: unknown) => {
+            edgesSeen = null;
+            edgesButton.title = `${EDGES_TITLE}; the last ask failed: ${errorText(error)}`;
+        }).finally(() => {
+            edgesOut = false;
+            draw(ctx.store.get());
+        });
     }
     const timer = setInterval(() => refresh(), FRAME_INTERVAL_MS);
     picture.addEventListener("load", () => {

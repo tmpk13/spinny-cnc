@@ -11,6 +11,7 @@ import type {
     CalibrateRequest,
     CalibrateResponse,
     CameraControls,
+    CameraEdges,
     CameraPose,
     CameraSettings,
     CamerasResponse,
@@ -331,6 +332,8 @@ export interface Api {
     cameraColor(camera: ControlledCamera, item: ColorItem, point: [number, number] | null): Promise<{ camera: ControlledCamera; item: ColorItem; rgb: [number, number, number] | null }>;
     /** A camera's V4L2 controls as its device has them now, with the values it keeps. */
     cameraControls(camera: ControlledCamera): Promise<CameraControls>;
+    /** The straight edges pcbv finds in the camera's newest picture, strongest first: what Corner by edges reads. */
+    cameraEdges(camera: ControlledCamera): Promise<CameraEdges>;
     /** Sets control values now and keeps them, to be set at each start; null forgets a kept one. */
     setCameraControls(camera: ControlledCamera, values: Record<string, number | null>): Promise<CameraControls>;
 
@@ -1101,6 +1104,10 @@ export class HttpApi implements Api {
 
     cameraControls(camera: ControlledCamera): Promise<CameraControls> {
         return this.request<CameraControls>("GET", `/api/cameras/controls?camera=${encodeURIComponent(camera)}`);
+    }
+
+    cameraEdges(camera: ControlledCamera): Promise<CameraEdges> {
+        return this.request<CameraEdges>("GET", `/api/cameras/edges?camera=${encodeURIComponent(camera)}`);
     }
 
     setCameraControls(camera: ControlledCamera, values: Record<string, number | null>): Promise<CameraControls> {

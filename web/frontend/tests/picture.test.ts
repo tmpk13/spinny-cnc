@@ -477,6 +477,62 @@ describe("the picture view", () => {
         view.stop();
     });
 
+    test("Edges draws the straight edges pcbv finds while on, scaled to the picture, and says why when they cannot be had", async () => {
+        const { ctx } = setup();
+        let fail = false;
+        let asked = 0;
+        const view = mountPicture({
+            key: "test-edges",
+            label: "Test camera",
+            rides: true,
+            running: () => true,
+            frameUrl: (width) => `data:image/svg+xml,w=${width}`,
+            pcbvOverlay: () => false,
+            size: () => [1000, 500],
+            calibration: () => null,
+            center: () => null,
+            marks: () => [],
+            edges: async () => {
+                asked += 1;
+                if (fail) {
+                    throw new Error("the camera is busy");
+                }
+                return { camera: "head", lines: [{ x0: 10, y0: 20, x1: 110, y1: 20, length: 100, contrast: 40 }], width: 500, height: 250 };
+            },
+            move: async () => undefined,
+            noScale: "no scale",
+            visible: () => true,
+        }, ctx);
+        document.body.append(view.root);
+        const layer = view.root.querySelector(".picture-marks") as SVGElement;
+        view.render(ctx.store.get());
+        expect(asked).toBe(0);
+        click(view.root, "Edges");
+        await settle();
+        const line = layer.querySelector("polyline.mark-edge");
+        // pcbv measured a picture half the size: its ends doubled.
+        expect(line?.getAttribute("points")).toBe("20.00,40.00 220.00,40.00");
+        expect(line?.querySelector("title")?.textContent).toBe("edge 1 of 1, the strongest first: 100 px, contrast 40");
+        expect(localStorage.getItem("spinny.picture.test-edges.edges")).toBe("1");
+        // Off: nothing drawn and nothing asked.
+        click(view.root, "Edges");
+        await settle();
+        expect(layer.querySelector(".mark-edge")).toBeNull();
+        const before = asked;
+        view.refresh(true);
+        await settle();
+        expect(asked).toBe(before);
+        // On again and refused: no lines, and the button says why.
+        fail = true;
+        click(view.root, "Edges");
+        await settle();
+        const edges = [...view.root.querySelectorAll("button")].find((node) => node.textContent === "Edges")!;
+        expect(edges.title).toContain("the camera is busy");
+        expect(layer.querySelector(".mark-edge")).toBeNull();
+        localStorage.removeItem("spinny.picture.test-edges.edges");
+        view.stop();
+    });
+
     test("the View menu sets the crosshair's shape and size, kept for the camera", () => {
         const { view } = mounted(false, undefined, "test-crosshair");
         const layer = view.root.querySelector(".picture-marks") as SVGElement;

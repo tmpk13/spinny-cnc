@@ -554,7 +554,12 @@ the newest keeps the circle it was looked for within and the line from
 the center); by default they follow the machine, staying over what they
 marked as the head moves (the head's place for the bottom camera, which
 sees the nozzle), and *Marks follow the machine* in *View* switched off
-keeps them where they were drawn. *Upright* (on unless switched off, kept per
+keeps them where they were drawn. *Edges* (kept per camera) draws in
+yellow the straight edges pcbv finds in the picture, strongest first,
+asked once a second while it is on and the picture shows: what *Corner by
+edges* reads, so a blank board's sides can be checked (and a color picked
+for them) before a corner is taken; its tooltip says why when they could
+not be had. *Upright* (on unless switched off, kept per
 camera) shows the picture turned by the camera's roll to the nearest
 quarter turn, and flipped when the camera sees the machine mirrored (the
 bottom camera looking up), so the machine's +X points right and +Y up as

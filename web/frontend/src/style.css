@@ -3787,6 +3787,7 @@ table.pnp-parts tr.dnp td {
 .picture-marks .mark-board { stroke: var(--cyan); stroke-dasharray: 3 3; stroke-width: 2; }
 .picture-marks .mark-rough { stroke: var(--violet); stroke-dasharray: 10 4; stroke-width: 2; }
 .picture-marks .mark-drag { stroke: var(--orange); stroke-width: 2; }
+.picture-marks .mark-edge { stroke: var(--yellow); stroke-width: 2; }
 
 /* The grip under a picture: drag it to make the picture's box taller or
    shorter. */
