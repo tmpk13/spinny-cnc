@@ -332,7 +332,7 @@ class PlacingPart:
         except (ValueError, LookupError, HTTPException):
             offset = None
         return {
-            "offset": offset, "roll": settings.roll, "mirror": settings.mirror,
+            "offset": offset, "roll": self._top_roll(machine), "mirror": settings.mirror,
             "mm_per_px": settings.mm_per_px, "device": settings.device, "pcbv": settings.pcbv, "lens": settings.lens,
             "machine": machine.name,
         }
@@ -351,11 +351,11 @@ class PlacingPart:
         if captured < quiet:
             return "the head is moving"
         try:
-            offset = self._top_offset(self.placing_machine())
+            machine = self.placing_machine()
+            offset = self._top_offset(machine)
         except (ValueError, LookupError, HTTPException):
             return "the top camera's offset is not known: Measure offset first"
-        settings = self.top.settings()
-        return PictureFrame((here[0] + offset[0], here[1] + offset[1]), settings.roll, settings.mirror)
+        return PictureFrame((here[0] + offset[0], here[1] + offset[1]), self._top_roll(machine), self.top.settings().mirror)
 
     def top_search(self, body: BoardSearchBody) -> dict:
         """Moves the top camera over a box until enough looks agree on the
@@ -367,6 +367,7 @@ class PlacingPart:
         _, diagonal = self._board_size(job)
         offset = self._top_offset(machine)
         settings = self.top.settings()
+        roll = self._top_roll(machine)
         width, height, scale = self._look_scale(self.top.client, settings.mm_per_px)
         here = self._here(machine)
         center = (float(here["x"]) + offset[0], float(here["y"]) + offset[1])
@@ -390,7 +391,7 @@ class PlacingPart:
                 search_extra(box, center, stops, width * scale, height * scale, known),
             )
             found = search(
-                look, mover, stops, offset, lambda point: PictureFrame(point, settings.roll, settings.mirror),
+                look, mover, stops, offset, lambda point: PictureFrame(point, roll, settings.mirror),
                 mover.stopped, lambda index, count: self.top._step(progress, f"stop {index + 1}"), PnpError, record,
                 checks=self._check_places(job, (width * scale, height * scale)), known=known, side=settings.side,
             )
@@ -481,7 +482,7 @@ class PlacingPart:
             raise ValueError("the top camera is not running: start it first")
         here = self._here(machine)
         offset = self._top_offset(machine)
-        frame = PictureFrame((float(here["x"]) + offset[0], float(here["y"]) + offset[1]), settings.roll, settings.mirror)
+        frame = PictureFrame((float(here["x"]) + offset[0], float(here["y"]) + offset[1]), self._top_roll(machine), settings.mirror)
         corner, rotation = self._edge_corner(self.top.client, body.corner, frame, settings)
         middle, _ = self._board_size(job)
         self.top_look.add_corner(job.id, body.corner, point, corner, middle, rotation, "edges")
@@ -556,6 +557,15 @@ class PlacingPart:
         if machine.top is not None and machine.top.offset is not None:
             return machine.top.offset
         raise ValueError("the top camera's offset is not known: give [top_camera] offset in the machine file, or Measure offset")
+
+    def _top_roll(self, machine: GcodeMachine) -> float:
+        """The turn of the top camera's picture, degrees: as measured with
+        its scale, else as the machine's design has it, else the settings'
+        (0 until set)."""
+        top = self.top.settings()
+        if top.mm_per_px <= 0.0 and machine.top is not None and machine.top.roll is not None:
+            return machine.top.roll
+        return top.roll
 
     def pnp_fiducials(self, body: PnpFiducialsBody) -> dict:
         """Finds the board's fiducials with the top camera where the

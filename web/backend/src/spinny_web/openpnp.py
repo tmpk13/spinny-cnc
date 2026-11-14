@@ -180,10 +180,15 @@ class TopCameraProfile:
     part in a pocket is looked for, mm. `home_fiducial` is a fiducial
     fixed on the machine's bed (OpenPnP's head homing fiducial), as the
     nozzle's place over it: Home by fiducial looks for it with this camera
-    and declares where the head is from where it is seen."""
+    and declares where the head is from where it is seen. `roll` is the
+    turn of its picture as mounted, degrees from the picture's x axis to
+    the machine's +X, counterclockwise seen from above (180 for a camera
+    upside down): a first guess too, until Measure offset measures the
+    picture's scale and roll; None leaves the measured one alone."""
 
     z: float | None = None
     offset: tuple[float, float] | None = None
+    roll: float | None = None
     fiducial: str = "bright"
     within: float = 2.0
     home_fiducial: tuple[float, float] | None = None
@@ -341,6 +346,7 @@ class GcodeMachine:
                 {
                     "z": top.z,
                     "offset": list(top.offset) if top.offset is not None else None,
+                    "roll": top.roll,
                     "fiducial": top.fiducial,
                     "within": top.within,
                     "home_fiducial": list(top.home_fiducial) if top.home_fiducial is not None else None,
@@ -586,11 +592,12 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
         top_camera = TopCameraProfile(
             z=read.number(looking, "z", "top_camera", None) if "z" in looking else None,
             offset=read.point(looking, "offset", "top_camera", 2, None) if "offset" in looking else None,
+            roll=read.number(looking, "roll", "top_camera", None, -360.0, 360.0) if "roll" in looking else None,
             fiducial=read.shade(looking, "fiducial", "top_camera", "bright"),
             within=read.number(looking, "within", "top_camera", 2.0, 0.1, 50.0),
             home_fiducial=read.point(looking, "home_fiducial", "top_camera", 2, None) if "home_fiducial" in looking else None,
         )
-        read.done(looking, "top_camera", {"z", "offset", "fiducial", "within", "home_fiducial"})
+        read.done(looking, "top_camera", {"z", "offset", "roll", "fiducial", "within", "home_fiducial"})
 
     bus = None
     wire = read.table(top, "bus")

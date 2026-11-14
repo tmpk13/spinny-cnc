@@ -102,6 +102,8 @@ export interface MockVacuum {
 export interface MockTopProfile {
     z: number | null;
     offset: [number, number] | null;
+    /** The picture's turn as mounted, degrees, until Measure offset measures it; null: none given. */
+    roll: number | null;
     fiducial: SpotPolarity;
     within: number;
     /** A fiducial on the bed, as the nozzle's place over it: Home by fiducial finds it. */
@@ -394,11 +396,12 @@ export function parseGcodeTables(top: TomlTable, id: string, name: string, descr
         device.top = {
             z: "z" in looking ? read.number(looking, "z", "top_camera", null) : null,
             offset: "offset" in looking ? (read.point(looking, "offset", "top_camera", 2, null) as [number, number]) : null,
+            roll: "roll" in looking ? read.number(looking, "roll", "top_camera", null, -360, 360) : null,
             fiducial: read.shade(looking, "fiducial", "top_camera", "bright"),
             within: read.number(looking, "within", "top_camera", 2, 0.1, 50),
             home_fiducial: "home_fiducial" in looking ? (read.point(looking, "home_fiducial", "top_camera", 2, null) as [number, number]) : null,
         };
-        read.done(looking, "top_camera", ["z", "offset", "fiducial", "within", "home_fiducial"]);
+        read.done(looking, "top_camera", ["z", "offset", "roll", "fiducial", "within", "home_fiducial"]);
     }
     device.bus = null;
     const wire = read.table(top, "bus");
@@ -640,6 +643,7 @@ export function deviceDocument(device: MockDevice): GcodeDocument {
             ? {
                 z: device.top.z,
                 offset: device.top.offset ? [...device.top.offset] : null,
+                roll: device.top.roll,
                 fiducial: device.top.fiducial,
                 within: device.top.within,
                 home_fiducial: device.top.home_fiducial ? [...device.top.home_fiducial] : null,

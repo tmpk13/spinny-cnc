@@ -1370,6 +1370,8 @@ export interface GcodeVacuum {
 export interface GcodeTopCamera {
     z: number | null;
     offset: [number, number] | null;
+    /** The picture's turn as mounted, degrees from its x axis to the machine's +X, counterclockwise from above; used until Measure offset measures the scale and roll. Missing or null: none given. */
+    roll?: number | null;
     fiducial: SpotPolarity;
     within: number;
     /** A fiducial on the bed, as the nozzle's place over it, that Home by fiducial finds; missing or null: none. */

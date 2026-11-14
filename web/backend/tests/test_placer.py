@@ -107,6 +107,7 @@ def test_a_sensor_without_ranges_is_read_by_hand_only_and_reads_over_several_lin
         (profile(feeder='pocket = "grey"', rest=TOP), "[feeder 1] pocket must be dark or bright"),
         (profile(motion="pick_tries = 0"), "[motion] pick_tries must be a whole number from 1 to 20"),
         (profile(rest='[top_camera]\nfiducial = "red"\n'), "[top_camera] fiducial must be dark or bright"),
+        (profile(rest="[top_camera]\nroll = 400\n"), "[top_camera] roll must be a number from -360 to 360"),
     ],
 )
 def test_a_new_word_that_does_not_read_names_its_key(text, words):
@@ -273,6 +274,21 @@ def test_a_pick_the_vacuum_finds_empty_is_let_go_at_the_discard_place_and_the_ne
     assert across == [(10.0, 20.0), (0.0, 0.0), (14.0, 20.0), (100.0, 50.0)]
     assert sent.count("M105") == 4 and "G0 Z-1.5 F600" in sent
     assert state["progress"]["sent"] == state["progress"]["total"]
+
+
+def test_the_files_top_camera_roll_places_its_pictures_until_a_scale_is_measured(client):
+    rig(client, profile(rest=TOP + "roll = 180\n"))
+    machine = client.backend.placing_machine()
+    assert machine.top is not None and machine.top.roll == 180.0
+    # The page reads it with the file, for the picture's Upright.
+    assert client.get("/api/pnp/placing").json()["document"]["top"]["roll"] == 180.0
+    assert client.backend._top_roll(machine) == 180.0
+    assert client.backend._top_picture(machine)["roll"] == 180.0
+    # Measured (Measure offset sets the scale and the roll together), the measured one wins.
+    assert client.put("/api/pnp/top", json={"mm_per_px": 0.02, "roll": 1.5}).status_code == 200
+    assert client.backend._top_roll(machine) == 1.5
+    # A file without one leaves the settings' roll.
+    assert parse(profile(rest=TOP), "rig").top.roll is None
 
 
 def test_the_parts_a_run_places_are_told_to_the_top_cameras_look_for_that_board(client):
