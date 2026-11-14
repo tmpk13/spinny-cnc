@@ -384,6 +384,8 @@ export interface MachinesResponse {
     used?: string | null;
     /** Files that could not be read, each with what is wrong; they can still be opened to be mended. */
     problems: MachineProblem[];
+    /** The folder the files are kept in: a file made on the page is written there as <id>.toml; missing from an older backend. */
+    folder?: string;
 }
 
 export interface MachineProblem {
@@ -1680,7 +1682,8 @@ export interface ScanTile {
 /** A camera's newest full scan: the job, how its pictures were taken, a number that grows with each change, the job's outline's box (its frame), the place the scan found, and the pictures in the order taken. */
 export interface ScanMosaic {
     job: string | null;
-    motion: ScanMotion;
+    /** How the pictures were taken: a full scan at rest or on the move, or a search's stops (a map of where it looked). */
+    motion: ScanMotion | "search";
     version: number;
     started: number;
     outline: [number, number, number, number] | null;
@@ -1947,7 +1950,7 @@ export interface BoardLook {
     stretch?: BoardStretch | null;
     delay?: { seconds: number; sd: number } | null;
     /** The camera's newest full scan, in short: its job, pictures, version, motion and whether it found the board; null with none. */
-    scan?: { job: string; pictures: number; version: number; motion: ScanMotion; found: boolean } | null;
+    scan?: { job: string; pictures: number; version: number; motion: ScanMotion | "search"; found: boolean } | null;
 }
 
 /** One V4L2 control of a camera on the backend's computer, as v4l2-ctl lists it, with the value the camera keeps for it (set at each start). */

@@ -3746,6 +3746,10 @@ table.pnp-parts tr.dnp td {
     user-select: none;
 }
 
+.picture-stage.panning {
+    cursor: move;
+}
+
 .picture-stage.dragging {
     cursor: grabbing;
 }

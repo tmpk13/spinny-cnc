@@ -380,6 +380,12 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
         "move the camera over the whole board where a rough place puts it (a find, the corners, the Align marks or references), row by row: every picture is weighed and kept for the mosaic below");
     const placeButton = button("Use as board place", () => usePlace(), "btn");
     const unloadButton = button("Unload", () => unload(), "btn btn-quiet", "stop looking for the board");
+    // A search or scan stopped keeps what it found and the place it
+    // predicts; Clear guesses forgets them with the board still loaded.
+    const stopButton = button("Stop search", () => stopSearch(), "btn urgent",
+        "stop the search or scan where it is: the guesses, the place they predict and the corners stay");
+    const forgetButton = button("Clear guesses", () => forgetGuesses(), "btn btn-quiet",
+        "forget the guesses and the place they predict; the board stays loaded and the look starts over");
     const lookLine = explain(explain(explain(el("p", { class: "muted find-look" }), "look"), "lock"), "rival");
     const knownLine = el("p", { class: "muted find-known" });
 
@@ -455,7 +461,7 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
         el("fieldset", { class: "panel-body" },
             el("div", { class: "button-row" }, labeled("Camera", pick, "labeled inline")),
             note,
-            el("div", { class: "button-row" }, lookButton, searchButton, scanButton, placeButton, unloadButton, motionField),
+            el("div", { class: "button-row" }, lookButton, searchButton, scanButton, stopButton, placeButton, forgetButton, unloadButton, motionField),
             lookLine,
             knownLine,
             explain(el("h3", {}, "Guesses"), "guess"),
@@ -562,6 +568,22 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             await into(ctx, "placing", ctx.api.topSearch(box));
         } else {
             await into(ctx, "camera", ctx.api.cameraSearch(box));
+        }
+    }
+
+    async function stopSearch(): Promise<void> {
+        if (chosen === "top") {
+            await into(ctx, "placing", ctx.api.topAbort());
+        } else {
+            await into(ctx, "camera", ctx.api.cameraAbort());
+        }
+    }
+
+    async function forgetGuesses(): Promise<void> {
+        if (chosen === "top") {
+            await into(ctx, "placing", ctx.api.topBoardForget());
+        } else {
+            await into(ctx, "camera", ctx.api.cameraBoardForget());
         }
     }
 
@@ -785,6 +807,10 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             ? "keep where the board found, else its corners, puts it as the job's references (two parts far apart); Find fiducials then makes it exact"
             : "take where the board found, else its corners, puts it as marks in the Align panel";
         lockFor(unloadButton, [!look?.job, "no board loaded"], [busy, "a routine is under way"]);
+        // Stop shows while this camera searches or scans.
+        stopButton.classList.toggle("hidden", !(src.searching(state) || src.scanning(state)));
+        lockFor(forgetButton, [!look?.job, "no board loaded"], [busy, "a routine is under way"],
+            [!(look?.guesses?.length) && !look?.estimate, "no guesses to forget"]);
         lockFor(cornerButton,
             [!job, "pick a board job first"],
             [!running, `start the ${src.label.toLowerCase()} first`],
@@ -836,8 +862,9 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
         } else {
             const where = scanned.job === job?.id ? "" : ` of ${state.jobs.find((entry) => entry.id === scanned.job)?.name ?? scanned.job}`;
             const delay = look?.delay ? `; the camera's delay ${formatFixed(look.delay.seconds * 1000, 0)} +- ${formatFixed(look.delay.sd * 1000, 0)} ms` : "";
-            scanLine.textContent = `${src.scanning(state) ? "Scanning" : "The newest scan"}${where}: ${scanned.pictures} ${scanned.pictures === 1 ? "picture" : "pictures"}`
-                + ` taken ${scanned.motion === "fly" ? "on the move" : "at rest"}${scanned.found ? ", the board found (dashed)" : ""}${delay}.`;
+            const what = scanned.motion === "search" ? (src.searching(state) ? "Searching" : "The newest search's map") : src.scanning(state) ? "Scanning" : "The newest scan";
+            const how = scanned.motion === "search" ? ", one at each stop it looked from" : ` taken ${scanned.motion === "fly" ? "on the move" : "at rest"}`;
+            scanLine.textContent = `${what}${where}: ${scanned.pictures} ${scanned.pictures === 1 ? "picture" : "pictures"}${how}${scanned.found ? ", the board found (dashed)" : ""}${delay}.`;
             void showScan(chosen, scanned.version);
         }
         void showSkew(chosen, `${chosen}:${look?.found === true}:${look?.scan?.version ?? 0}:${state.align?.marks.length ?? 0}`);

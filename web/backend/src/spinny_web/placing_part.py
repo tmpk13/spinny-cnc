@@ -432,6 +432,7 @@ class PlacingPart:
                 look, mover, stops, offset, lambda point: PictureFrame(point, roll, settings.mirror),
                 mover.stopped, lambda index, count: self.top._step(progress, f"stop {index + 1}"), PnpError, record,
                 checks=self._check_places(job, (width * scale, height * scale)), known=known, side=settings.side, box=box, prior=prior, steer=steer,
+                picture=(width, height, scale), outline=self._board_box(job),
             )
             self._learn_from_look("top", look, found)
             self.top._message("info", found_text(found, look.consensus))

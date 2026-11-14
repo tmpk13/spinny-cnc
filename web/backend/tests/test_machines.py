@@ -493,3 +493,8 @@ def test_a_machines_skew_is_learned_from_boards_at_two_turns_and_written_into_it
     # The boards measured on the old steps are forgotten.
     assert client.get("/api/skew?camera=head").json()["count"] == 0
     assert skew_module.KEEP >= 10
+
+
+def test_the_machines_list_says_the_folder_files_are_kept_in(client):
+    listed = client.get("/api/machines").json()
+    assert listed["folder"] == str(client.machines_dir.resolve())

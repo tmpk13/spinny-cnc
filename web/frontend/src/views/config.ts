@@ -91,6 +91,8 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
     const useButton = button("Use this machine", () => useMachine(), "btn btn-primary");
     useButton.title = "make this file the machine in use: connect its machine, or write it to the board";
     const inUse = el("p", { class: "config-in-use" });
+    // Where the files are kept: a file made here (New, Save as, the OpenPnP import) is written there.
+    const folderLine = el("p", { class: "muted config-folder hidden" });
     // What a release updated to offers of its machine files.
     const offersBox = el("div", {});
     const offers = mountMachineUpdates(offersBox, ctx, () => ctx.refreshMachines());
@@ -135,6 +137,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         el("div", { class: "panel-head" }, el("h2", {}, "Machine file"), el("div", { class: "button-row" }, reload)),
         el("div", { class: "button-row" }, labeled("Machine", pick, "labeled inline"), useButton, newId, create, remove),
         inUse,
+        folderLine,
         offersBox,
         note,
         el("div", { class: "button-row" }, load, read, flash),
@@ -480,6 +483,9 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         // The machine file in use, said where the files are picked.
         const use = machineInUse(state);
         inUse.textContent = `In use: ${inUseText(use)}`;
+        const folder = state.machines?.folder ?? null;
+        folderLine.textContent = folder ? `Machine files are kept in ${folder}: a new or imported one is written there as its id with .toml` : "";
+        folderLine.classList.toggle("hidden", folder === null);
         inUse.classList.toggle("muted", use.how !== "board" && use.how !== "connected");
         const using = (use.how === "board" || use.how === "connected") && use.id === picked;
         lockFor(useButton, [picked === null, "pick a machine file first"], [shown?.document == null, "the file does not parse"], [using, "this is the machine in use"]);

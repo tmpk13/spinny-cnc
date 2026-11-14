@@ -823,6 +823,9 @@ def test_the_top_camera_searches_with_the_posterior_when_its_look_method_says_so
     assert look["estimate"]["center"] == pytest.approx(list(middle), abs=0.05) and look["estimate"]["rotation"] == pytest.approx(2.0, abs=0.05)
     assert 0.0 <= look["elsewhere"] < look["guesses"][0]["probability"]
     assert look["views"] >= 1 and look["representation"] in ("samples", "gaussian")
+    # Clear guesses: the place predicted is forgotten, the board stays loaded.
+    forgot = client.post("/api/pnp/top/board/forget").json()["top"]["board_look"]
+    assert forgot["job"] is not None and forgot["guesses"] == [] and forgot["estimate"] is None
     # Back to the vote, the look starts over with it.
     assert client.put("/api/pnp/top", json={"look_method": "vote"}).json()["top"]["board_look"]["method"] == "vote"
 

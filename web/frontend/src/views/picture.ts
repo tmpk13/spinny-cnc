@@ -238,6 +238,23 @@ export function levelText(x: number, y: number, turn: Turn): string | null {
     return `translate(${at}) scale(${turn.flip ? -1 : 1} 1) rotate(${90 * turn.quarter}) translate(${(-x).toFixed(2)} ${(-y).toFixed(2)})`;
 }
 
+/** The arrow keys' directions on the screen, right and down positive. */
+export const ARROWS: Record<string, [number, number]> = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+
+/**
+ * The head's move an arrow key `way` (a screen direction) over a picture
+ * shown turned asks for: `mm` toward the machine point the picture shows
+ * that way from its middle, the turn undone; the same whether the camera
+ * rides on the head or is fixed (the head moves the way the arrow points
+ * on the picture).
+ */
+export function arrowMove(way: [number, number], turn: Turn, mm: number, calibration: Calibration): [number, number] {
+    const [px, py] = unturnOffset(way[0], way[1], turn);
+    const [mx, my] = pictureToMachine(px, py, calibration.mmPerPx, calibration.roll, calibration.mirror);
+    const length = Math.hypot(mx, my);
+    return length > 0 ? [(mx / length) * mm, (my / length) * mm] : [0, 0];
+}
+
 /**
  * The head's move a drag of `dx`, `dy` px of the full size picture asks
  * for, so what the camera sees follows the pointer. A camera riding on the
@@ -722,7 +739,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     }, "btn btn-quiet btn-small btn-toggle");
     upright.setAttribute("aria-pressed", uprightOn ? "true" : "false");
     upright.title = "show the picture turned by the camera's roll so the machine's +X points right and +Y up";
-    const reset = button("Reset view", () => setZoom(1), "btn btn-quiet btn-small", "back to the whole picture filling its box (zoom 1)");
+    const reset = button("Reset view", () => resetView(), "btn btn-quiet btn-small", "back to the whole picture filling its box: zoom 1, not panned");
     const turnButton = button("Turn", () => turnBy(-1), "btn btn-quiet btn-small");
     const view = button("View", () => openView(), "btn btn-quiet btn-small", "the crosshair's shape and size, and whether marks follow the machine");
     view.setAttribute("aria-haspopup", "menu");
@@ -952,6 +969,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     const observer = Observer ? new Observer(() => {
         rem = 0;
         fit();
+        applyView();
         draw(ctx.store.get());
         refresh(false);
     }) : null;
@@ -1000,13 +1018,50 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
             return;
         }
         zoom = value;
-        picture.style.transform = `scale(${zoom})`;
+        applyView();
         draw(ctx.store.get());
         refresh(true);
     }
 
     function step(direction: 1 | -1): void {
         setZoom(stepZoom(zoom, direction));
+    }
+
+    // The pan: how far the middle of what is shown lies from the picture's
+    // own middle, full size px; a drag with the middle button (or Alt) moves
+    // it, the wheel zooms about the pointer, Reset view takes it back.
+    let pan: [number, number] = [0, 0];
+
+    /** The picture zoomed about its middle and moved by the pan (in its own CSS px, before the zoom). */
+    function applyView(): void {
+        const [width] = fullSize(ctx.store.get());
+        const perPx = width > 0 ? stageSize()[0] / width : 0;
+        const moved = pan[0] !== 0 || pan[1] !== 0;
+        picture.style.transform = `scale(${zoom})${moved ? ` translate(${(-pan[0] * perPx).toFixed(3)}px, ${(-pan[1] * perPx).toFixed(3)}px)` : ""}`;
+    }
+
+    /** Another pan, held so the picture's middle stays within the view's reach. */
+    function setPan(next: [number, number]): void {
+        const [width, height] = fullSize(ctx.store.get());
+        pan = [Math.max(-width / 2, Math.min(width / 2, next[0])), Math.max(-height / 2, Math.min(height / 2, next[1]))];
+        applyView();
+        draw(ctx.store.get());
+    }
+
+    /** Zoom 1, not panned. */
+    function resetView(): void {
+        pan = [0, 0];
+        setZoom(1);
+        applyView();
+        draw(ctx.store.get());
+    }
+
+    /** A pointer's place as a share of the stage from its middle (the turn undone): what the pan and zoom act about. */
+    function shareAt(clientX: number, clientY: number): [number, number] {
+        const rect = stage.getBoundingClientRect();
+        const [stageWidth, stageHeight] = stageSize();
+        const [x, y] = unturnOffset(clientX - (rect.left + rect.width / 2), clientY - (rect.top + rect.height / 2), turn);
+        return [stageWidth > 0 ? x / stageWidth : 0, stageHeight > 0 ? y / stageHeight : 0];
     }
 
     /** Takes the zoom typed in; a field that holds no number gets the zoom back. */
@@ -1023,14 +1078,16 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         }
     });
 
-    // The plain wheel scrolls the page; Ctrl and the wheel (a pinch on a
-    // touchpad) zooms the picture.
+    // The wheel over the picture (or Ctrl and the wheel, a pinch on a
+    // touchpad) zooms it about the point under the pointer, which stays
+    // under it; the page scrolls by the wheel anywhere else.
     box.addEventListener("wheel", (event) => {
-        if (!event.ctrlKey) {
-            return;
-        }
         event.preventDefault();
+        const [width, height] = fullSize(ctx.store.get());
+        const [fx, fy] = shareAt(event.clientX, event.clientY);
+        const before: [number, number] = [pan[0] + (fx * width) / zoom, pan[1] + (fy * height) / zoom];
         step(event.deltaY < 0 ? 1 : -1);
+        setPan([before[0] - (fx * width) / zoom, before[1] - (fy * height) / zoom]);
     }, { passive: false });
 
     // --- the pointer ----------------------------------------------------------------
@@ -1043,13 +1100,23 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         const [x, y] = unturnOffset(clientX - (rect.left + rect.width / 2), clientY - (rect.top + rect.height / 2), turn);
         const fx = stageWidth > 0 ? x / stageWidth : 0;
         const fy = stageHeight > 0 ? y / stageHeight : 0;
-        return [width / 2 + (fx * width) / zoom, height / 2 + (fy * height) / zoom];
+        return [width / 2 + pan[0] + (fx * width) / zoom, height / 2 + pan[1] + (fy * height) / zoom];
     }
 
     // A press: where it began and is now, and whether it draws a box (a
     // search box with Shift, or the box an armed box pick waits for).
     let press: { from: [number, number]; to: [number, number]; client: [number, number]; boxing: boolean } | null = null;
+    // A drag with the middle button, or with Alt, pans the view instead:
+    // where it began and the pan then.
+    let panning: { client: [number, number]; pan: [number, number] } | null = null;
     stage.addEventListener("pointerdown", (event) => {
+        if (event.button === 1 || (event.button === 0 && event.altKey)) {
+            event.preventDefault();
+            panning = { client: [event.clientX, event.clientY], pan: [pan[0], pan[1]] };
+            stage.setPointerCapture?.(event.pointerId);
+            stage.classList.add("panning");
+            return;
+        }
         if (event.button !== 0) {
             return;
         }
@@ -1060,6 +1127,17 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         stage.classList.add(press.boxing ? "boxing" : "dragging");
     });
     stage.addEventListener("pointermove", (event) => {
+        if (panning !== null) {
+            // The picture follows the pointer: the view's middle moves against it.
+            const [width, height] = fullSize(ctx.store.get());
+            const [stageWidth, stageHeight] = stageSize();
+            const [dx, dy] = unturnOffset(event.clientX - panning.client[0], event.clientY - panning.client[1], turn);
+            setPan([
+                panning.pan[0] - (stageWidth > 0 ? (dx / stageWidth) * (width / zoom) : 0),
+                panning.pan[1] - (stageHeight > 0 ? (dy / stageHeight) * (height / zoom) : 0),
+            ]);
+            return;
+        }
         if (press === null) {
             return;
         }
@@ -1067,6 +1145,11 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         draw(ctx.store.get());
     });
     const release = (event: PointerEvent): void => {
+        if (panning !== null) {
+            panning = null;
+            stage.classList.remove("panning");
+            return;
+        }
         stage.classList.remove("dragging", "boxing");
         const done = press;
         press = null;
@@ -1116,6 +1199,8 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     };
     stage.addEventListener("pointerup", release);
     stage.addEventListener("pointercancel", () => {
+        panning = null;
+        stage.classList.remove("panning");
         press = null;
         stage.classList.remove("dragging", "boxing");
         draw(ctx.store.get());
@@ -1133,6 +1218,38 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         const [mx, my] = dragMove(options.rides, x - width / 2, y - height / 2, calibration);
         void options.move([-mx, -my]);
     });
+
+    // The arrow keys with the pointer over the picture move the head the
+    // way they point on the picture, turned as it is shown (a jog pad's
+    // arrows keep the machine's axes): a camera on the head looks further
+    // that way, a fixed camera sees the nozzle go that way. 1 mm a press,
+    // a tenth with Shift.
+    let hovered = false;
+    box.addEventListener("pointerenter", () => {
+        hovered = true;
+    });
+    box.addEventListener("pointerleave", () => {
+        hovered = false;
+    });
+    globalThis.addEventListener?.("keydown", (event: KeyboardEvent) => {
+        const way = ARROWS[event.key];
+        if (!hovered || way === undefined || event.repeat || event.ctrlKey || event.metaKey || event.altKey || !options.visible()) {
+            return;
+        }
+        const target = event.target as HTMLElement | null;
+        if (target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) {
+            return;
+        }
+        const state = ctx.store.get();
+        const calibration = options.calibration(state);
+        if (calibration === null) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const mm = event.shiftKey ? 0.1 : 1;
+        void options.move(arrowMove(way, turn, mm, calibration));
+    }, true);
 
     // --- the box -------------------------------------------------------------------
 
@@ -1209,7 +1326,9 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         // lands where the zoomed picture shows its point.
         const shownWidth = width / zoom;
         const shownHeight = height / zoom;
-        layer.setAttribute("viewBox", `${(width / 2 - shownWidth / 2).toFixed(3)} ${(height / 2 - shownHeight / 2).toFixed(3)} ${shownWidth.toFixed(3)} ${shownHeight.toFixed(3)}`);
+        const left = width / 2 + pan[0] - shownWidth / 2;
+        const top = height / 2 + pan[1] - shownHeight / 2;
+        layer.setAttribute("viewBox", `${left.toFixed(3)} ${top.toFixed(3)} ${shownWidth.toFixed(3)} ${shownHeight.toFixed(3)}`);
         const marks: Mark[] = [];
         if (overlayOn && options.running(state)) {
             marks.push(...crosshairMarks(crosshair.shape, crosshair.size, width / 2, height / 2, shownWidth, shownHeight));
@@ -1218,7 +1337,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
             const screen = stageSize()[0] || box.getBoundingClientRect().width || 640;
             const shown: PictureShown = {
                 size: [width, height],
-                region: [width / 2 - shownWidth / 2, height / 2 - shownHeight / 2, shownWidth, shownHeight],
+                region: [left, top, shownWidth, shownHeight],
                 scale: screen / shownWidth,
                 rem: rem || (rem = remPx()),
             };

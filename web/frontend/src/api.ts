@@ -310,6 +310,9 @@ export interface Api {
     /** A full scan of the board where a rough place puts it, the rows run `margin` mm past its outline (null: the backend's). */
     cameraScan(margin: number | null): Promise<CameraState>;
     cameraScanState(): Promise<ScanMosaic>;
+    /** Forgets the look's guesses and the place they predict, the board still loaded (Clear guesses). */
+    cameraBoardForget(): Promise<CameraState>;
+    topBoardForget(): Promise<PlacingState>;
     /** The machine's skew its boards show, as the head or top camera found them; Apply writes it into the machine file, Clear forgets the boards. */
     skew(camera: "head" | "top"): Promise<SkewState>;
     skewApply(camera: "head" | "top"): Promise<SkewState>;
@@ -1058,6 +1061,14 @@ export class HttpApi implements Api {
 
     cameraScanState(): Promise<ScanMosaic> {
         return this.request<ScanMosaic>("GET", "/api/camera/scan");
+    }
+
+    cameraBoardForget(): Promise<CameraState> {
+        return this.request<CameraState>("POST", "/api/camera/board/forget");
+    }
+
+    topBoardForget(): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/top/board/forget");
     }
 
     skew(camera: "head" | "top"): Promise<SkewState> {

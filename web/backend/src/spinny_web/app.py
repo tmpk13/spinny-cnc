@@ -2454,6 +2454,9 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             "current": current,
             "used": used if isinstance(used, str) and used in ids else None,
             "problems": problems,
+            # Where the files are kept: a file made on the page (Save as, the
+            # OpenPnP import) is written here as <id>.toml.
+            "folder": str(self.machine_store.directory.resolve()),
         }
 
     def _note_used(self, machine_id: str) -> None:
@@ -3679,6 +3682,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
                 found = search(
                     look, mover, stops, offset, lambda point: PictureFrame(point, settings.roll, False), mover.stopped, on_stop, CameraError, record,
                     checks=self._check_places(job, (width * scale, height * scale)), known=known, side=settings.side, box=box, prior=prior, steer=steer,
+                    picture=(width, height, scale), outline=self._board_box(job),
                 )
                 self._learn_from_look("head", look, found)
                 self.publish_message("info", found_text(found, look.consensus))
@@ -5336,6 +5340,22 @@ def create_app(
             return backend.skew_state(camera)
 
         return guarded(clear)
+
+    @app.post("/api/camera/board/forget")
+    def camera_board_forget():
+        def forget() -> dict:
+            backend.head_look.forget()
+            return backend.publish_camera()
+
+        return guarded(forget)
+
+    @app.post("/api/pnp/top/board/forget")
+    def top_board_forget():
+        def forget() -> dict:
+            backend.top_look.forget()
+            return backend.publish_placing()
+
+        return guarded(forget)
 
     @app.post("/api/camera/scan")
     def camera_scan(body: BoardScanBody | None = None):

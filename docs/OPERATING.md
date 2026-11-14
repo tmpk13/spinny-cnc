@@ -532,14 +532,21 @@ on the board the picture is and how well it is locked (below).
 
 Every camera picture (the head camera's, and the PNP page's bottom and top
 cameras') works the same way. It is asked for at the size it is shown, so
-it stays sharp when zoomed: *+* and *-* under it, or Ctrl and the wheel (a
-pinch on a touchpad), zoom on its center by steps, and the plain wheel
-scrolls the page; *-* and *+* are the ends of the zoom's own box, and the
-number between them is a field, so any zoom from 0.25 to 8 can be typed
-in and taken with Enter. Under 1 the picture shows smaller than its box,
-and the marks beyond its edges (known points, a search box, the board)
-show in the room around it; *Reset view* goes back to the whole picture
-filling its box. A drag moves the head
+it stays sharp when zoomed: *+* and *-* under it zoom on its middle by
+steps, and the wheel over the picture (or a pinch on a touchpad) zooms
+about the point under the pointer, which stays under it (the page
+scrolls by the wheel anywhere else); *-* and *+* are the ends of the
+zoom's own box, and the number between them is a field, so any zoom from
+0.25 to 8 can be typed in and taken with Enter. Under 1 the picture shows
+smaller than its box, and the marks beyond its edges (known points, a
+search box, the board) show in the room around it, where a search box can
+be drawn too. A drag with the middle button, or with Alt, pans the view;
+*Reset view* goes back to the whole picture filling its box, not panned.
+With the pointer over the picture the arrow keys move the head the way
+they point on the picture as it is shown, turned or not (1 mm a press, a
+tenth with Shift): a camera on the head looks further that way, the fixed
+bottom camera sees the nozzle go that way; the jog panel's keys and pad
+keep the machine's axes. A drag moves the head
 so what the camera sees follows the pointer, a line showing the move; a
 double-click brings a point to the crosshair (both once the camera's
 scale is measured). The grip under the picture makes its box taller or
@@ -752,6 +759,13 @@ pictures over a little late; that delay moves the board one way on rows
 run left to right and the other way on rows run back, so with *Probability
 over the pose* the scan measures it, and the scan's line says it. A
 G-code machine reports its place only at rest, so its scans always stop.
+
+While a search or a full scan runs, *Stop search* stops it where it is:
+the guesses, the place they predict and the corners taken stay, so *Use as
+board place* can still take it. *Clear guesses* forgets the guesses and
+the place they predict with the board still loaded; *Unload* stops looking
+altogether. A search keeps a picture from every stop it looked from, laid
+out under the panel as a map of where it looked, like a full scan's.
 
 *Use as board place* keeps where the found board lies: with the top camera
 as the job's references (two parts far apart; *Find fiducials* then makes

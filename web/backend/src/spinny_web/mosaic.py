@@ -49,8 +49,10 @@ class Tile:
 
 @dataclass
 class Mosaic:
-    """A scan's pictures: the job whose board was scanned, how the camera
-    took them (`motion`: stop or fly), the tiles in the order taken, the
+    """A scan's pictures (or a search's: a map of where it looked): the job
+    whose board was looked at, how the camera took them (`motion`: stop or
+    fly for a full scan, search for a search's stops), the tiles in the
+    order taken, the
     place the scan found (the job's frame onto the machine's: turn, shift,
     middle), the job's outline's box in its frame, and a number that grows
     with every change, for the page to fetch again."""

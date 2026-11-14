@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { boardMarks, boxShares, frameSize, nozzleBoxMarks, reachMark, shownSpots } from "../src/views/camview.ts";
-import { addTurn, armBox, armedPick, armPick, clampZoom, confirmFindings, crosshairMarks, disarmPick, dragMove, followShift, frameRequestWidth, growBox, keptMarks, levelText, machineToPicture, MAX_KEPT_SPOTS, mountPicture, pictureToMachine, readCrosshair, readQuarters, shiftMark, type ShownSpot, spotMarks, stepZoom, takeSpots, turnTransform, UNTURNED, unturnOffset, uprightTurn, zoomText } from "../src/views/picture.ts";
+import { addTurn, armBox, armedPick, ARROWS, arrowMove, armPick, clampZoom, confirmFindings, crosshairMarks, disarmPick, dragMove, followShift, frameRequestWidth, growBox, keptMarks, levelText, machineToPicture, MAX_KEPT_SPOTS, mountPicture, pictureToMachine, readCrosshair, readQuarters, shiftMark, type ShownSpot, spotMarks, stepZoom, takeSpots, turnTransform, UNTURNED, unturnOffset, uprightTurn, zoomText } from "../src/views/picture.ts";
 import type { CameraFinding } from "../src/types.ts";
 import { click, setup, settle } from "./harness.ts";
 
@@ -265,24 +265,66 @@ describe("the picture view", () => {
         stage.dispatchEvent(event);
     }
 
-    test("Ctrl and the wheel zoom; the plain wheel is left to the page", () => {
+    test("the wheel zooms about the point under the pointer, which stays under it; a middle drag pans; Reset view takes both back", () => {
         const { view, stage } = mounted();
         const box = view.root.querySelector(".picture-box") as HTMLElement;
-        const plain = new WheelEvent("wheel", { deltaY: -100, bubbles: true, cancelable: true });
-        box.dispatchEvent(plain);
-        expect(plain.defaultPrevented).toBe(false);
-        expect(view.zoom()).toBe(1);
-        // The test DOM's WheelEvent keeps no modifier keys: a wheel event made as a mouse event with the wheel's delta.
-        const ctrl = Object.assign(new MouseEvent("wheel", { ctrlKey: true, bubbles: true, cancelable: true }), { deltaY: -100 });
-        box.dispatchEvent(ctrl);
-        expect(ctrl.defaultPrevented).toBe(true);
-        expect(view.zoom()).toBe(1.5);
-        // The marks' view box is the part of the picture the zoom shows.
         const marks = view.root.querySelector(".picture-marks") as SVGElement;
-        const [x, , width] = (marks.getAttribute("viewBox") ?? "").split(" ").map(Number);
+        const viewBox = (): number[] => (marks.getAttribute("viewBox") ?? "").split(" ").map(Number);
+        // In the middle: a plain wheel zooms about it, the view box centered.
+        const plain = Object.assign(new MouseEvent("wheel", { clientX: 250, clientY: 125, bubbles: true, cancelable: true }), { deltaY: -100 });
+        box.dispatchEvent(plain);
+        expect(plain.defaultPrevented).toBe(true);
+        expect(view.zoom()).toBe(1.5);
+        let [x, , width] = viewBox();
         expect(width).toBeCloseTo(1000 / 1.5, 2);
         expect(x).toBeCloseTo(500 - 1000 / 3, 2);
-        void stage;
+        // Off to the right (a share 0.4 of the stage from its middle): the
+        // picture point under the pointer stays under it.
+        const under = (clientX: number): number => {
+            const [left, , shown] = viewBox();
+            return left! + (clientX / 500) * shown!;
+        };
+        const before = under(450);
+        const ctrl = Object.assign(new MouseEvent("wheel", { clientX: 450, clientY: 125, ctrlKey: true, bubbles: true, cancelable: true }), { deltaY: -100 });
+        box.dispatchEvent(ctrl);
+        expect(view.zoom()).toBe(2);
+        expect(under(450)).toBeCloseTo(before, 2);
+        // A drag with the middle button moves the picture with the pointer.
+        [x] = viewBox();
+        stage.dispatchEvent(new MouseEvent("pointerdown", { clientX: 200, clientY: 100, button: 1, bubbles: true }));
+        stage.dispatchEvent(new MouseEvent("pointermove", { clientX: 250, clientY: 100, bubbles: true }));
+        stage.dispatchEvent(new MouseEvent("pointerup", { clientX: 250, clientY: 100, bubbles: true }));
+        // 50 screen px at zoom 2 are 50 picture px: the view's left edge 50 px further left.
+        expect(viewBox()[0]).toBeCloseTo(x! - 50, 6);
+        (Array.from(view.root.querySelectorAll("button")).find((node) => node.textContent === "Reset view") as HTMLButtonElement).click();
+        expect(view.zoom()).toBe(1);
+        expect(viewBox()[0]).toBeCloseTo(0, 6);
+        view.stop();
+    });
+
+    test("the arrow keys over the picture move the head the way they point on the picture, turned as shown", () => {
+        // Screen right on an upright picture of a camera rolled a half turn is the machine's +X.
+        const half = { mmPerPx: 0.1, roll: 180, mirror: false };
+        expect(arrowMove(ARROWS["ArrowRight"]!, uprightTurn(180, false), 1, half).map((v) => Number(v.toFixed(9)) + 0)).toEqual([1, 0]);
+        expect(arrowMove(ARROWS["ArrowUp"]!, uprightTurn(180, false), 0.1, half).map((v) => Number(v.toFixed(9)) + 0)).toEqual([0, 0.1]);
+        // Turned a further quarter clockwise by hand, the machine's +Y now points right on the screen.
+        expect(arrowMove(ARROWS["ArrowRight"]!, addTurn(uprightTurn(0, false), -1), 1, { mmPerPx: 0.1, roll: 0, mirror: false }).map((v) => Number(v.toFixed(9)) + 0)).toEqual([0, 1]);
+        // A mirrored camera shown flipped: screen right is still +X.
+        expect(arrowMove(ARROWS["ArrowRight"]!, uprightTurn(0, true), 1, { mmPerPx: 0.1, roll: 0, mirror: true }).map((v) => Number(v.toFixed(9)) + 0)).toEqual([1, 0]);
+        // With the pointer over the picture a key moves the head; elsewhere it is left to the jog keys.
+        const { view, moves } = mounted();
+        const box = view.root.querySelector(".picture-box") as HTMLElement;
+        const press = (key: string, shift = false): KeyboardEvent => {
+            const event = new KeyboardEvent("keydown", { key, shiftKey: shift, bubbles: true, cancelable: true });
+            document.body.dispatchEvent(event);
+            return event;
+        };
+        expect(press("ArrowRight").defaultPrevented).toBe(false);
+        box.dispatchEvent(new MouseEvent("pointerenter"));
+        expect(press("ArrowRight", true).defaultPrevented).toBe(true);
+        expect(moves.at(-1)!.map((v) => Number(v.toFixed(9)) + 0)).toEqual([0.1, 0]);
+        box.dispatchEvent(new MouseEvent("pointerleave"));
+        expect(press("ArrowLeft").defaultPrevented).toBe(false);
         view.stop();
     });
 
@@ -305,6 +347,18 @@ describe("the picture view", () => {
         expect(view.box()).toEqual([0, 20, 50, 45]);
         expect(view.root.querySelector(".mark-box")).not.toBeNull();
         expect(moves).toHaveLength(1);
+        view.setBox(null);
+        // Zoomed out to a half, a box drawn from the empty room around the
+        // picture reaches past what the camera sees: the stage's corner is
+        // half a picture beyond the picture's own corner.
+        const box = view.root.querySelector(".picture-box") as HTMLElement;
+        box.dispatchEvent(Object.assign(new MouseEvent("wheel", { clientX: 250, clientY: 125, bubbles: true, cancelable: true }), { deltaY: 100 }));
+        box.dispatchEvent(Object.assign(new MouseEvent("wheel", { clientX: 250, clientY: 125, bubbles: true, cancelable: true }), { deltaY: 100 }));
+        expect(view.zoom()).toBe(0.5);
+        pointer(stage, "pointerdown", 0, 0, true);
+        pointer(stage, "pointermove", 250, 125, true);
+        pointer(stage, "pointerup", 250, 125, true);
+        expect(view.box()).toEqual([-50, 20, 50, 70]);
         view.setBox(null);
         view.stop();
     });

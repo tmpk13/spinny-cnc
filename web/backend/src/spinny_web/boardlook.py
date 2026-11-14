@@ -1016,6 +1016,14 @@ class BoardLook:
             self._recheck_at = None
             self._forget_known()
 
+    def forget(self) -> None:
+        """The guesses and the place they predict forgotten, the board still
+        loaded: the look starts over on the pictures to come (Clear
+        guesses), as a search does."""
+        self.end_record("searched")
+        self.restart()
+        self._changed = True
+
     def _forget_known(self) -> None:
         self.known = None
         self.guided = 0
@@ -1388,6 +1396,8 @@ def search(
     box: Box | None = None,
     prior: KnownPlace | None = None,
     steer: dict | None = None,
+    picture: tuple[float, float, float] | None = None,
+    outline: Box | None = None,
 ) -> Estimate:
     """Moves the head (`mover`, already begun and at its looking height) so
     the picture's center visits each stop (the head at the stop less the
@@ -1405,13 +1415,18 @@ def search(
     `width` and `height` px, its `scale` mm per px, the head's `speed`
     mm/s and where the picture's center is, `start`) goes to the stop
     expected to narrow the probability most for its time next, instead of
-    the nearest."""
+    the nearest. With `picture` (the full size picture's width, height px
+    and scale mm per px) each stop's picture goes into the look's mosaic,
+    a map of where the search looked, with the board's `outline` drawn
+    where it was found."""
     # The look's own record ends with the consensus it had, then the
     # search starts one afresh.
     look.begin_record(record)
     look.restart(box, prior)
     look.known = known
     look.searching = True
+    if picture is not None and look.job is not None:
+        look.mosaic.begin(look.job, [round(v, 4) for v in outline] if outline is not None else None, "search")
     visited = 0
     covered = False
     made = 0
@@ -1441,6 +1456,8 @@ def search(
         if record is not None:
             record.event("stop_end", index=index, result=result, seconds=round(time.monotonic() - began, 3))
             record.picture(look.client, f"stop-{index:03d}", index=index)
+        if picture is not None:
+            look.mosaic.add(look.client, frame.center, frame.roll, frame.mirror, picture[2], picture[0])
         return result
 
     remaining = list(range(len(stops)))
@@ -1483,6 +1500,8 @@ def search(
                     record.event("check", result=outcome, estimate=best.to_dict(), place=_rounded(place))
                 if outcome == "agreed":
                     final = look.consensus.best or best
+                    if picture is not None:
+                        look.mosaic.finish(final.to_dict())
                     look.remember_found(final)
                     look.publish(force=True)
                     look.end_record("found", only=record, estimate=final.to_dict(), visited=visited, found_at=index, checks=made)

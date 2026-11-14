@@ -3739,6 +3739,8 @@ export class MockBackend implements Api, EventFeed {
             current: this.gcodeId !== null ? this.gcodeId : this.connected ? this.machineOf()?.id ?? null : null,
             used: used !== null && this.machineTexts.has(used) ? used : null,
             problems,
+            // The mock keeps its files in memory; the folder is the backend's in a checkout.
+            folder: "machines (in the page's memory)",
         };
     }
 
@@ -8296,6 +8298,18 @@ export class MockBackend implements Api, EventFeed {
         this.message("info", `scan done: ${this.headLook.scan?.pictures.length ?? 0} pictures of the board`);
         this.emitCamera();
         return this.cameraStateOf();
+    }
+
+    async cameraBoardForget(): Promise<CameraState> {
+        this.headLook.restart();
+        this.emitCamera();
+        return this.cameraStateOf();
+    }
+
+    async topBoardForget(): Promise<PlacingState> {
+        this.topBoardLook.restart();
+        this.emitPlacing();
+        return this.placingStateOf();
     }
 
     /** The mock learns no skew: no machine of its keeps boards' stretch. */

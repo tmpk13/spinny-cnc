@@ -663,3 +663,29 @@ def test_a_search_on_a_frame_taken_while_the_head_settled_counts_through_its_tra
     other = Posterior(board(), box, sessions=1, scale=SCALE)
     other.take(raw, "the head is moving", 0.0, DESIGN.board_to_job, None, None, searched_where="the head is coming to rest")
     assert not other.views and ("search", raw["search"]) not in other._acquisitions
+
+
+def test_a_search_keeps_its_pictures_as_a_map_and_clear_guesses_keeps_the_board_loaded(quick):
+    middle = truth_middle()
+    camera = SearchCamera(FakePcbv())
+    look_ = BoardLook(lambda: camera, publish=lambda: None, paused=lambda: True, options=lambda: {"method": "posterior", "scale": SCALE})
+    look_.start("j1", DESIGN.board_to_job, MIDDLE, lambda captured: "the watcher is held off", features=PADS, outline=OUTLINE)
+    box = (middle[0] - 30.0, middle[1] - 25.0, middle[0] + 30.0, middle[1] + 25.0)
+    stops = search_stops(box, (SIZE[0] * SCALE, SIZE[1] * SCALE), (box[0], box[1]))
+    mover = Mover(camera)
+    try:
+        found = search(
+            look_, mover, stops, (0.0, 0.0), lambda point: PictureFrame(point, 0.0, False), lambda: False, lambda index, count: None, RuntimeError,
+            box=box, picture=(SIZE[0], SIZE[1], SCALE), outline=OUTLINE,
+        )
+        state = look_.mosaic.state()
+        # One picture a stop the search looked from, the checks too.
+        assert state["motion"] == "search" and len(state["pictures"]) == len(mover.places)
+        assert state["estimate"]["center"] == pytest.approx(list(found.center), abs=1e-3)
+        assert look_.state()["scan"]["motion"] == "search"
+        # Clear guesses: the place predicted is forgotten, the board stays loaded.
+        assert look_.consensus.guesses
+        look_.forget()
+        assert look_.job == "j1" and not look_.consensus.guesses and look_.state()["estimate"] is None
+    finally:
+        look_.stop()
