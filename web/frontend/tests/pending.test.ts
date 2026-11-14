@@ -76,6 +76,9 @@ describe("the settings list", () => {
         expect(text.value.slice(text.selectionStart, text.selectionEnd)).toBe("step_us = 2");
         expect(store.get().pending["machine-file"]).toBe(1);
         localStorage.removeItem("spinny.machine");
+        // The editor keeps the focus a click gave it, which would take the
+        // arrow keys from the jog tests that run after these.
+        (document.activeElement as HTMLElement | null)?.blur();
     });
 
     test("a host key the file leaves out is added with the host's value, or named when the host has none", async () => {
@@ -110,6 +113,7 @@ describe("the settings list", () => {
         expect(text.value).toContain("[host]");
         expect(errors().length).toBe(1);
         localStorage.removeItem("spinny.machine");
+        (document.activeElement as HTMLElement | null)?.blur();
     });
 });
 

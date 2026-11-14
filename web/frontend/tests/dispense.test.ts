@@ -236,7 +236,7 @@ describe("a dispenser machine", () => {
         expect(upload).toMatchObject({ mode: "dispense", thickness: 0.3 });
         expect(upload.clear).toBeUndefined();
         // The settings list: the dispensing values are the file's [host] keys.
-        const hosts = settingRows(null, "", store.get().settings, { tool: "dispenser", h_axis: true }).filter((row) => row.entry.kind === "host").map((row) => row.name);
+        const hosts = settingRows(null, "", store.get().settings, { tool: "dispenser", h_axis: true }).filter((row) => row.entry?.kind === "host").map((row) => row.name);
         expect(hosts).toEqual(["tolerance", "travel", "clearance", "gap", "retract", "output", "extrude_rate", "dwell_ms"]);
     });
 

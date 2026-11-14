@@ -1,13 +1,19 @@
 // The Config page's list of every key a machine file can set: the file's
-// value beside the board's, the ones that differ marked, a fuzzy search
-// over the key, the firmware setting it drives and its help. Nothing is
-// edited here: a row clicked takes the editor to its key, and adds the key
-// with the file's value when the file leaves it out, so the file stays the
-// one place a machine is written.
+// value beside the board's (or, for a camera's keys, the camera's), the
+// ones that differ marked, a fuzzy search over the key, the firmware
+// setting it drives, its help and the other words it goes by (a roll is
+// found as rotation or turn, the vacuum's keys by suction). A G-code
+// machine's file lists its own tables instead of the firmware's keys.
+// Nothing is edited here: a row clicked takes the editor to its key, and
+// adds the key with the file's value when the file leaves it out, so the
+// file stays the one place a machine is written.
 
 import { el, replace } from "../dom.ts";
+import { FILE_KEYS, fileValue, takes, textController, type FileKey, type FileValue } from "../filekeys.ts";
 import { MACHINE_KEYS, fuzzyScore, keyLine, sameValue, sectionFor, tomlValue, valueOf, type KeyValue, type MachineKey } from "../machinekeys.ts";
 import { profileOf } from "../profile.ts";
+import type { AppState } from "../state.ts";
+import { parseToml, type TomlTable } from "../toml.ts";
 import type { MachineDocument, SettingsResponse } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
@@ -17,8 +23,12 @@ export interface SettingsListSource {
     document(): MachineDocument | null;
     /** The editor's text now, to tell which scale key the file uses. */
     text(): string;
-    /** Takes the editor to the key, added with `value` when the file leaves it out. */
-    reveal(section: string | null, key: string, value: KeyValue): void;
+    /**
+     * Takes the editor to the key, added with `value` when the file leaves
+     * it out; a key of an array of tables (`array`) is only gone to, in the
+     * first table that gives it.
+     */
+    reveal(section: string | null, key: string, value: FileValue, array?: boolean): void;
 }
 
 /** The host's own values: what each is, since the firmware's schema does not hold them. */
@@ -35,16 +45,134 @@ const HOST_HELP: Record<string, string> = {
     dwell_ms: "ms the needle waits on a dot",
 };
 
+/**
+ * Other words the firmware's keys are looked for by: by the section, which
+ * names the axis or the part of the board, and by the key.
+ */
+const SECTION_WORDS: Record<string, string> = {
+    rail: "x radius r axis",
+    table: "a turntable rotation turn",
+    dispenser: "plunger paste extruder e",
+    slide: "y cross z axis",
+    focus: "z h height depth",
+    probe: "touch",
+    output: "laser spindle pwm power",
+    enable: "relay tool output air assist",
+    drivers: "tmc2209 stepper motor driver",
+    pca9685: "i2c servo",
+    host: "",
+};
+const KEY_WORDS: Record<string, string> = {
+    max_rate: "speed velocity feed",
+    accel: "acceleration",
+    jerk: "corner junction",
+    jog_rate: "jog speed",
+    limit: "travel soft limit max",
+    invert: "reverse direction flip",
+    current_ma: "amps motor current",
+    microsteps: "mres microstep",
+    socket: "driver slot plug",
+    endstop: "limit switch home",
+    endstop_pin: "limit switch gpio",
+    endstop_invert: "limit switch active high",
+    endstop_halt: "limit switch stop",
+    home_pull: "homing back off",
+    home_pos: "homing position",
+    home_travel: "homing length",
+    pin: "gpio",
+    pwm_hz: "frequency",
+    s_max: "power rpm full",
+    s_min: "power minimum",
+    test_ms: "beam test time",
+    full_steps_per_mm: "scale steps resolution",
+    full_steps_per_deg: "scale steps resolution",
+    steps_per_mm: "scale resolution",
+    steps_per_deg: "scale resolution",
+};
+
 /** One row: the key, the section it is in for this machine, and its values. */
 export interface SettingRow {
-    entry: MachineKey;
+    /** The firmware setting or host value it is; null for a key no firmware setting holds (FILE_KEYS). */
+    entry: MachineKey | null;
+    /** The key of the file's own it is, when it is one of those. */
+    fileKey?: FileKey | null;
     section: string | null;
     /** The key as the file says it: a scale's plain key when the file uses that one. */
     name: string;
-    file: KeyValue;
-    board: KeyValue;
+    file: FileValue;
+    /** The board's value, the host's, or a camera's; null where none is known. */
+    board: FileValue;
     differs: boolean;
     help: string;
+}
+
+/** What a row's Sets column says: the firmware setting, `host`, or where a file key's value goes. */
+export function rowSets(row: SettingRow): string {
+    if (row.fileKey) {
+        return row.fileKey.sets;
+    }
+    return row.entry === null ? "" : row.entry.kind === "host" ? "host" : row.entry.setting;
+}
+
+/** The value a click adds a missing key with: the file's, else the board's or the camera's, else what a file without it reads as. */
+export function rowAdds(row: SettingRow): FileValue {
+    if (row.fileKey) {
+        return row.file ?? row.board ?? row.fileKey.fallback;
+    }
+    return row.entry?.kind === "host" ? row.file ?? row.board : row.file;
+}
+
+/** Equal as the list compares a file's value with the live one. */
+function sameFileValue(a: FileValue, b: FileValue): boolean {
+    if (Array.isArray(a) || Array.isArray(b)) {
+        return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, index) => sameFileValue(item, b[index]!));
+    }
+    return sameValue(a, b);
+}
+
+/** A camera key's value as the camera has it now, for the machine shown; null for any other key, or a camera that is not that machine's. */
+export function liveValue(state: Pick<AppState, "camera" | "placing" | "pnp">, document: MachineDocument | null, key: FileKey): FileValue {
+    const capture = ["device", "size", "fps", "pcbv"];
+    if (key.section === "camera") {
+        const camera = state.camera;
+        if (!camera || document?.controller === "gcode") {
+            return null;
+        }
+        if (key.key === "offset") {
+            return [...camera.offset];
+        }
+        return [...capture, "side", "finish", "roll", "mm_per_px"].includes(key.key) ? (camera[key.key as keyof typeof camera] as FileValue) ?? null : null;
+    }
+    const placing = state.placing;
+    if (!document || !placing || placing.machine !== document.id) {
+        return null;
+    }
+    if (key.section === "top_camera") {
+        const top = placing.top;
+        if (!top) {
+            return null;
+        }
+        const measured = top.mm_per_px > 0;
+        if ([...capture, "mark_spot"].includes(key.key)) {
+            return (top[key.key as keyof typeof top] as FileValue) ?? null;
+        }
+        if (key.key === "offset") {
+            return measured && top.offset ? [...top.offset] : null;
+        }
+        return key.key === "roll" && measured ? top.roll : null;
+    }
+    if (key.section === "up_camera") {
+        const pnp = state.pnp;
+        if ([...capture, "nozzle_spot", "part_spot"].includes(key.key)) {
+            return pnp ? (pnp[key.key as keyof typeof pnp] as FileValue) ?? null : null;
+        }
+        const place = placing.camera;
+        if (key.key === "position") {
+            return place.measured && place.position ? [...place.position] : null;
+        }
+        return (key.key === "roll" || key.key === "mirror") && place.mm_per_px > 0 ? place[key.key] : null;
+    }
+    return null;
 }
 
 /** Whether a host key applies to the machine: the dispensing values to a dispenser, the spindle's to a spindle, the travel height to a focus axis. */
@@ -77,13 +205,25 @@ function scaleValue(entry: MachineKey, settings: Record<string, number> | null, 
     return value / micro;
 }
 
-/** The rows for a file and a board, in the keys' order. */
-export function settingRows(document: MachineDocument | null, text: string, settings: SettingsResponse | null, profile: { tool: string; h_axis: boolean }): SettingRow[] {
+/**
+ * The rows for a file and a board, in the keys' order: the firmware's keys
+ * and the host's for a file of this project's firmware, then the keys of
+ * the file's own (for a G-code machine's file, only those). `live` gives a
+ * file key's value as its camera has it.
+ */
+export function settingRows(
+    document: MachineDocument | null,
+    text: string,
+    settings: SettingsResponse | null,
+    profile: { tool: string; h_axis: boolean },
+    live: (key: FileKey) => FileValue = () => null,
+): SettingRow[] {
     const tool = document?.tool ?? profile.tool;
     const focus = document?.focus ?? profile.h_axis;
+    const controller = document?.controller ?? textController(text);
     const help = new Map((settings?.schema ?? []).map((item) => [item.name, item.unit ? `${item.unit}: ${item.help}` : item.help]));
     const rows: SettingRow[] = [];
-    for (const entry of MACHINE_KEYS) {
+    for (const entry of controller === "gcode" ? [] : MACHINE_KEYS) {
         if (entry.kind === "host" && !hostApplies(entry.key, tool, focus)) {
             continue;
         }
@@ -122,6 +262,32 @@ export function settingRows(document: MachineDocument | null, text: string, sett
         }
         rows.push({ entry, section, name, file, board, differs, help: what });
     }
+    let parsed: TomlTable | null = null;
+    try {
+        parsed = parseToml(text);
+    } catch {
+        // A text that does not read gives no file values; its rows stay.
+    }
+    for (const key of FILE_KEYS) {
+        if (!takes(key, controller)) {
+            continue;
+        }
+        const given = fileValue(parsed, key);
+        // A camera's key the file leaves out keeps the camera's own; any
+        // other reads as what a file without it reads as.
+        const file = given ?? (key.sets === "camera" || key.array ? null : key.fallback);
+        const board = live(key);
+        rows.push({
+            entry: null,
+            fileKey: key,
+            section: key.section,
+            name: key.key,
+            file,
+            board,
+            differs: file !== null && board !== null && !sameFileValue(file, board),
+            help: key.help,
+        });
+    }
     return rows;
 }
 
@@ -136,7 +302,7 @@ export function keyTip(rows: SettingRow[], section: string | null, name: string)
     if (!row) {
         return null;
     }
-    if (row.entry.kind === "host") {
+    if (row.entry === null || row.entry.kind === "host") {
         return row.help || null;
     }
     return row.help ? `${row.help} (${row.entry.setting})` : `sets ${row.entry.setting}`;
@@ -162,12 +328,16 @@ export function keyAt(text: string, line: number, column: number): { section: st
     return { section: null, name: match[2]! };
 }
 
-/** The text a row is searched by: its key, the setting it drives and its help. */
-function searchText(row: SettingRow): string {
-    return `${row.section ? `[${row.section}] ` : ""}${row.name} ${row.entry.setting} ${row.help}`;
+/** The text a row is searched by: its key, the setting it drives, its help and the other words it goes by. */
+export function searchText(row: SettingRow): string {
+    const words = row.fileKey
+        ? row.fileKey.words
+        : `${SECTION_WORDS[row.entry?.section ?? ""] ?? ""} ${KEY_WORDS[row.name] ?? ""}`;
+    return `${row.section ? `[${row.section}] ` : ""}${row.name} ${row.entry?.setting ?? ""} ${row.help} ${words}`;
 }
 
-function shown(value: KeyValue): string {
+/** How a value shows in the list: a number to a millionth, a word as it is, a list as TOML writes it. */
+export function shown(value: FileValue): string {
     if (value === null) {
         return "-";
     }
@@ -181,7 +351,7 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
     const search = el("input", {
         type: "search",
         class: "field settings-search",
-        placeholder: "search: key, setting or help",
+        placeholder: "search: key, setting, help or what it does",
         "aria-label": "Search the settings",
         spellcheck: "false",
         autocomplete: "off",
@@ -205,13 +375,20 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
         el("div", { class: "panel-head" }, el("h2", {}, "Settings"), count),
         actions,
         el("p", { class: "muted hint" },
-            "click a row to go to its key in the file, added if missing. Scales are full steps, or firmware steps where the file uses steps_per_mm."),
+            "click a row to go to its key in the file, added if missing. Scales are full steps, or firmware steps where the file uses steps_per_mm. A camera's keys show the camera's values under Board."),
         el("div", { class: "settings-scroll" }, table),
     );
 
+    /** The rows as the store and the file are now. */
+    function rowsNow(state: AppState): SettingRow[] {
+        const document = source.document();
+        return settingRows(document, source.text(), state.settings, profileOf(state.snapshot), (key) => liveValue(state, document, key));
+    }
+
     function refresh(): void {
         const state = ctx.store.get();
-        const rows = settingRows(source.document(), source.text(), state.settings, profileOf(state.snapshot));
+        const rows = rowsNow(state);
+        liveStamp = stampOf(rows);
         const query = search.value.trim();
         let picked = rows.map((row) => ({ row, score: fuzzyScore(query, searchText(row)) })).filter((item) => item.score !== null);
         if (onlyDiffer.checked) {
@@ -230,14 +407,13 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
                     el("span", { class: "mono settings-key" }, row.section ? `[${row.section}] ${row.name}` : row.name),
                     el("span", { class: "muted settings-help" }, row.help),
                 ),
-                el("td", { class: "mono muted" }, row.entry.kind === "host" ? "host" : row.entry.setting),
+                el("td", { class: "mono muted" }, rowSets(row)),
                 el("td", { class: "mono" }, shown(row.file)),
                 el("td", { class: "mono" }, shown(row.board)),
             );
-            // A host key the file leaves out has the host's value, so that
-            // is the value it is added with.
-            const value = row.entry.kind === "host" ? row.file ?? row.board : row.file;
-            line.addEventListener("click", () => source.reveal(row.section, row.name, value));
+            // A key the file leaves out is added with the host's or the
+            // camera's value where there is one.
+            line.addEventListener("click", () => source.reveal(row.section, row.name, rowAdds(row), row.fileKey?.array === true));
             return line;
         }));
         replace(table,
@@ -246,11 +422,24 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
         );
     }
 
+    /** The cameras' values the rows show, as one text. */
+    function stampOf(rows: SettingRow[]): string {
+        return JSON.stringify(rows.filter((row) => row.fileKey?.sets === "camera" || row.fileKey?.key === "roll").map((row) => row.board));
+    }
+    let liveStamp = "";
+
     search.addEventListener("input", () => refresh());
     onlyDiffer.addEventListener("change", () => refresh());
     // The settings, not the snapshot: that comes ten times a second, and a
     // machine of another kind brings new settings with it.
     ctx.store.subscribe(() => refresh(), ["settings"]);
+    // The cameras' states come with their pictures and the head's moves:
+    // the rows are made again only when a value they show has changed.
+    ctx.store.subscribe((state) => {
+        if (stampOf(rowsNow(state)) !== liveStamp) {
+            refresh();
+        }
+    }, ["camera", "placing", "pnp"]);
     refresh();
     return { refresh };
 }

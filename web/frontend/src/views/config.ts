@@ -12,7 +12,8 @@
 import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, lockFor, readStored, replace, setLocked, writeStored } from "../dom.ts";
-import { keyLine, setKey, type KeyValue } from "../machinekeys.ts";
+import type { FileValue } from "../filekeys.ts";
+import { keyLine, setKey } from "../machinekeys.ts";
 import { profileOf } from "../profile.ts";
 import { setPending } from "../state.ts";
 import { setTip } from "../tooltip.ts";
@@ -122,7 +123,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
     const list = mountSettingsList(listRoot, ctx, {
         document: () => checked ?? shown?.document ?? null,
         text: () => editor.getText(),
-        reveal: (section, name, value) => reveal(section, name, value),
+        reveal: (section, name, value, array) => reveal(section, name, value, array === true),
     });
     // An edit not saved is counted on the page's tab.
     const setDirty = (value: boolean): void => {
@@ -177,11 +178,20 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         }, CHECK_AFTER_MS);
     }
 
-    /** The editor at a key: its line selected, or the key added with `value` where the file leaves it out. */
-    function reveal(section: string | null, name: string, value: KeyValue): void {
+    /**
+     * The editor at a key: its line selected, or the key added with `value`
+     * where the file leaves it out. A key of an array of tables (`array`,
+     * [[feeder]]) is gone to in the first table that gives it; one none
+     * gives is typed into the table it belongs in.
+     */
+    function reveal(section: string | null, name: string, value: FileValue, array = false): void {
         let text = editor.getText();
         let line = keyLine(text, section, name);
         if (line === null) {
+            if (array) {
+                ctx.toast("error", `no [[${section}]] table gives ${name}: type it into the one it belongs in`);
+                return;
+            }
             if (editor.syntaxProblem() !== null) {
                 ctx.toast("error", "fix the text first: it does not parse");
                 return;

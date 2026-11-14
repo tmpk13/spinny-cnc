@@ -188,7 +188,7 @@ describe("spindle", () => {
     test("the settings list shows the milling clearance and spin-up on a spindle machine only", () => {
         const profile = (tool: "laser" | "spindle"): { tool: string; h_axis: boolean } => ({ tool, h_axis: false });
         const hostKeys = (tool: "laser" | "spindle"): string[] =>
-            settingRows(null, "", null, profile(tool)).filter((row) => row.entry.kind === "host").map((row) => row.name);
+            settingRows(null, "", null, profile(tool)).filter((row) => row.entry?.kind === "host").map((row) => row.name);
         expect(hostKeys("spindle")).toEqual(["tolerance", "clearance", "spinup", "speed_control"]);
         expect(hostKeys("laser")).toEqual(["tolerance"]);
     });

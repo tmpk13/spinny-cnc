@@ -28,6 +28,9 @@ export interface MachineKey {
 
 export type KeyValue = number | boolean | string | null;
 
+/** A value a file may be given: a key's value, or a list of them (a place, a list of lines). */
+export type TomlWritable = KeyValue | TomlWritable[];
+
 /** Where an axis's endstops are, in the order of the <axis>_stop values. */
 export const ENDSTOPS: readonly string[] = ["none", "min", "max", "both"];
 /** The driver sockets, in the order `sockets` numbers them from 1. */
@@ -190,12 +193,15 @@ export function sameValue(a: KeyValue, b: KeyValue): boolean {
     return a === b;
 }
 
-export function tomlValue(value: KeyValue): string {
+export function tomlValue(value: TomlWritable): string {
+    if (Array.isArray(value)) {
+        return `[${value.map(tomlValue).join(", ")}]`;
+    }
     if (typeof value === "boolean") {
         return value ? "true" : "false";
     }
     if (typeof value === "string") {
-        return `"${value}"`;
+        return JSON.stringify(value);
     }
     if (value === null) {
         return "unset";
@@ -274,7 +280,7 @@ export function removeKey(text: string, section: string | null, name: string): s
  * and its comment kept, or a line added after the section's last key, or
  * the section added before [controls] (or at the end).
  */
-export function setKey(text: string, section: string | null, name: string, value: KeyValue): string {
+export function setKey(text: string, section: string | null, name: string, value: TomlWritable): string {
     const lines = text.split("\n");
     const written = tomlValue(value);
     const pattern = new RegExp(`^(\\s*${escapeRegex(name)}\\s*=\\s*)(.*)$`);
@@ -453,6 +459,18 @@ export function fuzzyScore(query: string, text: string): number | null {
     if (whole >= 0) {
         score += 2 * wanted.length;
         first = Math.min(first, whole);
+    }
+    // So is each word of a query of several found whole: "camera turn"
+    // puts a text holding both words ahead of one where the letters of
+    // "turn" only fall in order ("capture ... resolution").
+    const words = query.toLowerCase().split(/\s+/).filter((word) => word !== "");
+    if (words.length > 1) {
+        for (const word of words) {
+            const at = haystack.indexOf(word);
+            if (at >= 0) {
+                score += 2 * word.length + (at === 0 || /[\s_.[\]=]/.test(haystack[at - 1]!) ? 2 : 0);
+            }
+        }
     }
     return score - first / 100;
 }
