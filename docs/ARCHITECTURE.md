@@ -108,7 +108,10 @@ flowchart LR
         BE --> LOOK[boardlook: the head and top cameras' poses read into guesses of where the board lies, the most likely found at the camera's threshold; corners taken by hand; the search over a box, started at the place known from corners, a find before, Align or references, or the job's own place, which pcbv is told to try first]
         LOOK --> PV
         LOOK --> PV3
-        LOOK --> SLOG[searchlog: every look and search recorded in var/searchlog: poses, stops, a picture at each, the board file, the outcome; searchreport and spinny-search read them back]
+        LOOK --> SLOG[searchlog: every look, search and scan recorded in var/searchlog: poses, stops, a picture at each, the board file, the outcome; searchreport and spinny-search read them back and replay them through the vote and the posterior]
+        LOOK --> POST[posterior: with a camera's look_method posterior, a probability over the board's pose: hypotheses as Gaussians weighed by their evidence, poses drawn from the prior for where nothing has looked, pictures without a lock as evidence; steering a search by expected narrowing; board stretch and a flying scan's camera delay in its state]
+        LOOK --> MOS[mosaic: the newest full scan's pictures, each where the head took it, for the page]
+        POST --> SKEW[skew: boards found with their stretch kept by machine in var/skew.json; their average over turns is the machine's skew, written into a cartesian machine file's steps per mm on request]
         FIND --> V4L[v4l2-ctl: a camera's controls listed and set, kept per camera and set at each start]
         FIND -.-> VID
         FIND -.-> UST
