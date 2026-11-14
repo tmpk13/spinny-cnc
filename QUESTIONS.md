@@ -67,3 +67,11 @@ Why it matters: `web/frontend/src/mock/` is 19.2k lines, a third of the page's s
 - C. Keep it in step with the backend, as now.
 Applied: nothing yet. docs/RESTRUCTURE.md assumes A in phase 3; phases 0 to 2 are the same either way.
 Answer:
+
+## Q10. How should Upright turn a camera's picture?
+Why it matters: a camera mounted upside down showed its picture upside down, and drags went against what the eye expects. Upright is on by default, so its rule changes every camera's view, the bottom camera's included (it looks up, so the backend counts it mirrored).
+- A. By the roll to the nearest quarter turn, flipped when mirrored (recommended): no new setting; screen right is +X and up is +Y on every camera, as on the jog pad; the bottom camera's picture shows a part as from above.
+- B. By the roll only, never flipped: the bottom camera keeps showing what it sees from below.
+- C. A turn of its own per camera (0, 90, 180, 270), apart from the roll: free to differ from the machine's directions.
+Applied: A, in ff3183b.
+Answer:
