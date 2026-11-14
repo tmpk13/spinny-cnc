@@ -434,14 +434,25 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         notes.classList.toggle("hidden", lines.length === 0);
     }
 
+    // What the select was last made from.
+    let pickShown = "";
+
     /** The select: the files by name, and the ones that do not read, by id, so they can be mended; the file in use says so. */
     function renderPick(): void {
         const use = machineInUse(ctx.store.get());
         const mark = (id: string): string => (use.id !== id ? "" : use.how === "last" ? " (last used)" : " (in use)");
-        replace(pick,
-            ...files.map((file) => el("option", { value: file.id }, `${file.name}${mark(file.id)}`)),
-            ...broken.map((entry) => el("option", { value: entry.id }, `${entry.id} (does not parse)`)),
-        );
+        const options = [
+            ...files.map((file) => [file.id, `${file.name}${mark(file.id)}`]),
+            ...broken.map((entry) => [entry.id, `${entry.id} (does not parse)`]),
+        ];
+        // Made again only when what it lists changes: the snapshot comes ten
+        // times a second, and a select whose options are replaced closes.
+        const key = JSON.stringify([options, picked]);
+        if (key === pickShown) {
+            return;
+        }
+        pickShown = key;
+        replace(pick, ...options.map(([value, label]) => el("option", { value: value! }, label!)));
         if (files.length === 0 && broken.length === 0) {
             pick.append(el("option", { value: "", disabled: true }, "no machine files"));
         }
