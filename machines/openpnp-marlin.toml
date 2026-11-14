@@ -66,14 +66,20 @@ pick_tries = 3           # pockets tried for one part before it is left out
 # max_offset = 1.0        # mm a part's center may sit off the nozzle's
 # max_turn = 15           # degrees a part may sit off its angle
 # size_tolerance = 0.3    # a part this fraction off its size is put back; 0 checks no size
+# crop = 3.0              # mm from the picture's center a part is looked for; left out, pcbv's own reach
+# leave = 2.0             # a jog leaving the camera with the tip down goes up to the safe height first
+# roll = 0                # its picture's turn as mounted, degrees; Center nozzle measures it
+# mirror = true           # a camera looking up sees the machine mirrored; false when its driver flips the picture
 
 # The top camera on the head, looking down: it finds the board's fiducials
 # (footprints FID* or named Fiducial), a feeder's marks and a part in its pocket.
 # [top_camera]
 # z = 0                   # the height the head looks from; left out, the safe height
 # offset = [40.0, 0.0]    # its picture's center from the nozzle, as designed; Measure offset finds it
+# roll = 0                # its picture's turn as mounted, degrees (180: upside down); Measure offset measures it
 # fiducial = "bright"     # how a fiducial looks to it
 # within = 2.0            # mm from where it is expected that a fiducial, mark or part is looked for
+# home_fiducial = [60.0, 170.0]  # a fiducial fixed on the bed, as the nozzle's place over it, for Home by fiducial
 
 # One table per feeder; a part is picked from the first one whose words its
 # value and footprint all hold.

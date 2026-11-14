@@ -1403,6 +1403,9 @@ export interface GcodeDocument {
     park: [number, number] | null;
     /** Where the up camera is as designed, before centering measures it. */
     camera_position: [number, number] | null;
+    /** The up camera's roll and mirror as mounted, used until centering measures them; null or missing: none given. */
+    camera_roll?: number | null;
+    camera_mirror?: boolean | null;
     /** The file switches lights for the cameras. */
     light: boolean;
     /** Where a part that failed a check is let go; null puts it back in its pocket. */

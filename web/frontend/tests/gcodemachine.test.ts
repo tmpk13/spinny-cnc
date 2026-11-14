@@ -72,6 +72,26 @@ describe("a G-code machine used like the other machines, in the mock", () => {
         expect(ports.find((port) => port.device === "/dev/ttyACM0")?.machine).toBeNull();
     });
 
+    test("the file's bottom camera roll and mirror stand until centering measures them, as the backend's", async () => {
+        const mock = new MockBackend();
+        await connectGcode(mock, "rig", PROFILE.replace("z = -4\n", "z = -4\nroll = 90\nmirror = false\n"));
+        const state = await mock.placingState();
+        expect(state.document?.camera_roll).toBe(90);
+        expect(state.document?.camera_mirror).toBe(false);
+        expect(state.camera.roll).toBe(90);
+        expect(state.camera.mirror).toBe(false);
+        // A file without them: a camera looking up, mirrored, at roll 0.
+        const plain = gcodeMachineOf(gcodeFile(PROFILE), "rig");
+        expect(plain.camera_roll).toBeNull();
+        expect(plain.camera_mirror).toBeNull();
+        expect((await (async () => {
+            const other = new MockBackend();
+            await connectGcode(other, "rig", PROFILE);
+            return other.placingState();
+        })()).camera.mirror).toBe(true);
+        expect(() => gcodeMachineOf(gcodeFile(PROFILE.replace("z = -4\n", "z = -4\nroll = 400\n")), "rig")).toThrow("[up_camera] roll must be a number from -360 to 360");
+    });
+
     test("a jog moves an axis from where the controller says it is", async () => {
         const mock = await rig();
         let start = await txCount(mock);

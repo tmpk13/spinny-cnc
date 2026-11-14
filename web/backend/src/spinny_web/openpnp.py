@@ -256,6 +256,13 @@ class GcodeMachine:
     # with the nozzle over its picture's center, a first guess that
     # centering the nozzle replaces.
     camera_position: tuple[float, float] | None = None
+    # How the up camera's picture lies as mounted, a first guess too, until
+    # centering the nozzle measures its scale: the turn, degrees from the
+    # picture's x axis to the machine's +X counterclockwise seen from above,
+    # and whether it shows the machine mirrored (a camera looking up does,
+    # unless its driver flips the picture). None leaves the measured one.
+    camera_roll: float | None = None
+    camera_mirror: bool | None = None
     # A jog that takes the nozzle from over the up camera (within this
     # many mm of its place) to farther than that, with the nozzle off the
     # safe height, goes up to the safe height first; None never lifts a
@@ -321,6 +328,8 @@ class GcodeMachine:
             "place_dwell_ms": self.place_dwell_ms,
             "park": list(self.park) if self.park is not None else None,
             "camera_position": list(self.camera_position) if self.camera_position is not None else None,
+            "camera_roll": self.camera_roll,
+            "camera_mirror": self.camera_mirror,
             "light": bool(self.light_on),
             "discard": list(self.discard) if self.discard is not None else None,
             "pick_tries": self.pick_tries,
@@ -748,7 +757,9 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
     max_turn = read.number(camera, "max_turn", "up_camera", 15.0, 0.1, 45.0)
     size_tolerance = read.number(camera, "size_tolerance", "up_camera", 0.3, 0.0, 1.0)
     leave = read.number(camera, "leave", "up_camera", None, 0.0, 1000.0) if "leave" in camera else None
-    read.done(camera, "up_camera", {"z", "position", "crop", "max_offset", "max_turn", "size_tolerance", "leave"})
+    camera_roll = read.number(camera, "roll", "up_camera", None, -360.0, 360.0) if "roll" in camera else None
+    camera_mirror = read.flag(camera, "mirror", "up_camera", True) if "mirror" in camera else None
+    read.done(camera, "up_camera", {"z", "position", "crop", "max_offset", "max_turn", "size_tolerance", "leave", "roll", "mirror"})
     return GcodeMachine(
         id=machine.id,
         name=name or machine.id,
@@ -787,6 +798,8 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
         light_on=light_on,
         light_off=light_off,
         camera_position=camera_position,
+        camera_roll=camera_roll,
+        camera_mirror=camera_mirror,
         leave=leave,
         park=park,
         crop=crop,

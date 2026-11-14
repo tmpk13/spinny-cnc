@@ -551,7 +551,8 @@ quarter turn, and flipped when the camera sees the machine mirrored (the
 bottom camera looking up), so the machine's +X points right and +Y up as
 on the jog pad: a camera mounted upside down shows the right way up once
 its roll says 180, measured by its offset routine or typed (the head
-camera's *Roll deg*, the file's `[camera] roll` or `[top_camera] roll`).
+camera's *Roll deg*, the file's `[camera] roll`, `[top_camera] roll` or
+`[up_camera] roll` and `mirror`).
 Its tooltip says the turn; the marks turn with the picture, their words
 kept level, but pcbv's own marks drawn into the JPEG turn too.
 
@@ -942,7 +943,8 @@ told to advance (`feed`, one line or several); one names its parts by
 `refs` or by the words of `match`. The bottom camera's place on the machine
 comes from its file, or *Camera is here* with the nozzle over it by
 eye, or typed; *Center nozzle* measures it with the picture's scale, roll
-and mirror, then *Measure runout*: the tip is found at six turns of the
+and mirror (the file's `[up_camera] roll` and `mirror` stand until then),
+then *Measure runout*: the tip is found at six turns of the
 nozzle, its runout made up for at every look and place, and a nozzle that
 turns the other way for the file's `rotation_cw` says so. Parts of a
 feeder marked `vision = true` are looked at over the camera turned to the

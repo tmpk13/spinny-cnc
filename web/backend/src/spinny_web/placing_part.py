@@ -167,7 +167,9 @@ class PlacingPart:
     def _up_place(self, machine: GcodeMachine | None) -> CameraPlace:
         """Where the up camera sits on the machine, as centering the nozzle
         over it measured (or the file has it, until then), at the height
-        the file says the nozzle is sharp at."""
+        the file says the nozzle is sharp at. Its roll and mirror are the
+        measured ones once its scale is, else the file's [up_camera] roll
+        and mirror where it gives them."""
         kept = self._placing_config().get("camera")
         kept = kept if isinstance(kept, dict) else {}
         position = kept.get("position")
@@ -175,7 +177,7 @@ class PlacingPart:
             position = list(machine.camera_position)
         runout = kept.get("runout")
         try:
-            return CameraPlace(
+            place = CameraPlace(
                 position=(float(position[0]), float(position[1])) if isinstance(position, list) and len(position) == 2 else None,
                 height=machine.camera_z if machine is not None else None,
                 mm_per_px=float(kept.get("mm_per_px", 0.0)),
@@ -184,7 +186,14 @@ class PlacingPart:
                 runout=(float(runout[0]), float(runout[1])) if isinstance(runout, list) and len(runout) == 2 else None,
             )
         except (TypeError, ValueError):
-            return CameraPlace(height=machine.camera_z if machine is not None else None)
+            place = CameraPlace(height=machine.camera_z if machine is not None else None)
+        if place.mm_per_px <= 0.0 and machine is not None:
+            # Not measured yet: the camera as the file says it is mounted.
+            if machine.camera_roll is not None:
+                place.roll = machine.camera_roll
+            if machine.camera_mirror is not None:
+                place.mirror = machine.camera_mirror
+        return place
 
     def _keep_up_place(self, place: CameraPlace) -> None:
         kept = place.to_dict()

@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 import re
 import time
+from dataclasses import replace
 
 import pytest
 from device_fakes import BoardTopCamera, DeviceTopCamera, DeviceUpCamera, FakeMarlin, LaggingUpCamera, SeenBoard, turn, wait_for
@@ -289,6 +290,30 @@ def test_the_files_top_camera_roll_places_its_pictures_until_a_scale_is_measured
     assert client.backend._top_roll(machine) == 1.5
     # A file without one leaves the settings' roll.
     assert parse(profile(rest=TOP), "rig").top.roll is None
+
+
+def test_the_files_bottom_camera_roll_and_mirror_stand_until_centering_measures_them(client):
+    rig(client, profile(rest=CAMERA + "position = [150.0, 30.0]\nroll = 90\nmirror = false\n"))
+    machine = client.backend.placing_machine()
+    assert machine.camera_roll == 90.0 and machine.camera_mirror is False
+    document = client.get("/api/pnp/placing").json()
+    assert document["document"]["camera_roll"] == 90.0 and document["document"]["camera_mirror"] is False
+    # Not measured: the place the routines and the picture's Upright take is the file's.
+    assert document["camera"]["roll"] == 90.0 and document["camera"]["mirror"] is False
+    # A place set by hand keeps no scale, so the file's roll still stands.
+    assert client.put("/api/pnp/camera", json={"position": [151.0, 31.0]}).status_code == 200
+    assert client.get("/api/pnp/placing").json()["camera"]["roll"] == 90.0
+    # Measured (Center nozzle keeps the scale, roll and mirror together), the measured ones win.
+    client.backend._keep_up_place(replace(client.backend._up_place(machine), mm_per_px=0.02, roll=1.5, mirror=True))
+    camera = client.get("/api/pnp/placing").json()["camera"]
+    assert camera["roll"] == 1.5 and camera["mirror"] is True
+    # A file without them leaves a camera looking up mirrored, at roll 0.
+    plain = parse(profile(rest=CAMERA), "rig")
+    assert plain.camera_roll is None and plain.camera_mirror is None
+    with pytest.raises(MachineError, match=r"\[up_camera\] roll must be a number from -360 to 360"):
+        parse(profile(rest=CAMERA + "roll = 400\n"), "rig")
+    with pytest.raises(MachineError, match=r"\[up_camera\] mirror must be true or false"):
+        parse(profile(rest=CAMERA + 'mirror = "yes"\n'), "rig")
 
 
 def test_the_parts_a_run_places_are_told_to_the_top_cameras_look_for_that_board(client):

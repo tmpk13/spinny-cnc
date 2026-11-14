@@ -7318,6 +7318,11 @@ export class MockBackend implements Api, EventFeed {
         }
         const placing = this.placing();
         const position = this.deviceCameraPosition();
+        // Not measured yet: the up camera as the file says it is mounted.
+        const designed = placing.upPlace.mm_per_px > 0 || !device ? {} : {
+            ...(device.camera_roll !== null ? { roll: device.camera_roll } : {}),
+            ...(device.camera_mirror !== null ? { mirror: device.camera_mirror } : {}),
+        };
         return {
             machine: id,
             name: device?.name ?? null,
@@ -7328,6 +7333,7 @@ export class MockBackend implements Api, EventFeed {
             boards: placing.boards,
             camera: {
                 ...placing.upPlace,
+                ...designed,
                 position: position ? [...position] : null,
                 runout: placing.upPlace.runout ? [...placing.upPlace.runout] : null,
                 height: device?.camera_z ?? null,

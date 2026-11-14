@@ -158,6 +158,9 @@ export interface MockDevice {
     light_off: string[];
     /** Where the up camera is as designed: the head with the nozzle over its picture's center. */
     camera_position: [number, number] | null;
+    /** How the up camera's picture lies as mounted, until centering measures it: its roll and whether it is mirrored; null leaves the measured one. */
+    camera_roll: number | null;
+    camera_mirror: boolean | null;
     /** A jog taking the nozzle from within this many mm of the up camera to farther, off the safe height, rises first; null never. */
     leave: number | null;
     /** Where the head waits out of the way. */
@@ -573,7 +576,9 @@ export function parseGcodeTables(top: TomlTable, id: string, name: string, descr
     device.max_turn = read.number(camera, "max_turn", "up_camera", 15, 0.1, 45);
     device.size_tolerance = read.number(camera, "size_tolerance", "up_camera", 0.3, 0, 1);
     device.leave = "leave" in camera ? read.number(camera, "leave", "up_camera", null, 0, 1000) : null;
-    read.done(camera, "up_camera", ["z", "position", "crop", "max_offset", "max_turn", "size_tolerance", "leave"]);
+    device.camera_roll = "roll" in camera ? read.number(camera, "roll", "up_camera", null, -360, 360) : null;
+    device.camera_mirror = "mirror" in camera ? read.flag(camera, "mirror", "up_camera", true) : null;
+    read.done(camera, "up_camera", ["z", "position", "crop", "max_offset", "max_turn", "size_tolerance", "leave", "roll", "mirror"]);
     return device as MockDevice;
 }
 
@@ -620,6 +625,8 @@ export function deviceDocument(device: MockDevice): GcodeDocument {
         place_dwell_ms: device.place_dwell_ms,
         park: device.park ? [...device.park] : null,
         camera_position: device.camera_position ? [...device.camera_position] : null,
+        camera_roll: device.camera_roll,
+        camera_mirror: device.camera_mirror,
         light: device.light_on.length > 0,
         discard: device.discard ? [...device.discard] : null,
         pick_tries: device.pick_tries,
