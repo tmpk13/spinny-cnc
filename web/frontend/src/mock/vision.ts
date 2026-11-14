@@ -305,8 +305,14 @@ export function controlsNote(device: string): string | null {
     return "pictures replayed from files have no controls";
 }
 
-/** A camera's look settings, as the backend checks them: the threshold 0 to 1, the corners' tolerance 0.1 to 50 mm. */
-export function checkLook(settings: { look_threshold?: number; corner_mm?: number }): void {
+/** A camera's look settings, as the backend checks them: the threshold 0 to 1, the corners' tolerance 0.1 to 50 mm, the method vote or posterior, the scan's motion stop or fly. */
+export function checkLook(settings: { look_threshold?: number; corner_mm?: number; look_method?: string; scan_motion?: string }): void {
+    if (settings.look_method !== undefined && settings.look_method !== "vote" && settings.look_method !== "posterior") {
+        throw new Error("the look's method must be vote or posterior");
+    }
+    if (settings.scan_motion !== undefined && settings.scan_motion !== "stop" && settings.scan_motion !== "fly") {
+        throw new Error("the scan's motion must be stop or fly");
+    }
     const threshold = settings.look_threshold;
     if (threshold !== undefined && !(typeof threshold === "number" && Number.isFinite(threshold) && threshold >= 0 && threshold <= 1)) {
         throw new Error("the look's threshold must be 0 to 1");

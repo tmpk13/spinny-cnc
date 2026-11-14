@@ -779,7 +779,7 @@ when a job's board is loaded, through the job's `design`.
 | `POST /api/cameras/color` | `{"camera": "head", "item": "spots", "x": 640, "y": 360}`: the mean color about that point of the full size picture (pcbv's `color`, 3 px about it) kept in the camera's settings (`colors`) for `spots` (marks, fiducials, pads: spots of that color instead of a shade), `board` (pcbv looks for the board's pads by it; a board loaded is loaded again) or `edges` (a blank board's edges found on it); `{"camera", "item", "clear": true}` forgets it. Answers `{"camera", "item", "rgb", "state"}`. 400 without a point or with the camera stopped |
 | `PUT /api/cameras/controls` | `{"camera": "head", "values": {"auto_exposure": 1, "exposure_time_absolute": 300, "gain": null}}`: each value set on the device now (automatic ones first, each on its own; the camera may be streaming) and kept in that camera's settings (`controls`), to be set again whenever it starts; `null` forgets a kept value. Answers the listing with `refused`, each control v4l2-ctl refused and why. 400 for a name that is not a control's or a value that is not whole |
 | `GET /api/camera` | the camera state (below) |
-| `PUT /api/camera/settings` | any of `{"device": "/dev/video0", "size": "1280x720", "fps": 30, "pcbv": "pcbv", "side": "front", "finish": "masked", "offset": [dx, dy], "roll": 0.4, "mm_per_px": 0.021, "look_threshold": 0.5, "corner_mm": 2.0}` (and `controls`, which the controls' route keeps), kept in the backend's config; `look_threshold` and `corner_mm` are the board look's (Board look, below). 400 for a size that is not `WIDTHxHEIGHT`, a side or finish that is not one of its two words, an offset past 1000 mm, a roll past 360 degrees, a negative scale, a threshold past 0 to 1 or a tolerance past 0.1 to 50 mm. A running camera given another `device`, `size`, `fps` or `pcbv` starts again on them and looks for the board it looked for (409 while the find routine runs; when the start fails, 502 with pcbv's reason, the camera stopped and the settings kept). Returns the state |
+| `PUT /api/camera/settings` | any of `{"device": "/dev/video0", "size": "1280x720", "fps": 30, "pcbv": "pcbv", "side": "front", "finish": "masked", "offset": [dx, dy], "roll": 0.4, "mm_per_px": 0.021, "look_threshold": 0.5, "corner_mm": 2.0, "look_method": "vote", "board_stretch": false, "scan_motion": "stop"}` (and `controls`, which the controls' route keeps), kept in the backend's config; `look_threshold`, `corner_mm`, `look_method` (`vote` or `posterior`) and `board_stretch` are the board look's (Board look, below), `scan_motion` (`stop` or `fly`) the full scan's. 422 for a method or motion not one of its words; 400 for a size that is not `WIDTHxHEIGHT`, a side or finish that is not one of its two words, an offset past 1000 mm, a roll past 360 degrees, a negative scale, a threshold past 0 to 1 or a tolerance past 0.1 to 50 mm. A running camera given another `device`, `size`, `fps` or `pcbv` starts again on them and looks for the board it looked for (409 while the find routine runs; when the start fails, 502 with pcbv's reason, the camera stopped and the settings kept). Returns the state |
 | `POST /api/camera/start` | starts pcbv on the device (`pcbv serve`, or a connection to the socket) with the size and fps; 502 when the program is not found or does not answer `hello` within 5 s, 409 when running. Returns the state; the first frame may take a moment, `frame` is null until then |
 | `POST /api/camera/stop` | stops it; 409 while the find routine runs. The state |
 | `GET /api/camera/frame.jpg?width=640&overlay=1` | the newest picture as JPEG, shrunk to at most `width` (160 to 4096; left out, 640), with the spots and the pose drawn on it when `overlay` is 1 and a crosshair at the center always; 404 when the camera is not running or has no frame yet, 502 when pcbv fails or another request has had it for over 1 s (`the camera is busy`). `Cache-Control: no-store`; the page asks again for every picture |
@@ -924,7 +924,31 @@ pcbv took it (`guided`) or could not (`unguided`); null when no search
 has run on this load or none was known. `record` is the id of
 the newest search record of this look or its search (Search records,
 below). With no board loaded, `{"job": null, "threshold", "corner_mm",
-"corners"}`.
+"method", "board_stretch", "corners"}`.
+
+`method` says how the board is called found: `vote` (above) or
+`posterior`, the camera's `look_method`; `board_stretch` whether the
+posterior fits the board's stretch. With `posterior` the look keeps a
+probability over the board's pose (spinny_web.posterior;
+docs/PROBABILISTIC_SEARCH.md): each place the candidates of one or more
+pictures agree on is a guess whose `probability` is its share of the
+probability, `looks` the pictures that saw it and `sessions` the pcbv
+searches, `spread_mm` and `spread_deg` one standard deviation of its fit;
+`elsewhere` is the probability no place holds yet (where nothing has
+looked), `views` the pictures weighed (those that locked on nothing too),
+`hypotheses` the places kept, `representation` `gaussian` once one place
+holds 90% (else `samples`), `stretch` the most likely place's
+`{"scale_x", "scale_x_sd", "scale_y", "scale_y_sd", "shear_deg",
+"shear_deg_sd"}` with board stretch on (else null) and `delay` the
+camera's delay a flying scan fits (`{"seconds", "sd"}`, else null). The
+board is `found` once the most likely place holds the camera's
+`look_threshold` as a probability, more than the next place and than
+`elsewhere`, its spread within 0.5 mm and 1 degree, from `sessions_needed`
+searches; `need` is 1. A search with the posterior takes its box and the
+place known before (corners aside: they are evidence that rules a place
+out) as the prior, and goes to the stop expected to narrow the
+probability most for its travel and look time next; the check of a place
+found runs as with the vote.
 `POST /api/align/capture` takes a found estimate (the board's middle, its
 place and turn) when the camera has one for that job, else a mark at each
 corner taken of that board, else the newest pose as before.
@@ -1126,7 +1150,7 @@ reference, the angle, a count) needs a G-code machine to keep it for.
 | `POST /api/pnp/nozzle` | on a G-code machine, the bottom camera's nozzle routine (as above) with the nozzle turned to 0, its moves the file's move word and wait command, its place read with the position command; what it measures is kept as the placing state's `camera`. The routine shows in the bottom camera state with `"target": "gcode"` |
 | `POST /api/pnp/runout` | over the bottom camera, the tip found at six turns of the nozzle: the circle they lie on gives `camera.runout` (the tip off the turning axis at 0, mm), which places and looks then make up for; a tip going round the wrong way for `rotation_cw` fails naming it. Kind `runout` in the bottom camera's routine |
 | `POST /api/pnp/fiducials` | `{"job"}`: the top camera finds the board's fiducials where the references put them; two or more replace the hand references (`by: fiducial`); fails when one is not within `within`, or they disagree with their fit by over 0.25 mm. Kind `fiducials` in `top.routine` |
-| `PUT /api/pnp/top` | the top camera's settings, any of `device`, `size`, `fps`, `pcbv`, `mark_spot`, `mark_at`, `offset`, `mm_per_px`, `roll`, `mirror`, the board look's `look_threshold` (0 to 1) and `corner_mm` (0.1 to 50), the board's `side` (`front`, `back`), `finish` (`masked`, `bare`) and `paste` (bool; another side or finish loads a board looked for again, paste is told to pcbv as its assembly), and `clear` (`mark_at`, `offset`); a running camera given another device, size, fps or program starts again. A placing run tells the top camera's pcbv, looking for that job's board, the parts on it: none as it begins (a run places on the next board), then each as it is placed |
+| `PUT /api/pnp/top` | the top camera's settings, any of `device`, `size`, `fps`, `pcbv`, `mark_spot`, `mark_at`, `offset`, `mm_per_px`, `roll`, `mirror`, the board look's `look_threshold` (0 to 1), `corner_mm` (0.1 to 50), `look_method` (`vote` or `posterior`) and `board_stretch` (bool), the board's `side` (`front`, `back`), `finish` (`masked`, `bare`) and `paste` (bool; another side or finish loads a board looked for again, paste is told to pcbv as its assembly), and `clear` (`mark_at`, `offset`); a running camera given another device, size, fps or program starts again. A placing run tells the top camera's pcbv, looking for that job's board, the parts on it: none as it begins (a run places on the next board), then each as it is placed |
 | `POST /api/pnp/top/start`, `.../stop` | starts or stops its pcbv |
 | `GET /api/pnp/top/frame.jpg?width=640&overlay=1` | its picture; 404 before the first |
 | `POST /api/pnp/top/mark` | the nozzle's tip is over a mark: the head's place is kept as `mark_at` |

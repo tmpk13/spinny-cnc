@@ -5045,6 +5045,15 @@ button:disabled {
     vector-effect: non-scaling-stroke;
 }
 
+/* The posterior's last column: the probability no place holds yet. */
+.find-graph .find-column.elsewhere path {
+    fill: color-mix(in oklab, var(--violet) 22%, var(--panel));
+    stroke: var(--violet);
+    stroke-width: 1;
+    stroke-dasharray: 3 2;
+    vector-effect: non-scaling-stroke;
+}
+
 .find-graph .find-hatch-ground {
     fill: color-mix(in oklab, var(--red) 10%, var(--panel));
 }
@@ -5112,6 +5121,11 @@ table.find-guesses tr.ruled-out td {
 
 table.find-guesses tr.found td {
     font-weight: 600;
+}
+
+table.find-guesses tr.elsewhere td {
+    color: var(--muted);
+    font-style: italic;
 }
 
 /* --- movement (src/look.ts) -------------------------------------------- */

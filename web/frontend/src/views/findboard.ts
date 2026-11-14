@@ -12,13 +12,16 @@
 // picture's center put on each) rule out the guesses that put one elsewhere
 // and give a rough place of their own (boardlook.py on the backend). A
 // search starts where the board is known to be and tells pcbv so; a line
-// says what said where.
+// says what said where. The camera's look method picks how the board is
+// called found: the vote among guesses, or the probability over the board's
+// pose (posterior.py), whose columns are its places' probabilities with one
+// more for where nothing has looked yet.
 
 import { CORNER_NAMES } from "../corners.ts";
 import { button, el, labeled, lockFor, numberField, readStored, setLocked, Tracked, writeStored } from "../dom.ts";
 import { formatFixed, formatPercent as percent, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
-import type { BoardCorners, BoardGuess, BoardKnown, BoardLook, CornerName, RefineUse } from "../types.ts";
+import type { BoardCorners, BoardGuess, BoardKnown, BoardLook, BoardStretch, CornerName, LookMethod, RefineUse } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
 import type { MachineBox } from "./picture.ts";
 import { gcodePlacing } from "./placing.ts";
@@ -112,6 +115,19 @@ export function cornersText(corners: BoardCorners | null | undefined, job: strin
     }
     return `${taken}; ${place}, turned ${formatFixed(rough.rotation, 2)} deg, the corners within ${formatFixed(rough.rms, 2)} mm of it`;
 }
+
+/** The board's stretch the posterior fits, as a line; empty without it. */
+export function stretchText(stretch: BoardStretch | null | undefined): string {
+    if (!stretch) {
+        return "";
+    }
+    const scale = (value: number, sd: number) => `${formatFixed(value, 4)} +- ${formatFixed(sd, 4)}`;
+    return `Board stretch: X scale ${scale(stretch.scale_x, stretch.scale_x_sd)}, Y scale ${scale(stretch.scale_y, stretch.scale_y_sd)},`
+        + ` shear ${formatFixed(stretch.shear_deg, 3)} +- ${formatFixed(stretch.shear_deg_sd, 3)} deg off square`;
+}
+
+/** The look methods as the page names them. */
+const METHOD_NAMES: Record<LookMethod, string> = { vote: "Vote among guesses", posterior: "Probability over the pose" };
 
 /** What said where the board was before a search, as the page names it. */
 const KNOWN_SOURCES: Record<BoardKnown["source"], string> = {
@@ -248,16 +264,29 @@ export function mountGuessGraph(preview: (value: number) => void, commit: (value
     });
 
     function render(look: BoardLook | null, value: number): void {
-        const guesses = (look?.guesses ?? []).slice(0, SLOTS);
+        // The posterior keeps the last slot for where nothing has looked yet.
+        const elsewhere = look?.method === "posterior" && typeof look.elsewhere === "number" ? look.elsewhere : null;
+        const guesses = (look?.guesses ?? []).slice(0, elsewhere === null ? SLOTS : SLOTS - 1);
         const slot = (PLOT.x1 - PLOT.x0) / SLOTS;
         const found = look?.found === true;
+        const rest: SVGElement[] = [];
+        if (elsewhere !== null) {
+            const x = PLOT.x0 + guesses.length * slot + (slot - COLUMN) / 2;
+            const top = shareY(elsewhere);
+            rest.push(svg("g", { class: "find-column elsewhere" },
+                svg("title", {}, `where nothing has looked yet: ${percent(elsewhere)} of the probability; the board may lie where no picture has shown it`),
+                svg("path", { d: columnPath(x, top, COLUMN) }),
+                svg("text", { x: x + COLUMN / 2, y: PLOT.base + 11, class: "find-tick", "font-size": 8, "text-anchor": "middle" }, "?"),
+                svg("text", { x: x + COLUMN / 2, y: top - 3, class: "find-value", "font-size": 8, "text-anchor": "middle" }, percent(elsewhere)),
+            ));
+        }
         columns.replaceChildren(...guesses.map((guess, index) => {
             const x = PLOT.x0 + index * slot + (slot - COLUMN) / 2;
             const height = guess.ruled_out ? guess.share : guess.probability;
             const top = shareY(height);
             const kind = guess.ruled_out ? "ruled" : index === 0 && found ? "found" : guess.probability >= value - 1e-9 ? "over" : "under";
             const group = svg("g", { class: `find-column ${kind}` },
-                svg("title", {}, guessTitle(guess, index, kind)),
+                svg("title", {}, guessTitle(guess, index, kind, elsewhere !== null)),
                 svg("path", { d: columnPath(x, top, COLUMN), ...(kind === "ruled" ? { fill: `url(#${hatch})` } : {}) }),
                 svg("text", { x: x + COLUMN / 2, y: PLOT.base + 11, class: "find-tick", "font-size": 8, "text-anchor": "middle" }, `#${index + 1}`),
             );
@@ -266,8 +295,8 @@ export function mountGuessGraph(preview: (value: number) => void, commit: (value
                 group.append(svg("text", { x: x + COLUMN / 2, y: top - 3, class: "find-value", "font-size": 8, "text-anchor": "middle" }, kind === "ruled" ? "out" : percent(guess.probability)));
             }
             return group;
-        }));
-        empty.classList.toggle("hidden", guesses.length > 0);
+        }), ...rest);
+        empty.classList.toggle("hidden", guesses.length > 0 || elsewhere !== null);
         const y = shareY(value);
         line.setAttribute("y1", String(y));
         line.setAttribute("y2", String(y));
@@ -281,9 +310,16 @@ export function mountGuessGraph(preview: (value: number) => void, commit: (value
     return { root: box, render };
 }
 
-/** A guess's tooltip: its share, looks, match, spread and place. */
-function guessTitle(guess: BoardGuess, index: number, kind: string): string {
+/** A guess's tooltip: its share (a probability with the posterior), looks, match, spread and place. */
+function guessTitle(guess: BoardGuess, index: number, kind: string, posterior = false): string {
     const state = kind === "found" ? ", found" : kind === "over" ? ", at or over the threshold" : kind === "ruled" ? ", ruled out by the corners" : ", under the threshold";
+    if (posterior) {
+        const corner = guess.corner_mm !== null ? `; puts a corner ${formatFixed(guess.corner_mm, 2)} mm from where it was taken` : "";
+        const searches = guess.sessions ?? 1;
+        return `#${index + 1}: ${percent(guess.probability)} likely${state}; seen in ${guess.looks} ${guess.looks === 1 ? "picture" : "pictures"} by ${searches} ${searches === 1 ? "search" : "searches"},`
+            + ` within ${formatFixed(guess.spread_mm, 2)} mm and ${formatFixed(guess.spread_deg, 2)} deg (one standard deviation);`
+            + ` middle at ${formatFixed(guess.center[0], 2)}, ${formatFixed(guess.center[1], 2)}, turned ${formatFixed(guess.rotation, 2)} deg${corner}`;
+    }
     const corner = guess.corner_mm !== null ? `; puts a corner ${formatFixed(guess.corner_mm, 2)} mm from where it was taken` : "";
     const match = guess.match !== undefined ? `, matched ${percent(guess.match)}` : "";
     return `#${index + 1}: ${percent(kind === "ruled" ? guess.share : guess.probability)} of the evidence${state}; ${guess.looks} looks${match}, within ${formatFixed(guess.spread_mm, 2)} mm and ${formatFixed(guess.spread_deg, 2)} deg;`
@@ -330,6 +366,16 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
     const graph = mountGuessGraph((value) => show(value), (value) => void setThreshold(value));
     slider.addEventListener("input", () => show(Number(slider.value) / 100));
     slider.addEventListener("change", () => void setThreshold(Number(slider.value) / 100));
+    // How the look calls the board found, and the posterior's board stretch.
+    const method = el("select", { class: "field", "aria-label": "Look method" }) as HTMLSelectElement;
+    method.title = "how the look calls the board found: the vote counts locked looks that agree; the probability weighs every picture, those that locked on nothing too, and keeps some for where nothing has looked yet";
+    method.append(...(Object.keys(METHOD_NAMES) as LookMethod[]).map((key) => el("option", { value: key }, METHOD_NAMES[key])));
+    method.addEventListener("change", () => void tune({ look_method: method.value === "posterior" ? "posterior" : "vote" }));
+    const stretch = el("input", { type: "checkbox", "aria-label": "Board stretch" }) as HTMLInputElement;
+    stretch.title = "the probability also fits the board's X and Y scale and shear (within a fab's tolerance): pictures far apart, or a full scan, measure them";
+    stretch.addEventListener("change", () => void tune({ board_stretch: stretch.checked }));
+    const stretchLabel = el("label", { class: "check-label", title: stretch.title }, stretch, " Board stretch");
+    const stretchLine = el("p", { class: "muted find-stretch" });
     const table = el("table", { class: "find-guesses" });
     const tableBox = el("div", { class: "find-table-box" }, table);
     const more = el("p", { class: "muted find-more" });
@@ -369,6 +415,8 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             el("h3", {}, "Guesses"),
             graph.root,
             el("div", { class: "button-row find-slider-row" }, labeled("Threshold", slider, "labeled inline"), sliderValue),
+            el("div", { class: "button-row" }, labeled("Method", method, "labeled inline"), stretchLabel),
+            stretchLine,
             tableBox,
             more,
             el("h3", {}, "Rough place by corners"),
@@ -405,7 +453,7 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
         options.onChange?.();
     }
 
-    async function tune(patch: { look_threshold?: number; corner_mm?: number }): Promise<void> {
+    async function tune(patch: { look_threshold?: number; corner_mm?: number; look_method?: LookMethod; board_stretch?: boolean }): Promise<void> {
         if (chosen === "top") {
             await into(ctx, "placing", ctx.api.topSettings(patch));
         } else {
@@ -529,14 +577,20 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
     /** The guesses as a table: what the graph shows, in numbers. */
     function renderTable(look: BoardLook | null, threshold: number): void {
         const guesses = look?.guesses ?? [];
-        tableBox.classList.toggle("hidden", guesses.length === 0);
-        if (guesses.length === 0) {
+        // The posterior's table holds where nothing has looked yet, places or none.
+        const rest = look?.method === "posterior" && typeof look.elsewhere === "number";
+        tableBox.classList.toggle("hidden", guesses.length === 0 && !rest);
+        if (guesses.length === 0 && !rest) {
             table.replaceChildren();
             return;
         }
         const corners = guesses.some((guess) => guess.corner_mm !== null);
         const locks = guesses.some((guess) => guess.sessions !== undefined);
-        const heads = ["#", "Share", "Looks", ...(locks ? ["Locks"] : []), "Match", "Spread mm", ...(corners ? ["Corner mm"] : []), "Middle", "Turn deg", ""];
+        const posterior = look?.method === "posterior";
+        const heads = [
+            "#", posterior ? "Probability" : "Share", posterior ? "Pictures" : "Looks", ...(locks ? [posterior ? "Searches" : "Locks"] : []), "Match",
+            "Spread mm", ...(corners ? ["Corner mm"] : []), "Middle", "Turn deg", "",
+        ];
         const rows = guesses.map((guess, index) => {
             const kind = guess.ruled_out ? "ruled out" : index === 0 && look?.found ? "found" : guess.probability >= threshold - 1e-9 ? "over" : "under";
             return el("tr", { class: `find-row ${kind.replace(" ", "-")}` },
@@ -552,6 +606,12 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
                 el("td", {}, kind),
             );
         });
+        if (posterior && typeof look?.elsewhere === "number") {
+            const blank = heads.length - 3;
+            rows.push(el("tr", { class: "find-row elsewhere", title: "the probability no place holds yet: where no picture has shown the board" },
+                el("td", {}, "?"), el("td", {}, percent(look.elsewhere)), el("td", { colspan: String(blank) }, "where nothing has looked yet"), el("td", {}, ""),
+            ));
+        }
         table.replaceChildren(
             el("thead", {}, el("tr", {}, ...heads.map((head) => el("th", {}, head)))),
             el("tbody", {}, ...rows),
@@ -654,6 +714,19 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
         more.textContent = look?.more ? `and ${look.more} more guesses with fewer looks` : "";
         more.classList.toggle("hidden", !look?.more);
         tracked.follow(within, String(look?.corner_mm ?? 2));
+        const lookMethod: LookMethod = look?.method === "posterior" ? "posterior" : "vote";
+        if (document.activeElement !== method) {
+            method.value = lookMethod;
+        }
+        stretch.checked = look?.board_stretch === true;
+        method.disabled = busy;
+        stretch.disabled = busy || lookMethod !== "posterior";
+        stretchLabel.title = lookMethod !== "posterior"
+            ? "board stretch is the probability's: pick Probability over the pose as the method first"
+            : busy ? "a routine is under way" : stretch.title;
+        stretchLabel.classList.toggle("muted", lookMethod !== "posterior");
+        stretchLine.textContent = look?.job ? stretchText(look.stretch) : "";
+        stretchLine.classList.toggle("hidden", stretchLine.textContent === "");
         cornersLine.textContent = cornersText(corners, job?.id ?? null, (id) => state.jobs.find((entry) => entry.id === id)?.name ?? id);
         cornersLine.classList.toggle("hidden", cornersLine.textContent === "");
     }

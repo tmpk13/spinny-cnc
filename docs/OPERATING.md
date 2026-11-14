@@ -631,6 +631,26 @@ camera's picture lies on the board, labeled with its share. The Jobs
 preview draws the board's outline dashed where the most likely guess puts
 it, and the camera pictures draw it over what they show.
 
+*Method* picks how the board is called found, for the camera picked:
+*Vote among guesses* (the default, above) or *Probability over the pose*.
+The probability weighs every picture, also those that locked on nothing:
+a picture that should have shown the board's pads and did not lowers the
+places that would have put them there, and a place repeated along a row
+of pads stays split until a picture at the board's edge tells the two
+apart. Its columns are the places' probabilities, with one more, dashed
+and marked *?*, for where nothing has looked yet; the threshold reads as
+a probability (half means more likely than not, so raise it for caution),
+and the most likely place must also hold more than that last column and
+lie within half a millimeter and a degree. With it, *Search* goes next to
+the stop that should tell the most for the time it takes to get there,
+not the nearest. *Board stretch* (with the probability only) also fits
+the board's X and Y scale and its shear, within a fab's tolerance, and
+says them under the slider; pictures far apart on the board measure them.
+The vote stays the default until search records from the machine show the
+probability finding boards at least as often and as right
+(`mise run search-report -- sweep --method both` replays both on every
+record kept).
+
 *Use as board place* keeps where the found board lies: with the top camera
 as the job's references (two parts far apart; *Find fiducials* then makes
 them exact), with the head camera as marks in the Align panel.

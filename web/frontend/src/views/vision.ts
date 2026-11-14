@@ -106,6 +106,20 @@ export function lookText(look: BoardLook | null | undefined, name: string | null
         ? ` from ${look.sessions} of ${look.sessions_needed} independent locks${look.rechecking ? ", looking afresh for another" : ""}`
         : "";
     const ambiguous = ambiguityText(look);
+    if (look.method === "posterior") {
+        // The probability over the board's pose: its most likely place's
+        // share, and what no place holds yet.
+        const pictures = look.views !== undefined ? `${look.views} ${look.views === 1 ? "picture" : "pictures"}` : "the pictures";
+        const likely = lead && !lead.ruled_out ? formatPercent(lead.probability) : "no place";
+        const rest = typeof look.elsewhere === "number" ? `, ${formatPercent(look.elsewhere)} where nothing has looked yet` : "";
+        if (look.found) {
+            return `${what} found: ${likely} likely from ${pictures}${locks}${spread}${place}${ambiguous}`;
+        }
+        const needs = look.threshold !== undefined ? ` (needs ${formatPercent(look.threshold)})` : "";
+        const pose = look.pose ? look.pose : "no pose yet";
+        const why = look.problem ? ` (${look.problem})` : "";
+        return `looking for ${what}: the most likely place holds ${likely}${needs}${rest}, from ${pictures}${locks}, ${look.locked ?? 0} of ${look.looks ?? 0} locked, now ${pose}${why}${place}${ambiguous}`;
+    }
     if (look.found) {
         return `${what} found: ${look.agree ?? need} looks agree${locks}${spread}${share}${place}${ambiguous}`;
     }

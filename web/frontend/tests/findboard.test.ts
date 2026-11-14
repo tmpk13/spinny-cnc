@@ -4,7 +4,8 @@ import { turned } from "../src/kinematics.ts";
 import { estimateOf, jobSize } from "../src/mock/boardlook.ts";
 import { TOP_TRUTH } from "../src/mock/pnp.ts";
 import type { BoardGuess, BoardLook } from "../src/types.ts";
-import { cornersText, knownText, mountFindBoard, mountGuessGraph, pickedCamera, shownGuesses } from "../src/views/findboard.ts";
+import { cornersText, knownText, mountFindBoard, mountGuessGraph, pickedCamera, shownGuesses, stretchText } from "../src/views/findboard.ts";
+import { lookText } from "../src/views/vision.ts";
 import { click, findButton, runUntilIdle, settle, setup } from "./harness.ts";
 
 const TOP = '[top_camera]\nz = 0\noffset = [34.0, -9.0]\nfiducial = "bright"\nwithin = 2\n';
@@ -66,6 +67,69 @@ describe("the guesses' graph", () => {
         expect(cornersText({ ...two, job: "b2" }, "a1", name)).toBe("2 corners taken of other board: Clear corners, or take this board's");
         const edged = { ...two, points: [{ ...two.points[0]!, by: "edges" as const, angle: 2 }], rough: { ...two.rough, rotation: 2 } };
         expect(cornersText(edged, "a1", name)).toBe("bottom left by its edges at 100.00, 50.00; rough place: middle at 120.00, 65.00, turned 2.00 deg as its edges run");
+    });
+});
+
+describe("the probability over the board's pose", () => {
+    test("its places' probabilities as columns with one more for where nothing has looked, said in the look line and the table", () => {
+        const graph = mountGuessGraph(() => {}, () => {});
+        document.body.append(graph.root);
+        const look: BoardLook = {
+            job: "a1", method: "posterior", found: false, elsewhere: 0.3, views: 4, looks: 20, locked: 6, pose: "locked", threshold: 0.6,
+            guesses: [guess(0.45, { looks: 3, sessions: 2 }), guess(0.25, { looks: 1, sessions: 1 })],
+        };
+        graph.render(look, 0.6);
+        const kinds = Array.from(graph.root.querySelectorAll(".find-column")).map((node) => node.getAttribute("class"));
+        expect(kinds).toEqual(["find-column under", "find-column under", "find-column elsewhere"]);
+        expect(graph.root.querySelector(".find-column.elsewhere title")?.textContent).toContain("where nothing has looked yet: 30%");
+        expect(graph.root.querySelector(".find-column title")?.textContent).toContain("#1: 45% likely, under the threshold; seen in 3 pictures by 2 searches");
+        // Eight slots: seven places and where nothing has looked.
+        graph.render({ ...look, guesses: Array.from({ length: 9 }, () => guess(0.05)) }, 0.6);
+        expect(graph.root.querySelectorAll(".find-column").length).toBe(8);
+        expect(lookText(look, "board")).toBe("looking for board: the most likely place holds 45% (needs 60%), 30% where nothing has looked yet, from 4 pictures, 6 of 20 locked, now locked");
+        expect(lookText({ ...look, found: true, guesses: [guess(0.8, { looks: 3, sessions: 2 })], sessions: 2, sessions_needed: 2, spread_mm: 0.12, spread_deg: 0.08 }, "board"))
+            .toBe("board found: 80% likely from 4 pictures from 2 of 2 independent locks within 0.12 mm and 0.08 deg");
+    });
+
+    test("the board's stretch as a line", () => {
+        expect(stretchText(null)).toBe("");
+        expect(stretchText({ scale_x: 1.0021, scale_x_sd: 0.0008, scale_y: 0.9994, scale_y_sd: 0.0009, shear_deg: 0.012, shear_deg_sd: 0.04 }))
+            .toBe("Board stretch: X scale 1.0021 +- 0.0008, Y scale 0.9994 +- 0.0009, shear 0.012 +- 0.040 deg off square");
+    });
+
+    test("the panel switches the camera's method and its board stretch, and the mock's look follows", async () => {
+        const { store, ctx, root, api, backend, calls } = setup();
+        await api.connect("/dev/ttyACM0");
+        await backend.applyMachine("cartesian-mill");
+        await ctx.refreshState();
+        const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
+        await ctx.refreshJobs();
+        await ctx.selectJob(job.id);
+        await ctx.refreshCamera();
+        mountFindBoard(root, ctx, { page: "test-method", boxes: { head: () => null, top: () => null } });
+        const method = root.querySelector('select[aria-label="Look method"]') as HTMLSelectElement;
+        const stretch = root.querySelector('input[aria-label="Board stretch"]') as HTMLInputElement;
+        expect(method.value).toBe("vote");
+        expect(stretch.disabled).toBe(true);
+        method.value = "posterior";
+        method.dispatchEvent(new Event("change"));
+        await twice();
+        expect(calls.filter((call) => call.name === "cameraSettings").at(-1)?.args[0]).toEqual({ look_method: "posterior" });
+        expect(store.get().camera?.board_look?.method).toBe("posterior");
+        expect(stretch.disabled).toBe(false);
+        stretch.checked = true;
+        stretch.dispatchEvent(new Event("change"));
+        await twice();
+        expect(calls.filter((call) => call.name === "cameraSettings").at(-1)?.args[0]).toEqual({ board_stretch: true });
+        expect(store.get().camera?.board_look?.board_stretch).toBe(true);
+        // A look of the board with the probability: where nothing has looked shows.
+        store.set({ camera: await api.cameraStart() });
+        click(root, "Look for board");
+        await twice();
+        expect(store.get().camera?.board_look?.elsewhere).toBeGreaterThan(0);
+        expect(root.querySelector(".find-column.elsewhere")).not.toBeNull();
+        expect(root.querySelector("tr.find-row.elsewhere")?.textContent).toContain("where nothing has looked yet");
+        await expect(api.cameraSettings({ look_method: "guess" as never })).rejects.toThrow("vote or posterior");
     });
 });
 

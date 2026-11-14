@@ -9,7 +9,7 @@
 
 import { fitRigid } from "../align.ts";
 import { turned } from "../kinematics.ts";
-import type { Board, BoardCorners, BoardEstimate, BoardGuess, BoardKnown, BoardLook, CornerName, Job } from "../types.ts";
+import type { Board, BoardCorners, BoardEstimate, BoardGuess, BoardKnown, BoardLook, CornerName, Job, LookMethod } from "../types.ts";
 import { round4 } from "./jobs.ts";
 import { jobBounds } from "./vision.ts";
 
@@ -44,6 +44,14 @@ const JOB_SHARE = 0.25;
 const JOB_DEG = 15;
 
 export type SearchBox = [number, number, number, number];
+
+/** A camera's look settings as a look reads them: its threshold (0 to 1), corners' tolerance (mm), and its method and board stretch when it says. */
+export interface LookTuning {
+    threshold: number;
+    cornerMm: number;
+    method?: LookMethod;
+    stretch?: boolean;
+}
 
 /** A job's middle (its extent's) and diagonal in its frame. */
 export function jobSize(job: Job): { middle: Board; diagonal: number } {
@@ -225,8 +233,23 @@ export class MockBoardLook {
     /** Mock time since the last pose read, s. */
     elapsed = 0;
 
-    /** `tuning` gives the camera's threshold (0 to 1) and corners' tolerance (mm) as they are now. */
-    constructor(private readonly tuning: () => { threshold: number; cornerMm: number } = () => ({ threshold: LOOK_THRESHOLD, cornerMm: CORNER_MM })) {}
+    /** `tuning` gives the camera's threshold (0 to 1), corners' tolerance (mm), look method and board stretch as they are now. */
+    constructor(private readonly tuning: () => LookTuning = () => ({ threshold: LOOK_THRESHOLD, cornerMm: CORNER_MM })) {}
+
+    /** Whether the camera's look weighs the probability over the board's pose (the backend's posterior.py) rather than votes. */
+    private get posterior(): boolean {
+        return this.tuning().method === "posterior";
+    }
+
+    /**
+     * The share no place holds yet, as the backend's posterior keeps for
+     * where nothing has looked: in this twin, less the more evidence the
+     * looks hold (the backend weighs every picture, those with no lock too).
+     */
+    private get elsewhere(): number {
+        const total = this.guesses.reduce((sum, guess) => sum + (guess.ruledOut ? 0 : guess.weight), 0);
+        return 1 / (1 + total);
+    }
 
     start(job: string): void {
         this.job = job;
@@ -261,6 +284,12 @@ export class MockBoardLook {
 
     get found(): boolean {
         const lead = this.lead;
+        if (this.posterior) {
+            // Two pictures' worth and the threshold as a probability, over
+            // the next place and over where nothing has looked.
+            const next = this.guesses[1]?.probability ?? 0;
+            return lead !== null && lead.looks >= 2 && lead.probability >= this.tuning().threshold - 1e-9 && lead.probability > Math.max(next, this.elsewhere) + 1e-9;
+        }
         if (lead === null || lead.looks < LOOK_NEED || lead.probability < this.tuning().threshold - 1e-9) {
             return false;
         }
@@ -431,8 +460,10 @@ export class MockBoardLook {
             }
         }
         const total = this.guesses.reduce((sum, guess) => sum + (guess.ruledOut ? 0 : guess.weight), 0);
+        // The posterior keeps some of the probability for where nothing has looked.
+        const kept = this.posterior ? 1 - this.elsewhere : 1;
         for (const guess of this.guesses) {
-            guess.probability = total > 0 && !guess.ruledOut ? guess.weight / total : 0;
+            guess.probability = total > 0 && !guess.ruledOut ? (kept * guess.weight) / total : 0;
         }
         this.guesses.sort((a, b) => b.probability - a.probability || b.looks - a.looks || b.newest - a.newest);
     }
@@ -462,17 +493,31 @@ export class MockBoardLook {
 
     state(): BoardLook {
         const { threshold, cornerMm } = this.tuning();
+        const method = this.tuning().method ?? "vote";
+        const boardStretch = method === "posterior" && this.tuning().stretch === true;
         const corners: BoardCorners | null = this.corners === null || this.corners.points.length === 0 ? null : {
             job: this.corners.job,
             points: this.corners.points.map((point) => ({ ...point, job: [...point.job] as [number, number], machine: [...point.machine] as [number, number] })),
             rough: roughPlace(this.corners.points, this.corners.middle),
         };
         if (this.job === null) {
-            return { job: null, threshold, corner_mm: cornerMm, corners };
+            return { job: null, threshold, corner_mm: cornerMm, method, board_stretch: boardStretch, corners };
         }
         const lead = this.lead;
         const total = this.guesses.reduce((sum, guess) => sum + guess.weight, 0);
+        const posterior: Partial<BoardLook> = method !== "posterior" ? {} : {
+            elsewhere: round4(this.elsewhere),
+            representation: lead !== null && lead.probability >= 0.9 ? "gaussian" : "samples",
+            views: this.locked,
+            hypotheses: this.guesses.length,
+            // A fixed stretch stands for the backend's fit, within its own uncertainty.
+            stretch: boardStretch && lead !== null ? { scale_x: 1.0006, scale_x_sd: 0.0012, scale_y: 0.9997, scale_y_sd: 0.0013, shear_deg: 0.004, shear_deg_sd: 0.05 } : null,
+            delay: null,
+        };
         return {
+            method,
+            board_stretch: boardStretch,
+            ...posterior,
             job: this.job,
             looks: this.looks,
             locked: this.locked,

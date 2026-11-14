@@ -1476,6 +1476,9 @@ export interface TopSettings {
     /** The look for a board: the least share of the evidence the most likely guess must hold, 0 to 1, and how far a guess may put a corner taken by hand from where it was taken, mm. */
     look_threshold?: number;
     corner_mm?: number;
+    /** How the look calls the board found, and whether the posterior fits the board's stretch. */
+    look_method?: LookMethod;
+    board_stretch?: boolean;
     /** The board as the top camera sees it: the side, whether solder mask hides its copper, whether it carries paste. */
     side?: CameraSide;
     finish?: CameraFinish;
@@ -1566,6 +1569,28 @@ export type CameraSide = "front" | "back";
 /** Whether solder mask hides the copper the camera looks for. */
 export type CameraFinish = "masked" | "bare";
 
+/**
+ * How a camera's look calls a board found: `vote`, the most likely of the
+ * guesses its locked looks make holding the threshold's share of their
+ * evidence; `posterior`, a probability over the board's pose that every
+ * picture updates, the most likely place holding the threshold as a
+ * probability (spinny_web.posterior).
+ */
+export type LookMethod = "vote" | "posterior";
+
+/** How a full scan takes its pictures: the head at rest at each (`stop`), or on the move (`fly`, this project's firmware only). */
+export type ScanMotion = "stop" | "fly";
+
+/** The board's stretch the posterior fits: X and Y scale and shear (degrees off square), each with its standard deviation. */
+export interface BoardStretch {
+    scale_x: number;
+    scale_x_sd: number;
+    scale_y: number;
+    scale_y_sd: number;
+    shear_deg: number;
+    shear_deg_sd: number;
+}
+
 /** The camera on the head: what it is read with, and how it sits against the tool. */
 export interface CameraSettings {
     /** A V4L2 device, socket://host:port of a pcbv serve elsewhere, or a picture or a directory to replay. */
@@ -1586,6 +1611,10 @@ export interface CameraSettings {
     /** The look for a board: the least share of the evidence the most likely guess must hold, 0 to 1, and how far a guess may put a corner taken by hand from where it was taken, mm. */
     look_threshold?: number;
     corner_mm?: number;
+    /** How the look calls the board found, whether the posterior fits the board's stretch, and how a full scan takes its pictures. */
+    look_method?: LookMethod;
+    board_stretch?: boolean;
+    scan_motion?: ScanMotion;
     /** The lens correction measured from a dot grid, and the colors picked from the picture for what the camera looks for. */
     lens?: CameraLens | null;
     colors?: CameraColors;
@@ -1779,6 +1808,16 @@ export interface BoardLook {
     corners?: BoardCorners | null;
     /** Where the newest search expected the board; null with no search or nothing known. */
     known?: BoardKnown | null;
+    /** How the look calls the board found, and whether the posterior fits the board's stretch. */
+    method?: LookMethod;
+    board_stretch?: boolean;
+    /** The posterior's: the probability no place holds yet (where nothing has looked), whether it is a Gaussian about one peak or spread over places, the pictures (views) and places (hypotheses) it holds, the board's stretch and the camera's delay it fits. */
+    elsewhere?: number;
+    representation?: "samples" | "gaussian";
+    views?: number;
+    hypotheses?: number;
+    stretch?: BoardStretch | null;
+    delay?: { seconds: number; sd: number } | null;
 }
 
 /** One V4L2 control of a camera on the backend's computer, as v4l2-ctl lists it, with the value the camera keeps for it (set at each start). */

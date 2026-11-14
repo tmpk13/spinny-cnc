@@ -107,6 +107,7 @@ import {
     onBoard,
     roughBox,
     searchStops,
+    type LookTuning,
     type MachinePicture,
     type SearchBox,
 } from "./boardlook.ts";
@@ -211,6 +212,7 @@ import type {
     HolePoint,
     HostSettings,
     Job,
+    LookMethod,
     JobIcon,
     JobPatch,
     JobSummary,
@@ -291,8 +293,13 @@ export const MOCK_VERSION = "0.1.0-mock";
 const CLOCK_EPSILON = 1e-9;
 
 /** A camera's look settings, or the backend's defaults where it has none. */
-function lookTuning(settings: { look_threshold?: number; corner_mm?: number }): { threshold: number; cornerMm: number } {
-    return { threshold: settings.look_threshold ?? LOOK_THRESHOLD, cornerMm: settings.corner_mm ?? CORNER_MM };
+function lookTuning(settings: { look_threshold?: number; corner_mm?: number; look_method?: LookMethod; board_stretch?: boolean }): LookTuning {
+    return {
+        threshold: settings.look_threshold ?? LOOK_THRESHOLD,
+        cornerMm: settings.corner_mm ?? CORNER_MM,
+        method: settings.look_method ?? "vote",
+        stretch: settings.board_stretch ?? false,
+    };
 }
 
 /** Why a search gave up, as the backend says it. */
@@ -6298,6 +6305,11 @@ export class MockBackend implements Api, EventFeed {
         }
         if (patch.corner_mm !== undefined) {
             next.corner_mm = patch.corner_mm;
+        }
+        for (const key of ["look_method", "board_stretch", "scan_motion"] as const) {
+            if (patch[key] !== undefined) {
+                (next as unknown as Record<string, unknown>)[key] = patch[key];
+            }
         }
         // A running camera starts again on other capture settings, as the
         // backend's does, but not under the find routine.
