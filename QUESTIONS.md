@@ -124,3 +124,39 @@ Why it matters: the long text it showed was most likely a G-code machine's answe
 - B. Also this program's own release version in the top bar.
 Applied: A, in 214c76f.
 Answer:
+
+## Q18. Should the cameras' `roll` key be renamed?
+Why it matters: operators look for "rotation" or "turn", but `rotation` already names a feeder's part angle and the G-code rotation axis letter.
+- A. Keep `roll`, found by rotation, turn and angle in the settings search (recommended): no file changes, no clash between names.
+- B. Rename it to `turn`, still reading `roll`: the file uses the operator's word, but old files carry two names for one key.
+Applied: A, in b261de4.
+Answer:
+
+## Q19. When should a G-code machine file's camera keys reach the cameras?
+Why it matters: the PNP tab can also change a camera's device, and the file's value wins at whatever moment is chosen.
+- A. When the machine connects (recommended): the cameras come with the machine, as Write to board does for `[camera]`; a device picked on the PNP tab lasts until the next connect unless written into the file.
+- B. Only when Use this machine is pressed: a reconnect keeps what the PNP tab set.
+- C. As defaults where the tab has set nothing: once the tab sets a value, later edits to the file do nothing.
+Applied: A, in b84c583.
+Answer:
+
+## Q20. What should Use this machine do for a board file when nothing is connected?
+Why it matters: the button can connect the board itself, or only remember the choice.
+- A. Connect the board's port when it is listed, then Write to board, which asks first (recommended): one press reaches the machine and nothing is written unasked.
+- B. Only remember the file as the one in use; connecting and writing stay with the Connection tab and Write to board.
+Applied: A, in 78eda0d.
+Answer:
+
+## Q21. Should a release's CAM profiles be offered the way its machine files are?
+Why it matters: copies of `cam/*.toml` never get a newer release's changes either.
+- A. Machine files only for now (recommended): the item named configs; the merge module can take CAM profiles later.
+- B. CAM profiles too, offered on the CAM tab.
+Applied: A, in 7739e33.
+Answer:
+
+## Q22. How should an OpenPnP part's height go into the machine file?
+Why it matters: OpenPnP places a part at the board height plus the part height; these files have one `place_z` per machine or per feeder.
+- A. Set a feeder's `place_z` to the job's board height plus the part height, only when a job is imported with it (recommended): no new key; without a job only the size and a comment come in.
+- B. A new feeder key `height` that a run adds to `[motion] place_z`: works without a job, but `place_z` then means the bare board top.
+Applied: A, in 106a2a8.
+Answer:

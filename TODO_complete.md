@@ -820,3 +820,13 @@
 - The feeder scan's Keep slot, Slot here and Count again buttons have tooltips.
 - The top bar shows the firmware's version (Marlin 2.1.2), its whole description on hover, instead of the long text.
 - The PNP Board panel with no board offers Open a board and the four newest board jobs.
+- G-code machine files carry their cameras: [top_camera] and [up_camera] take device, size, fps, pcbv and spot shades, applied when the machine connects; the virtual LumenPnP connects with its cameras set up.
+- Roll: the head camera ([camera] roll) and the top camera ([top_camera] roll) had it in the file; the bottom camera now has [up_camera] roll and mirror, applying until Center nozzle measures them; the settings search finds roll as rotation, turn or angle.
+- The Config settings list shows every key a file can take (a G-code machine's tables, the cameras, the controls); vacuum keys are found by vacuum or suction; a camera's keys show its live values.
+- Settings list: Copy puts a key on the clipboard as TOML, Insert writes the board's or camera's value into the file, Copy all copies the rows shown.
+- Config tab: find in the machine file (Ctrl+F, matches marked, Enter steps through them), or in every machine file.
+- Imported or edited machine files show without a reload.
+- Use this machine connects a G-code machine, or writes a board file to the board (connecting first if needed), or remembers the file as the one in use; the file in use is named on the Config tab, the Connection tab and the top bar.
+- A release's machine files are offered on the Config tab: new files, or your copy with the release's changes merged and your values kept, with a diff; Take or Keep mine.
+- Components: the parts to place come from the KiCad board; the OpenPnP import now reads parts.xml and packages.xml, giving each feeder its part's body size, and its place_z when a job gives the board height.
+- Servos: the firmware stores each slot's settings in a fixed-layout record (four slots, Q6); a file says how many it uses through its [servo.N] sections, and the jog panel draws bars only for those.
