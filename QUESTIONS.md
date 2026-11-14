@@ -160,3 +160,103 @@ Why it matters: OpenPnP places a part at the board height plus the part height; 
 - B. A new feeder key `height` that a run adds to `[motion] place_z`: works without a job, but `place_z` then means the bare board top.
 Applied: A, in 106a2a8.
 Answer:
+
+## Q23. What should a G-code machine file that does not say `seesaw` do?
+Why it matters: on a seesaw Z (the LumenPnP) a nozzle above the safe height is the other one hanging down; on a plain Z it is just a nozzle held up, which "Nozzle is going down for most operations" asked to keep up.
+- A. As before: moves across come to the safe height from either side, jogs go where sent (recommended, safe for a seesaw nobody marked); a plain Z says `seesaw = false` to keep a high nozzle up, a seesaw says `true` to also stop Z jogs at the safe height (the shipped LumenPnP and virtual files do).
+- B. Plain by default: a high nozzle stays up unless the file says `seesaw = true`; a hand-made seesaw file that leaves it out crosses with its other nozzle down.
+Applied: A, in 8143332 (the PNP agent had applied B in bd8ff6c).
+Answer:
+
+## Q24. On a seesaw, should a Z jog stop at the safe height?
+Why it matters: "N1 up" pressed past 31.5 lowers N2, which is why every move across then brought Z back down.
+- A. Stop at it; a goto to a height above it still lowers N2 (recommended).
+- B. Let jogs pass it as before.
+Applied: A, in bd8ff6c.
+Answer:
+
+## Q25. Where should the picked part's shape be drawn on the top camera's picture?
+Why it matters: about the crosshair it is a stencil for Camera here; where the board's place puts the part, it shows how far that place is off.
+- A. About the crosshair (recommended): jog until the part fills it, then Camera here.
+- B. Where the board's place puts the part.
+- C. Both, in two colors.
+Applied: A, in a39a849.
+Answer:
+
+## Q26. What should Shift and Ctrl picks in the Feeders panel act on?
+Why it matters: the item could mean the feeder list or the scan's results.
+- A. The feeder list: Scan looks for just the picked feeders by id (recommended).
+- B. The scan's results: Keep slot and Slot here act on several at once.
+Applied: A, in 33001e0.
+Answer:
+
+## Q27. Should Clear corners also forget the corners kept as references?
+Why it matters: after Clear corners, Go to part loses the place they gave.
+- A. Yes, a corner is forgotten everywhere; Use as board place makes references that outlast it (recommended).
+- B. No: they stay until dropped in Board on the machine.
+Applied: A, in 2109862.
+Answer:
+
+## Q28. Should a machine file name more bed fiducials than the homing one?
+Why it matters: "Machine Fiducial finding on machines that support it": several would let a fiducial home also check the axes' scale and squareness.
+- A. No, one homing fiducial, as OpenPnP and the LumenPnP have; Home by fiducial now works on the virtual LumenPnP and Find home fiducial corrects without homing (recommended).
+- B. Yes: `[top_camera] fiducials = [...]`, found after the home fiducial, the fit's turn and scale reported (not built).
+Applied: A, in ab08d9c.
+Answer:
+
+## Q29. How should the crosshair's size be set?
+Why it matters: "Resize crosshair" names no unit.
+- A. A share of the view, from a menu: a fortieth, a tenth or a quarter of the view, or across it; one size on screen at any zoom, before the scale is measured too (recommended).
+- B. Millimeters on the machine: a circle the size of a nozzle tip or fiducial; needs the scale and grows with zoom.
+Applied: A, in 0a7054f.
+Answer:
+
+## Q30. Should a routine's marks follow the machine by default?
+Why it matters: the TODO line asks for a toggle but not where it starts.
+- A. Follow: a found spot stays over what it marked as the head jogs (recommended).
+- B. Stay fixed to the picture, as before.
+Applied: A, in d6a2eb7.
+Answer:
+
+## Q31. What should the edge view show?
+Why it matters: "Edge view" could mean the lines Corner by edges uses, or a whole edge-detected picture.
+- A. pcbv's straight edges drawn over the picture: what Corner by edges reads, no pcbv change (recommended).
+- B. An edge-detected picture, every edge pixel: pcbv would have to send such a frame.
+Applied: A, in e3c59b9.
+Answer:
+
+## Q32. Should Corner by edges be logged even with the camera log off?
+Why it matters: other routines are logged only while it is on; search records always are.
+- A. Only while the log is on, like the other routines (recommended).
+- B. Always, like search records.
+Applied: A, in 8943444.
+Answer:
+
+## Q33. What is the top camera's nozzle box for?
+Why it matters: the TODO line asks for a box but not what uses it.
+- A. A hand-drawn mark of where the nozzle shows in the picture, drawn over it; nothing else reads it (recommended).
+- B. A region the vision ignores (a nozzle in view confusing the finder): pcbv would have to skip a box.
+- C. A rough nozzle offset for Measure offset's first look.
+Applied: A, in 476acb2.
+Answer:
+
+## Q34. Where should part size classes be defined, and is a circle crop enough?
+Why it matters: classes set the crop every run uses, and pcbv's spot finder takes only a radius about the picture's center.
+- A. `[[part_class]]` in the G-code machine file, each with a circular crop in mm (recommended): beside the feeders and `[up_camera] crop`, edited in the Config tab, works with pcbv as it is.
+- B. In the bottom camera's settings, a table on the page; or crops as boxes drawn on the picture (pcbv would have to take a box).
+Applied: A, in 5f0cfed.
+Answer:
+
+## Q35. Should camera routines ask before keeping what they find?
+Why it matters: it adds one press after every such routine.
+- A. Ask by default, switched off per camera in View; the API and Auto keep at once (recommended).
+- B. Keep at once by default; ask only where switched on.
+Applied: A, in f6bbbf9.
+Answer:
+
+## Q36. Which routines should ask first?
+Why it matters: Center nozzle, Measure runout and Home by fiducial still keep at once.
+- A. The five that keep an offset, references, a corner or Align marks: Find mark, Measure offset, Find fiducials, Corner by edges, Center features (recommended).
+- B. Also Center nozzle and Measure runout (Home by fiducial's G92 is part of homing).
+Applied: A, in f6bbbf9.
+Answer:

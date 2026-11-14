@@ -830,3 +830,21 @@
 - A release's machine files are offered on the Config tab: new files, or your copy with the release's changes merged and your values kept, with a diff; Take or Keep mine.
 - Components: the parts to place come from the KiCad board; the OpenPnP import now reads parts.xml and packages.xml, giving each feeder its part's body size, and its place_z when a job gives the board height.
 - Servos: the firmware stores each slot's settings in a fixed-layout record (four slots, Q6); a file says how many it uses through its [servo.N] sections, and the jog panel draws bars only for those.
+- Parts to align to: Board on the machine picks N parts spread over the board (fiducials first), adds or drops the picked one, and Next moves the top camera over the next part with no reference.
+- The picked part's pads and body, read from the board file, are drawn about the top camera's crosshair, turned as it lies, to line it up by eye.
+- A corner taken with the top camera is one of the job's references, so Go to part, Find fiducials and Plan work from it at once.
+- Go to part and the moves across never bring a nozzle down: up to the safe height only from below on a plain Z (seesaw = false), from either side on a seesaw or a file that does not say; a seesaw's Z jog stops at the safe height, so N1 up no longer lowers N2.
+- The part picked on the board drawing is lit and scrolled to in the parts list, its group unfolded, even outside the filter's words; a press near a part on the drawing picks it.
+- Pick: the run's picks work on the virtual LumenPnP once a feeder holds the parts; the shipped file has no feeder, so Run now says why nothing places; the camera's outline on the Board drawing no longer takes the press meant for a part.
+- The Feeders list takes Shift and Ctrl/Cmd picks; Scan looks for the picked feeders by id and names those that did not answer.
+- Home by fiducial works on the virtual LumenPnP (its fiducial drawn findable), Find home fiducial corrects the numbers without homing, and the setup's Home step offers it.
+- The camera crosshair is a cross, a circle or both, reaching a fortieth of the view up to across it, set per camera from View.
+- Turn turns a camera picture a quarter clockwise per press over Upright's turn, kept per camera; drags and picks follow.
+- Camera pictures zoom out to a quarter size, showing marks beyond the picture's edges; Reset view restores zoom 1.
+- Spots routines and Look once found stay over the picture until Clear marks, following the machine (View can keep them fixed to the picture).
+- Edges draws the straight edges pcbv finds over a camera's picture.
+- The bottom camera keeps to a part class's crop ([[part_class]] in G-code machine files, picked under its picture), used by runs and Look once; cropping was a circle about the center already, now by class.
+- The top camera keeps a hand-drawn box of where the nozzle shows in its picture.
+- Find mark, Measure offset, Find fiducials, Corner by edges and Center features show what they found under the picture and wait for Keep or Discard.
+- Camera words (spots, lens, roll, rival, look, ...) have their meaning on hover and in a What the words mean list per camera panel.
+- Corner by edges is kept in the camera log with its picture, edges and corner, and in the search record.
