@@ -90,10 +90,26 @@ function bottomCalibration(state: AppState): Calibration | null {
     return pnp && pnp.mm_per_px > 0 ? { mmPerPx: pnp.mm_per_px, roll: pnp.roll, mirror: pnp.mirror } : null;
 }
 
+/** The bottom camera's roll and mirror, measured or not, for Upright. */
+function bottomOrientation(state: AppState): { roll: number; mirror: boolean } | null {
+    const place = gcodePlacing(state) ? state.placing?.camera : state.pnp;
+    return place ? { roll: place.roll, mirror: place.mirror } : null;
+}
+
 /** The top camera's calibration, once measured. */
 export function topCalibration(state: AppState): Calibration | null {
     const top = state.placing?.top;
     return top && top.mm_per_px > 0 ? { mmPerPx: top.mm_per_px, roll: top.roll, mirror: top.mirror } : null;
+}
+
+/** The top camera's roll and mirror for Upright: the roll as measured with its scale, else the machine file's, else the settings'. */
+export function topOrientation(state: AppState): { roll: number; mirror: boolean } | null {
+    const top = state.placing?.top;
+    if (!top) {
+        return null;
+    }
+    const designed = state.placing?.document?.top?.roll ?? null;
+    return { roll: top.mm_per_px > 0 || designed === null ? top.roll : designed, mirror: top.mirror };
 }
 
 /** The machine point under the top camera's picture's center: the head's place plus the camera's offset, measured or the file's. */
@@ -133,6 +149,7 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
         pcbvOverlay: () => false,
         size: (state) => frameSize(state.pnp?.frame, state.pnp?.size),
         calibration: bottomCalibration,
+        orientation: bottomOrientation,
         center: () => null,
         marks: (state, shown) => {
             const size = frameSize(state.pnp?.frame, state.pnp?.size) ?? [1280, 720];
@@ -168,6 +185,7 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
         pcbvOverlay: (state) => (state.placing?.top?.board_look?.job ?? null) !== null,
         size: (state) => frameSize(state.placing?.top?.frame, state.placing?.top?.size),
         calibration: topCalibration,
+        orientation: topOrientation,
         center: topCenter,
         marks: (state, shown) => {
             const topState = state.placing?.top;

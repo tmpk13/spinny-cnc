@@ -1,10 +1,61 @@
 import { describe, expect, test } from "bun:test";
 
 import { boardMarks, foundMarks, frameSize, reachMark } from "../src/views/camview.ts";
-import { armedPick, armPick, clampZoom, disarmPick, dragMove, frameRequestWidth, growBox, machineToPicture, mountPicture, pictureToMachine, spotMarks, stepZoom, zoomText } from "../src/views/picture.ts";
+import { armedPick, armPick, clampZoom, disarmPick, dragMove, frameRequestWidth, growBox, levelText, machineToPicture, mountPicture, pictureToMachine, spotMarks, stepZoom, turnTransform, UNTURNED, unturnOffset, uprightTurn, zoomText } from "../src/views/picture.ts";
 import { click, setup, settle } from "./harness.ts";
 
+/** A CSS or SVG transform list applied to a point: rotate (degrees, clockwise on a y-down screen), scaleX, scale and translate; the last one listed acts first. */
+function transformPoint(list: string, point: [number, number]): [number, number] {
+    const steps = [...list.matchAll(/(rotate|scaleX|scale|translate)\(([^)]*)\)/g)].map((match) => [match[1]!, match[2]!.split(/[\s,]+/).map((value) => parseFloat(value))] as const);
+    let [x, y] = point;
+    for (const [name, args] of steps.reverse()) {
+        if (name === "rotate") {
+            const radians = (args[0]! * Math.PI) / 180;
+            [x, y] = [x * Math.cos(radians) - y * Math.sin(radians), x * Math.sin(radians) + y * Math.cos(radians)];
+        } else if (name === "scaleX") {
+            x *= args[0]!;
+        } else if (name === "scale") {
+            [x, y] = [x * args[0]!, y * (args[1] ?? args[0]!)];
+        } else {
+            [x, y] = [x + args[0]!, y + (args[1] ?? 0)];
+        }
+    }
+    return [x, y];
+}
+
 describe("picture geometry", () => {
+    test("Upright shows the machine's +X to the right and +Y up, whatever the roll and mirror", () => {
+        for (const mirror of [false, true]) {
+            for (const roll of [0, 90, 180, -90, 270, 178.5, 93, -136]) {
+                const turn = uprightTurn(roll, mirror);
+                // A step right on the screen and one up (the screen's y is down), back in the picture, then on the machine.
+                const right = unturnOffset(10, 0, turn);
+                const up = unturnOffset(0, -10, turn);
+                const [rx, ry] = pictureToMachine(right[0], right[1], 1, roll, mirror);
+                const [ux, uy] = pictureToMachine(up[0], up[1], 1, roll, mirror);
+                expect(rx).toBeGreaterThan(Math.abs(ry));
+                expect(uy).toBeGreaterThan(Math.abs(ux));
+                // The CSS turn puts each picture step where the pointer's turn back takes it from.
+                for (const step of [[10, 0], [0, -10], [3, 7]] as [number, number][]) {
+                    const [sx, sy] = transformPoint(turnTransform(turn), unturnOffset(step[0], step[1], turn));
+                    expect(sx).toBeCloseTo(step[0], 9);
+                    expect(sy).toBeCloseTo(step[1], 9);
+                }
+                // Words keep level: their own turn and the picture's cancel about their anchor.
+                const level = levelText(40, 30, turn);
+                const [lx, ly] = transformPoint(turnTransform(turn), (([x, y]) => [x - 40, y - 30] as [number, number])(transformPoint(level ?? "", [45, 30])));
+                expect(lx).toBeCloseTo(5, 9);
+                expect(ly).toBeCloseTo(0, 9);
+            }
+        }
+        expect(uprightTurn(180, false)).toEqual({ quarter: 2, flip: false });
+        expect(uprightTurn(-90, true)).toEqual({ quarter: 3, flip: true });
+        expect(uprightTurn(Number.NaN, false)).toEqual(UNTURNED);
+        expect(turnTransform(uprightTurn(90, true))).toBe("rotate(-90deg) scaleX(-1)");
+        expect(turnTransform(UNTURNED)).toBe("");
+        expect(levelText(1, 2, UNTURNED)).toBeNull();
+    });
+
     test("a picture displacement turns into the machine's mm and back, mirrored or not", () => {
         for (const [roll, mirror] of [[0, false], [37, false], [-120, true], [180, true]] as [number, boolean][]) {
             const [mx, my] = pictureToMachine(12, -7, 0.02, roll, mirror);
@@ -97,18 +148,19 @@ describe("picture geometry", () => {
 });
 
 describe("the picture view", () => {
-    function mounted(rides = true) {
+    function mounted(rides = true, orientation?: { roll: number; mirror: boolean }, key = `test-${rides}`) {
         const { ctx } = setup();
         const moves: [number, number][] = [];
         const view = mountPicture({
-            key: `test-${rides}`,
+            key,
             label: "Test camera",
             rides,
             running: () => true,
             frameUrl: (width, overlay) => `data:image/svg+xml,w=${width}&o=${overlay ? 1 : 0}`,
             pcbvOverlay: () => false,
             size: () => [1000, 500],
-            calibration: () => ({ mmPerPx: 0.1, roll: 0, mirror: false }),
+            calibration: () => ({ mmPerPx: 0.1, roll: orientation?.roll ?? 0, mirror: orientation?.mirror ?? false }),
+            ...(orientation ? { orientation: () => orientation } : {}),
             center: () => [50, 20],
             marks: () => [],
             move: async (mm) => {
@@ -199,6 +251,58 @@ describe("the picture view", () => {
         pointer(stage, "pointerdown", 100, 100);
         pointer(stage, "pointerup", 100, 100);
         expect(picked).toHaveLength(1);
+        view.stop();
+    });
+
+    test("Upright turns a camera upside down the right way up, and the pointer follows the turn", async () => {
+        const { view, stage, moves } = mounted(true, { roll: 180, mirror: false }, "test-upright");
+        expect(stage.style.transform).toBe("rotate(-180deg)");
+        const button = [...view.root.querySelectorAll("button")].find((node) => node.textContent === "Upright")!;
+        expect(button.getAttribute("aria-pressed")).toBe("true");
+        expect(button.title).toContain("turned 180 degrees");
+        const picked: [number, number][] = [];
+        // A click up and left of the center lands down and right of the picture's own center.
+        armPick("test-upright", "here", (point) => picked.push(point));
+        pointer(stage, "pointerdown", 100, 50);
+        pointer(stage, "pointerup", 100, 50);
+        expect(picked[0]![0]).toBeCloseTo(800, 9);
+        expect(picked[0]![1]).toBeCloseTo(400, 9);
+        // A drag to the right on the screen still moves the riding camera's head to -X: the picture follows the pointer.
+        pointer(stage, "pointerdown", 100, 100);
+        pointer(stage, "pointerup", 150, 100);
+        await settle();
+        expect(moves[0]![0]).toBeCloseTo(-10, 9);
+        expect(moves[0]![1]).toBeCloseTo(0, 9);
+        // Switched off: the picture as the camera gives it, kept for the camera.
+        click(view.root, "Upright");
+        expect(stage.style.transform).toBe("");
+        expect(button.getAttribute("aria-pressed")).toBe("false");
+        armPick("test-upright", "here", (point) => picked.push(point));
+        pointer(stage, "pointerdown", 100, 50);
+        pointer(stage, "pointerup", 100, 50);
+        expect(picked[1]).toEqual([200, 100]);
+        click(view.root, "Upright");
+        view.stop();
+    });
+
+    test("a quarter turn stands the picture on its side, and the screen's up is the picture's right", () => {
+        const { view, stage } = mounted(true, { roll: 90, mirror: false }, "test-quarter");
+        expect(stage.style.transform).toBe("rotate(-90deg)");
+        // On its side the stage's box on the screen is 250 wide by 500 high.
+        stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 250, height: 500, right: 250, bottom: 500, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+        const picked: [number, number][] = [];
+        armPick("test-quarter", "here", (point) => picked.push(point));
+        pointer(stage, "pointerdown", 125, 50);
+        pointer(stage, "pointerup", 125, 50);
+        expect(picked[0]![0]).toBeCloseTo(900, 9);
+        expect(picked[0]![1]).toBeCloseTo(250, 9);
+        view.stop();
+    });
+
+    test("a picture without an orientation has no Upright", () => {
+        const { view, stage } = mounted();
+        expect([...view.root.querySelectorAll("button")].some((node) => node.textContent === "Upright")).toBe(false);
+        expect(stage.style.transform).toBe("");
         view.stop();
     });
 

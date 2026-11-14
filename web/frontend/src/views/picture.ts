@@ -12,7 +12,12 @@
 // between them; a drag moves the head so what the camera sees follows the
 // pointer, a line showing the move; a double-click brings a point to the
 // crosshair; Shift and a drag draw the box a search keeps to, in the
-// machine's frame.
+// machine's frame. Upright (on unless switched off, kept per camera) shows
+// the picture turned by the camera's roll to the nearest quarter turn, and
+// flipped when the camera sees the machine mirrored, so the machine's +X
+// points right and +Y up as on the jog pad; the marks turn with it, their
+// words kept level, and the pointer is turned back into the picture's own
+// pixels.
 
 import { button, el, numberField, readStored, writeStored } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
@@ -84,6 +89,64 @@ export function machineToPicture(mx: number, my: number, mmPerPx: number, roll: 
     const u = (mx * c - my * s) / mmPerPx;
     const v = (mx * s + my * c) / mmPerPx;
     return [mirror ? -u : u, -v];
+}
+
+/** How a picture is shown turned: quarter turns counterclockwise on the screen (0 to 3), after flipping it left for right when `flip`. */
+export interface Turn {
+    quarter: number;
+    flip: boolean;
+}
+
+/** The picture as the camera gives it. */
+export const UNTURNED: Turn = { quarter: 0, flip: false };
+
+/**
+ * The turn that shows a camera's picture with the machine's +X to the
+ * right and +Y up: flipped when the picture is mirrored, then turned by the
+ * roll (from the picture's x axis to +X, counterclockwise) to the nearest
+ * quarter turn.
+ */
+export function uprightTurn(roll: number, mirror: boolean): Turn {
+    const quarter = Number.isFinite(roll) ? ((Math.round(roll / 90) % 4) + 4) % 4 : 0;
+    return { quarter, flip: mirror };
+}
+
+/** The cosine and sine of a turn's angle. */
+function quarterTrig(quarter: number): [number, number] {
+    return ([[1, 0], [0, 1], [-1, 0], [0, -1]] as [number, number][])[quarter] ?? [1, 0];
+}
+
+/** The CSS transform that shows a picture turned (flipped first, then turned counterclockwise); empty for none. */
+export function turnTransform(turn: Turn): string {
+    const parts: string[] = [];
+    if (turn.quarter !== 0) {
+        parts.push(`rotate(${-90 * turn.quarter}deg)`);
+    }
+    if (turn.flip) {
+        parts.push("scaleX(-1)");
+    }
+    return parts.join(" ");
+}
+
+/**
+ * A displacement on the screen, CSS px (right and down positive), as one
+ * in the picture shown turned, in the same px before the turn: the
+ * counterclockwise turn undone, then the flip.
+ */
+export function unturnOffset(x: number, y: number, turn: Turn): [number, number] {
+    const [c, s] = quarterTrig(turn.quarter);
+    const u = x * c - y * s;
+    const v = x * s + y * c;
+    return [turn.flip ? -u : u, v];
+}
+
+/** The SVG transform that keeps words at `x`, `y` of a turned picture level on the screen: the turn undone about that point; null for none. */
+export function levelText(x: number, y: number, turn: Turn): string | null {
+    if (turn.quarter === 0 && !turn.flip) {
+        return null;
+    }
+    const at = `${x.toFixed(2)} ${y.toFixed(2)}`;
+    return `translate(${at}) scale(${turn.flip ? -1 : 1} 1) rotate(${90 * turn.quarter}) translate(${(-x).toFixed(2)} ${(-y).toFixed(2)})`;
 }
 
 /**
@@ -254,6 +317,8 @@ export interface PictureOptions {
     /** The picture's full size, px, when known. */
     size(state: AppState): [number, number] | null;
     calibration(state: AppState): Calibration | null;
+    /** The camera's roll and whether its picture is mirrored, measured or not, which Upright turns the picture by; left out, no Upright. */
+    orientation?(state: AppState): { roll: number; mirror: boolean } | null;
     /** The machine point under the picture's center now; null when not known. */
     center(state: AppState): [number, number] | null;
     /** The page's marks over the picture besides the crosshair, the box and a drag; `shown` is what the picture shows now. */
@@ -314,8 +379,12 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     const heightKey = `spinny.picture.${options.key}.height`;
     const boxKey = `spinny.picture.${options.key}.box`;
     const overlayKey = `spinny.picture.${options.key}.overlay`;
+    const uprightKey = `spinny.picture.${options.key}.upright`;
     let zoom = 1;
     let overlayOn = readStored(overlayKey) !== "0";
+    let uprightOn = readStored(uprightKey) !== "0";
+    // The turn the picture is shown at, set at each fit.
+    let turn: Turn = UNTURNED;
     let searchBox: MachineBox | null = options.boxes ? readBox(boxKey) : null;
     let held: number | null = (() => {
         const value = parseFloat(readStored(heightKey) ?? "");
@@ -346,6 +415,16 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     }, "btn btn-quiet btn-small btn-toggle");
     overlay.title = "the page's marks over the picture, and pcbv's pose of a board loaded";
     overlay.setAttribute("aria-pressed", overlayOn ? "true" : "false");
+    const upright = button("Upright", () => {
+        uprightOn = !uprightOn;
+        writeStored(uprightKey, uprightOn ? "1" : "0");
+        upright.setAttribute("aria-pressed", uprightOn ? "true" : "false");
+        fit();
+        draw(ctx.store.get());
+        refresh(true);
+    }, "btn btn-quiet btn-small btn-toggle");
+    upright.setAttribute("aria-pressed", uprightOn ? "true" : "false");
+    upright.title = "show the picture turned by the camera's roll so the machine's +X points right and +Y up";
     const boxLine = el("span", { class: "muted picture-box-line" });
     const clearBox = button("Clear box", () => setBox(null), "btn btn-quiet btn-small");
     clearBox.title = "forget the box: a search then covers the board's size about where the picture is";
@@ -356,6 +435,9 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     cancelPick.title = "pick nothing";
     const pickRow = el("div", { class: "button-row picture-pick-row hidden" }, pickLine, cancelPick);
     const caption = el("div", { class: "button-row picture-caption" }, out, zoomLine, into, overlay);
+    if (options.orientation) {
+        caption.append(upright);
+    }
     /** The picture waits for a pick: a crosshair, and a line saying what for. */
     const showPick = (): void => {
         const label = armedPick(options.key);
@@ -380,12 +462,37 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         return [picture.naturalWidth || 1280, picture.naturalHeight || 720];
     }
 
-    /** The box at its kept height or the picture's own shape, and the stage fitted inside it with the picture's shape. */
+    /** The turn Upright shows the picture at now. */
+    function turnOf(state: AppState): Turn {
+        const orientation = uprightOn ? options.orientation?.(state) ?? null : null;
+        return orientation ? uprightTurn(orientation.roll, orientation.mirror) : UNTURNED;
+    }
+
+    /** The turn and the button's words about it. */
+    function setTurn(state: AppState): void {
+        turn = turnOf(state);
+        stage.style.transform = turnTransform(turn);
+        const orientation = options.orientation?.(state) ?? null;
+        const would = orientation ? uprightTurn(orientation.roll, orientation.mirror) : UNTURNED;
+        const steps = [would.quarter !== 0 ? `turned ${90 * would.quarter} degrees counterclockwise` : "", would.flip ? "flipped left for right" : ""].filter((part) => part !== "");
+        const how = steps.length > 0 ? steps.join(", ") : "the camera's picture is upright already";
+        upright.title = `show the picture turned by the camera's roll so the machine's +X points right and +Y up (${how})`;
+    }
+
+    /**
+     * The box at its kept height or the shape of the picture as shown, and
+     * the stage fitted inside it: laid out in the picture's own shape and
+     * turned about its center, so a quarter turn stands it on its side.
+     */
     function fit(): void {
-        const [width, height] = fullSize(ctx.store.get());
+        const state = ctx.store.get();
+        setTurn(state);
+        const [width, height] = fullSize(state);
+        const sideways = turn.quarter % 2 === 1;
+        const [seenWidth, seenHeight] = sideways ? [height, width] : [width, height];
         if (held === null) {
             box.style.height = "";
-            box.style.aspectRatio = `${width} / ${height}`;
+            box.style.aspectRatio = `${seenWidth} / ${seenHeight}`;
         } else {
             box.style.aspectRatio = "";
             box.style.height = `${held}rem`;
@@ -395,12 +502,19 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
             Object.assign(stage.style, { left: "0", top: "0", width: "100%", height: "100%" });
             return;
         }
-        const shown = Math.min(rect.width, rect.height * (width / height));
-        const shownHeight = shown * (height / width);
-        stage.style.width = `${(100 * shown) / rect.width}%`;
-        stage.style.height = `${(100 * shownHeight) / rect.height}%`;
-        stage.style.left = `${(100 * (rect.width - shown)) / 2 / rect.width}%`;
-        stage.style.top = `${(100 * (rect.height - shownHeight)) / 2 / rect.height}%`;
+        const shown = Math.min(rect.width, rect.height * (seenWidth / seenHeight));
+        const shownHeight = shown * (seenHeight / seenWidth);
+        const [stageWidth, stageHeight] = sideways ? [shownHeight, shown] : [shown, shownHeight];
+        stage.style.width = `${(100 * stageWidth) / rect.width}%`;
+        stage.style.height = `${(100 * stageHeight) / rect.height}%`;
+        stage.style.left = `${(100 * (rect.width - stageWidth)) / 2 / rect.width}%`;
+        stage.style.top = `${(100 * (rect.height - stageHeight)) / 2 / rect.height}%`;
+    }
+
+    /** The stage's own width and height on the screen, CSS px, before its turn: its bounding box's, the other way about when on its side. */
+    function stageSize(): [number, number] {
+        const rect = stage.getBoundingClientRect();
+        return turn.quarter % 2 === 1 ? [rect.height, rect.width] : [rect.width, rect.height];
     }
 
     // A rem in CSS px, read once and again at each resize: marks sized to
@@ -493,13 +607,15 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
 
     // --- the pointer ----------------------------------------------------------------
 
-    /** A pointer's place as a point of the full size picture, the zoom about its center undone. */
+    /** A pointer's place as a point of the full size picture, the turn and the zoom about its center undone. */
     function pictureAt(clientX: number, clientY: number): [number, number] {
         const rect = stage.getBoundingClientRect();
         const [width, height] = fullSize(ctx.store.get());
-        const fx = rect.width > 0 ? (clientX - rect.left) / rect.width : 0.5;
-        const fy = rect.height > 0 ? (clientY - rect.top) / rect.height : 0.5;
-        return [width / 2 + ((fx - 0.5) * width) / zoom, height / 2 + ((fy - 0.5) * height) / zoom];
+        const [stageWidth, stageHeight] = stageSize();
+        const [x, y] = unturnOffset(clientX - (rect.left + rect.width / 2), clientY - (rect.top + rect.height / 2), turn);
+        const fx = stageWidth > 0 ? x / stageWidth : 0;
+        const fy = stageHeight > 0 ? y / stageHeight : 0;
+        return [width / 2 + (fx * width) / zoom, height / 2 + (fy * height) / zoom];
     }
 
     let press: { from: [number, number]; to: [number, number]; client: [number, number]; boxing: boolean } | null = null;
@@ -630,6 +746,12 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
                 // The halo under the letters is a stroke a quarter of the
                 // font wide, so the words read on a light or a dark picture.
                 node = svg("text", { x: mark.x.toFixed(2), y: mark.y.toFixed(2), "font-size": mark.size.toFixed(3), "text-anchor": mark.anchor, "stroke-width": (mark.size / 4).toFixed(3) });
+                {
+                    const level = levelText(mark.x, mark.y, turn);
+                    if (level !== null) {
+                        node.setAttribute("transform", level);
+                    }
+                }
                 node.textContent = mark.text;
                 node.setAttribute("class", `mark-label mark-label-${mark.tone}`);
                 return node;
@@ -658,7 +780,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
             marks.push({ kind: "line", points: [[width / 2, height / 2 - arm], [width / 2, height / 2 + arm]], tone: "center" });
             // A stage not laid out yet is taken as wide as an unknown one
             // is asked for; the observer draws again once it is.
-            const screen = stage.getBoundingClientRect().width || box.getBoundingClientRect().width || 640;
+            const screen = stageSize()[0] || box.getBoundingClientRect().width || 640;
             const shown: PictureShown = {
                 size: [width, height],
                 region: [width / 2 - shownWidth / 2, height / 2 - shownHeight / 2, shownWidth, shownHeight],
@@ -706,7 +828,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
             return;
         }
         last = now;
-        const shown = stage.getBoundingClientRect().width || box.getBoundingClientRect().width || 640;
+        const shown = stageSize()[0] || box.getBoundingClientRect().width || 640;
         const size = options.size(state);
         const width = frameRequestWidth(shown, globalThis.devicePixelRatio ?? 1, zoom, size ? size[0] : null);
         marked = overlayOn && options.pcbvOverlay(state);

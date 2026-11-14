@@ -512,7 +512,15 @@ its own shape back. *Overlay* switches the page's marks over it (the
 crosshair, the circle a spot is looked for within, a spot found with its
 ellipse and box, a search box, the board where the looks put it, the
 known points below) and pcbv's pose of a loaded board; the marks keep
-thin lines at any zoom.
+thin lines at any zoom. *Upright* (on unless switched off, kept per
+camera) shows the picture turned by the camera's roll to the nearest
+quarter turn, and flipped when the camera sees the machine mirrored (the
+bottom camera looking up), so the machine's +X points right and +Y up as
+on the jog pad: a camera mounted upside down shows the right way up once
+its roll says 180, measured by its offset routine or typed (the head
+camera's *Roll deg*, the file's `[camera] roll` or `[top_camera] roll`).
+Its tooltip says the turn; the marks turn with the picture, their words
+kept level, but pcbv's own marks drawn into the JPEG turn too.
 
 Blue rings mark the points whose place on the machine is known, where
 they fall in the picture, so a glance says whether what the page holds

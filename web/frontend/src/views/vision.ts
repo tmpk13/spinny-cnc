@@ -147,6 +147,7 @@ export function mountVisionView(root: HTMLElement, ctx: Ctx, visible: () => bool
         pcbvOverlay: (state) => (state.camera?.board ?? null) !== null,
         size: (state) => frameSize(state.camera?.frame, state.camera?.size),
         calibration: headCalibration,
+        orientation: (state) => (state.camera ? { roll: state.camera.roll, mirror: false } : null),
         center: headCenter,
         marks: (state, shown) => {
             const camera = state.camera;
