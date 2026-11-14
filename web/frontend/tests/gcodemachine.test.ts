@@ -92,6 +92,25 @@ describe("a G-code machine used like the other machines, in the mock", () => {
         expect(() => gcodeMachineOf(gcodeFile(PROFILE.replace("z = -4\n", "z = -4\nroll = 400\n")), "rig")).toThrow("[up_camera] roll must be a number from -360 to 360");
     });
 
+    test("the file's camera settings go into the cameras as the machine connects, as the backend's", async () => {
+        const mock = new MockBackend();
+        await mock.pnpSettings({ device: "/dev/video7", fps: 15 });
+        const text = PROFILE
+            .replace("z = -4\n", 'z = -4\ndevice = "http://127.0.0.1:2328/snapshot"\nsize = "640x480"\nnozzle_spot = "bright"\n')
+            .replace("offset = [20.0, 60.0]\n", 'offset = [20.0, 60.0]\ndevice = "http://127.0.0.1:2329/snapshot"\nsize = "640x480"\nmark_spot = "bright"\n');
+        await connectGcode(mock, "rig", text);
+        const state = await mock.placingState();
+        expect(state.document?.camera_settings).toEqual({ device: "http://127.0.0.1:2328/snapshot", size: "640x480", nozzle_spot: "bright" });
+        expect(state.document?.top?.settings).toEqual({ device: "http://127.0.0.1:2329/snapshot", size: "640x480", mark_spot: "bright" });
+        expect([state.top?.device, state.top?.size, state.top?.mark_spot]).toEqual(["http://127.0.0.1:2329/snapshot", "640x480", "bright"]);
+        const bottom = await mock.pnp();
+        expect([bottom.device, bottom.size, bottom.nozzle_spot, bottom.fps]).toEqual(["http://127.0.0.1:2328/snapshot", "640x480", "bright", 15]);
+        // Each key is checked as the backend checks it.
+        expect(() => gcodeMachineOf(gcodeFile(PROFILE.replace("z = -4\n", 'z = -4\nsize = "big"\n')), "rig")).toThrow("[up_camera] size must be WIDTHxHEIGHT");
+        expect(() => gcodeMachineOf(gcodeFile(PROFILE.replace("z = -4\n", "z = -4\nfps = 500\n")), "rig")).toThrow("[up_camera] fps must be a whole number from 1 to 120");
+        expect(() => gcodeMachineOf(gcodeFile(PROFILE.replace("offset = [20.0, 60.0]\n", 'offset = [20.0, 60.0]\ndevice = ""\n')), "rig")).toThrow("[top_camera] device must name it");
+    });
+
     test("a jog moves an axis from where the controller says it is", async () => {
         const mock = await rig();
         let start = await txCount(mock);

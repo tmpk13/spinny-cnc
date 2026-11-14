@@ -292,6 +292,33 @@ def test_the_files_top_camera_roll_places_its_pictures_until_a_scale_is_measured
     assert parse(profile(rest=TOP), "rig").top.roll is None
 
 
+def test_the_files_camera_settings_go_into_the_cameras_as_the_machine_connects(client):
+    # The page set its own before: what the file leaves out stays.
+    assert client.put("/api/pnp/settings", json={"device": "/dev/video7", "fps": 15}).status_code == 200
+    top = TOP + 'device = "http://127.0.0.1:2329/snapshot"\nsize = "640x480"\nmark_spot = "bright"\n'
+    up = CAMERA + 'device = "http://127.0.0.1:2328/snapshot"\nsize = "640x480"\nnozzle_spot = "bright"\n'
+    rig(client, profile(rest=top + up))
+    machine = client.backend.placing_machine()
+    assert machine.top is not None and machine.top.settings == {"device": "http://127.0.0.1:2329/snapshot", "size": "640x480", "mark_spot": "bright"}
+    assert machine.camera_settings == {"device": "http://127.0.0.1:2328/snapshot", "size": "640x480", "nozzle_spot": "bright"}
+    taken = client.backend.top.settings()
+    assert (taken.device, taken.size, taken.mark_spot) == ("http://127.0.0.1:2329/snapshot", "640x480", "bright")
+    bottom = client.get("/api/pnp").json()
+    assert (bottom["device"], bottom["size"], bottom["nozzle_spot"], bottom["fps"]) == ("http://127.0.0.1:2328/snapshot", "640x480", "bright", 15)
+    document = client.get("/api/pnp/placing").json()["document"]
+    assert document["top"]["settings"]["device"] == "http://127.0.0.1:2329/snapshot" and document["camera_settings"]["size"] == "640x480"
+    # Each key is checked as the camera's settings check it.
+    for rest, words in (
+        (CAMERA + 'size = "big"\n', "[up_camera] size must be WIDTHxHEIGHT"),
+        (CAMERA + "fps = 500\n", "[up_camera] fps must be a whole number from 1 to 120"),
+        (TOP + 'device = ""\n', "[top_camera] device must name it"),
+        (TOP + 'mark_spot = "grey"\n', "[top_camera] mark_spot must be dark or bright"),
+    ):
+        with pytest.raises(MachineError) as error:
+            parse(profile(rest=rest), "rig")
+        assert words in str(error.value)
+
+
 def test_the_files_bottom_camera_roll_and_mirror_stand_until_centering_measures_them(client):
     rig(client, profile(rest=CAMERA + "position = [150.0, 30.0]\nroll = 90\nmirror = false\n"))
     machine = client.backend.placing_machine()

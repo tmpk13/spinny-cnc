@@ -1017,10 +1017,12 @@ the nozzle open, 231 with a part on it. Three Photon feeders answer on
 the bus (addresses 1 to 3; the program prints their ids for `bus_id`).
 
 Connect *Virtual LumenPnP* (`machines/virtual-pnp.toml`) on the Connection tab.
-Give the bottom (up) camera the device `http://127.0.0.1:2328/snapshot`
-and the top camera `http://127.0.0.1:2329/snapshot`, size 640x480 (or
-start the backend with `SPINNY_CAMERA_PORTS="2325 2326 2328 2329"` and
-pick them from the list). pcbv reads them as it reads a Pi's camera.
+Its file gives the bottom (up) camera the device
+`http://127.0.0.1:2328/snapshot` and the top camera
+`http://127.0.0.1:2329/snapshot`, size 640x480, which the cameras take as
+it connects (start the backend with `SPINNY_CAMERA_PORTS="2325 2326 2328
+2329"` to see them in the cameras list too). pcbv reads them as it reads
+a Pi's camera.
 
 - The nozzle picks a part wherever its tip comes down to Z 16.5 or lower
   with the suction on (the pump and N1's valve), except over the bottom

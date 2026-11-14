@@ -7386,10 +7386,40 @@ export class MockBackend implements Api, EventFeed {
         this.gcodeFirmware = /FIRMWARE_NAME:\s*(.+?)(?:\s+[A-Z_]+:|$)/.exec(answer)?.[1]?.trim() ?? null;
         this.deviceHere(device);
         this.message("info", `connected to ${url}: ${device.name}${this.gcodeFirmware ? `, ${this.gcodeFirmware}` : ""} (mock)`);
+        this.takeCameraSettings(device);
         const snapshot = this.snapshot();
         this.emit({ type: "state", data: snapshot });
+        this.emitPnp();
         this.emitPlacing();
         return snapshot;
+    }
+
+    /**
+     * The cameras' own settings the machine's file names put into the
+     * cameras as it connects, as the backend's take_camera_settings: what the
+     * file leaves out stays, and a camera that cannot take them says so.
+     */
+    private takeCameraSettings(device: MockDevice): void {
+        const top = device.top?.settings ?? {};
+        if (Object.keys(top).length > 0) {
+            const next = { ...this.topConfig, ...top } as TopSettings;
+            try {
+                checkTopSettings(next);
+                this.topConfig = next;
+            } catch (error) {
+                this.message("error", `${device.name}: the top camera did not take the file's settings: ${errorText(error)}`);
+            }
+        }
+        const up = device.camera_settings;
+        if (Object.keys(up).length > 0) {
+            const next = { ...this.pnpConfig, ...up } as PnpSettings;
+            try {
+                checkPnpSettings(next);
+                this.pnpConfig = next;
+            } catch (error) {
+                this.message("error", `${device.name}: the bottom camera did not take the file's settings: ${errorText(error)}`);
+            }
+        }
     }
 
     /** Lets the G-code machine's port go, a placing run on it stopped first. */

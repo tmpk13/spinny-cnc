@@ -106,6 +106,10 @@ z = 4.0
 max_offset = 1.0
 max_turn = 15
 size_tolerance = 0.3
+# spinny-virtual-pnp's bottom camera, taken by the bottom camera when the
+# machine connects.
+device = "http://127.0.0.1:2328/snapshot"
+size = "640x480"
 
 # The top camera's offset as designed; the virtual one sits a few tenths
 # off, which Measure offset finds from the dark mark at 150, 150.
@@ -113,6 +117,8 @@ size_tolerance = 0.3
 offset = [23.544, 65.188]
 fiducial = "bright"
 within = 2.0
+device = "http://127.0.0.1:2329/snapshot"   # spinny-virtual-pnp's top camera
+size = "640x480"
 # The LumenPnP's homing fiducial, drawn on the virtual bed; a home leaves
 # the virtual head a little off (--home-error) for Home by fiducial.
 home_fiducial = [60.91, 175.23]

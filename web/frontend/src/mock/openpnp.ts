@@ -22,6 +22,13 @@ const SHADES = ["dark", "bright"];
 export const DEFAULT_VACUUM_PATTERN = "T:\\s*(-?[0-9]+(?:\\.[0-9]+)?)";
 /** OpenPnP's patterns name their group the Java way, (?<Value>...); the backend keeps them as Python's (?P<Value>...). */
 const JAVA_GROUP = /\(\?<(?![=!])/g;
+/** A camera's capture size, as the camera settings take it. */
+const CAPTURE_SIZE = /^[1-9][0-9]{1,4}x[1-9][0-9]{1,4}$/;
+/** A camera's own settings a G-code machine's file may name in its [top_camera] or [up_camera], as openpnp.TOP_CAMERA_SETTINGS and UP_CAMERA_SETTINGS. */
+export const TOP_CAMERA_SETTINGS = ["device", "size", "fps", "pcbv", "mark_spot"] as const;
+export const UP_CAMERA_SETTINGS = ["device", "size", "fps", "pcbv", "nozzle_spot", "part_spot"] as const;
+/** The camera settings a file names, by key. */
+export type CameraTake = Record<string, string | number>;
 
 export interface MockFeeder {
     id: string;
@@ -108,6 +115,8 @@ export interface MockTopProfile {
     within: number;
     /** A fiducial on the bed, as the nozzle's place over it: Home by fiducial finds it. */
     home_fiducial: [number, number] | null;
+    /** The camera's own settings the file names, put into it as the machine connects. */
+    settings: CameraTake;
 }
 
 export interface MockDevice {
@@ -161,6 +170,8 @@ export interface MockDevice {
     /** How the up camera's picture lies as mounted, until centering measures it: its roll and whether it is mirrored; null leaves the measured one. */
     camera_roll: number | null;
     camera_mirror: boolean | null;
+    /** The up camera's own settings the file names, put into it as the machine connects. */
+    camera_settings: CameraTake;
     /** A jog taking the nozzle from within this many mm of the up camera to farther, off the safe height, rises first; null never. */
     leave: number | null;
     /** Where the head waits out of the way. */
@@ -268,6 +279,34 @@ class Reader {
             throw this.fail(section, key, `must be a whole number from ${low} to ${high}`);
         }
         return value;
+    }
+
+    /** A camera's own settings the table names, of `keys`, each checked as the camera's settings check it. */
+    camera(table: TomlTable, section: string, keys: readonly string[]): CameraTake {
+        const taken: CameraTake = {};
+        for (const key of keys) {
+            if (!(key in table)) {
+                continue;
+            }
+            if (key === "device" || key === "pcbv") {
+                const value = this.text(table, key, section, "");
+                if (!value) {
+                    throw this.fail(section, key, "must name it");
+                }
+                taken[key] = value;
+            } else if (key === "size") {
+                const value = this.text(table, key, section, "");
+                if (!CAPTURE_SIZE.test(value)) {
+                    throw this.fail(section, key, "must be WIDTHxHEIGHT");
+                }
+                taken[key] = value;
+            } else if (key === "fps") {
+                taken[key] = this.integer(table, key, section, 30, 1, 120);
+            } else {
+                taken[key] = this.shade(table, key, section, "dark");
+            }
+        }
+        return taken;
     }
 
     point(table: TomlTable, key: string, section: string, size: number, fallback: number[] | null): number[] {
@@ -403,8 +442,9 @@ export function parseGcodeTables(top: TomlTable, id: string, name: string, descr
             fiducial: read.shade(looking, "fiducial", "top_camera", "bright"),
             within: read.number(looking, "within", "top_camera", 2, 0.1, 50),
             home_fiducial: "home_fiducial" in looking ? (read.point(looking, "home_fiducial", "top_camera", 2, null) as [number, number]) : null,
+            settings: read.camera(looking, "top_camera", TOP_CAMERA_SETTINGS),
         };
-        read.done(looking, "top_camera", ["z", "offset", "roll", "fiducial", "within", "home_fiducial"]);
+        read.done(looking, "top_camera", ["z", "offset", "roll", "fiducial", "within", "home_fiducial", ...TOP_CAMERA_SETTINGS]);
     }
     device.bus = null;
     const wire = read.table(top, "bus");
@@ -578,7 +618,8 @@ export function parseGcodeTables(top: TomlTable, id: string, name: string, descr
     device.leave = "leave" in camera ? read.number(camera, "leave", "up_camera", null, 0, 1000) : null;
     device.camera_roll = "roll" in camera ? read.number(camera, "roll", "up_camera", null, -360, 360) : null;
     device.camera_mirror = "mirror" in camera ? read.flag(camera, "mirror", "up_camera", true) : null;
-    read.done(camera, "up_camera", ["z", "position", "crop", "max_offset", "max_turn", "size_tolerance", "leave", "roll", "mirror"]);
+    device.camera_settings = read.camera(camera, "up_camera", UP_CAMERA_SETTINGS);
+    read.done(camera, "up_camera", ["z", "position", "crop", "max_offset", "max_turn", "size_tolerance", "leave", "roll", "mirror", ...UP_CAMERA_SETTINGS]);
     return device as MockDevice;
 }
 
@@ -627,6 +668,7 @@ export function deviceDocument(device: MockDevice): GcodeDocument {
         camera_position: device.camera_position ? [...device.camera_position] : null,
         camera_roll: device.camera_roll,
         camera_mirror: device.camera_mirror,
+        camera_settings: { ...device.camera_settings },
         light: device.light_on.length > 0,
         discard: device.discard ? [...device.discard] : null,
         pick_tries: device.pick_tries,
@@ -654,6 +696,7 @@ export function deviceDocument(device: MockDevice): GcodeDocument {
                 fiducial: device.top.fiducial,
                 within: device.top.within,
                 home_fiducial: device.top.home_fiducial ? [...device.top.home_fiducial] : null,
+                settings: { ...device.top.settings },
             }
             : null,
         feeders: device.feeders.map((f) => ({

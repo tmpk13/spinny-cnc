@@ -124,6 +124,10 @@ class GcodePart:
             self.publish_message("error", f"{machine.name}: the head's place could not be read: {exc}")
         firmware = f", {self.gcode.firmware}" if self.gcode.firmware else ""
         self.publish_message("info", f"connected to {url}: {machine.name}{firmware}")
+        # The machine is the one placed with from here on: its file's camera
+        # settings go into the cameras.
+        self.take_camera_settings(machine)
+        self.publish_pnp()
         self._start_gcode_poll()
         self.publish_placing()
         return self.snapshot()

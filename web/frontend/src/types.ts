@@ -1376,6 +1376,8 @@ export interface GcodeTopCamera {
     within: number;
     /** A fiducial on the bed, as the nozzle's place over it, that Home by fiducial finds; missing or null: none. */
     home_fiducial?: [number, number] | null;
+    /** The camera's own settings the file names, put into the camera as the machine connects; missing from an older backend. */
+    settings?: Partial<Pick<TopSettings, "device" | "size" | "fps" | "pcbv" | "mark_spot">>;
 }
 
 /** A G-code machine's own tables as its file reads: port, dialect, heights, cameras, feeders. */
@@ -1406,6 +1408,8 @@ export interface GcodeDocument {
     /** The up camera's roll and mirror as mounted, used until centering measures them; null or missing: none given. */
     camera_roll?: number | null;
     camera_mirror?: boolean | null;
+    /** The up camera's own settings the file names, put into the camera as the machine connects; missing from an older backend. */
+    camera_settings?: Partial<Pick<PnpSettings, "device" | "size" | "fps" | "pcbv" | "nozzle_spot" | "part_spot">>;
     /** The file switches lights for the cameras. */
     light: boolean;
     /** Where a part that failed a check is let go; null puts it back in its pocket. */

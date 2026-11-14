@@ -46,7 +46,7 @@ from .placer import Placement, PlaceSetup, fiducial_fit
 from .pnp import CameraPlace, PnpError
 from .log import log
 from .topcam import Found
-from .vision import scale_range
+from .vision import VisionError, scale_range
 
 if TYPE_CHECKING:
     from .app import (
@@ -194,6 +194,24 @@ class PlacingPart:
             if machine.camera_mirror is not None:
                 place.mirror = machine.camera_mirror
         return place
+
+    def take_camera_settings(self, machine: GcodeMachine) -> None:
+        """The cameras' own settings the machine's file names ([top_camera]
+        and [up_camera] device, size, fps, pcbv and the shades their routines
+        look for) put into the cameras as the machine is connected, as a
+        load puts a file's [camera] into the head camera's. What the file
+        leaves out keeps the camera's own; a camera that cannot take them
+        says so and keeps what it had."""
+        given = ((self.top, machine.top.settings if machine.top is not None else {}), (self.pnp, machine.camera_settings))
+        for camera, settings in given:
+            current = camera.settings()
+            if not settings or all(getattr(current, key) == value for key, value in settings.items()):
+                continue
+            try:
+                camera.update(dict(settings))
+                log.info("%s: the %s took the file's %s", machine.id, camera.label, ", ".join(sorted(settings)))
+            except (PnpError, VisionError, ValueError) as exc:
+                self.publish_message("error", f"{machine.name}: the {camera.label} did not take the file's settings: {exc}")
 
     def _keep_up_place(self, place: CameraPlace) -> None:
         kept = place.to_dict()

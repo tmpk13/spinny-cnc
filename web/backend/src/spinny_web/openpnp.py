@@ -56,6 +56,11 @@ SHADES = ("dark", "bright")
 DEFAULT_VACUUM_PATTERN = r"T:\s*(-?[0-9]+(?:\.[0-9]+)?)"
 # OpenPnP's regular expressions name their group the Java way, (?<Value>...).
 JAVA_GROUP = re.compile(r"\(\?<(?![=!])")
+# A camera's own settings a G-code machine's file may name in its
+# [top_camera] or [up_camera]: the device, the capture size and rate, the
+# pcbv program, and the shades the camera's routines look for.
+TOP_CAMERA_SETTINGS = ("device", "size", "fps", "pcbv", "mark_spot")
+UP_CAMERA_SETTINGS = ("device", "size", "fps", "pcbv", "nozzle_spot", "part_spot")
 
 
 class PlanError(ValueError):
@@ -184,7 +189,9 @@ class TopCameraProfile:
     turn of its picture as mounted, degrees from the picture's x axis to
     the machine's +X, counterclockwise seen from above (180 for a camera
     upside down): a first guess too, until Measure offset measures the
-    picture's scale and roll; None leaves the measured one alone."""
+    picture's scale and roll; None leaves the measured one alone.
+    `settings` are the camera's own settings the file names (of
+    TOP_CAMERA_SETTINGS), put into the camera as the machine connects."""
 
     z: float | None = None
     offset: tuple[float, float] | None = None
@@ -192,6 +199,7 @@ class TopCameraProfile:
     fiducial: str = "bright"
     within: float = 2.0
     home_fiducial: tuple[float, float] | None = None
+    settings: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -263,6 +271,9 @@ class GcodeMachine:
     # unless its driver flips the picture). None leaves the measured one.
     camera_roll: float | None = None
     camera_mirror: bool | None = None
+    # The up camera's own settings the file names (of UP_CAMERA_SETTINGS),
+    # put into the camera as the machine connects.
+    camera_settings: dict = field(default_factory=dict)
     # A jog that takes the nozzle from over the up camera (within this
     # many mm of its place) to farther than that, with the nozzle off the
     # safe height, goes up to the safe height first; None never lifts a
@@ -330,6 +341,7 @@ class GcodeMachine:
             "camera_position": list(self.camera_position) if self.camera_position is not None else None,
             "camera_roll": self.camera_roll,
             "camera_mirror": self.camera_mirror,
+            "camera_settings": dict(self.camera_settings),
             "light": bool(self.light_on),
             "discard": list(self.discard) if self.discard is not None else None,
             "pick_tries": self.pick_tries,
@@ -359,6 +371,7 @@ class GcodeMachine:
                     "fiducial": top.fiducial,
                     "within": top.within,
                     "home_fiducial": list(top.home_fiducial) if top.home_fiducial is not None else None,
+                    "settings": dict(top.settings),
                 }
                 if top is not None
                 else None
@@ -473,6 +486,30 @@ class _Reader:
         if low > high:
             raise self.fail(section, key, "must be the low reading, then the high one")
         return (low, high)
+
+    def camera(self, table: dict, section: str, keys: tuple[str, ...]) -> dict:
+        """A camera's own settings the table names, of `keys`, each checked
+        as the camera's settings check it: the device and the pcbv program
+        named, the size WIDTHxHEIGHT, the rate 1 to 120 a second, a shade
+        dark or bright."""
+        taken: dict = {}
+        for key in keys:
+            if key not in table:
+                continue
+            if key in ("device", "pcbv"):
+                value = self.text(table, key, section, "")
+                if not value:
+                    raise self.fail(section, key, "must name it")
+            elif key == "size":
+                value = self.text(table, key, section, "")
+                if not machine_files._CAMERA_SIZE.match(value):
+                    raise self.fail(section, key, "must be WIDTHxHEIGHT")
+            elif key == "fps":
+                value = self.integer(table, key, section, 30, 1, 120)
+            else:
+                value = self.shade(table, key, section, "dark")
+            taken[key] = value
+        return taken
 
     def places(self, table: dict, key: str, section: str, most: int) -> tuple[tuple[float, float], ...]:
         value = table.get(key, [])
@@ -605,8 +642,9 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
             fiducial=read.shade(looking, "fiducial", "top_camera", "bright"),
             within=read.number(looking, "within", "top_camera", 2.0, 0.1, 50.0),
             home_fiducial=read.point(looking, "home_fiducial", "top_camera", 2, None) if "home_fiducial" in looking else None,
+            settings=read.camera(looking, "top_camera", TOP_CAMERA_SETTINGS),
         )
-        read.done(looking, "top_camera", {"z", "offset", "roll", "fiducial", "within", "home_fiducial"})
+        read.done(looking, "top_camera", {"z", "offset", "roll", "fiducial", "within", "home_fiducial", *TOP_CAMERA_SETTINGS})
 
     bus = None
     wire = read.table(top, "bus")
@@ -759,7 +797,8 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
     leave = read.number(camera, "leave", "up_camera", None, 0.0, 1000.0) if "leave" in camera else None
     camera_roll = read.number(camera, "roll", "up_camera", None, -360.0, 360.0) if "roll" in camera else None
     camera_mirror = read.flag(camera, "mirror", "up_camera", True) if "mirror" in camera else None
-    read.done(camera, "up_camera", {"z", "position", "crop", "max_offset", "max_turn", "size_tolerance", "leave", "roll", "mirror"})
+    camera_settings = read.camera(camera, "up_camera", UP_CAMERA_SETTINGS)
+    read.done(camera, "up_camera", {"z", "position", "crop", "max_offset", "max_turn", "size_tolerance", "leave", "roll", "mirror", *UP_CAMERA_SETTINGS})
     return GcodeMachine(
         id=machine.id,
         name=name or machine.id,
@@ -800,6 +839,7 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
         camera_position=camera_position,
         camera_roll=camera_roll,
         camera_mirror=camera_mirror,
+        camera_settings=camera_settings,
         leave=leave,
         park=park,
         crop=crop,

@@ -1226,7 +1226,9 @@ Placing state:
 name and `document` its file's own tables read (as `GET
 /api/machines/{id}` gives them under `gcode`): `safe_z`, `place_z`, the
 feeds, `park`, `camera_position`, `camera_z`, `camera_roll` and
-`camera_mirror` (null where the file gives none), `light`, `vacuum`, `top`,
+`camera_mirror` (null where the file gives none), `camera_settings` (the
+bottom camera's own settings the file names, taken as the machine
+connects; `top.settings` the top camera's), `light`, `vacuum`, `top`,
 `feeders` and the rest. `connected` is true while that machine is the one
 connected; `url`, `lost`, `running`, `homed`, `position`, `light`,
 `vacuum`, `progress` and `log` are its link's. `position` follows the

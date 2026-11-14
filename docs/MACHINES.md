@@ -511,6 +511,12 @@ size_tolerance = 0.3     # fraction a part's length or width may differ from the
 leave = 2.0              # a jog taking the nozzle from within this many mm of the camera to farther, off the safe height, goes up to it first; left out, jogs never rise
 roll = 0                 # degrees from the picture's x axis to +X, counterclockwise seen from above, as mounted; used until Center nozzle measures the scale, roll and mirror; left out, the measured one or 0
 mirror = true            # the picture shows the machine mirrored, as a camera looking up sees it; false when its driver flips the picture; used until measured like roll
+device = "/dev/video2"   # the camera itself, taken by the bottom camera as the machine connects (below): its device as [camera]'s,
+size = "1280x720"        # its capture size,
+fps = 30                 # its rate,
+pcbv = "pcbv"            # the pcbv program,
+nozzle_spot = "dark"     # how the nozzle's bore looks to it,
+part_spot = "dark"       # and a part on the nozzle
 
 [top_camera]             # a camera on the head looking down
 z = 0                    # the height the head looks from; left out, the safe height
@@ -519,6 +525,8 @@ roll = 180               # degrees from the picture's x axis to +X, counterclock
 fiducial = "bright"      # how a fiducial looks to it
 within = 2.0             # mm from where it is expected that a fiducial, mark or part is looked for
 home_fiducial = [60.0, 170.0]  # a fiducial fixed on the bed, as the nozzle's place over it: Home by fiducial finds it with this camera; left out, none
+device = "/dev/video4"   # the camera itself, taken by the top camera as the machine connects: device, size, fps and pcbv as [up_camera]'s,
+mark_spot = "dark"       # and how the mark Measure offset centers looks to it
 
 [[feeder]]               # a part is picked from the first one whose words its value and footprint all hold
 id = "r-10k-0603"
@@ -531,6 +539,15 @@ rotation = 0             # the parts' angle as they sit in it
 # place_z, feed (lines before each pick), vision (looked at over the bottom camera), size,
 # pocket (its shade to the top camera), marks and mark, crop
 ```
+
+The cameras' own keys (`device`, `size`, `fps`, `pcbv` and the shades
+their routines look for) are put into the bottom and top cameras' settings
+when the machine is connected, as a load puts a `[camera]` table into the
+head camera's: what the file leaves out keeps what the PNP tab set, and a
+camera given a new device starts again on it. The places, rolls and
+mirror are first guesses instead, which the cameras' routines measure and
+keep. So a machine's cameras come with it: the virtual LumenPnP's file
+names its two cameras' addresses, and connecting it sets both up.
 
 A feeder bus (`[bus]`, `[[slot]]`, and a feeder's `bus_id`, `slot`,
 `offset` and `advance` in place of `at`, `pitch` and `count`) carries
