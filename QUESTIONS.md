@@ -260,3 +260,18 @@ Why it matters: Center nozzle, Measure runout and Home by fiducial still keep at
 - B. Also Center nozzle and Measure runout (Home by fiducial's G92 is part of homing).
 Applied: A, in f6bbbf9.
 Answer:
+
+## Q37. Should the plain wheel over a camera picture zoom it?
+Why it matters: "Can't use scroll wheel over camera view": before, only Ctrl and the wheel zoomed and the plain wheel scrolled the page, also with the pointer over the picture.
+- A. The wheel over a picture zooms about the point under the pointer; the page scrolls by the wheel anywhere else (recommended).
+- B. Ctrl and the wheel only, as before; the plain wheel scrolls the page over the picture too.
+Applied: A, in 026ec94.
+Answer:
+
+## Q38. Which way should an arrow key move the head with the pointer over a camera picture?
+Why it matters: "Arrow and Dragging controls get inverted with the camera flip" and "Movement not aligned with camera": the jog keys follow the machine's axes, which a turned or flipped picture shows another way.
+- A. The way the arrow points on the picture as shown (recommended): a camera on the head looks further that way, the fixed bottom camera sees the nozzle go that way; the jog panel keeps the machine's axes.
+- B. The other way (the picture's content moves the way the arrow points, as a drag would).
+- C. Leave the arrow keys on the machine's axes everywhere.
+Applied: A, in 026ec94.
+Answer:
