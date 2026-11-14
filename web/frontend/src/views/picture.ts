@@ -9,25 +9,89 @@
 // shown is handed to whoever watches the picture's key (a camera's live
 // numbers). Ctrl and the wheel zoom on the picture's center (the plain
 // wheel scrolls the page), as do the buttons under it and a zoom typed in
-// between them; a drag moves the head so what the camera sees follows the
-// pointer, a line showing the move; a double-click brings a point to the
-// crosshair; Shift and a drag draw the box a search keeps to, in the
-// machine's frame. Upright (on unless switched off, kept per camera) shows
-// the picture turned by the camera's roll to the nearest quarter turn, and
-// flipped when the camera sees the machine mirrored, so the machine's +X
-// points right and +Y up as on the jog pad; the marks turn with it, their
-// words kept level, and the pointer is turned back into the picture's own
-// pixels.
+// between them, out to a quarter of the picture's size with room around
+// it; Reset view brings the whole picture back. A drag moves the head so
+// what the camera sees follows the pointer, a line showing the move; a
+// double-click brings a point to the crosshair; Shift and a drag draw the
+// box a search keeps to, in the machine's frame. Upright (on unless
+// switched off, kept per camera) shows the picture turned by the camera's
+// roll to the nearest quarter turn, and flipped when the camera sees the
+// machine mirrored, so the machine's +X points right and +Y up as on the
+// jog pad; Turn turns it a further quarter clockwise by hand (kept per
+// camera). The marks turn with it, their words kept level, and the pointer
+// is turned back into the picture's own pixels. The View menu sets the
+// crosshair's shape (a cross, a circle, both) and reach, kept per camera.
 
 import { button, el, numberField, readStored, stepperBox, writeStored } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
+import { openMenu } from "../menu.ts";
 import type { AppState } from "../state.ts";
 import type { Ctx } from "./context.ts";
 
 /** How often a picture is asked for while it shows, ms. */
 export const FRAME_INTERVAL_MS = 250;
-/** The zooms the buttons and the wheel step through; a zoom typed in may lie anywhere from the first to the last. */
-export const ZOOMS = [1, 1.5, 2, 3, 4, 6, 8];
+/**
+ * The zooms the buttons and the wheel step through; a zoom typed in may lie
+ * anywhere from the first to the last. Under 1 the picture shows smaller
+ * than its box, with room around it where marks beyond its edges show.
+ */
+export const ZOOMS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8];
+
+/** How the picture's center is marked: a cross, a circle, both, or nothing. */
+export type CrosshairShape = "cross" | "circle" | "both" | "none";
+/** How far the crosshair reaches from the center: a share of the view's width, or `across` to the view's edges. */
+export type CrosshairSize = "small" | "medium" | "large" | "across";
+
+export const CROSSHAIR_SHAPES: { value: CrosshairShape; label: string }[] = [
+    { value: "cross", label: "Cross" },
+    { value: "circle", label: "Circle" },
+    { value: "both", label: "Cross and circle" },
+    { value: "none", label: "No crosshair" },
+];
+
+export const CROSSHAIR_SIZES: { value: CrosshairSize; label: string }[] = [
+    { value: "small", label: "Small crosshair" },
+    { value: "medium", label: "Medium crosshair" },
+    { value: "large", label: "Large crosshair" },
+    { value: "across", label: "Crosshair across the view" },
+];
+
+/** The share of the view's width each arm (and the circle's radius) reaches at each size but `across`. */
+export const CROSSHAIR_SHARE: Record<Exclude<CrosshairSize, "across">, number> = { small: 1 / 40, medium: 1 / 10, large: 1 / 4 };
+
+/** A kept crosshair shape or size, or the default for anything else. */
+export function readCrosshair(shape: string | null, size: string | null): { shape: CrosshairShape; size: CrosshairSize } {
+    return {
+        shape: CROSSHAIR_SHAPES.find((entry) => entry.value === shape)?.value ?? "cross",
+        size: CROSSHAIR_SIZES.find((entry) => entry.value === size)?.value ?? "small",
+    };
+}
+
+/**
+ * The crosshair's marks about the point `cx`, `cy` of a view `width` by
+ * `height` px of the picture: arms a share of the view's width either way
+ * (to its edges `across`), a circle of the same reach (the view's shorter
+ * half `across`), or both. Sized to the view, so it keeps one size on the
+ * screen at any zoom.
+ */
+export function crosshairMarks(shape: CrosshairShape, size: CrosshairSize, cx: number, cy: number, width: number, height: number): Mark[] {
+    if (shape === "none") {
+        return [];
+    }
+    const across = size === "across";
+    const reach = across ? Math.min(width, height) / 2 : width * CROSSHAIR_SHARE[size];
+    const armX = across ? width / 2 : reach;
+    const armY = across ? height / 2 : reach;
+    const marks: Mark[] = [];
+    if (shape === "cross" || shape === "both") {
+        marks.push({ kind: "line", points: [[cx - armX, cy], [cx + armX, cy]], tone: "center" });
+        marks.push({ kind: "line", points: [[cx, cy - armY], [cx, cy + armY]], tone: "center" });
+    }
+    if (shape === "circle" || shape === "both") {
+        marks.push({ kind: "circle", x: cx, y: cy, r: reach, tone: "center" });
+    }
+    return marks;
+}
 
 /** The zoom a value typed in asks for: within the steps' range, to a hundredth; null for no number. */
 export function clampZoom(value: number | null): number | null {
@@ -109,6 +173,18 @@ export const UNTURNED: Turn = { quarter: 0, flip: false };
 export function uprightTurn(roll: number, mirror: boolean): Turn {
     const quarter = Number.isFinite(roll) ? ((Math.round(roll / 90) % 4) + 4) % 4 : 0;
     return { quarter, flip: mirror };
+}
+
+/** A turn turned further by `quarters` counterclockwise on the screen (negative: clockwise), its flip kept: the flip comes first, so a further turn of the screen only adds to the quarter. */
+export function addTurn(turn: Turn, quarters: number): Turn {
+    const add = Number.isFinite(quarters) ? Math.round(quarters) : 0;
+    return { quarter: (((turn.quarter + add) % 4) + 4) % 4, flip: turn.flip };
+}
+
+/** The quarters a picture is kept turned by hand, counterclockwise, 0 to 3; 0 for anything else kept. */
+export function readQuarters(kept: string | null): number {
+    const value = Number(kept);
+    return Number.isInteger(value) && value >= 0 && value <= 3 ? value : 0;
 }
 
 /** The cosine and sine of a turn's angle. */
@@ -380,9 +456,15 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     const boxKey = `spinny.picture.${options.key}.box`;
     const overlayKey = `spinny.picture.${options.key}.overlay`;
     const uprightKey = `spinny.picture.${options.key}.upright`;
+    const turnKey = `spinny.picture.${options.key}.turn`;
+    const crosshairKey = `spinny.picture.${options.key}.crosshair`;
+    const crosshairSizeKey = `spinny.picture.${options.key}.crosshair.size`;
     let zoom = 1;
     let overlayOn = readStored(overlayKey) !== "0";
     let uprightOn = readStored(uprightKey) !== "0";
+    // Quarters the picture is turned by hand, counterclockwise, over Upright's turn.
+    let byHand = readQuarters(readStored(turnKey));
+    let crosshair = readCrosshair(readStored(crosshairKey), readStored(crosshairSizeKey));
     // The turn the picture is shown at, set at each fit.
     let turn: Turn = UNTURNED;
     let searchBox: MachineBox | null = options.boxes ? readBox(boxKey) : null;
@@ -427,6 +509,10 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     }, "btn btn-quiet btn-small btn-toggle");
     upright.setAttribute("aria-pressed", uprightOn ? "true" : "false");
     upright.title = "show the picture turned by the camera's roll so the machine's +X points right and +Y up";
+    const reset = button("Reset view", () => setZoom(1), "btn btn-quiet btn-small", "back to the whole picture filling its box (zoom 1)");
+    const turnButton = button("Turn", () => turnBy(-1), "btn btn-quiet btn-small");
+    const view = button("View", () => openView(), "btn btn-quiet btn-small", "the crosshair's shape and size");
+    view.setAttribute("aria-haspopup", "menu");
     const boxLine = el("span", { class: "muted picture-box-line" });
     const clearBox = button("Clear box", () => setBox(null), "btn btn-quiet btn-small");
     clearBox.title = "forget the box: a search then covers the board's size about where the picture is";
@@ -436,10 +522,11 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     const cancelPick = button("Cancel", () => disarmPick(options.key), "btn btn-quiet btn-small");
     cancelPick.title = "pick nothing";
     const pickRow = el("div", { class: "button-row picture-pick-row hidden" }, pickLine, cancelPick);
-    const caption = el("div", { class: "button-row picture-caption" }, zoomLine, overlay);
+    const caption = el("div", { class: "button-row picture-caption" }, zoomLine, reset, turnButton);
     if (options.orientation) {
         caption.append(upright);
     }
+    caption.append(overlay, view);
     /** The picture waits for a pick: a crosshair, and a line saying what for. */
     const showPick = (): void => {
         const label = armedPick(options.key);
@@ -464,13 +551,13 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         return [picture.naturalWidth || 1280, picture.naturalHeight || 720];
     }
 
-    /** The turn Upright shows the picture at now. */
+    /** The turn the picture is shown at now: Upright's, then the turn by hand. */
     function turnOf(state: AppState): Turn {
         const orientation = uprightOn ? options.orientation?.(state) ?? null : null;
-        return orientation ? uprightTurn(orientation.roll, orientation.mirror) : UNTURNED;
+        return addTurn(orientation ? uprightTurn(orientation.roll, orientation.mirror) : UNTURNED, byHand);
     }
 
-    /** The turn and the button's words about it. */
+    /** The turn and the buttons' words about it. */
     function setTurn(state: AppState): void {
         turn = turnOf(state);
         stage.style.transform = turnTransform(turn);
@@ -479,6 +566,40 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         const steps = [would.quarter !== 0 ? `turned ${90 * would.quarter} degrees counterclockwise` : "", would.flip ? "flipped left for right" : ""].filter((part) => part !== "");
         const how = steps.length > 0 ? steps.join(", ") : "the camera's picture is upright already";
         upright.title = `show the picture turned by the camera's roll so the machine's +X points right and +Y up (${how})`;
+        // The turn by hand as clockwise degrees, the way the button turns it.
+        const clockwise = (4 - byHand) % 4;
+        turnButton.title = clockwise === 0
+            ? "turn the picture a quarter clockwise, over any Upright turn (kept for this camera)"
+            : `turn the picture a quarter clockwise; it is turned ${90 * clockwise} degrees clockwise by hand now (kept for this camera)`;
+        turnButton.setAttribute("aria-pressed", byHand !== 0 ? "true" : "false");
+    }
+
+    /** Turns the picture by hand by `quarters` counterclockwise (negative: clockwise), kept for the camera. */
+    function turnBy(quarters: number): void {
+        byHand = addTurn({ quarter: byHand, flip: false }, quarters).quarter;
+        writeStored(turnKey, String(byHand));
+        fit();
+        draw(ctx.store.get());
+        refresh(true);
+    }
+
+    /** The View menu: the crosshair's shape and size. */
+    function openView(): void {
+        const pickShape = (shape: CrosshairShape) => (): void => {
+            crosshair = { ...crosshair, shape };
+            writeStored(crosshairKey, shape);
+            draw(ctx.store.get());
+        };
+        const pickSize = (size: CrosshairSize) => (): void => {
+            crosshair = { ...crosshair, size };
+            writeStored(crosshairSizeKey, size);
+            draw(ctx.store.get());
+        };
+        openMenu([
+            ...CROSSHAIR_SHAPES.map((entry) => ({ label: entry.label, run: pickShape(entry.value), checked: crosshair.shape === entry.value })),
+            "-",
+            ...CROSSHAIR_SIZES.map((entry) => ({ label: entry.label, run: pickSize(entry.value), checked: crosshair.size === entry.value })),
+        ], view, `${options.label} view`);
     }
 
     /**
@@ -776,10 +897,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         layer.setAttribute("viewBox", `${(width / 2 - shownWidth / 2).toFixed(3)} ${(height / 2 - shownHeight / 2).toFixed(3)} ${shownWidth.toFixed(3)} ${shownHeight.toFixed(3)}`);
         const marks: Mark[] = [];
         if (overlayOn && options.running(state)) {
-            // The crosshair, a fortieth of the view's width either way.
-            const arm = shownWidth / 40;
-            marks.push({ kind: "line", points: [[width / 2 - arm, height / 2], [width / 2 + arm, height / 2]], tone: "center" });
-            marks.push({ kind: "line", points: [[width / 2, height / 2 - arm], [width / 2, height / 2 + arm]], tone: "center" });
+            marks.push(...crosshairMarks(crosshair.shape, crosshair.size, width / 2, height / 2, shownWidth, shownHeight));
             // A stage not laid out yet is taken as wide as an unknown one
             // is asked for; the observer draws again once it is.
             const screen = stageSize()[0] || box.getBoundingClientRect().width || 640;

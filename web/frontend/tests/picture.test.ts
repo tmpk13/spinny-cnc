@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { boardMarks, foundMarks, frameSize, reachMark } from "../src/views/camview.ts";
-import { armedPick, armPick, clampZoom, disarmPick, dragMove, frameRequestWidth, growBox, levelText, machineToPicture, mountPicture, pictureToMachine, spotMarks, stepZoom, turnTransform, UNTURNED, unturnOffset, uprightTurn, zoomText } from "../src/views/picture.ts";
+import { addTurn, armedPick, armPick, clampZoom, crosshairMarks, disarmPick, dragMove, frameRequestWidth, growBox, levelText, machineToPicture, mountPicture, pictureToMachine, readCrosshair, readQuarters, spotMarks, stepZoom, turnTransform, UNTURNED, unturnOffset, uprightTurn, zoomText } from "../src/views/picture.ts";
 import { click, setup, settle } from "./harness.ts";
 
 /** A CSS or SVG transform list applied to a point: rotate (degrees, clockwise on a y-down screen), scaleX, scale and translate; the last one listed acts first. */
@@ -93,7 +93,9 @@ describe("picture geometry", () => {
     test("a zoom typed in is held within the steps' range, and the steps go to the one beside it", () => {
         expect(clampZoom(null)).toBeNull();
         expect(clampZoom(Number.NaN)).toBeNull();
-        expect(clampZoom(0.5)).toBe(1);
+        // Out past the picture's own size, a quarter of it at least.
+        expect(clampZoom(0.5)).toBe(0.5);
+        expect(clampZoom(0.1)).toBe(0.25);
         expect(clampZoom(20)).toBe(8);
         expect(clampZoom(2.3456)).toBe(2.35);
         expect(stepZoom(1, 1)).toBe(1.5);
@@ -101,7 +103,8 @@ describe("picture geometry", () => {
         expect(stepZoom(2.5, 1)).toBe(3);
         expect(stepZoom(2.5, -1)).toBe(2);
         expect(stepZoom(8, 1)).toBe(8);
-        expect(stepZoom(1, -1)).toBe(1);
+        expect(stepZoom(1, -1)).toBe(0.75);
+        expect(stepZoom(0.25, -1)).toBe(0.25);
         expect(stepZoom(1.2, -1)).toBe(1);
         expect(zoomText(2.5)).toBe("2.5");
         expect(zoomText(1)).toBe("1");
@@ -110,6 +113,32 @@ describe("picture geometry", () => {
     test("a box grows to take in another", () => {
         expect(growBox(null, [5, 6, 1, 2])).toEqual([1, 2, 5, 6]);
         expect(growBox([0, 0, 10, 10], [5, -3, 20, 4])).toEqual([0, -3, 20, 10]);
+    });
+
+    test("the crosshair is a cross, a circle or both, its reach a share of the view or across it", () => {
+        // A view 400 by 200 px about the point 500, 250.
+        const cross = crosshairMarks("cross", "small", 500, 250, 400, 200);
+        expect(cross).toHaveLength(2);
+        expect(cross[0]).toMatchObject({ kind: "line", points: [[490, 250], [510, 250]], tone: "center" });
+        const circle = crosshairMarks("circle", "large", 500, 250, 400, 200);
+        expect(circle).toEqual([{ kind: "circle", x: 500, y: 250, r: 100, tone: "center" }]);
+        // Across: the arms reach the view's edges, the circle its shorter half.
+        const across = crosshairMarks("both", "across", 500, 250, 400, 200);
+        expect(across[0]).toMatchObject({ points: [[300, 250], [700, 250]] });
+        expect(across[1]).toMatchObject({ points: [[500, 150], [500, 350]] });
+        expect(across[2]).toMatchObject({ kind: "circle", r: 100 });
+        expect(crosshairMarks("none", "medium", 0, 0, 10, 10)).toEqual([]);
+        // What a store keeps, read back; anything else is the default.
+        expect(readCrosshair("circle", "large")).toEqual({ shape: "circle", size: "large" });
+        expect(readCrosshair("square", null)).toEqual({ shape: "cross", size: "small" });
+    });
+
+    test("a turn by hand adds quarters to Upright's and keeps its flip", () => {
+        expect(addTurn({ quarter: 3, flip: true }, 2)).toEqual({ quarter: 1, flip: true });
+        expect(addTurn(UNTURNED, -1)).toEqual({ quarter: 3, flip: false });
+        expect(readQuarters("2")).toBe(2);
+        expect(readQuarters("7")).toBe(0);
+        expect(readQuarters(null)).toBe(0);
     });
 
     test("a spot found draws its ellipse, rectangle, center and reach; a miss only the reach", () => {
@@ -303,6 +332,80 @@ describe("the picture view", () => {
         const { view, stage } = mounted();
         expect([...view.root.querySelectorAll("button")].some((node) => node.textContent === "Upright")).toBe(false);
         expect(stage.style.transform).toBe("");
+        view.stop();
+    });
+
+    test("Turn turns the picture a quarter clockwise each press over Upright's turn, kept for the camera, and the pointer follows", async () => {
+        const { view, stage, moves } = mounted(true, { roll: 180, mirror: false }, "test-turn");
+        expect(stage.style.transform).toBe("rotate(-180deg)");
+        click(view.root, "Turn");
+        // Upright's half turn and a quarter clockwise: three quarters counterclockwise.
+        expect(stage.style.transform).toBe("rotate(-90deg)");
+        expect(localStorage.getItem("spinny.picture.test-turn.turn")).toBe("3");
+        const turnButton = [...view.root.querySelectorAll("button")].find((node) => node.textContent === "Turn")!;
+        expect(turnButton.title).toContain("90 degrees clockwise by hand");
+        // On its side the stage's box on the screen is 250 wide by 500 high.
+        stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 250, height: 500, right: 250, bottom: 500, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+        // Upright put +X to the right; a quarter clockwise more puts +Y
+        // there. A drag to the right moves the riding camera's head to -Y,
+        // so the picture follows the pointer.
+        pointer(stage, "pointerdown", 100, 100);
+        pointer(stage, "pointerup", 150, 100);
+        await settle();
+        expect(moves[0]![0]).toBeCloseTo(0, 9);
+        expect(moves[0]![1]).toBeCloseTo(-10, 9);
+        // A new picture of the same camera starts turned as it was left.
+        view.stop();
+        const again = mounted(true, { roll: 180, mirror: false }, "test-turn");
+        expect(again.stage.style.transform).toBe("rotate(-90deg)");
+        for (let press = 0; press < 3; press++) {
+            click(again.view.root, "Turn");
+        }
+        expect(again.stage.style.transform).toBe("rotate(-180deg)");
+        expect(localStorage.getItem("spinny.picture.test-turn.turn")).toBe("0");
+        again.view.stop();
+    });
+
+    test("zoomed out past the picture the marks' view takes in the room around it, and Reset view brings the whole picture back", () => {
+        const { view } = mounted(false, undefined, "test-out");
+        const marks = view.root.querySelector(".picture-marks") as SVGElement;
+        view.setZoom(0.5);
+        expect(view.zoom()).toBe(0.5);
+        const [x, y, width, height] = (marks.getAttribute("viewBox") ?? "").split(" ").map(Number);
+        // A 1000 by 500 picture at a half: a view twice its size about its center.
+        expect(width).toBeCloseTo(2000, 2);
+        expect(height).toBeCloseTo(1000, 2);
+        expect(x).toBeCloseTo(-500, 2);
+        expect(y).toBeCloseTo(-250, 2);
+        click(view.root, "Reset view");
+        expect(view.zoom()).toBe(1);
+        expect(Number((marks.getAttribute("viewBox") ?? "").split(" ")[2])).toBeCloseTo(1000, 2);
+        view.stop();
+    });
+
+    test("the View menu sets the crosshair's shape and size, kept for the camera", () => {
+        const { view } = mounted(false, undefined, "test-crosshair");
+        const layer = view.root.querySelector(".picture-marks") as SVGElement;
+        expect(layer.querySelectorAll("polyline.mark-center")).toHaveLength(2);
+        const pick = (label: string): void => {
+            click(view.root, "View");
+            const item = [...document.querySelectorAll<HTMLButtonElement>(".menu-item")].find((node) => node.textContent === label);
+            expect(item).toBeDefined();
+            item!.click();
+        };
+        pick("Circle");
+        expect(layer.querySelectorAll("polyline.mark-center")).toHaveLength(0);
+        const ring = layer.querySelector("circle.mark-center");
+        // A small circle: a fortieth of the 1000 px view.
+        expect(Number(ring?.getAttribute("r"))).toBeCloseTo(25, 6);
+        pick("Large crosshair");
+        expect(Number(layer.querySelector("circle.mark-center")?.getAttribute("r"))).toBeCloseTo(250, 6);
+        expect(localStorage.getItem("spinny.picture.test-crosshair.crosshair")).toBe("circle");
+        expect(localStorage.getItem("spinny.picture.test-crosshair.crosshair.size")).toBe("large");
+        pick("No crosshair");
+        expect(layer.querySelector(".mark-center")).toBeNull();
+        localStorage.removeItem("spinny.picture.test-crosshair.crosshair");
+        localStorage.removeItem("spinny.picture.test-crosshair.crosshair.size");
         view.stop();
     });
 

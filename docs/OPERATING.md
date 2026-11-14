@@ -535,8 +535,11 @@ cameras') works the same way. It is asked for at the size it is shown, so
 it stays sharp when zoomed: *+* and *-* under it, or Ctrl and the wheel (a
 pinch on a touchpad), zoom on its center by steps, and the plain wheel
 scrolls the page; *-* and *+* are the ends of the zoom's own box, and the
-number between them is a field, so any zoom from 1 to 8 can be typed in
-and taken with Enter. A drag moves the head
+number between them is a field, so any zoom from 0.25 to 8 can be typed
+in and taken with Enter. Under 1 the picture shows smaller than its box,
+and the marks beyond its edges (known points, a search box, the board)
+show in the room around it; *Reset view* goes back to the whole picture
+filling its box. A drag moves the head
 so what the camera sees follows the pointer, a line showing the move; a
 double-click brings a point to the crosshair (both once the camera's
 scale is measured). The grip under the picture makes its box taller or
@@ -554,7 +557,13 @@ its roll says 180, measured by its offset routine or typed (the head
 camera's *Roll deg*, the file's `[camera] roll`, `[top_camera] roll` or
 `[up_camera] roll` and `mirror`).
 Its tooltip says the turn; the marks turn with the picture, their words
-kept level, but pcbv's own marks drawn into the JPEG turn too.
+kept level, but pcbv's own marks drawn into the JPEG turn too. *Turn*
+turns the picture a further quarter clockwise each press, over Upright's
+turn or without it, kept per camera (four presses take it back); drags,
+double-clicks and picks follow the turn. *View* sets the crosshair, kept
+per camera: a cross, a circle, both or none, and how far it reaches (a
+fortieth, a tenth or a quarter of the view's width, or across the whole
+view), the same size on the screen at any zoom.
 
 Blue rings mark the points whose place on the machine is known, where
 they fall in the picture, so a glance says whether what the page holds
