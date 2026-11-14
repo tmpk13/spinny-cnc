@@ -11,7 +11,8 @@
 // to line the part up with (partshape.ts). A drag moves the head
 // (picture.ts). The pictures are asked for only while the page shows.
 
-import { activePage, button, el, lockFor } from "../dom.ts";
+import { activePage, button, el, labeled, lockFor, readStored, writeStored } from "../dom.ts";
+import { formatFixed } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { BoardCorners, BoardEstimate, Job, RoutineSpot, SpotLook } from "../types.ts";
 import type { Ctx } from "./context.ts";
@@ -114,6 +115,34 @@ export function boxShares(box: [number, number, number, number], size: [number, 
     return shares[0] < shares[2] && shares[1] < shares[3] ? shares : null;
 }
 
+/** Where the page keeps the part class picked for the bottom camera's crop, by name. */
+export const CROP_KEY = "spinny.pnp.crop";
+
+/**
+ * How far from the bottom camera's center a part is looked for, mm, and
+ * why: the part class picked (`name`), else the G-code machine file's own
+ * crop; null for pcbv's own reach, or with no G-code machine placing.
+ */
+export function partCrop(state: AppState, picked: string | null = readStored(CROP_KEY)): { mm: number; name: string | null } | null {
+    if (!gcodePlacing(state)) {
+        return null;
+    }
+    const document = state.placing?.document;
+    const chosen = document?.classes?.find((entry) => entry.name === picked) ?? null;
+    if (chosen) {
+        return { mm: chosen.crop, name: chosen.name };
+    }
+    const crop = document?.crop ?? null;
+    return crop !== null && crop > 0 ? { mm: crop, name: null } : null;
+}
+
+/** The radius a Look once at a part keeps to, px of the bottom camera's picture, from the crop picked; undefined without a crop or a scale. */
+export function partLookRadius(state: AppState): number | undefined {
+    const crop = partCrop(state);
+    const calibration = bottomCalibration(state);
+    return crop !== null && calibration !== null ? Math.round((crop.mm / calibration.mmPerPx) * 10) / 10 : undefined;
+}
+
 /** The bottom camera's calibration on the machine its routines move. */
 function bottomCalibration(state: AppState): Calibration | null {
     if (gcodePlacing(state)) {
@@ -188,10 +217,10 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
         marks: (state, shown) => {
             const size = frameSize(state.pnp?.frame, state.pnp?.size) ?? [1280, 720];
             const gcode = gcodePlacing(state);
-            const crop = gcode ? state.placing?.document?.crop ?? null : null;
+            const crop = partCrop(state);
             const known = bottomKnown(state, gcode);
             return [
-                ...reachMark(crop, bottomCalibration(state), size, "parts are looked for within this circle"),
+                ...reachMark(crop?.mm ?? null, bottomCalibration(state), size, crop?.name ? `parts of class ${crop.name} are looked for within this circle` : "parts are looked for within this circle"),
                 ...knownMarks(known.points, known.center, bottomCalibration(state), shown),
             ];
         },
@@ -204,6 +233,34 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
         visible,
     }, ctx);
     const bottomEmpty = el("p", { class: "muted camera-view-empty" }, "The bottom camera is not running: start it in its panel.");
+    // The part class whose crop the picture rings and a Look once at a
+    // part keeps to: the machine file's [[part_class]] tables.
+    const cropPick = el("select", { class: "field", "aria-label": "Bottom camera crop" }) as HTMLSelectElement;
+    cropPick.title = "the part class whose crop the picture rings and Look once at a part keeps to; a run looks at each part within its own class's crop";
+    const cropField = labeled("Crop", cropPick, "labeled inline");
+    cropPick.addEventListener("change", () => {
+        writeStored(CROP_KEY, cropPick.value);
+        bottom.render(ctx.store.get());
+    });
+    bottom.caption.append(cropField);
+    let cropOptions = "";
+
+    /** The crop list: the file's own crop, then each part class with its crop. */
+    function renderCrop(state: AppState): void {
+        const document = gcodePlacing(state) ? state.placing?.document ?? null : null;
+        const classes = document?.classes ?? [];
+        cropField.classList.toggle("hidden", classes.length === 0);
+        const options = JSON.stringify([document?.crop ?? null, classes]);
+        if (options !== cropOptions) {
+            cropOptions = options;
+            const own = document?.crop ? `file's crop, ${formatFixed(document.crop, 2)} mm` : "pcbv's own reach";
+            cropPick.replaceChildren(
+                el("option", { value: "" }, own),
+                ...classes.map((entry) => el("option", { value: entry.name }, `${entry.name}, ${formatFixed(entry.crop, 2)} mm`)),
+            );
+        }
+        cropPick.value = partCrop(state)?.name ?? "";
+    }
     roots.bottom.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Bottom camera view")),
         el("div", { class: "panel-body" },
@@ -288,6 +345,7 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
     );
 
     function render(state: AppState): void {
+        renderCrop(state);
         bottom.render(state);
         top.render(state);
         const topState = state.placing?.top;

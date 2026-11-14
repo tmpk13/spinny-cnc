@@ -17,7 +17,7 @@ import { mountCameraControls, placeFolds, type CameraFolds } from "./cameracontr
 import { mountCameraSight } from "./camerasight.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
-import { mountCameraViews } from "./camview.ts";
+import { mountCameraViews, partLookRadius } from "./camview.ts";
 import { into, type Ctx } from "./context.ts";
 import { mountFindBoard, shownGuesses } from "./findboard.ts";
 import { PLACING_SETUP, gcodePlacing, mountHead, upCameraText } from "./placing.ts";
@@ -714,7 +714,8 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     cameraApply.title = "send the fields marked as not applied";
     const lookSpot = el("select", { class: "field", "aria-label": "Spot to look for once" },
         el("option", { value: "nozzle" }, "nozzle spot"), el("option", { value: "part" }, "part spot")) as HTMLSelectElement;
-    const lookOnce = button("Look once", () => into(ctx, "pnp", ctx.api.pnpLook(lookSpot.value as "nozzle" | "part")), "btn");
+    // A part is looked for within the crop picked under the picture, as a run looks at it.
+    const lookOnce = button("Look once", () => into(ctx, "pnp", ctx.api.pnpLook(lookSpot.value as "nozzle" | "part", lookSpot.value === "part" ? partLookRadius(ctx.store.get()) : undefined)), "btn");
     lookOnce.title = "find the spot once, with no move, and draw what was found over the picture: a wrong polarity or size shows before a routine trusts it";
     const lookLine = el("p", { class: "muted pnp-look-line" });
     const upControls = mountCameraControls(ctx, "up", "the bottom camera");

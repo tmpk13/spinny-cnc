@@ -704,6 +704,9 @@ class PnpNozzleBody(Finite):
 class PnpLookBody(Finite):
     # Which of the up camera's spots to look for once: the nozzle's or a part's.
     spot: Literal["nozzle", "part"] = "nozzle"
+    # How far from the picture's center to look, px of the full size
+    # picture (a part class's crop, say); left out, pcbv's own reach.
+    radius: float | None = Field(default=None, gt=0.0, le=10000.0)
 
 
 class PnpAngleBody(Finite):
@@ -4106,11 +4109,12 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             self.pnp.measure_part(self._pnp_mover(link))
         return self.pnp.state()
 
-    def pnp_look(self, spot: str) -> dict:
-        """The up camera's nozzle or part spot found once, no move: kept in
-        its state for the page to draw over the picture."""
+    def pnp_look(self, spot: str, radius: float | None = None) -> dict:
+        """The up camera's nozzle or part spot found once, no move, within
+        `radius` px of the picture's center when given: kept in its state
+        for the page to draw over the picture."""
         settings = self.pnp.settings()
-        self.pnp.look_once(settings.nozzle_spot if spot == "nozzle" else settings.part_spot)
+        self.pnp.look_once(settings.nozzle_spot if spot == "nozzle" else settings.part_spot, radius)
         return self.pnp.state()
 
     def pnp_abort(self) -> dict:
@@ -5328,7 +5332,8 @@ def create_app(
 
     @app.post("/api/pnp/look")
     def pnp_look(body: PnpLookBody | None = None):
-        return guarded(lambda: backend.pnp_look((body or PnpLookBody()).spot))
+        look = body or PnpLookBody()
+        return guarded(lambda: backend.pnp_look(look.spot, look.radius))
 
     @app.post("/api/pnp/abort")
     def pnp_abort():

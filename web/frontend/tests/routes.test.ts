@@ -267,6 +267,7 @@ describe("HttpApi camera look, search and control routes", () => {
         await api.cameraControls("up");
         await api.setCameraControls("top", { gain: 4, exposure_time_absolute: null });
         await api.pnpLook("part");
+        await api.pnpLook("part", 60);
         await api.topLook();
         await api.topBoard("a1");
         await api.topBoard(null);
@@ -278,6 +279,7 @@ describe("HttpApi camera look, search and control routes", () => {
             ["GET", "/api/cameras/controls?camera=up", null],
             ["PUT", "/api/cameras/controls", { camera: "top", values: { gain: 4, exposure_time_absolute: null } }],
             ["POST", "/api/pnp/look", { spot: "part" }],
+            ["POST", "/api/pnp/look", { spot: "part", radius: 60 }],
             ["POST", "/api/pnp/top/look", null],
             ["POST", "/api/pnp/top/board", { job: "a1" }],
             ["POST", "/api/pnp/top/board", { job: null }],

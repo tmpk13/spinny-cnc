@@ -1475,6 +1475,8 @@ export interface GcodeDocument {
     leave?: number | null;
     /** How far from the up camera's center a part is looked for, mm; null: as far as pcbv does. */
     crop?: number | null;
+    /** Classes of parts by size, each looked for within its own crop, mm: a part takes the first whose words its value and footprint hold, a feeder's own crop outdoing it. */
+    classes?: PartClass[];
     /** The file has a feeder bus, and these slots' places. */
     bus?: boolean;
     slots?: { address: number; at: [number, number, number]; rotation: number }[];
@@ -1484,6 +1486,13 @@ export interface GcodeDocument {
     vacuum: GcodeVacuum | null;
     top: GcodeTopCamera | null;
     feeders: FeederSummary[];
+}
+
+/** A class of parts by size (0402, SOT-23, QFN-32): the words a part's value and footprint hold to be of it, and how far from the bottom camera's center its parts are looked for, mm. */
+export interface PartClass {
+    name: string;
+    match: string;
+    crop: number;
 }
 
 /** A part's place in the job paired with where it is on the machine, and how it was taken: the nozzle over it, the top camera over it, or a fiducial the top camera found. */

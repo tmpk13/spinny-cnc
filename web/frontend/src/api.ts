@@ -363,7 +363,7 @@ export interface Api {
     pnpPart(): Promise<PnpState>;
     pnpAbort(): Promise<PnpState>;
     /** The nozzle's or a part's spot found once over the up camera, no move: kept as the state's look. */
-    pnpLook(spot: "nozzle" | "part"): Promise<PnpState>;
+    pnpLook(spot: "nozzle" | "part", radius?: number): Promise<PnpState>;
     /** The nozzle over a part's place at the travel height. */
     pnpGoto(request: PnpGotoRequest): Promise<void>;
     /** The parts of a board job; none for a job that keeps no board file. */
@@ -1170,8 +1170,8 @@ export class HttpApi implements Api {
         return this.request<PnpState>("POST", "/api/pnp/part");
     }
 
-    pnpLook(spot: "nozzle" | "part"): Promise<PnpState> {
-        return this.request<PnpState>("POST", "/api/pnp/look", { spot });
+    pnpLook(spot: "nozzle" | "part", radius?: number): Promise<PnpState> {
+        return this.request<PnpState>("POST", "/api/pnp/look", radius === undefined ? { spot } : { spot, radius });
     }
 
     pnpAbort(): Promise<PnpState> {

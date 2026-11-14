@@ -966,7 +966,12 @@ below it and never brings it down. The Bottom camera view and Top
 camera view panels show the two pictures (stack them, or put them side
 by side, from the panels' menus); a drag on a picture moves the head so
 the picture follows the pointer, a double-click brings a point to the
-crosshair, and Ctrl and the wheel zoom. *Nozzle box* under the top
+crosshair, and Ctrl and the wheel zoom. With part classes in the
+machine file (`[[part_class]]`, MACHINES.md), *Crop* under the bottom
+camera's picture picks the class whose crop the dashed circle shows and
+the bottom camera panel's *Look once* at a part keeps to, so a class's
+crop can be tried on a part held over the camera before a run uses it.
+*Nozzle box* under the top
 camera's picture, then a drag on it, draws a box where the nozzle
 generally shows in that picture: the nozzle rides on the head with the
 camera, so the box stays put there and is drawn dashed orange with the

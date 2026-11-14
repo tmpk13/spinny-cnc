@@ -8649,16 +8649,22 @@ export class MockBackend implements Api, EventFeed {
         };
     }
 
-    async pnpLook(spot: "nozzle" | "part"): Promise<PnpState> {
+    async pnpLook(spot: "nozzle" | "part", radius?: number): Promise<PnpState> {
         if (!this.pnpRunning) {
             throw new ApiError(409, "the bottom camera is not running: start it first");
+        }
+        if (radius !== undefined && !(Number.isFinite(radius) && radius > 0 && radius <= 10000)) {
+            throw new ApiError(422, "radius: over 0, at most 10000 px");
         }
         const polarity = spot === "nozzle" ? this.pnpConfig.nozzle_spot : this.pnpConfig.part_spot;
         const mm: [number, number] = this.gcodeId !== null
             ? [this.deviceLink.position.x - DEVICE_CAMERA_WHERE[0], this.deviceLink.position.y - DEVICE_CAMERA_WHERE[1]]
             : this.nozzleFromCamera();
-        const seen = upInPicture(mm, UP_TRUTH, this.pnpConfig.size) && (spot === "nozzle" || this.pnpHolding);
-        this.upLookOnce = this.spotLook(polarity, seen ? upPicturePoint(mm, UP_TRUTH) : null, this.pnpConfig.size);
+        const at = upPicturePoint(mm, UP_TRUTH);
+        // Looked for within a radius, a spot further out is not found.
+        const within = radius === undefined || Math.hypot(at.px, at.py) <= radius;
+        const seen = upInPicture(mm, UP_TRUTH, this.pnpConfig.size) && (spot === "nozzle" || this.pnpHolding) && within;
+        this.upLookOnce = { ...this.spotLook(polarity, seen ? at : null, this.pnpConfig.size), radius: radius ?? null };
         this.emitPnp();
         return this.pnpStateOf();
     }

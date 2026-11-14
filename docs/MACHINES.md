@@ -544,6 +544,11 @@ columns = 0              # with row_pitch, a tray taken row by row
 rotation = 0             # the parts' angle as they sit in it
 # place_z, feed (lines before each pick), vision (looked at over the bottom camera), size,
 # pocket (its shade to the top camera), marks and mark, crop
+
+[[part_class]]           # parts by size, each looked at over the bottom camera within its own crop
+name = "0402"            # the class's name, as the page lists it
+match = "0402"           # words a part's value and footprint must all hold, any case; the first class that matches is the part's
+crop = 1.0               # mm from the picture's center its parts are looked for: a small part close in, a large one with room for its body
 ```
 
 The cameras' own keys (`device`, `size`, `fps`, `pcbv` and the shades
@@ -554,6 +559,13 @@ camera given a new device starts again on it. The places, rolls and
 mirror are first guesses instead, which the cameras' routines measure and
 keep. So a machine's cameras come with it: the virtual LumenPnP's file
 names its two cameras' addresses, and connecting it sets both up.
+
+A part looked at over the bottom camera keeps to a circle about the
+picture's center: its feeder's `crop`, else its `[[part_class]]`'s, else
+`[up_camera] crop`, else pcbv's own reach (a third of the picture's
+height). pcbv's spot finder takes a circle about the center, not a box,
+so a crop is a radius. The bottom camera view rings the crop of the class
+picked under it, and its *Look once* at a part keeps to that crop.
 
 A feeder bus (`[bus]`, `[[slot]]`, and a feeder's `bus_id`, `slot`,
 `offset` and `advance` in place of `at`, `pitch` and `count`) carries

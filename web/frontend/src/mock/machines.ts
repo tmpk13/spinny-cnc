@@ -162,7 +162,7 @@ const KINEMATICS: Kinematics[] = ["polar", "cartesian"];
 const TOOLS: Tool[] = ["laser", "spindle", "dispenser"];
 const CONTROLLERS = ["spinny", "gcode"];
 /** The tables of a G-code machine file its own reader reads (openpnp.ts parseGcodeTables). */
-export const GCODE_SECTIONS = ["port", "gcode", "motion", "vacuum", "up_camera", "top_camera", "bus", "slot", "feeder"];
+export const GCODE_SECTIONS = ["port", "gcode", "motion", "vacuum", "up_camera", "top_camera", "bus", "slot", "feeder", "part_class"];
 /** The microsteps a TMC2209 takes. */
 export const MICROSTEPS = [1, 2, 4, 8, 16, 32, 64, 128, 256];
 /** Largest value a float setting takes, as the firmware bounds them. */

@@ -467,6 +467,9 @@ def test_a_look_once_finds_the_spot_without_a_move_and_keeps_its_shape(client):
     # Far off, nothing: said, not refused.
     client.post("/api/command", json={"line": "G0 X160 Y30"})
     assert client.post("/api/pnp/look", json={"spot": "part"}).json()["look"] == {"found": False, "polarity": "dark", "radius": None}
+    # Within a part class's crop, in px of the picture: kept with the look.
+    assert client.post("/api/pnp/look", json={"spot": "part", "radius": 60.0}).json()["look"]["radius"] == 60.0
+    assert client.post("/api/pnp/look", json={"spot": "part", "radius": 0}).status_code == 422
 
 
 def test_the_runout_is_measured_over_the_up_camera_and_a_reversed_axis_named(client):

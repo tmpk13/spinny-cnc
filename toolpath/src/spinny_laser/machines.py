@@ -68,7 +68,7 @@ CONTROLLERS = (SPINNY, GCODE)
 NOZZLE = "nozzle"
 # The tables of a G-code machine file the backend reads; this module keeps
 # them as written.
-GCODE_SECTIONS = ("port", "gcode", "motion", "vacuum", "up_camera", "top_camera", "bus", "slot", "feeder")
+GCODE_SECTIONS = ("port", "gcode", "motion", "vacuum", "up_camera", "top_camera", "bus", "slot", "feeder", "part_class")
 
 # Servos the firmware drives, servo.1 to servo.4 in a file. Each is on a
 # GPIO of the board or on a channel of a PCA9685 on its I2C bus; a pulse of

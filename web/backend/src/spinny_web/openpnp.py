@@ -176,6 +176,22 @@ class Vacuum:
 
 
 @dataclass(frozen=True)
+class PartClass:
+    """A class of parts by size (0402, SOT-23, QFN-32), for the bottom
+    camera's look at a part: the parts whose value and footprint hold all
+    its words are looked for within `crop` mm of the picture's center, a
+    small part close in, a large one with room for its whole body."""
+
+    name: str
+    match: str
+    crop: float
+
+    def holds(self, value: str, footprint: str) -> bool:
+        hay = f"{value} {footprint}".lower()
+        return all(word in hay for word in self.match.lower().split())
+
+
+@dataclass(frozen=True)
 class TopCameraProfile:
     """The camera on the machine's head looking down: the height the head
     stands at for it to see the board sharp (None keeps the safe height),
@@ -292,6 +308,9 @@ class GcodeMachine:
     # How far from the up camera's picture center a part is looked for, mm;
     # None looks as far as pcbv does by default (a third of the height).
     crop: float | None = None
+    # Classes of parts by size, each with its own crop; a part takes the
+    # first whose words it holds, a feeder's own crop outdoing it.
+    classes: tuple[PartClass, ...] = ()
     # The bus smart feeders are on, and where each address's feeder sits.
     bus: BusProfile | None = None
     slots: tuple[Slot, ...] = ()
@@ -321,6 +340,20 @@ class GcodeMachine:
             return True
         hay = names.lower()
         return bool(hay) and any(word.lower() in hay for word in self.match)
+
+    def class_of(self, value: str, footprint: str) -> PartClass | None:
+        """The first part class whose words a part's value and footprint
+        all hold; None with none."""
+        return next((entry for entry in self.classes if entry.holds(value, footprint)), None)
+
+    def crop_of(self, feeder: Feeder, value: str, footprint: str) -> float | None:
+        """How far from the up camera's picture center a part from
+        `feeder` is looked for, mm: the feeder's own crop, else its part
+        class's, else the machine's; None for pcbv's own reach."""
+        if feeder.crop is not None:
+            return feeder.crop
+        chosen = self.class_of(value, footprint)
+        return chosen.crop if chosen is not None else self.crop
 
     def angle_word(self, degrees: float) -> str:
         """An angle of the nozzle, counterclockwise from above, as the
@@ -356,6 +389,7 @@ class GcodeMachine:
             "camera_z": self.camera_z,
             "leave": self.leave,
             "crop": self.crop,
+            "classes": [{"name": entry.name, "match": entry.match, "crop": entry.crop} for entry in self.classes],
             "bus": self.bus is not None,
             "slots": [{"address": slot.address, "at": list(slot.at), "rotation": slot.rotation} for slot in self.slots],
             "max_offset": self.max_offset,
@@ -796,6 +830,25 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
                 "pocket", "marks", "mark", "crop", "bus_id", "slot", "offset", "advance",
             },
         )
+    class_tables = top.get("part_class", [])
+    if not isinstance(class_tables, list) or not all(isinstance(item, dict) for item in class_tables):
+        raise read.fail(None, "part_class", "must be an array of tables ([[part_class]])")
+    classes: list[PartClass] = []
+    for number, table in enumerate(class_tables, start=1):
+        section = f"part_class {number}"
+        class_name = read.text(table, "name", section, "")
+        if not class_name.strip():
+            raise read.fail(section, "name", "must name the class, as 0402 or SOT-23")
+        if any(other.name == class_name for other in classes):
+            raise read.fail(section, "name", f"{class_name!r} is another class's too")
+        class_match = read.text(table, "match", section, "")
+        if not class_match.strip():
+            raise read.fail(section, "match", "must hold the words of a part's value or footprint, as 0402 or SOT-23")
+        if "crop" not in table:
+            raise read.fail(section, "crop", "must say how far from the picture's center its parts are looked for, mm")
+        classes.append(PartClass(name=class_name, match=class_match, crop=read.number(table, "crop", section, None, 0.1, 100.0)))
+        read.done(table, section, {"name", "match", "crop"})
+
     camera = read.table(top, "up_camera")
     camera_z = read.number(camera, "z", "up_camera", None) if "z" in camera else None
     camera_position = read.point(camera, "position", "up_camera", 2, None) if "position" in camera else None
@@ -853,6 +906,7 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
         leave=leave,
         park=park,
         crop=crop,
+        classes=tuple(classes),
         bus=bus,
         slots=tuple(slots),
         match=port_words,
@@ -1255,7 +1309,7 @@ def plan(
                 release=check_lines(machine, held=False),
                 angle=angle,
                 size=expected_size(feeder, part),
-                crop=feeder.crop if feeder.crop is not None else machine.crop,
+                crop=machine.crop_of(feeder, str(part.get("value", "")), str(part.get("footprint", ""))),
             )
         )
     head = [f"; {title or 'placement'} on {machine.name}: {len(blocks)} parts", *machine.init]

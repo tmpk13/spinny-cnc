@@ -9,7 +9,7 @@ import { fitRigid, turnPoint } from "../align.ts";
 import { errorText } from "../api.ts";
 import { type TomlTable, type TomlValue } from "../toml.ts";
 import { HEADER_FIELDS, slotPlace } from "../feederbus.ts";
-import type { AlignFit, Component, GcodeDocument, PlacingPlan, SpotPolarity } from "../types.ts";
+import type { AlignFit, Component, GcodeDocument, PartClass, PlacingPlan, SpotPolarity } from "../types.ts";
 
 export const DEVICE_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const AXIS = /^[A-Z]$/;
@@ -180,6 +180,8 @@ export interface MockDevice {
     park: [number, number] | null;
     /** How far from the up camera's center a part is looked for, mm; null: as far as pcbv does. */
     crop: number | null;
+    /** Classes of parts by size, each with its own crop. */
+    classes: PartClass[];
     /** The bus smart feeders are on, and where each address's feeder sits. */
     bus: MockBus | null;
     slots: MockSlot[];
@@ -611,6 +613,31 @@ export function parseGcodeTables(top: TomlTable, id: string, name: string, descr
         ]);
     });
     device.feeders = feeders;
+    const classTables = top["part_class"] ?? [];
+    if (!Array.isArray(classTables) || !classTables.every((item) => typeof item === "object" && item !== null && !Array.isArray(item))) {
+        throw read.fail(null, "part_class", "must be an array of tables ([[part_class]])");
+    }
+    const classes: PartClass[] = [];
+    (classTables as TomlTable[]).forEach((table, at) => {
+        const section = `part_class ${at + 1}`;
+        const name = read.text(table, "name", section, "");
+        if (name === "") {
+            throw read.fail(section, "name", "must name the class, as 0402 or SOT-23");
+        }
+        if (classes.some((other) => other.name === name)) {
+            throw read.fail(section, "name", `'${name}' is another class's too`);
+        }
+        const match = read.text(table, "match", section, "");
+        if (match === "") {
+            throw read.fail(section, "match", "must hold the words of a part's value or footprint, as 0402 or SOT-23");
+        }
+        if (!("crop" in table)) {
+            throw read.fail(section, "crop", "must say how far from the picture's center its parts are looked for, mm");
+        }
+        classes.push({ name, match, crop: read.number(table, "crop", section, null, 0.1, 100)! });
+        read.done(table, section, ["name", "match", "crop"]);
+    });
+    device.classes = classes;
     const camera = read.table(top, "up_camera");
     device.camera_z = "z" in camera ? read.number(camera, "z", "up_camera", null) : null;
     device.camera_position = "position" in camera ? (read.point(camera, "position", "up_camera", 2, null) as [number, number]) : null;
@@ -679,6 +706,7 @@ export function deviceDocument(device: MockDevice): GcodeDocument {
         camera_z: device.camera_z,
         leave: device.leave,
         crop: device.crop,
+        classes: device.classes.map((entry) => ({ ...entry })),
         bus: device.bus !== null,
         slots: device.slots.map((slot) => ({ address: slot.address, at: [...slot.at], rotation: slot.rotation })),
         max_offset: device.max_offset,

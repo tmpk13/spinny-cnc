@@ -519,6 +519,40 @@ def test_a_part_is_looked_for_within_its_feeders_crop_else_the_files():
     assert [block.crop for block in program.blocks] == [3.0, 6.5]
 
 
+def test_a_part_class_gives_its_parts_their_crop_between_the_feeders_and_the_files():
+    classes = '[[part_class]]\nname = "0603"\nmatch = "0603"\ncrop = 1.2\n[[part_class]]\nname = "QFP"\nmatch = "lqfp"\ncrop = 8\n'
+    text = PROFILE.replace("[camera]\n", "[camera]\ncrop = 3.0\n").replace('count = 10\n', 'count = 10\nvision = true\n[[feeder]]\nid = "ic"\nmatch = "STM32"\nat = [50.0, 20.0, -2.0]\nvision = true\n[[feeder]]\nid = "cap"\nmatch = "100n"\nat = [60.0, 20.0, -2.0]\ncrop = 0.8\nvision = true\n') + classes
+    machine = parse(gcode_file(text), "rig")
+    assert [entry.name for entry in machine.classes] == ["0603", "QFP"]
+    assert machine.document()["classes"] == [{"name": "0603", "match": "0603", "crop": 1.2}, {"name": "QFP", "match": "lqfp", "crop": 8.0}]
+    assert machine.class_of("10k", "R_0603_1608Metric").name == "0603" and machine.class_of("10k", "R_0805") is None
+    from spinny_web.openpnp import board_fit, plan
+
+    parts = [
+        {"ref": "R1", "value": "10k", "footprint": "R_0603", "side": "front", "x": 0.0, "y": 0.0, "rotation": 0.0, "dnp": False},
+        {"ref": "U1", "value": "STM32", "footprint": "LQFP-48", "side": "front", "x": 5.0, "y": 0.0, "rotation": 0.0, "dnp": False},
+        {"ref": "C1", "value": "100n", "footprint": "C_0603", "side": "front", "x": 9.0, "y": 0.0, "rotation": 0.0, "dnp": False},
+        {"ref": "R2", "value": "10k", "footprint": "R_0805", "side": "front", "x": 12.0, "y": 0.0, "rotation": 0.0, "dnp": False},
+    ]
+    program = plan(machine, parts, board_fit([((0.0, 0.0), (0.0, 0.0))], 0.0), {}, vision_ready=True)
+    # Its class's crop; the feeder's own outdoes it; no class, the file's.
+    assert {block.ref: block.crop for block in program.blocks} == {"R1": 1.2, "U1": 8.0, "C1": 0.8, "R2": 3.0}
+    for broken, words in (
+        (classes.replace('name = "QFP"', 'name = "0603"'), "another class's too"),
+        (classes.replace('match = "lqfp"\n', ""), "match must hold"),
+        (classes.replace("crop = 8\n", ""), "crop must say"),
+        (classes.replace("crop = 8", "crop = 0"), "crop"),
+        (classes + 'size = [1, 2]\n', "size"),
+    ):
+        with pytest.raises(Exception, match=words):
+            parse(gcode_file(PROFILE + broken), "rig")
+    # A machine of this project's firmware has no part classes.
+    from spinny_laser import machines as machine_files
+
+    with pytest.raises(machine_files.MachineError, match="part_class"):
+        machine_files.parse('name = "x"\n[[part_class]]\nname = "0603"\nmatch = "0603"\ncrop = 1\n', "x")
+
+
 def test_a_feeder_that_names_its_parts_holds_them_before_any_words():
     text = PROFILE.replace('count = 10\n', 'count = 10\n[[feeder]]\nid = "named"\nrefs = ["R2"]\nat = [70.0, 20.0, -2.0]\n')
     machine = parse(gcode_file(text), "rig")
