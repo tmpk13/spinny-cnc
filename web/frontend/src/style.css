@@ -1141,11 +1141,14 @@ input.num.field.invalid {
     gap: var(--gap);
 }
 
+/* A long word (a port's path) breaks rather than spill out of its card. */
 .overview-card {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: 0.25rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
     padding: 0.9rem 1rem 1rem;
     font: inherit;
     text-align: left;

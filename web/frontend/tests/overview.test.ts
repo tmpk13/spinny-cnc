@@ -35,6 +35,10 @@ test("a card says what its page holds now, and follows the store", () => {
     expect(note("connection")).toBe("nothing connected");
     store.set({ snapshot: connected({}, { url: "socket://127.0.0.1:2323" }), pending: { "machine-file": 2 } });
     expect(note("connection")).toBe("connected: socket://127.0.0.1:2323");
+    // A port the list names goes by that name, not its long path.
+    const port = { url: "/dev/serial/by-id/usb-spinny_spinny_laser_controller-if00", device: "/dev/ttyACM0", description: "spinny laser controller", product: "spinny laser controller", kind: "usb" as const, spinny: true };
+    store.set({ ports: [port], snapshot: connected({}, { url: port.url }) });
+    expect(note("connection")).toBe("connected: spinny laser controller (/dev/ttyACM0)");
     expect(note("config")).toBe("2 edits not applied");
     // A page with nothing to say shows no note.
     expect((root.querySelector(`.overview-card[data-page="cam"] .overview-note`) as HTMLElement).hidden).toBe(true);

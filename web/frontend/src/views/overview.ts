@@ -10,6 +10,7 @@ import { el, replace } from "../dom.ts";
 import { countText } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { Ctx } from "./context.ts";
+import { portLabel } from "./statusbar.ts";
 import { PAGES, pendingOn, showPage, type PageId } from "./tabs.ts";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -137,9 +138,14 @@ export function pageNote(page: PageId | string, state: AppState): string {
                 notes.push(countText(state.auto!.entries.length, "line", "lines"));
             }
             break;
-        case "connection":
-            notes.push(state.snapshot.connected ? `connected: ${state.snapshot.url ?? "a machine"}` : "nothing connected");
+        case "connection": {
+            // The port by the name the Connection tab gives it, shorter
+            // than its path (a by-id path runs to sixty letters).
+            const url = state.snapshot.url;
+            const port = url ? state.ports.find((entry) => entry.url === url || entry.device === url) : undefined;
+            notes.push(state.snapshot.connected ? `connected: ${port ? portLabel(port) : url ?? "a machine"}` : "nothing connected");
             break;
+        }
         case "plugins": {
             const plugins = state.plugins ?? [];
             if (plugins.length > 0) {
@@ -182,6 +188,6 @@ export function mountOverview(root: HTMLElement, ctx: Ctx): void {
             note.hidden = text === "";
         }
     };
-    ctx.store.subscribe(draw, ["jobs", "progress", "components", "auto", "snapshot", "pending", "plugins"]);
+    ctx.store.subscribe(draw, ["jobs", "progress", "components", "auto", "snapshot", "ports", "pending", "plugins"]);
     draw(ctx.store.get());
 }
