@@ -801,6 +801,10 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
                 return;
             }
         }
+        // The ports as they are now: a machine plugged in since the list was made shows.
+        if (!ctx.store.get().snapshot.connected) {
+            await ctx.refreshPorts();
+        }
         const state = ctx.store.get();
         const snapshot = state.snapshot;
         const now = machineInUse(state);
