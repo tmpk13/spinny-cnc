@@ -107,7 +107,7 @@ from .gcode_part import GcodePart
 from .openpnp import machine_of
 from .placing_part import PlacingPart
 from .probing_part import ProbingPart
-from .pnp import MachineMover, PnpError, UpCamera, job_components
+from .pnp import MachineMover, PnpError, UpCamera, job_components, part_shape
 from .parts import KEY as PARTS_FILTER_KEY, PartsFilter, filter_of, mark as mark_filtered, state as filter_state
 from .topcam import TopCamera
 from .heightmap import (
@@ -4090,6 +4090,20 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             return {"job": job_id, "components": [], "note": "only a .kicad_pcb upload keeps the board its parts are read from"}
         return {"job": job_id, "components": mark_filtered(job_components(job, path), filter_of(self.config)), "note": None}
 
+    def job_part_shape(self, job_id: str, ref: str) -> dict:
+        """A part of a job's board as its footprint draws it, offsets from its
+        center in the job's frame: its pads' outlines and its body's lines,
+        for the top camera's picture to show it for lining up by eye; 404
+        for a job that keeps no board file, or a part its board lacks."""
+        job = self._job(job_id)
+        path = self.store.board_path(job_id)
+        if job.design is None or not job.design.board or path is None:
+            raise HTTPException(status_code=404, detail="only a .kicad_pcb upload keeps the board its parts are read from")
+        shape = part_shape(job, path, ref)
+        if shape is None:
+            raise HTTPException(status_code=404, detail=f"the job has no part {ref!r}")
+        return {"job": job_id, **shape}
+
     def set_update_prereleases(self, follow: bool) -> dict:
         """Takes pre-releases into the update check or leaves them out, kept
         across restarts."""
@@ -5282,6 +5296,10 @@ def create_app(
     @app.get("/api/jobs/{job_id}/components")
     def job_components_route(job_id: str):
         return guarded(lambda: backend.job_parts(job_id))
+
+    @app.get("/api/jobs/{job_id}/components/{ref}/shape")
+    def job_part_shape_route(job_id: str, ref: str):
+        return guarded(lambda: backend.job_part_shape(job_id, ref))
 
     @app.get("/api/pnp/parts-filter")
     def parts_filter_state():

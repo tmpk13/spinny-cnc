@@ -3636,6 +3636,17 @@ table.pnp-parts tr.dnp td {
     margin: 0.15rem 0;
 }
 
+/* The parts to align to: a press picks each; those with a reference are
+   green, the one picked ringed in the picked part's magenta. */
+.align-chip.taken {
+    border-color: var(--green);
+    color: var(--green);
+}
+
+.align-chip.picked {
+    box-shadow: inset 0 0 0 0.12rem var(--magenta);
+}
+
 /* Parts a run left out, with why. */
 .device-failed li {
     color: var(--danger);
@@ -3817,6 +3828,8 @@ table.pnp-parts tr.dnp td {
    label: light letters on a dark halo read on any picture, so they keep
    the Solarized ends rather than the theme's text color. */
 .picture-marks .mark-known { stroke: var(--blue); stroke-width: 2; }
+/* The picked part's pads and body about the crosshair, in the picked part's color. */
+.picture-marks .mark-part { stroke: var(--magenta); stroke-width: 2; }
 
 .picture-marks .mark-label {
     fill: var(--base3);

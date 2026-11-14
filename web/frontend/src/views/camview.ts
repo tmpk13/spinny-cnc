@@ -6,14 +6,17 @@
 // the spot's ellipse and rectangle), the circle a part or a mark is looked
 // for within, and for the top camera the box a board search keeps to and
 // the board where its looks put it; each rings the points whose place is
-// known (known.ts). A drag moves the head (picture.ts).
-// The pictures are asked for only while the page shows.
+// known (known.ts), and the top camera draws the picked part's pads and
+// body about its crosshair to line the part up with (partshape.ts). A
+// drag moves the head (picture.ts). The pictures are asked for only while
+// the page shows.
 
 import { activePage, el } from "../dom.ts";
 import type { AppState } from "../state.ts";
 import type { BoardCorners, BoardEstimate, Job, RoutineSpot, SpotLook } from "../types.ts";
 import type { Ctx } from "./context.ts";
 import { bottomKnown, knownMarks, topKnown } from "./known.ts";
+import { boardTurn, partShapes, readShowShape, shapeMarks } from "./partshape.ts";
 import { type Calibration, type Mark, machineToPicturePoints, mountPicture, type PictureView, spotMarks } from "./picture.ts";
 import { gcodePlacing } from "./placing.ts";
 
@@ -176,6 +179,18 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
         ),
     );
 
+    // The picked part's shape, asked for once a part is picked.
+    const shapes = partShapes(ctx, () => top.render(ctx.store.get()));
+    const shapeOf = (state: AppState, calibration: Calibration | null, size: [number, number]): Mark[] => {
+        const job = state.job;
+        const ref = state.pnpPart;
+        if (!readShowShape() || !job || ref === null || calibration === null) {
+            return [];
+        }
+        const shape = shapes.get(job, ref);
+        return shape ? shapeMarks(shape, boardTurn(state), calibration, size) : [];
+    };
+
     const top = mountPicture({
         key: "top",
         label: "Top camera",
@@ -199,6 +214,7 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
                 ...boardMarks(state.job, roughOf(state.job, look?.corners), topCenter(state), calibration, size, "rough"),
                 ...boardMarks(job, look?.estimate ?? null, topCenter(state), calibration, size),
                 ...knownMarks(topKnown(state), topCenter(state), calibration, shown),
+                ...shapeOf(state, calibration, size),
             ];
         },
         move: jog,
@@ -224,7 +240,7 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
         // The top camera is a G-code machine's: its panel shows with one.
         roots.top.classList.toggle("hidden", !gcodePlacing(state));
     }
-    ctx.store.subscribe((state) => render(state), ["pnp", "placing", "snapshot", "job", "components"]);
+    ctx.store.subscribe((state) => render(state), ["pnp", "placing", "snapshot", "job", "components", "pnpPart"]);
     render(ctx.store.get());
     globalThis.addEventListener?.("pagehide", () => {
         bottom.stop();

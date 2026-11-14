@@ -865,6 +865,17 @@ def test_corners_taken_with_the_top_camera_give_a_rough_place_a_search_box_and_r
     assert known.source == "references" and known.place.rotation == pytest.approx(2.0, abs=0.01)
 
 
+def test_a_parts_shape_is_served_from_its_board_file(client):
+    job_id = rig(client, profile())
+    shape = client.get(f"/api/jobs/{job_id}/components/R1/shape").json()
+    # R1 draws its body on F.Fab (1.6 by 0.8 about its center) and has no pads.
+    assert shape["job"] == job_id and shape["ref"] == "R1" and shape["pads"] == [] and len(shape["body"]) == 4
+    assert client.get(f"/api/jobs/{job_id}/components/R9/shape").status_code == 404
+    bare = Job(name="plain", source="svg", groups=[Group(label="g", paths=[[(0.0, 0.0), (1.0, 0.0)]])])
+    client.backend.store.add(bare)
+    assert client.get(f"/api/jobs/{bare.id}/components/R1/shape").status_code == 404
+
+
 def test_a_corner_taken_is_a_reference_go_to_part_and_a_plan_place_the_board_by(client):
     rig(client, profile(rest=TOP))
     job_id = outlined_job(client)

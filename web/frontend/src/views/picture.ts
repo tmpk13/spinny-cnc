@@ -184,7 +184,7 @@ export function growBox(box: MachineBox | null, by: MachineBox): MachineBox {
 }
 
 /** What a mark is: its color and line follow the tone. */
-export type Tone = "center" | "ring" | "spot" | "look" | "box" | "board" | "rough" | "drag" | "miss" | "known";
+export type Tone = "center" | "ring" | "spot" | "look" | "box" | "board" | "rough" | "drag" | "miss" | "known" | "part";
 
 /**
  * A mark over the picture, in its full size px from the top left (y down);

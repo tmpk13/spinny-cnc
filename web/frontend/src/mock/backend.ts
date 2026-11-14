@@ -83,6 +83,7 @@ import {
     checkTopSettings,
     markFiltered,
     mockComponents,
+    mockPartShape,
     partsFilterPattern,
     partsFilterState,
     topFrameSvg,
@@ -246,6 +247,7 @@ import type {
     PadProbePlan,
     PadProbeRequest,
     PartOffset,
+    PartShape,
     PartsFilter,
     PartsFilterState,
     Path,
@@ -7245,6 +7247,18 @@ export class MockBackend implements Api, EventFeed {
         return { job: jobId, components: markFiltered(mockComponents(job), this.partsFilterKept), note: null };
     }
 
+    async partShape(jobId: string, ref: string): Promise<PartShape> {
+        const job = this.requireJob(jobId);
+        if (!job.design?.board) {
+            throw new ApiError(404, "only a .kicad_pcb upload keeps the board its parts are read from");
+        }
+        const shape = mockPartShape(job, ref);
+        if (shape === null) {
+            throw new ApiError(404, `the job has no part '${ref}'`);
+        }
+        return shape;
+    }
+
     /** The parts filter, as the backend keeps it in its config. */
     private partsFilterKept: PartsFilter = { pattern: "", field: "ref" };
 
@@ -8869,13 +8883,8 @@ export class MockBackend implements Api, EventFeed {
         this.devicePart(request.job, request.ref);
         let at = request.at;
         if (at === undefined) {
-            let offset: [number, number] = [0, 0];
-            if (request.camera) {
-                if (!this.topMeasured() || this.topConfig.offset === null) {
-                    throw new ApiError(400, "the top camera's offset is not measured: put the nozzle on a mark, then Measure offset");
-                }
-                offset = this.topConfig.offset;
-            }
+            // The camera's offset as measured, else as the file designs it: the backend's _top_offset.
+            const offset: [number, number] = request.camera ? this.topOffsetOf(this.placingDevice()) : [0, 0];
             const here = this.deviceHere(this.gcodeIdle());
             at = [here.x + offset[0], here.y + offset[1]];
         } else if (!at.every((value) => Number.isFinite(value) && Math.abs(value) <= 10000)) {

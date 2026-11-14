@@ -1324,6 +1324,19 @@ export interface PartsFilterState extends PartsFilter {
     error: string | null;
 }
 
+/**
+ * A part as its footprint draws it, for a camera's picture to show it for
+ * lining up by eye: its pads' outlines (closed) and its body's lines (its
+ * fabrication drawing, else its courtyard), each point an offset from the
+ * part's center in the job's frame, mm, the part's own turn included.
+ */
+export interface PartShape {
+    job: string;
+    ref: string;
+    pads: [number, number][][];
+    body: [number, number][][];
+}
+
 export interface ComponentsResponse {
     job: string;
     components: Component[];

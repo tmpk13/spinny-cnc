@@ -282,6 +282,175 @@ def board_footprints(path: Path) -> list[Footprint]:
     return found
 
 
+# A round pad's or circle's outline is drawn with this many sides, an arc
+# with this many pieces.
+ROUND_SIDES = 16
+ARC_PIECES = 8
+# The layers a footprint's body is drawn from: its fabrication drawing,
+# else its courtyard.
+COURTYARD_LAYERS = ("F.CrtYd", "B.CrtYd")
+
+
+def _screen_turn(point: tuple[float, float], degrees: float) -> tuple[float, float]:
+    """A point of KiCad's frame (y down) turned counterclockwise as drawn on the screen."""
+    radians = math.radians(degrees)
+    c, s = math.cos(radians), math.sin(radians)
+    return (point[0] * c + point[1] * s, -point[0] * s + point[1] * c)
+
+
+def _round(center: tuple[float, float], radius: float, sides: int = ROUND_SIDES) -> list[tuple[float, float]]:
+    return [(center[0] + radius * math.cos(2.0 * math.pi * k / sides), center[1] + radius * math.sin(2.0 * math.pi * k / sides)) for k in range(sides)]
+
+
+def pad_outline(node: list, footprint_angle: float) -> list[tuple[float, float]]:
+    """A pad's outline in its footprint's own frame (KiCad's, y down): a
+    circle or an oval as a polygon, every other shape (rectangles, rounded
+    ones, trapezoids, custom pads) as its size's rectangle, turned by the
+    pad's own angle (the board file keeps the pad's whole angle, its
+    footprint's included)."""
+    at = _child(node, "at") or ["at", "0", "0"]
+    size = _child(node, "size") or ["size", "0", "0"]
+    shape = node[3] if len(node) > 3 and isinstance(node[3], str) else "rect"
+    x, y = _number(at[1] if len(at) > 1 else 0), _number(at[2] if len(at) > 2 else 0)
+    width, height = _number(size[1] if len(size) > 1 else 0), _number(size[2] if len(size) > 2 else 0)
+    own = _number(at[3] if len(at) > 3 else 0) - footprint_angle
+    if shape == "circle":
+        points = _round((0.0, 0.0), width / 2.0)
+    elif shape == "oval" and abs(width - height) > 1e-9:
+        # Two half circles joined: across the longer side.
+        long, short = max(width, height), min(width, height)
+        reach = (long - short) / 2.0
+        half = ROUND_SIDES // 2
+        ends = []
+        for side in (1.0, -1.0):
+            for k in range(half + 1):
+                angle = math.pi * k / half - math.pi / 2.0 + (0.0 if side > 0 else math.pi)
+                ends.append((side * reach + short / 2.0 * math.cos(angle), short / 2.0 * math.sin(angle)))
+        points = ends if width >= height else [(-py, px) for px, py in ends]
+    elif shape == "oval":
+        points = _round((0.0, 0.0), width / 2.0)
+    else:
+        points = [(-width / 2.0, -height / 2.0), (width / 2.0, -height / 2.0), (width / 2.0, height / 2.0), (-width / 2.0, height / 2.0)]
+    return [(x + px, y + py) for px, py in (_screen_turn(point, own) for point in points)]
+
+
+def _arc(start: tuple[float, float], mid: tuple[float, float], end: tuple[float, float]) -> list[tuple[float, float]]:
+    """The arc through three points, in ARC_PIECES pieces; a straight line when they lie on one."""
+    ax, ay = start
+    bx, by = mid
+    cx, cy = end
+    d = 2.0 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
+    if abs(d) < 1e-12:
+        return [start, end]
+    ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / d
+    uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / d
+    radius = math.dist((ux, uy), start)
+    first = math.atan2(ay - uy, ax - ux)
+    through = math.atan2(by - uy, bx - ux)
+    last = math.atan2(cy - uy, cx - ux)
+    sweep = (last - first) % (2.0 * math.pi)
+    if (through - first) % (2.0 * math.pi) > sweep:
+        sweep -= 2.0 * math.pi
+    return [(ux + radius * math.cos(first + sweep * k / ARC_PIECES), uy + radius * math.sin(first + sweep * k / ARC_PIECES)) for k in range(ARC_PIECES + 1)]
+
+
+def _drawing_lines(item: list) -> list[list[tuple[float, float]]]:
+    """A footprint's drawing item as lines in its own frame: a line, a
+    rectangle's or a polygon's edge closed, a circle, an arc."""
+    def point(key: str) -> tuple[float, float] | None:
+        found = _child(item, key)
+        return (_number(found[1]), _number(found[2])) if found is not None and len(found) >= 3 else None
+
+    kind = item[0]
+    start, end = point("start"), point("end")
+    if kind == "fp_line" and start and end:
+        return [[start, end]]
+    if kind == "fp_rect" and start and end:
+        return [[start, (end[0], start[1]), end, (start[0], end[1]), start]]
+    if kind == "fp_poly":
+        pts = _child(item, "pts")
+        corners = [(_number(xy[1]), _number(xy[2])) for xy in (pts or [])[1:] if isinstance(xy, list) and len(xy) >= 3 and xy[0] == "xy"]
+        return [[*corners, corners[0]]] if len(corners) >= 2 else []
+    if kind == "fp_circle":
+        center = point("center")
+        if center and end:
+            ring = _round(center, math.dist(center, end), ROUND_SIDES + 8)
+            return [[*ring, ring[0]]]
+    if kind == "fp_arc" and start and end:
+        mid = point("mid")
+        if mid:
+            return [_arc(start, mid, end)]
+    return []
+
+
+def footprint_drawings(text: str) -> dict[str, dict]:
+    """Each footprint's drawing in KiCad's board frame (mm, y down), by its
+    reference: its center, its pads' outlines and its body's lines (its
+    fabrication drawing, else its courtyard), for a camera's picture to
+    show the part's shape."""
+    tree = parse_sexp(text)
+    root = tree[0] if tree and isinstance(tree[0], list) else tree
+    found: dict[str, dict] = {}
+    for node in root:
+        if not (isinstance(node, list) and node and node[0] in ("footprint", "module")):
+            continue
+        ref = ""
+        for item in node:
+            if isinstance(item, list) and len(item) >= 3 and isinstance(item[1], str) and isinstance(item[2], str):
+                if (item[0], item[1].lower()) in (("property", "reference"), ("fp_text", "reference")):
+                    ref = item[2]
+        if not ref or ref in found:
+            continue
+        at = _child(node, "at") or ["at", "0", "0"]
+        origin = (_number(at[1] if len(at) > 1 else 0), _number(at[2] if len(at) > 2 else 0))
+        angle = _number(at[3] if len(at) > 3 else 0)
+
+        def placed(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+            return [(origin[0] + x, origin[1] + y) for x, y in (_screen_turn(point, angle) for point in points)]
+
+        pads = [placed(pad_outline(item, angle)) for item in node if isinstance(item, list) and item and item[0] == "pad"]
+        body: dict[str, list] = {"fab": [], "courtyard": []}
+        for item in node:
+            if not (isinstance(item, list) and item and item[0] in ("fp_line", "fp_rect", "fp_poly", "fp_circle", "fp_arc")):
+                continue
+            layer = _child(item, "layer")
+            name = layer[1] if layer is not None and len(layer) > 1 else ""
+            kind = "fab" if name in FAB_LAYERS else "courtyard" if name in COURTYARD_LAYERS else None
+            if kind is not None:
+                body[kind].extend(placed(line) for line in _drawing_lines(item))
+        found[ref] = {"center": origin, "pads": [pad for pad in pads if len(pad) >= 3], "body": body["fab"] or body["courtyard"]}
+    return found
+
+
+_SHAPES: dict[str, tuple[float, dict[str, dict]]] = {}
+
+
+def part_shape(job, path: Path, ref: str) -> dict | None:
+    """A part's shape in the job's frame, as offsets from its center (mm):
+    its pads' outlines and its body's lines, placed and turned as the job
+    lies, flipped with it when its layer is cut turned over; None for a
+    part the board lacks. Read once per change of the board file."""
+    design = job.design
+    if design is None:
+        raise ValueError("the job has no board design: only a board upload keeps its parts' shapes")
+    stamp = path.stat().st_mtime
+    with _CACHE_LOCK:
+        cached = _SHAPES.get(str(path))
+    if cached is None or cached[0] != stamp:
+        cached = (stamp, footprint_drawings(path.read_text(encoding="utf-8", errors="replace")))
+        with _CACHE_LOCK:
+            _SHAPES[str(path)] = cached
+    drawing = cached[1].get(ref)
+    if drawing is None:
+        return None
+    cx, cy = design.board_to_job(drawing["center"])
+
+    def offsets(points: list[tuple[float, float]]) -> list[list[float]]:
+        return [[round(x - cx, 4), round(y - cy, 4)] for x, y in (design.board_to_job(point) for point in points)]
+
+    return {"ref": ref, "pads": [offsets(pad) for pad in drawing["pads"]], "body": [offsets(line) for line in drawing["body"]]}
+
+
 def job_components(job, path: Path) -> list[dict]:
     """The parts of a board job, placed and turned into the job's frame
     through its design map, which follows every move and turn of the job."""

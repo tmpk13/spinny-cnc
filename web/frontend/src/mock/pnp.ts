@@ -6,7 +6,7 @@
 // picture's center, x right and y down.
 
 import { turnPoint } from "../align.ts";
-import type { Component, Job, PartsFilter, PartsFilterState, PnpSettings, SpotPolarity, TopSettings } from "../types.ts";
+import type { Component, Job, PartShape, PartsFilter, PartsFilterState, PnpSettings, SpotPolarity, TopSettings } from "../types.ts";
 import { svgUrl } from "./camlog.ts";
 import { round4 } from "./jobs.ts";
 import { CAMERA_SIZE } from "./machines.ts";
@@ -276,6 +276,32 @@ export function mockComponents(job: Job): Component[] {
         });
     }
     return parts;
+}
+
+/**
+ * A mock part's shape, as the backend's part_shape gives a footprint's: a
+ * test point's square pad (its area's side), a fiducial's round pad with
+ * its 2 mm mask opening as its body, a mounting hole's 3.2 mm ring; offsets
+ * from the part's center in the job's frame. Null for a part the board lacks.
+ */
+export function mockPartShape(job: Job, ref: string): PartShape | null {
+    const part = mockComponents(job).find((entry) => entry.ref === ref);
+    if (!part) {
+        return null;
+    }
+    const round = (diameter: number, sides = 16): [number, number][] =>
+        Array.from({ length: sides }, (_, k) => [round4((diameter / 2) * Math.cos((2 * Math.PI * k) / sides)), round4((diameter / 2) * Math.sin((2 * Math.PI * k) / sides))] as [number, number]);
+    if (part.fiducial) {
+        const ring = round(2, 24);
+        return { job: job.id, ref, pads: [round(part.diameter ?? 1)], body: [[...ring, ring[0]!]] };
+    }
+    if (part.pads === 0) {
+        const ring = round(3.2, 24);
+        return { job: job.id, ref, pads: [], body: [[...ring, ring[0]!]] };
+    }
+    const index = Number(ref.replace(/^TP/, "")) - 1;
+    const side = Math.sqrt(Math.max((job.pads ?? [])[index]?.[2] ?? 1, 0.01)) / 2;
+    return { job: job.id, ref, pads: [[[-side, -side], [side, -side], [side, side], [-side, side]].map(([x, y]) => [round4(x!), round4(y!)] as [number, number])], body: [] };
 }
 
 /** The parts filter's expression, any case; null for an empty one; an Error saying why for one that does not compile. */

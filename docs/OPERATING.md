@@ -899,7 +899,15 @@ come from the board's KiCad file, not from OpenPnP. Its setup steps:
    *Corner by edges* in the Find board panel) is a reference too, listed
    as "corner bottom left", so *Go to part* works from it at once; one
    found by its edges also gives the board's turn. *Clear corners*
-   forgets them.
+   forgets them. *Parts to align to*: *Choose* picks that many parts
+   spread over the board (its fiducials first, then each next the part
+   farthest from those picked; *Add picked* and *Drop picked* change the
+   set), each a button that picks its part, green once it has a
+   reference; *Next* picks the next one with none and, once the board's
+   place is known, takes the top camera over it. With *part's shape on
+   the top camera* ticked, the picked part's pads and body (as its
+   footprint draws them, turned as it lies) are drawn about the top
+   camera's crosshair: jog until the part fills them, then *Camera here*.
 4. *Plan* makes the placement program from the references and the
    feeders and shows it; nothing moves (it works with the machine
    disconnected too, for the one last connected). *Run* places the

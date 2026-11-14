@@ -56,6 +56,7 @@ import type {
     Mode,
     PadProbePlan,
     PadProbeRequest,
+    PartShape,
     PartsFilter,
     PartsFilterState,
     PlacingPlan,
@@ -364,6 +365,8 @@ export interface Api {
     pnpGoto(request: PnpGotoRequest): Promise<void>;
     /** The parts of a board job; none for a job that keeps no board file. */
     components(jobId: string): Promise<ComponentsResponse>;
+    /** A part's pads and body as its footprint draws them, offsets from its center in the job's frame. */
+    partShape(jobId: string, ref: string): Promise<PartShape>;
     /** The parts filter kept on the backend, which a placing run honors. */
     partsFilter(): Promise<PartsFilterState>;
     /** Keeps the parts filter; an expression that does not compile is refused (400). */
@@ -1173,6 +1176,10 @@ export class HttpApi implements Api {
 
     components(jobId: string): Promise<ComponentsResponse> {
         return this.request<ComponentsResponse>("GET", `/api/jobs/${encodeURIComponent(jobId)}/components`);
+    }
+
+    partShape(jobId: string, ref: string): Promise<PartShape> {
+        return this.request<PartShape>("GET", `/api/jobs/${encodeURIComponent(jobId)}/components/${encodeURIComponent(ref)}/shape`);
     }
 
     partsFilter(): Promise<PartsFilterState> {

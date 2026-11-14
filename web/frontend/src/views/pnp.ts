@@ -587,7 +587,8 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     // The steps follow the machine the parts are placed with.
     mountSteps(roots.steps, ctx, (state) => [gcodePlacing(state) ? PLACING_SETUP : PNP_SETUP], "spinny.steps.pnp");
     mountHead(roots.head, ctx);
-    mountPnpRefs(roots.refs, ctx);
+    // The top camera's picture is drawn again when the part's shape is turned on or off.
+    mountPnpRefs(roots.refs, ctx, () => views.top.render(ctx.store.get()));
     mountPnpFeeders(roots.feeders, ctx);
     mountPnpRun(roots.run, ctx);
     const views = mountCameraViews({ bottom: roots.view, top: roots.topView }, ctx);
@@ -1445,6 +1446,15 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         renderJobs(state);
         renderBoard(state);
     }, ["jobs", "job"]);
+    // A part picked elsewhere (the parts to align to) is picked here too,
+    // its row brought into view.
+    ctx.store.subscribe((state) => {
+        if (state.pnpPart !== selected) {
+            selected = state.pnpPart;
+            revealPick = selected !== null;
+            renderAll();
+        }
+    }, ["pnpPart"]);
     ctx.store.subscribe((state) => {
         renderCamera(state);
         renderActions(state);

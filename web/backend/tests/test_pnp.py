@@ -17,7 +17,7 @@ from spinny_web import camera as camera_module
 from spinny_web.camera import picture_to_machine, wait_settled
 from spinny_web.jobs import Design, Group, Job
 from spinny_web.link import Link
-from spinny_web.pnp import UpCameraSettings, calibrate, footprints_of, job_components, parse_sexp
+from spinny_web.pnp import UpCameraSettings, calibrate, footprint_drawings, footprints_of, job_components, parse_sexp, part_shape
 from spinny_web.vision import VisionError
 
 REPO = Path(__file__).resolve().parents[3]
@@ -423,3 +423,65 @@ def test_a_look_waits_for_a_picture_taken_after_the_head_came_to_rest(monkeypatc
     monkeypatch.setattr(camera_module, "FRESH_SECONDS", 0.1)
     with pytest.raises(VisionError, match="no picture taken after"):
         wait_settled(Frozen())
+
+
+SHAPED = """(kicad_pcb
+\t(footprint "Resistor_SMD:R_0603_1608Metric"
+\t\t(layer "F.Cu")
+\t\t(at 101 -70 90)
+\t\t(property "Reference" "R1")
+\t\t(property "Value" "10k")
+\t\t(attr smd)
+\t\t(fp_rect (start -0.8 -0.4) (end 0.8 0.4) (stroke (width 0.1) (type solid)) (layer "F.Fab"))
+\t\t(fp_line (start -1.5 -0.7) (end 1.5 -0.7) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+\t\t(pad "1" smd roundrect (at -0.825 0 90) (size 0.8 0.95) (layers "F.Cu" "F.Paste" "F.Mask"))
+\t\t(pad "2" smd roundrect (at 0.825 0 90) (size 0.8 0.95) (layers "F.Cu" "F.Paste" "F.Mask"))
+\t)
+\t(footprint "TestPoint:TestPoint_Pad_D1.0mm"
+\t\t(layer "F.Cu")
+\t\t(at 120 -80)
+\t\t(property "Reference" "TP1")
+\t\t(pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu" "F.Mask"))
+\t\t(fp_circle (center 0 0) (end 0.9 0) (stroke (width 0.05) (type solid)) (layer "F.CrtYd"))
+\t)
+\t(footprint "Connector:Oval"
+\t\t(layer "F.Cu")
+\t\t(at 130 -80)
+\t\t(property "Reference" "J1")
+\t\t(pad "1" thru_hole oval (at 0 0) (size 1 2) (drill 0.6) (layers "*.Cu"))
+\t)
+)
+"""
+
+
+def box_of(points: list) -> tuple[float, float, float, float]:
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def test_a_parts_shape_is_its_pads_and_body_placed_and_turned_as_the_job_lies(tmp_path):
+    path = tmp_path / "shaped.kicad_pcb"
+    path.write_text(SHAPED, encoding="utf-8")
+    drawings = footprint_drawings(SHAPED)
+    assert set(drawings) == {"R1", "TP1", "J1"} and drawings["R1"]["center"] == (101.0, -70.0)
+    job = Job(name="board", source="kicad", groups=[Group(label="g", paths=[[(0.0, 0.0), (1.0, 0.0)]])], design=Design(shift=(-100.0, -70.0), rotation=0.0, board=True))
+    shape = part_shape(job, path, "R1")
+    assert shape is not None and shape["ref"] == "R1" and len(shape["pads"]) == 2
+    # Turned a quarter counterclockwise, pad 1 (left of the center as drawn
+    # in the footprint) lies below it, its 0.95 mm side now along X.
+    x0, y0, x1, y1 = box_of(shape["pads"][0])
+    assert (x0, y0, x1, y1) == pytest.approx((-0.475, -1.225, 0.475, -0.425), abs=1e-6)
+    # The body is the fabrication drawing's, not the courtyard: 0.8 along X, 1.6 along Y.
+    assert box_of([point for line in shape["body"] for point in line]) == pytest.approx((-0.4, -0.8, 0.4, 0.8), abs=1e-6)
+    # Round and oval pads come as polygons; a footprint without a drawing takes its courtyard.
+    tp = part_shape(job, path, "TP1")
+    assert tp is not None and len(tp["pads"][0]) == 16 and box_of(tp["pads"][0]) == pytest.approx((-0.5, -0.5, 0.5, 0.5), abs=1e-6)
+    assert box_of(tp["body"][0]) == pytest.approx((-0.9, -0.9, 0.9, 0.9), abs=1e-6)
+    oval = part_shape(job, path, "J1")
+    assert oval is not None and box_of(oval["pads"][0]) == pytest.approx((-0.5, -1.0, 0.5, 1.0), abs=1e-6) and oval["body"] == []
+    # The job turned a quarter: so is the shape.
+    turned = Job(name="board", source="kicad", groups=job.groups, design=Design(shift=(0.0, 0.0), rotation=90.0, board=True))
+    body = part_shape(turned, path, "R1")
+    assert body is not None and box_of([point for line in body["body"] for point in line]) == pytest.approx((-0.8, -0.4, 0.8, 0.4), abs=1e-6)
+    assert part_shape(job, path, "R9") is None
