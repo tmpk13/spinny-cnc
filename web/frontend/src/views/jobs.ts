@@ -395,7 +395,9 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
             }
             const layer = layers.find((entry) => entry.name === name);
             const empty = layer && layer.items === 0 ? "This layer is empty. " : "";
-            const how = modeField.selectedOptions[0]?.textContent ?? modeField.value;
+            // The option of the value, looked up rather than read from
+            // selectedOptions: happy-dom's live list of it can go stale.
+            const how = Array.from(modeField.options).find((option) => option.value === modeField.value)?.textContent ?? modeField.value;
             chooserNote.textContent = `${empty}Board: ${how} (set below).`;
         };
         follow();
