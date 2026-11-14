@@ -1032,10 +1032,12 @@ select.field option {
     color: var(--text);
 }
 
+/* A number sits in the middle of its box, its placeholder too. */
 input.num.field {
     width: 6rem;
     font-family: var(--mono);
     font-variant-numeric: tabular-nums;
+    text-align: center;
 }
 
 /* A number field whose text reads as no number nor any arithmetic. */
