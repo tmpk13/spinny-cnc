@@ -4,7 +4,7 @@ import { crc8, decodePacket, encodePacket, HEADER_FIELDS, slotPlace } from "../s
 import { DEVICE_LINES_PER_SECOND, MockBackend } from "../src/mock/backend.ts";
 import { planDevice } from "../src/mock/openpnp.ts";
 import type { Component } from "../src/types.ts";
-import { mountPnpFeeders } from "../src/views/pnpfeeders.ts";
+import { mountPnpFeeders, pickAfter } from "../src/views/pnpfeeders.ts";
 import { connectGcode, parseDevice } from "./gcoderig.ts";
 import { findButton, settle, setup } from "./harness.ts";
 
@@ -110,6 +110,64 @@ describe("the feeder bus in the page and its mock", () => {
         const state = await mock.placingState();
         expect(state.progress?.state).toBe("done");
         expect(state.progress?.steps?.some((step) => step.text === "feeder c-100n advanced 2 mm (address 3)")).toBe(true);
+    });
+
+    test("a press picks a feeder, Shift a run of them, Ctrl or Cmd adds or drops one", () => {
+        const ids = ["a", "b", "c", "d", "e"];
+        const plain = { shift: false, toggle: false };
+        let state = pickAfter(ids, new Set(), null, 1, plain);
+        expect([...state.picked]).toEqual(["b"]);
+        expect(state.anchor).toBe("b");
+        // Shift: the run from the anchor, either way.
+        state = pickAfter(ids, state.picked, state.anchor, 3, { shift: true, toggle: false });
+        expect([...state.picked].sort()).toEqual(["b", "c", "d"]);
+        expect(state.anchor).toBe("b");
+        expect([...pickAfter(ids, state.picked, state.anchor, 0, { shift: true, toggle: false }).picked].sort()).toEqual(["a", "b"]);
+        // Ctrl drops one and adds another, moving the anchor.
+        state = pickAfter(ids, state.picked, state.anchor, 2, { shift: false, toggle: true });
+        expect([...state.picked].sort()).toEqual(["b", "d"]);
+        state = pickAfter(ids, state.picked, state.anchor, 4, { shift: false, toggle: true });
+        expect([...state.picked].sort()).toEqual(["b", "d", "e"]);
+        expect(state.anchor).toBe("e");
+        // Ctrl and Shift add the run to what is picked.
+        expect([...pickAfter(ids, new Set(["a"]), "c", 4, { shift: true, toggle: true }).picked].sort()).toEqual(["a", "c", "d", "e"]);
+        // A plain press picks one alone, and lets it go when it was the only one.
+        state = pickAfter(ids, state.picked, state.anchor, 0, plain);
+        expect([...state.picked]).toEqual(["a"]);
+        expect([...pickAfter(ids, state.picked, state.anchor, 0, plain).picked]).toEqual([]);
+    });
+
+    test("the feeders picked are what the scan looks for, each by its id, and the ones not found are named", async () => {
+        const { ctx, root, backend, calls } = setup();
+        await connectGcode(backend, "lumen", `${PROFILE}[[feeder]]\nid = "tray"\nmatch = "10k"\nat = [10.0, 10.0, 5.0]\n`);
+        await ctx.refreshPlacing();
+        mountPnpFeeders(root, ctx);
+        const rows = (): HTMLTableRowElement[] => Array.from(root.querySelectorAll<HTMLTableRowElement>(".device-feeders tbody tr"));
+        const press = (index: number, keys: MouseEventInit = {}): void => {
+            rows()[index]!.dispatchEvent(new MouseEvent("click", { bubbles: true, ...keys }));
+        };
+        expect(findButton(root, "Scan bus")).toBeDefined();
+        press(0);
+        press(2, { shiftKey: true });
+        expect(rows().map((row) => row.classList.contains("selected"))).toEqual([true, true, true]);
+        // The tray is not on the bus: the scan names the two that are.
+        expect(root.querySelector(".feeder-picks")?.textContent).toContain("3 picked: c-100n, c-1u, tray (1 not on the bus)");
+        press(1, { ctrlKey: true });
+        expect(rows().map((row) => row.classList.contains("selected"))).toEqual([true, false, true]);
+        findButton(root, "Scan 1 picked").click();
+        await settle();
+        const asked = calls.filter((call) => call.name === "pnpBusScan").at(-1);
+        expect(asked?.args[0]).toEqual(["c-100n", "tray"]);
+        expect(root.querySelector(".bus-scan")?.textContent).toContain("address 3: " + C100N);
+        expect(root.querySelector(".bus-missing")?.textContent).toBe("feeder tray: not on the bus: its file gives no bus_id");
+        // A press on a row's button is not a pick.
+        findButton(rows()[0]!, "Count again").click();
+        expect(rows()[0]!.classList.contains("selected")).toBe(true);
+        // Nothing picked: the scan asks every address again.
+        findButton(root, "Clear").click();
+        expect(findButton(root, "Scan bus")).toBeDefined();
+        document.querySelector("dialog[open]")?.remove();
+        root.remove();
     });
 
     test("the scan's buttons say what they do on hover", async () => {

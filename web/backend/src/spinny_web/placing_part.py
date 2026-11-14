@@ -991,11 +991,37 @@ class PlacingPart:
             feeders.append(feeder)
         return replace(machine, feeders=tuple(feeders))
 
-    def pnp_bus_scan(self) -> dict:
+    def pnp_bus_scan(self, feeders: list[str] | None = None) -> dict:
         """The feeders that answer on the bus, by address, each with its id
-        and the file's feeder of that id, when there is one."""
+        and the file's feeder of that id, when there is one. With `feeders`
+        (the file's feeders by name), only those are looked for, each by its
+        id (one question each, not one per address); `missing` names those
+        that did not answer, or are not on the bus."""
         machine = self._placing_idle()
-        found = self._bus(machine).scan()
+        bus = self._bus(machine)
+        missing: list[dict] = []
+        if feeders is None:
+            found = bus.scan()
+        else:
+            by_name = {feeder.id: feeder for feeder in machine.feeders}
+            unknown = [name for name in feeders if name not in by_name]
+            if unknown:
+                raise HTTPException(status_code=404, detail=f"{machine.name}'s file has no feeder {unknown[0]!r}")
+            found = []
+            for name in dict.fromkeys(feeders):
+                feeder = by_name[name]
+                if feeder.bus_id is None:
+                    missing.append({"feeder": name, "id": None, "reason": "not on the bus: its file gives no bus_id"})
+                    continue
+                try:
+                    address = bus.find(feeder.bus_id)
+                except BusError as exc:
+                    raise GcodeLinkError(f"feeder {name}: {exc}") from exc
+                if address is None:
+                    missing.append({"feeder": name, "id": feeder.bus_id, "reason": "did not answer to its id: is it in a slot?"})
+                else:
+                    found.append({"address": address, "id": feeder.bus_id})
+            found.sort(key=lambda entry: entry["address"])
         by_id = {feeder.bus_id: feeder for feeder in machine.feeders if feeder.bus_id is not None}
         slots = {slot.address for slot in machine.slots}
         return {
@@ -1008,6 +1034,7 @@ class PlacingPart:
                 }
                 for entry in found
             ],
+            "missing": missing,
             **self.publish_placing(),
         }
 

@@ -732,6 +732,12 @@ class PnpBusFeedBody(BaseModel):
     feeder: str
 
 
+class PnpBusScanBody(BaseModel):
+    # The machine file's feeders to look for on the bus by their ids; left
+    # out, every address is asked which feeder is there.
+    feeders: list[str] | None = None
+
+
 class PnpLightBody(BaseModel):
     on: bool
 
@@ -5350,8 +5356,8 @@ def create_app(
         return guarded(backend.pnp_boards_reset)
 
     @app.post("/api/pnp/bus/scan")
-    def pnp_bus_scan():
-        return guarded(backend.pnp_bus_scan)
+    def pnp_bus_scan(body: PnpBusScanBody | None = None):
+        return guarded(lambda: backend.pnp_bus_scan((body or PnpBusScanBody()).feeders))
 
     @app.post("/api/pnp/bus/feed")
     def pnp_bus_feed(body: PnpBusFeedBody):

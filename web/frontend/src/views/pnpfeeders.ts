@@ -4,13 +4,15 @@
 // tape move. With a [bus] in the file, a scan lists the feeders that
 // answer by address and id: a file's feeder found at an address takes it
 // as its slot, and a slot's place is taken with the nozzle over the point
-// a feeder there presents its part at.
+// a feeder there presents its part at. Feeders picked in the list (a press
+// picks one, Shift a run of them, Ctrl or Cmd adds or drops one) are what
+// the scan looks for, each by its id, in place of every address.
 
 import { askConfirm } from "../confirm.ts";
-import { button, el, lockFor, replace } from "../dom.ts";
+import { button, el, lockFor, replace, setLocked } from "../dom.ts";
 import { formatFixed } from "../format.ts";
 import type { AppState } from "../state.ts";
-import type { BusFeeder, GcodeDocument, FeederSummary } from "../types.ts";
+import type { BusFeeder, BusMissing, GcodeDocument, FeederSummary } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
 
 /** Where a feeder presents its parts, in words. */
@@ -52,30 +54,87 @@ export function withSlot(text: string, doc: GcodeDocument, address: number, at: 
     return text;
 }
 
+/** Which keys were held with a press on a list's row: Shift picks a run of rows, Ctrl (or Cmd) adds or drops one. */
+export interface PickKeys {
+    shift: boolean;
+    toggle: boolean;
+}
+
+/**
+ * A list's picked rows after a press on row `index` of `ids`, and the row
+ * a Shift press counts a run from: a plain press picks that row alone (or
+ * lets it go when it was the one row picked), Ctrl or Cmd adds or drops
+ * it, Shift picks the run from the anchor to it (added to the rows picked
+ * with Ctrl too). A plain or Ctrl press moves the anchor; Shift keeps it.
+ */
+export function pickAfter(ids: string[], picked: ReadonlySet<string>, anchor: string | null, index: number, keys: PickKeys): { picked: Set<string>; anchor: string | null } {
+    const id = ids[index];
+    if (id === undefined) {
+        return { picked: new Set(picked), anchor };
+    }
+    if (keys.shift) {
+        const from = anchor !== null && ids.includes(anchor) ? ids.indexOf(anchor) : index;
+        const run = ids.slice(Math.min(from, index), Math.max(from, index) + 1);
+        return { picked: new Set([...(keys.toggle ? picked : []), ...run]), anchor: anchor ?? id };
+    }
+    if (keys.toggle) {
+        const next = new Set(picked);
+        if (next.has(id)) {
+            next.delete(id);
+        } else {
+            next.add(id);
+        }
+        return { picked: next, anchor: id };
+    }
+    const alone = picked.size === 1 && picked.has(id);
+    return { picked: alone ? new Set() : new Set([id]), anchor: id };
+}
+
 export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
     const list = el("table", { class: "pnp-parts device-feeders" });
     const scan = button("Scan bus", () => scanBus(), "btn");
-    scan.title = "ask every address on the feeder bus which feeder is there";
     const scanList = el("ul", { class: "device-references bus-scan" });
     const busBox = el("div", { class: "stack hidden" }, el("div", { class: "button-row" }, scan), scanList);
     const note = el("p", { class: "muted hint" });
+    const pickLine = el("span", { class: "muted" });
+    const clearPicks = button("Clear", () => setPicked(new Set(), null), "btn btn-quiet btn-small", "pick no feeder: the scan asks every address");
+    const pickRow = el("div", { class: "button-row feeder-picks" }, pickLine, clearPicks);
     const listBox = el("div", { class: "pnp-parts-box" }, list);
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Feeders")),
-        el("div", { class: "panel-body" }, note, listBox, busBox),
+        el("div", { class: "panel-body" }, note, pickRow, listBox, busBox),
     );
 
     let found: BusFeeder[] = [];
+    let missing: BusMissing[] = [];
     const feedButtons = new Map<string, HTMLButtonElement>();
+    // The feeders picked in the list, by id, and the one a Shift press
+    // counts its run from.
+    let picked = new Set<string>();
+    let anchor: string | null = null;
+
+    function setPicked(next: Set<string>, nextAnchor: string | null): void {
+        picked = next;
+        anchor = nextAnchor;
+        drawn = "";
+        render(ctx.store.get());
+    }
+
+    /** The file's feeders picked, in its order. */
+    function pickedFeeders(state: AppState): FeederSummary[] {
+        return (state.placing?.document?.feeders ?? []).filter((feeder) => picked.has(feeder.id));
+    }
 
     async function scanBus(): Promise<void> {
-        const answer = await ctx.call(ctx.api.pnpBusScan());
+        const names = pickedFeeders(ctx.store.get()).map((feeder) => feeder.id);
+        const answer = await ctx.call(ctx.api.pnpBusScan(names.length > 0 ? names : undefined));
         if (answer) {
-            const { feeders, ...state } = answer;
+            const { feeders, missing: unanswered, ...state } = answer;
             found = feeders;
+            missing = unanswered ?? [];
             ctx.store.set({ placing: state });
             drawScan(ctx.store.get());
-            if (feeders.length === 0) {
+            if (feeders.length === 0 && missing.length === 0) {
                 ctx.toast("info", "no feeder answered on the bus");
             }
         }
@@ -126,12 +185,13 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
     function drawScan(state: AppState): void {
         const doc = state.placing?.document;
         const feeders = doc?.feeders ?? [];
-        const key = JSON.stringify([found, feeders.map((feeder) => [feeder.id, feeder.bus_id, feeder.slot]), doc?.slots ?? []]);
+        const key = JSON.stringify([found, missing, feeders.map((feeder) => [feeder.id, feeder.bus_id, feeder.slot]), doc?.slots ?? []]);
         if (key === scanKey) {
             return;
         }
         scanKey = key;
-        replace(scanList, ...found.map((entry) => {
+        const unanswered = missing.map((entry) => el("li", { class: "bus-missing" }, `feeder ${entry.feeder}${entry.id ? ` (${entry.id})` : ""}: ${entry.reason}`));
+        replace(scanList, ...unanswered, ...found.map((entry) => {
             const index = feeders.findIndex((feeder) => feeder.bus_id === entry.id);
             const feeder = index >= 0 ? feeders[index]! : null;
             const actions: HTMLElement[] = [];
@@ -150,13 +210,18 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
         const doc = state.placing?.document ?? null;
         const device = state.placing;
         const feeders = doc?.feeders ?? [];
-        const key = JSON.stringify([feeders, device?.taken ?? {}, doc?.bus ?? false]);
+        const ids = feeders.map((feeder) => feeder.id);
+        if ([...picked].some((id) => !ids.includes(id))) {
+            // A feeder gone from the file is picked no more.
+            picked = new Set([...picked].filter((id) => ids.includes(id)));
+        }
+        const key = JSON.stringify([feeders, device?.taken ?? {}, doc?.bus ?? false, [...picked]]);
         if (key !== drawn) {
             drawn = key;
             feedButtons.clear();
             replace(list,
                 el("thead", {}, el("tr", {}, ...["Feeder", "Parts", "Place", "Taken", ""].map((name) => el("th", {}, name)))),
-                el("tbody", {}, ...feeders.map((feeder) => {
+                el("tbody", {}, ...feeders.map((feeder, index) => {
                     const actions: HTMLElement[] = [];
                     if (feeder.bus_id) {
                         const feed = button("Feed", () => into(ctx, "placing", ctx.api.pnpBusFeed(feeder.id)), "btn btn-quiet btn-small");
@@ -169,13 +234,32 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
                             await into(ctx, "placing", ctx.api.pnpResetFeeders(feeder.id));
                         }
                     }, "btn btn-quiet btn-small", "count this feeder's parts from its first again"));
-                    return el("tr", {},
+                    const row = el("tr", {
+                        class: picked.has(feeder.id) ? "selected" : "",
+                        "aria-selected": picked.has(feeder.id) ? "true" : "false",
+                        title: "a press picks this feeder; Shift a run of them, Ctrl or Cmd adds or drops one",
+                    },
                         el("td", { class: "mono" }, feeder.id),
                         el("td", {}, (feeder.refs?.length ?? 0) > 0 ? feeder.refs!.join(" ") : feeder.match),
                         el("td", { class: "muted" }, feederPlaceText(feeder)),
                         el("td", { class: "mono" }, `${device?.taken[feeder.id] ?? 0}${feeder.count > 0 ? ` of ${feeder.count}` : ""}`),
                         el("td", {}, ...actions),
                     );
+                    row.addEventListener("click", (event) => {
+                        // A press on a row's buttons is theirs.
+                        if ((event.target as Element).closest("button")) {
+                            return;
+                        }
+                        const next = pickAfter(ids, picked, anchor, index, { shift: event.shiftKey, toggle: event.ctrlKey || event.metaKey });
+                        setPicked(next.picked, next.anchor);
+                    });
+                    // Shift with a press would also pick the page's text.
+                    row.addEventListener("mousedown", (event) => {
+                        if (event.shiftKey) {
+                            event.preventDefault();
+                        }
+                    });
+                    return row;
                 })),
             );
         }
@@ -185,7 +269,18 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
         busBox.classList.toggle("hidden", doc?.bus !== true);
         const connected = device?.connected === true;
         const busy = device?.running === true || state.pnp?.routine?.state === "running" || device?.top?.routine?.state === "running";
-        lockFor(scan, [!connected, "connect the machine first"], [busy, "the machine is busy"]);
+        const chosen = pickedFeeders(state);
+        const onBus = chosen.filter((feeder) => feeder.bus_id);
+        pickRow.classList.toggle("hidden", feeders.length === 0);
+        pickLine.textContent = chosen.length === 0
+            ? "Press a feeder to pick it, Shift a run of them, Ctrl or Cmd to add or drop one: Scan then looks for those."
+            : `${chosen.length} picked: ${chosen.map((feeder) => feeder.id).join(", ")}${onBus.length < chosen.length ? ` (${chosen.length - onBus.length} not on the bus)` : ""}`;
+        setLocked(clearPicks, chosen.length === 0, "no feeder picked");
+        scan.textContent = chosen.length > 0 ? `Scan ${onBus.length} picked` : "Scan bus";
+        scan.title = chosen.length > 0
+            ? "look for the picked feeders on the bus, each by its id: one question each"
+            : "ask every address on the feeder bus which feeder is there";
+        lockFor(scan, [!connected, "connect the machine first"], [busy, "the machine is busy"], [chosen.length > 0 && onBus.length === 0, "none of the picked feeders is on the bus"]);
         for (const feed of feedButtons.values()) {
             lockFor(feed, [!connected, "connect the machine first"], [busy, "the machine is busy"]);
         }

@@ -998,7 +998,11 @@ it and says so.
 Feeders on a bus, Opulo's Photon feeders on the LumenPnP: the file's
 `[bus]` says how packets reach them (the LumenPnP file has Photon's),
 and a feeder names its id there (`bus_id`) instead of a place. *Scan bus*
-in the Feeders panel lists the feeders that answer, by address and id. A
+in the Feeders panel lists the feeders that answer, by address and id.
+Feeders picked in the panel's list (a press picks one, Shift a run of
+them, Ctrl or Cmd adds or drops one) turn it into *Scan N picked*, which
+looks for just those, each by its id, and names the ones that did not
+answer. A
 feeder's pick point comes from its slot's place: put N1 over the point a
 feeder presents its part at and press *Slot here* by its address, or let
 *Import from OpenPnP* bring the slots and the feeders OpenPnP kept. A

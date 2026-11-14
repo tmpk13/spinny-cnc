@@ -179,6 +179,8 @@ import type {
     Board,
     BoardEstimate,
     BusFeeder,
+    BusMissing,
+    BusScan,
     CalibrateRequest,
     CalibrateResponse,
     CameraColors,
@@ -9366,21 +9368,46 @@ export class MockBackend implements Api, EventFeed {
         return { ...device, feeders };
     }
 
-    async pnpBusScan(): Promise<PlacingState & { feeders: BusFeeder[] }> {
+    async pnpBusScan(feeders?: string[]): Promise<PlacingState & BusScan> {
         const device = this.gcodeIdle();
         if (device.bus === null) {
             throw new ApiError(400, "the machine file has no [bus] section");
         }
         const found: BusFeeder[] = [];
-        for (let address = 1; address <= device.bus.max_address; address++) {
-            const answer = this.busExchange(device, address, device.bus.codes["get_id"]!);
-            if (answer !== null && answer.payload[0] === device.bus.codes["ok"] && answer.payload.length >= 13) {
-                const id = answer.payload.slice(1, 13).map((byte) => byte.toString(16).padStart(2, "0")).join("").toUpperCase();
-                found.push({ address, id, feeder: device.feeders.find((feeder) => feeder.bus_id === id)?.id ?? null, slot: device.slots.some((slot) => slot.address === address) });
+        const missing: BusMissing[] = [];
+        const entry = (address: number, id: string): BusFeeder => ({
+            address, id, feeder: device.feeders.find((feeder) => feeder.bus_id === id)?.id ?? null, slot: device.slots.some((slot) => slot.address === address),
+        });
+        if (feeders === undefined) {
+            for (let address = 1; address <= device.bus.max_address; address++) {
+                const answer = this.busExchange(device, address, device.bus.codes["get_id"]!);
+                if (answer !== null && answer.payload[0] === device.bus.codes["ok"] && answer.payload.length >= 13) {
+                    found.push(entry(address, answer.payload.slice(1, 13).map((byte) => byte.toString(16).padStart(2, "0")).join("").toUpperCase()));
+                }
             }
+        } else {
+            // The feeders picked, each looked for by its id, as the backend's.
+            const unknown = feeders.find((name) => !device.feeders.some((feeder) => feeder.id === name));
+            if (unknown !== undefined) {
+                throw new ApiError(404, `${device.name}'s file has no feeder '${unknown}'`);
+            }
+            for (const name of [...new Set(feeders)]) {
+                const feeder = device.feeders.find((each) => each.id === name)!;
+                if (feeder.bus_id === null) {
+                    missing.push({ feeder: name, id: null, reason: "not on the bus: its file gives no bus_id" });
+                    continue;
+                }
+                const answer = this.busExchange(device, device.bus.broadcast, device.bus.codes["find"]!, idBytes(feeder.bus_id));
+                if (answer === null || answer.payload[0] !== device.bus.codes["ok"]) {
+                    missing.push({ feeder: name, id: feeder.bus_id, reason: "did not answer to its id: is it in a slot?" });
+                } else {
+                    found.push(entry(answer.sender, feeder.bus_id));
+                }
+            }
+            found.sort((a, b) => a.address - b.address);
         }
         this.emitPlacing();
-        return { feeders: found, ...this.placingStateOf() };
+        return { feeders: found, missing, ...this.placingStateOf() };
     }
 
     async pnpBusFeed(feederId: string): Promise<PlacingState> {

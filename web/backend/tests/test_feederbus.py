@@ -205,6 +205,24 @@ def client(tmp_path):
         yield client
 
 
+def test_a_scan_of_the_feeders_picked_looks_for_each_by_its_id_and_names_the_missing(client):
+    connect(client, "lumen")
+    before = len(client.fake.lines)
+    answer = client.post("/api/pnp/bus/scan", json={"feeders": ["c-1u", "c-100n", "c-1u"]}).json()
+    assert answer["feeders"] == [{"address": 3, "id": C100N, "feeder": "c-100n", "slot": True}, {"address": 4, "id": C1U, "feeder": "c-1u", "slot": True}]
+    assert answer["missing"] == []
+    # One question each, by id, not one per address.
+    asked = [line for line in client.fake.lines[before:] if line.startswith("M485")]
+    assert len(asked) == 2 and all(decode(line[5:], HEADER_FIELDS).to == 255 for line in asked)
+    # A feeder taken out of its slot is named, and why.
+    del client.fake.bus.feeders[4]
+    answer = client.post("/api/pnp/bus/scan", json={"feeders": ["c-1u"]}).json()
+    assert answer["feeders"] == [] and answer["missing"] == [{"feeder": "c-1u", "id": C1U, "reason": "did not answer to its id: is it in a slot?"}]
+    assert client.post("/api/pnp/bus/scan", json={"feeders": ["nope"]}).status_code == 404
+    # No list: every address is asked, as before.
+    assert [entry["address"] for entry in client.post("/api/pnp/bus/scan").json()["feeders"]] == [3]
+
+
 def test_the_bus_is_scanned_a_feeder_fed_and_a_run_advances_each_before_its_pick(client):
     connect(client, "lumen")
     scan = client.post("/api/pnp/bus/scan").json()["feeders"]

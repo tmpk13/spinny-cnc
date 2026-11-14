@@ -7,7 +7,7 @@ import type {
     AutoConversation,
     AutoSettings,
     AutoSettingsUpdate,
-    BusFeeder,
+    BusScan,
     CalibrateRequest,
     CalibrateResponse,
     CameraControls,
@@ -386,7 +386,8 @@ export interface Api {
     /** The count of boards finished back to 0. */
     pnpBoardsReset(): Promise<PlacingState>;
     /** The feeders that answer on the feeder bus, with their ids. */
-    pnpBusScan(): Promise<PlacingState & { feeders: BusFeeder[] }>;
+    /** The feeders on the bus: every address asked, or with `feeders` (the file's feeders by name) each of those looked for by its id. */
+    pnpBusScan(feeders?: string[]): Promise<PlacingState & BusScan>;
     /** One advance of a feeder on the bus. */
     pnpBusFeed(feeder: string): Promise<PlacingState>;
     /** A reference for a part: where it is on the machine, read off it when `at` is left out. */
@@ -1218,8 +1219,8 @@ export class HttpApi implements Api {
         return this.request<PlacingState>("POST", "/api/pnp/boards/reset");
     }
 
-    pnpBusScan(): Promise<PlacingState & { feeders: BusFeeder[] }> {
-        return this.request<PlacingState & { feeders: BusFeeder[] }>("POST", "/api/pnp/bus/scan");
+    pnpBusScan(feeders?: string[]): Promise<PlacingState & BusScan> {
+        return this.request<PlacingState & BusScan>("POST", "/api/pnp/bus/scan", feeders === undefined ? undefined : { feeders });
     }
 
     pnpBusFeed(feeder: string): Promise<PlacingState> {

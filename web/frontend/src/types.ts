@@ -1382,6 +1382,19 @@ export interface BusFeeder {
     slot: boolean;
 }
 
+/** A feeder looked for by its id that the bus did not find: its id (null for one not on the bus) and why. */
+export interface BusMissing {
+    feeder: string;
+    id: string | null;
+    reason: string;
+}
+
+/** What a scan of the feeder bus found: the feeders that answered, by address, and the ones asked for by name that did not. */
+export interface BusScan {
+    feeders: BusFeeder[];
+    missing: BusMissing[];
+}
+
 /** The vacuum sensor: the lines that read it, the pattern whose group is the reading, the readings with a part held and empty (none: read by hand only). */
 export interface GcodeVacuum {
     read: string[];
