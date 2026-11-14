@@ -59,3 +59,11 @@ Why it matters: GP3, GP4, GP16 and GP25 reach the chip through a 74LVC2G34 input
 - C. Leave them as they are.
 Applied: A, in 16bce86.
 Answer:
+
+## Q9. Should the page's in-page mock backend be retired?
+Why it matters: `web/frontend/src/mock/` is 19.2k lines, a third of the page's source. It reimplements the backend and the firmware in TypeScript, so every backend change is made twice, five fixture tasks exist only to check the copies, and 40 of the 79 page test files run on it. Retiring it changes how `?mock=1`, the layout checks and the screenshots run.
+- A. Retire it (recommended): `mise run demo` serves the real backend with the virtual firmware and the virtual LumenPnP, which the layout checks and screenshots then use; view tests use typed fake answers; `src/mock/` and the five fixture tasks are deleted.
+- B. Freeze it: it keeps what it does today but gets nothing new, and newer routes answer "not in the mock".
+- C. Keep it in step with the backend, as now.
+Applied: nothing yet. docs/RESTRUCTURE.md assumes A in phase 3; phases 0 to 2 are the same either way.
+Answer:
