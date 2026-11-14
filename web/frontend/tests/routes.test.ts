@@ -107,6 +107,7 @@ describe("HttpApi G-code machine and placing routes", () => {
         await api.topMark();
         await api.topOffset(1.5);
         await api.topHome();
+        await api.topHome(false);
         await api.topAbort();
         await api.pnpPark();
         await api.pnpOverCamera();
@@ -116,7 +117,9 @@ describe("HttpApi G-code machine and placing routes", () => {
         await api.pnpVacuum({ on: false, read: true });
         await api.pnpBoardsReset();
         await api.pnpBusScan();
+        await api.pnpBusScan(["tape", "tray"]);
         await api.pnpBusFeed("tape");
+        await api.partShape("a 1", "R/1");
         expect(calls.map((call) => [call.method, call.url.replace("http://host", ""), call.body])).toEqual([
             ["POST", "/api/connect", { url: "/dev/ttyACM1", machine: "opulo-lumen-rev5" }],
             ["POST", "/api/connect", { url: "/dev/ttyACM0" }],
@@ -145,6 +148,7 @@ describe("HttpApi G-code machine and placing routes", () => {
             ["POST", "/api/pnp/top/mark", null],
             ["POST", "/api/pnp/top/offset", { step: 1.5 }],
             ["POST", "/api/pnp/top/home", null],
+            ["POST", "/api/pnp/top/home", { home: false }],
             ["POST", "/api/pnp/top/abort", null],
             ["POST", "/api/pnp/park", null],
             ["POST", "/api/pnp/over-camera", null],
@@ -154,7 +158,9 @@ describe("HttpApi G-code machine and placing routes", () => {
             ["POST", "/api/pnp/vacuum", { on: false, read: true }],
             ["POST", "/api/pnp/boards/reset", null],
             ["POST", "/api/pnp/bus/scan", null],
+            ["POST", "/api/pnp/bus/scan", { feeders: ["tape", "tray"] }],
             ["POST", "/api/pnp/bus/feed", { feeder: "tape" }],
+            ["GET", "/api/jobs/a%201/components/R%2F1/shape", null],
         ]);
         expect(api.pnpProgramUrl("a1", ["R1", "C2"])).toBe("http://host/api/pnp/program.gcode?job=a1&refs=R1%2CC2");
         expect(api.topFrameUrl(640, true)).toMatch(/^http:\/\/host\/api\/pnp\/top\/frame\.jpg\?width=640&overlay=1&t=\d+$/);

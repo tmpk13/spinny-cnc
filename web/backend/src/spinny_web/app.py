@@ -798,6 +798,12 @@ class TopOffsetBody(Finite):
     step: float = 2.0
 
 
+class TopHomeBody(BaseModel):
+    # Home the machine first (its file's home line); false finds the bed's
+    # homing fiducial from where the head is, and ties the numbers to it.
+    home: bool = True
+
+
 class PnpFeederBody(BaseModel):
     # The feeder to count from its first part again; left out, every one.
     feeder: str | None = None
@@ -5458,8 +5464,8 @@ def create_app(
         return guarded(backend.top_corners_clear)
 
     @app.post("/api/pnp/top/home")
-    def top_home():
-        return guarded(backend.top_home)
+    def top_home(body: TopHomeBody | None = None):
+        return guarded(lambda: backend.top_home((body or TopHomeBody()).home))
 
     @app.post("/api/pnp/top/abort")
     def top_abort():

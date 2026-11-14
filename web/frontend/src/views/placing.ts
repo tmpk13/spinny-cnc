@@ -143,7 +143,10 @@ export function topRoutineText(top: TopState | null | undefined): string {
     if (!routine) {
         return "";
     }
-    const what = routine.kind === "offset" ? "Measuring the offset" : "Finding the fiducials";
+    const whats: Record<string, string> = {
+        offset: "Measuring the offset", fiducials: "Finding the fiducials", search: "Looking for the board", scan: "Scanning the board", home: "Homing by the fiducial",
+    };
+    const what = whats[routine.kind] ?? "The routine";
     switch (routine.state) {
         case "running":
             return `${what}: ${routine.step} (${routine.done} of ${routine.total})`;
@@ -181,7 +184,14 @@ export const PLACING_SETUP: Setup = {
                 hint: "Pick the machine's port in the top bar (it is named after its machine file) and press Connect.",
                 panel: "status",
             },
-            { label: "Home", done: placing?.homed === true, hint: "Press Home in the Jog panel.", panel: "pnp-jog" },
+            {
+                label: "Home",
+                done: placing?.homed === true,
+                hint: placing?.document?.top?.home_fiducial
+                    ? "Press Home in the Jog panel, or Home by fiducial in the Top camera panel: it homes, then ties the numbers to the bed's homing fiducial."
+                    : "Press Home in the Jog panel.",
+                panel: "pnp-jog",
+            },
             { label: "Board", done: parts > 0, hint: "Pick or upload a board (.kicad_pcb) in the Parts panel.", panel: "pnp-parts" },
             {
                 label: "Reference",

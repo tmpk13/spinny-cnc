@@ -983,7 +983,10 @@ import reads from the head's homing fiducial) homes the machine, then
 finds that fiducial on the bed with the top camera, centers it, and
 declares where the head is (G92) so the numbers put the fiducial where
 the file says: the switches find home to a few hundredths, the fiducial
-ties the numbers to the bed itself. *Find fiducials* (or
+ties the numbers to the bed itself. *Find home fiducial* does the same
+with no home first, from where the numbers put the fiducial now: a check
+after a long run or a knock, quicker than a home. The setup's Home step
+offers it on a machine whose file names the fiducial. *Find fiducials* (or
 *find fiducials first* on a run) fits the board on its fiducials,
 footprints FID* or named Fiducial, from where the references put them.
 A board with no references at all is found with the Find board panel
@@ -1063,8 +1066,9 @@ a Pi's camera.
   *Nozzle on mark* and *Measure offset*, the parts let go, and a board
   given with `--board board.kicad_pcb@X,Y[,ANGLE]` (its origin at X, Y,
   turned ANGLE): its outline dark and its fiducials bright, for *Find
-  fiducials*, and the file's homing fiducial, bright. Its offset is a few
-  tenths off the file's.
+  fiducials*, and the file's homing fiducial, a bright dot on a dark
+  5 mm square (a bright dot on the bright bed alone was too faint for
+  pcbv to find). Its offset is a few tenths off the file's.
 - A home (G28) leaves the virtual head 0.2, -0.15 mm off the place its
   numbers say (`--home-error DX,DY`), and G92 changes the numbers, not
   the head, so *Home by fiducial* has something to find.

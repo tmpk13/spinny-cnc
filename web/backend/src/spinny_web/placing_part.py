@@ -628,27 +628,30 @@ class PlacingPart:
         self.top.measure_offset(mover, step, profile.z if profile is not None else None, profile.offset if profile is not None else None)
         return self.placing_state()
 
-    def top_home(self) -> dict:
+    def top_home(self, home: bool = True) -> dict:
         """Homes the machine, then finds the bed's homing fiducial with the
         top camera and declares where the head is from it (visual homing,
-        OpenPnP's head homing fiducial)."""
+        OpenPnP's head homing fiducial). With `home` false the machine is
+        not homed first: the fiducial is found from where the head's numbers
+        put it now, and they are tied to it again (a check after a long run
+        or a knock, quicker than a home)."""
         machine = self._placing_idle()
         profile = machine.top
         if profile is None or profile.home_fiducial is None:
             raise ValueError(f"{machine.name}'s file has no [top_camera] home_fiducial")
-        if not machine.home:
+        if home and not machine.home:
             raise ValueError(f"{machine.name}'s file has no [gcode] home command")
         mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
         x, y = machine.axes[0], machine.axes[1]
 
-        def home() -> None:
+        def homing() -> None:
             self.gcode.command(machine.home, machine.timeout * HOME_TIMEOUTS)
             self.gcode.homed = True
 
         def declare(head: tuple[float, float]) -> None:
             self.gcode.command(f"G92 {x}{num(head[0])} {y}{num(head[1])}", machine.timeout)
 
-        self.top.home_by_fiducial(mover, profile.home_fiducial, profile.fiducial, profile.within, profile.z, home, declare)
+        self.top.home_by_fiducial(mover, profile.home_fiducial, profile.fiducial, profile.within, profile.z, homing if home else None, declare)
         return self.placing_state()
 
     def top_look(self) -> dict:

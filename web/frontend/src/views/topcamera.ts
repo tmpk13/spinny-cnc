@@ -1,7 +1,9 @@
 // A G-code machine's top camera, on its head and looking down: its
 // device picked from the cameras found or typed, its size, rate and the
 // shade of a mark, its picture controls, and its offset from the nozzle
-// measured from a mark the nozzle's tip was put on, and Home by fiducial.
+// measured from a mark the nozzle's tip was put on, and Home by fiducial
+// (or Find home fiducial, no home first) on a machine whose file names the
+// homing fiducial on its bed.
 // Its picture shows in the Top camera view panel; the looks of its routines
 // are kept in its camera log. The look for a board, its search and the
 // place found are the Find board panel's (findboard.ts).
@@ -61,9 +63,12 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
     measure.title = "move the top camera over the mark to measure its offset from the nozzle";
     const homeFiducial = button("Home by fiducial", () => into(ctx, "placing", ctx.api.topHome()), "btn",
         "home, then find the bed's homing fiducial and correct where the head is from it");
+    const findFiducial = button("Find home fiducial", () => into(ctx, "placing", ctx.api.topHome(false)), "btn btn-quiet",
+        "find the bed's homing fiducial from where the head's numbers are, with no home first, and correct them from it: a check after a long run or a knock");
     const abort = button("Abort", () => into(ctx, "placing", ctx.api.topAbort()), "btn btn-danger urgent");
     abort.title = "stop the top camera's routine (Measure offset, Home by fiducial, Find fiducials or Search) and the machine";
     const routineLine = el("p", { class: "muted vision-routine" });
+    const fiducialLine = el("span", { class: "muted" });
     const log = el("div", { class: "camlog-box" });
     mountCameraLog(log, ctx, "top");
 
@@ -86,7 +91,8 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
             lookLine,
             ...placeFolds(folds, "top", controls.root, sight.root),
             el("div", { class: "button-row" }, offsetLine, infoTip("offset")),
-            el("div", { class: "button-row" }, markHere, labeled("Step mm", step, "labeled inline"), measure, homeFiducial, abort),
+            el("div", { class: "button-row" }, markHere, labeled("Step mm", step, "labeled inline"), measure, abort),
+            el("div", { class: "button-row" }, homeFiducial, findFiducial, fiducialLine),
             routineLine,
             log,
         ),
@@ -172,12 +178,16 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
         setLocked(apply, busy, "a routine is under way");
         lockFor(markHere, [!connected, "connect the machine first"], [running || moving || busy, "the machine is busy"]);
         lockFor(measure, [!connected, "connect the machine first"], [running || moving || busy, "the machine is busy"], [top?.running !== true, "start the top camera first"], [!top?.mark_at, "put the nozzle on a mark and press Nozzle on mark first"]);
-        lockFor(homeFiducial,
-            [!state.placing?.document?.top?.home_fiducial, "the machine file has no [top_camera] home_fiducial"],
-            [!connected, "connect the machine first"],
-            [running || moving || busy, "the machine is busy"],
-            [top?.running !== true, "start the top camera first"],
-            [!(top?.mm_per_px && top.mm_per_px > 0), "the top camera's offset is not measured: Measure offset first"]);
+        const home = state.placing?.document?.top?.home_fiducial ?? null;
+        for (const control of [homeFiducial, findFiducial]) {
+            lockFor(control,
+                [!home, "the machine file has no [top_camera] home_fiducial: a fiducial fixed on its bed, as the nozzle's place over it"],
+                [!connected, "connect the machine first"],
+                [running || moving || busy, "the machine is busy"],
+                [top?.running !== true, "start the top camera first"],
+                [!(top?.mm_per_px && top.mm_per_px > 0), "the top camera's offset is not measured: Measure offset first"]);
+        }
+        fiducialLine.textContent = home ? `the bed's fiducial at X ${home[0]} Y ${home[1]}` : "no homing fiducial in the machine file";
         setLocked(abort, !busy, "no routine under way");
         offsetLine.textContent = topCameraText(top);
         routineLine.textContent = topRoutineText(top);

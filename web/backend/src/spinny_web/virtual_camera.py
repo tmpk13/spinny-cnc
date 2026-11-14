@@ -51,6 +51,10 @@ TIP = 0.5
 MARK = 1.0
 # The homing fiducial on the bed, mm across: OpenPnP's calibration fiducials are 1 mm.
 HOME_FIDUCIAL = 1.0
+# The dark square the homing fiducial is printed on, mm on a side: a bright
+# dot on the bright bed alone is too faint for pcbv to find (a LumenPnP's is
+# a copper dot on a small dark board).
+HOME_PATCH = 5.0
 # Where a board's edge lies when its file draws none: this far out of its parts, mm.
 BOARD_MARGIN = 3.0
 # How far off the machine file the cameras sit, so the routines have
@@ -335,7 +339,8 @@ class TopCamera(Camera):
         if math.dist(self.world.mark, center) < reach + MARK:
             self.draw(raster, disk(self.world.mark, MARK / 2.0), center, round(DARK * light))
         fiducial = self.world.home_fiducial
-        if fiducial is not None and math.dist(fiducial, center) < reach + HOME_FIDUCIAL:
+        if fiducial is not None and math.dist(fiducial, center) < reach + HOME_PATCH:
+            self.draw(raster, rectangle(fiducial, (HOME_PATCH, HOME_PATCH), 0.0), center, round(BOARD * light))
             self.draw(raster, disk(fiducial, HOME_FIDUCIAL / 2.0), center, round(COPPER * light))
         for part in machine.lying:
             if math.dist(part.center, center) < reach + max(part.size):

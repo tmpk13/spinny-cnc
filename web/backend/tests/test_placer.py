@@ -626,6 +626,16 @@ def test_home_by_fiducial_homes_then_ties_the_numbers_to_the_bed(client):
     assert sent[0] == "G28" and any(line.startswith("G92 X") for line in sent)
     # The numbers and the bed agree again, to the centering's tolerance.
     assert client.fake.bed_position[:2] == pytest.approx(client.fake.position[:2], abs=0.02)
+    # Knocked 0.3 mm off later: found again from where the numbers are, no home.
+    client.fake.origin[0] += 0.3
+    before = len(client.fake.lines)
+    assert client.post("/api/pnp/top/home", json={"home": False}).status_code == 200
+    routine = routine_done(client, "/api/pnp/placing")
+    # Looking and declaring: no homing step.
+    assert routine["state"] == "done" and routine["total"] == 2, routine
+    sent = client.fake.lines[before:]
+    assert "G28" not in sent and any(line.startswith("G92 X") for line in sent)
+    assert client.fake.bed_position[:2] == pytest.approx(client.fake.position[:2], abs=0.02)
     # A file without the fiducial says so.
     client.backend.machine_store.directory.joinpath("rig.toml").write_text(gcode_file(profile(rest=TOP)), encoding="utf-8")
     connect(client, "rig")

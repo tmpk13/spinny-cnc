@@ -4,7 +4,7 @@ import { DEVICE_LINES_PER_SECOND, MockBackend } from "../src/mock/backend.ts";
 import { MARKS_NOTE, POCKET_NOTE, blockLines, checkLines, deviceFit, planDevice, tipShift, vacuumReading } from "../src/mock/openpnp.ts";
 import { TOP_TRUTH } from "../src/mock/pnp.ts";
 import type { Component, PlacingPlan, PlacingState } from "../src/types.ts";
-import { fiducialText, partsLeft, placingRunText, topCameraText } from "../src/views/placing.ts";
+import { fiducialText, partsLeft, placingRunText, topCameraText, topRoutineText } from "../src/views/placing.ts";
 import { mountPnp } from "../src/views/pnp.ts";
 import { parseDevice } from "./gcoderig.ts";
 import { settle, setup, pnpRoots } from "./harness.ts";
@@ -169,6 +169,14 @@ describe("the cameras and the vacuum on the mock's G-code machine", () => {
         await routines(backend);
         const homed = (await backend.placingState()).log.filter((entry) => entry.dir === "tx").map((entry) => entry.text);
         expect(homed.slice(-3)).toEqual(["G28", "G0 X25 Y180 F6000", "G92 X25.2 Y179.85"]);
+        expect(topRoutineText((await backend.placingState()).top)).toBe("Homing by the fiducial: done.");
+        // Found again from where the numbers are: no home first.
+        await backend.topHome(false);
+        expect((await backend.placingState()).top?.routine?.total).toBe(2);
+        await routines(backend);
+        const again = (await backend.placingState()).log.filter((entry) => entry.dir === "tx").map((entry) => entry.text);
+        expect(again.slice(-2)).toEqual(["G0 X25 Y180 F6000", "G92 X25.2 Y179.85"]);
+        expect(again.filter((line) => line === "G28").length).toBe(homed.filter((line) => line === "G28").length);
         // A rough reference, then the fiducials found and kept in its place.
         await backend.pnpReference({ job: job.id, ref: components[0]!.ref, at: [40, 30] });
         await backend.pnpFiducials(job.id);

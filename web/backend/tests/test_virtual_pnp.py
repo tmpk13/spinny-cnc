@@ -280,6 +280,21 @@ def test_the_top_camera_sees_the_mark_and_a_board_s_fiducials(tmp_path):
         assert (x, y) == pytest.approx((camera.width / 2 + u, camera.height / 2 + v), abs=0.3)
 
 
+def test_the_homing_fiducial_is_a_bright_dot_on_a_dark_patch():
+    world = world_over((0.0, 0.0, 31.5))
+    fiducial = world.home_fiducial
+    assert fiducial is not None
+    camera = world.top
+    world.machine.light = 255
+    send(world.machine, f"G1 X{fiducial[0] - camera.offset[0]:.4f} Y{fiducial[1] - camera.offset[1]:.4f}")
+    raster = camera.picture()
+    middle = raster[(camera.height // 2) * camera.width + camera.width // 2]
+    # 1.5 mm from it: the patch, darker than the bed and the dot alike.
+    beside = raster[(camera.height // 2) * camera.width + camera.width // 2 + round(1.5 / camera.scale)]
+    corner = raster[0]
+    assert middle > corner > beside
+
+
 def test_a_polygon_s_edge_pixels_are_blended_by_cover():
     raster = bytearray([200]) * 16
     fill_polygon(raster, 4, 4, [(1.5, 0.0), (3.0, 0.0), (3.0, 4.0), (1.5, 4.0)], 0)

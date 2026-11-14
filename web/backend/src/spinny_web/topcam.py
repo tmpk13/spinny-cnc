@@ -301,11 +301,12 @@ class TopCamera(PickCamera):
         shade: str,
         within: float,
         z: float | None,
-        home: Callable[[], None],
+        home: Callable[[], None] | None,
         declare: Callable[[Point], None],
     ) -> None:
         """Starts the visual home on its own thread: the machine homed
-        (`home`, the file's home line), the bed's homing fiducial looked for
+        (`home`, the file's home line; None finds the fiducial from where
+        the head's numbers are now), the bed's homing fiducial looked for
         within `within` mm of `fiducial` (the nozzle's place over it, as
         the file has it) and centered in the picture, then the head's X Y
         declared (`declare`, a G92) so the controller's numbers put the
@@ -317,8 +318,9 @@ class TopCamera(PickCamera):
             raise ValueError("the top camera is not running: start it first")
 
         def body(progress: RoutineProgress) -> None:
-            self._step(progress, "homing")
-            home()
+            if home is not None:
+                self._step(progress, "homing")
+                home()
             mover.begin()
             self._step(progress, "looking")
             seen = self.look_at(mover, fiducial, shade, within, z, center=True, routine="homing by fiducial", step="fiducial", progress=progress)
@@ -330,9 +332,11 @@ class TopCamera(PickCamera):
             here = mover.here()
             declare((round(here[0] - shift[0], 4), round(here[1] - shift[1], 4)))
             mover.begin()
-            self._message("info", f"homed by the fiducial: the head was {shift[0]:+.3f}, {shift[1]:+.3f} mm off the switches' home")
+            against = "the switches' home" if home is not None else "where its numbers said"
+            self._message("info", f"homed by the fiducial: the head was {shift[0]:+.3f}, {shift[1]:+.3f} mm off {against}")
 
-        self._begin("home", ("homing", "looking", "declaring", "done"), mover, body)
+        steps = ("homing", "looking", "declaring", "done") if home is not None else ("looking", "declaring", "done")
+        self._begin("home", steps, mover, body)
 
     def _offset(self, mover: Mover, progress: RoutineProgress, step: float, z: float | None, guess: Point | None) -> None:
         settings = self.settings()
