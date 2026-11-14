@@ -875,6 +875,14 @@ def test_corners_taken_with_the_top_camera_give_a_rough_place_a_search_box_and_r
     assert known.source == "references" and known.place.rotation == pytest.approx(2.0, abs=0.01)
 
 
+def test_a_run_that_places_no_part_says_why(client):
+    job_id = rig(client, profile(feeder='refs = ["X9"]').replace('match = "10k"\n', ""))
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    response = client.post("/api/pnp/run", json={"job": job_id})
+    assert response.status_code == 502
+    assert response.json()["detail"] == "the program places no part: 2 parts no feeder holds it"
+
+
 def test_a_parts_shape_is_served_from_its_board_file(client):
     job_id = rig(client, profile())
     shape = client.get(f"/api/jobs/{job_id}/components/R1/shape").json()
@@ -921,8 +929,12 @@ def test_a_corner_taken_is_a_reference_go_to_part_and_a_plan_place_the_board_by(
     parts = client.backend.job_parts(job_id)["components"]
     with pytest.raises(ValueError):
         client.backend._board_fit(job_id, parts, corners=False)
-    # A corner found by its edges turns a lone reference by the turn they showed.
+    # With the look's corners gone (as after a restart), the corners kept as
+    # references still tell a search where the board is.
     client.backend.top_look.clear_corners()
+    known = client.backend._top_known(job, 2.0)
+    assert known is not None and known.source == "references" and known.place.rotation == pytest.approx(2.0, abs=0.01)
+    # A corner found by its edges turns a lone reference by the turn they showed.
     client.backend._keep_corner(job_id, "top right", (40.0, 30.0), (190.0, 110.0), 5.0)
     client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [0.0, 0.0]})
     client.delete(f"/api/pnp/references?job={job_id}&ref=R1")

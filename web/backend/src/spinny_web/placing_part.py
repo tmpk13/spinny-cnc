@@ -491,14 +491,17 @@ class PlacingPart:
         by hand) put it (boardlook.known_place). The job's own frame is not
         the G-code machine's, so it says nothing here."""
         middle, diagonal = self._board_size(job)
+        look = self.top_look
         references = None
         try:
-            # The corners are weighed on their own (taken), not again as references.
-            fit = self._board_fit(job.id, self.job_parts(job.id)["components"], corners=False)
+            # The corners the look holds are weighed on their own (taken, or
+            # by the posterior), not again as references; corners kept as
+            # references the look no longer holds (taken before a restart)
+            # count among the references.
+            fit = self._board_fit(job.id, self.job_parts(job.id)["components"], corners=not look.corners_of(job.id))
             references = measured_known("references", fit.rotation, fit.shift, fit.rms, fit.marks, middle)
         except Exception:  # no references, or none of the job's parts: nothing known from them
             references = None
-        look = self.top_look
         taken = corners_known(look.corners_of(job.id), middle, corner_mm, diagonal) if corners else None
         return known_place(taken, look.found_known(job.id), references)
 
@@ -905,7 +908,11 @@ class PlacingPart:
         )
         program = placement.program
         if not program.blocks:
-            raise GcodeLinkError("the program places no part")
+            counts: dict[str, int] = {}
+            for entry in program.skipped:
+                counts[entry["reason"]] = counts.get(entry["reason"], 0) + 1
+            why = "; ".join(f"{count} part{'' if count == 1 else 's'} {reason}" for reason, count in sorted(counts.items(), key=lambda item: -item[1]))
+            raise GcodeLinkError(f"the program places no part{': ' + why if why else ''}")
         if any(block.vision for block in program.blocks) and not self.pnp.running:
             raise ValueError("the bottom camera is not running: start it, since some parts are to be looked at over it")
         used = {block.feeder for block in program.blocks}

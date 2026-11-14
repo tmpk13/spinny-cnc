@@ -8977,7 +8977,11 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(502, "no G-code machine is connected: connect one from the top bar");
         }
         if (plan.blocks.length === 0) {
-            throw new ApiError(502, "the program places no part");
+            // Why, the commonest reason first, as the backend says it.
+            const counts = new Map<string, number>();
+            plan.skipped.forEach((entry) => counts.set(entry.reason, (counts.get(entry.reason) ?? 0) + 1));
+            const why = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([reason, count]) => `${count} part${count === 1 ? "" : "s"} ${reason}`).join("; ");
+            throw new ApiError(502, `the program places no part${why ? `: ${why}` : ""}`);
         }
         if (plan.blocks.some((block) => block.vision) && !this.pnpRunning) {
             throw new ApiError(400, "the bottom camera is not running: start it, since some parts are to be looked at over it");
