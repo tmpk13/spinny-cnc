@@ -104,6 +104,7 @@ describe("the camera log", () => {
         };
         expect(searchText(line)).toBe("7 of 24 stops, 187 poses, 41.3 s, board");
         expect(searchText({ ...line, kind: "look", stops: null, visited: null, poses: 40, seconds: 3.21, job_name: null })).toBe("40 poses, 3.2 s");
+        expect(searchText({ ...line, kind: "scan" })).toBe("a scan, 7 of 24 places, 187 poses, 41.3 s, board");
     });
 
     test("the head and top cameras' panels list their newest search records with their pages; the bottom camera's has none", async () => {

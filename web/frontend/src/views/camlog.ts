@@ -25,6 +25,9 @@ export function searchText(line: SearchRecordLine): string {
     const parts: string[] = [];
     if (line.kind === "search" && line.stops !== null) {
         parts.push(`${line.visited ?? 0} of ${line.stops} stops`);
+    } else if (line.kind === "scan" && line.stops !== null) {
+        // A full scan's stops are its pictures (rows when it flew).
+        parts.push(`a scan, ${line.visited ?? 0} of ${line.stops} places`);
     }
     if (line.poses !== null) {
         parts.push(`${line.poses} poses`);
