@@ -280,6 +280,8 @@ describe("the pnp page", () => {
         expect(row.classList.contains("hidden")).toBe(false);
         expect(box.scrollTop).toBe(320);
         expect(store.get().pnpPart).toBe(target);
+        // The grouping is kept per browser: the next test lists its parts flat.
+        localStorage.removeItem("spinny.pnp.group");
     });
 
     test("with no board picked, the drawing offers to open a board file or pick a board job", async () => {
