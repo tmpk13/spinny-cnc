@@ -545,6 +545,9 @@ class Consensus:
     others to see what they would have called (searchreport.py). `tune`
     changes the threshold, the corners and their tolerance as they go."""
 
+    # How the look calls the board found: a camera's look_method.
+    method = "vote"
+
     def __init__(
         self,
         middle: Point = (0.0, 0.0),
@@ -653,6 +656,12 @@ class Consensus:
             self.view = estimate
             self.estimates.append(estimate)
             self._settle()
+
+    def take(self, raw: dict, where, captured: float, to_job, estimate: Estimate | None, problem: str | None, session: int | None = None, searched_where=None) -> None:
+        """One pose pcbv reported, with what was made of it: the vote reads
+        only its state and estimate (the probability, posterior.py, reads
+        the rest)."""
+        self.see(raw.get("state"), estimate, problem)
 
     def tune(self, threshold: float | None = None, corner_mm: float | None = None, corners: list[Corner] | None = None) -> None:
         """Another threshold, tolerance or set of corners (None keeps
@@ -782,6 +791,7 @@ class Consensus:
             best = self.best
             total = sum(guess.weight for guess in self.guesses)
             return {
+                "method": self.method,
                 "looks": self.looks,
                 "locked": self.locked,
                 "pose": self.last_state,
@@ -855,12 +865,21 @@ class BoardLook:
         publish: Callable[[], None],
         paused: Callable[[], bool],
         tuning: Callable[[], tuple[float, float]] | None = None,
+        options: Callable[[], dict] | None = None,
     ) -> None:
         self._client = client
         self._publish = publish
         self._paused = paused
         # The camera's threshold and corners' tolerance, as they are now.
         self.tuning: Callable[[], tuple[float, float]] = tuning or (lambda: (THRESHOLD, CORNER_MM))
+        # How the camera's look calls a board found (`method`: vote or
+        # posterior), whether the posterior fits the board's stretch, and
+        # the camera's scale (mm per px, 0 unknown), as they are now.
+        self.options: Callable[[], dict] = options or (lambda: {"method": "vote"})
+        # The loaded board's pads and holes and its outline's box, in the
+        # job's frame, for the posterior's pictures.
+        self._features: list[Point] = []
+        self._outline: Box | None = None
         self.job: str | None = None
         self._to_job: Callable[[Point], Point] | None = None
         self._place: PlaceOf | None = None
@@ -911,14 +930,21 @@ class BoardLook:
     def client(self) -> VisionClient:
         return self._client()
 
-    def start(self, job_id: str, to_job: Callable[[Point], Point], middle: Point, place: PlaceOf, record=None) -> None:
+    def start(
+        self, job_id: str, to_job: Callable[[Point], Point], middle: Point, place: PlaceOf, record=None,
+        features: list[Point] | None = None, outline: Box | None = None,
+    ) -> None:
         """The board of `job_id` is loaded in pcbv: its poses are read from
         now on, into a consensus begun anew, and into `record` (a look's
-        search record) until the board is found."""
+        search record) until the board is found. `features` (its pads and
+        holes) and `outline` (its outline's box), in the job's frame, are
+        what the posterior expects pictures to show."""
         self.stop()
         self.begin_record(record)
         with self._lock:
             self.job = job_id
+            self._features = list(features or [])
+            self._outline = outline
             self._to_job = to_job
             try:
                 self.to_board = inverse_of(to_job)
@@ -971,10 +997,12 @@ class BoardLook:
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=2.0)
 
-    def restart(self) -> None:
-        """A fresh consensus for the board loaded: a search starts over."""
+    def restart(self, box: Box | None = None, prior: KnownPlace | None = None) -> None:
+        """A fresh consensus for the board loaded: a search starts over, the
+        posterior's prior over `box` (the search's) and about `prior` (a
+        place known before, corners aside)."""
         with self._lock:
-            self.consensus = self._consensus(self.consensus.middle, self.job)
+            self.consensus = self._consensus(self.consensus.middle, self.job, box, prior)
             self._frame = None
             self._recheck_at = None
             self._forget_known()
@@ -1003,8 +1031,18 @@ class BoardLook:
             return None
         return {**known.to_dict(), "guided": self.guided, "unguided": self.unguided}
 
-    def _consensus(self, middle: Point, job_id: str | None) -> Consensus:
+    def _consensus(self, middle: Point, job_id: str | None, box: Box | None = None, prior: KnownPlace | None = None) -> Consensus:
         threshold, corner_mm = self.tuning()
+        options = self.options()
+        if options.get("method") == "posterior" and job_id is not None:
+            from .posterior import Board, Posterior
+
+            board = Board.of(middle, self._outline, self._features)
+            scale = options.get("scale")
+            return Posterior(
+                board, box, prior, threshold=threshold, corner_mm=corner_mm, corners=self.corners_of(job_id),
+                scale=float(scale) if isinstance(scale, (int, float)) else None, stretch=bool(options.get("stretch")),
+            )
         return Consensus(middle, threshold=threshold, corner_mm=corner_mm, corners=self.corners_of(job_id))
 
     def corners_of(self, job_id: str | None) -> list[Corner]:
@@ -1018,6 +1056,19 @@ class BoardLook:
         threshold, corner_mm = self.tuning()
         consensus = self.consensus
         corners = self.corners_of(self.job)
+        options = self.options()
+        method = "posterior" if options.get("method") == "posterior" and self.job is not None else "vote"
+        stretch = bool(options.get("stretch")) and method == "posterior"
+        if method != consensus.method or stretch != bool(getattr(getattr(consensus, "layout", None), "stretch", False)):
+            # Another method, or the board's stretch switched: the look
+            # starts over with it, on the same pictures to come.
+            with self._lock:
+                self.consensus = self._consensus(consensus.middle, self.job, getattr(consensus, "_box_given", None), getattr(consensus, "known", None))
+            self._changed = True
+            record = self.record
+            if record is not None:
+                record.event("settings", method=method, stretch=stretch, **tuning_fields(self.consensus))
+            return
         if (threshold, corner_mm, corners) == (consensus.threshold, consensus.corner_mm, consensus.corners):
             return
         consensus.tune(threshold, corner_mm, corners)
@@ -1108,16 +1159,22 @@ class BoardLook:
         width, height = raw.get("width"), raw.get("height")
         if isinstance(where, PictureFrame) and self._scale is not None and _number(width) and _number(height) and width > 0 and height > 0:
             self.consensus.picture = (where, float(width), float(height), self._scale)
-        self.consensus.see(state, estimate, problem)
+        searched_where = None
+        age = raw.get("candidates_age_ms")
+        if raw.get("candidates") and _number(age):
+            # The candidates are of the frame their search ran on, which
+            # may have been taken before the newest, from another place.
+            searched_where = place(received - float(age) / 1000.0)
+        self.consensus.take(raw, where, captured, to_job, estimate, problem, estimate.session if estimate is not None else self.resets, searched_where)
         if not self.searching and self.consensus.found and self.consensus.best is not None:
             # A search remembers only a place its check agreed with.
             self.remember_found(self.consensus.best)
         self._changed = True
         seen = "used" if estimate is not None else "locked" if state == "locked" else "none"
         if record is not None:
-            # A record keeps the place of a locked pose only, as it did
-            # before every pose was placed.
-            kept = where if state == "locked" else None
+            # The place of every pose is kept: a picture that locked on
+            # nothing says where the board is not, for the posterior's replay.
+            kept = where
             record.event("pose", **pose_fields(record, raw, received, captured, kept, estimate, problem, seen, self.consensus))
             if record.kind == "look":
                 self._look_record(record)
@@ -1305,6 +1362,9 @@ def search(
     checks: Callable[[Estimate], list[Point]] | None = None,
     known: KnownPlace | None = None,
     side: str = "front",
+    box: Box | None = None,
+    prior: KnownPlace | None = None,
+    steer: dict | None = None,
 ) -> Estimate:
     """Moves the head (`mover`, already begun and at its looking height) so
     the picture's center visits each stop (the head at the stop less the
@@ -1317,11 +1377,16 @@ def search(
     told to pcbv at every stop but the checks (`side`, the camera's, says
     how pcbv reads the picture's turn). `record` (searchlog.py) gets every
     pose, each stop's move, end and picture, each check, and how the
-    search ended."""
+    search ended. A posterior look takes `box` and `prior` (a place known
+    before, corners aside) as its prior, and with `steer` (the picture's
+    `width` and `height` px, its `scale` mm per px, the head's `speed`
+    mm/s and where the picture's center is, `start`) goes to the stop
+    expected to narrow the probability most for its time next, instead of
+    the nearest."""
     # The look's own record ends with the consensus it had, then the
     # search starts one afresh.
     look.begin_record(record)
-    look.restart()
+    look.restart(box, prior)
     look.known = known
     look.searching = True
     visited = 0
@@ -1355,10 +1420,24 @@ def search(
             record.picture(look.client, f"stop-{index:03d}", index=index)
         return result
 
+    remaining = list(range(len(stops)))
+    here = steer.get("start") if steer is not None else None
     try:
-        for index, stop in enumerate(stops):
-            on_stop(index, len(stops))
-            visited = index + 1
+        while remaining:
+            consensus = look.consensus
+            if steer is not None and here is not None and hasattr(consensus, "next_stop") and len(remaining) > 1:
+                frame = frame_at(tuple(here))
+                pick = consensus.next_stop(
+                    [stops[i] for i in remaining], tuple(here), frame.roll, frame.mirror, float(steer["width"]), float(steer["height"]),
+                    float(steer["scale"]), float(steer.get("speed") or SLOW_MM_S), LOCK_SECONDS + camera_module.SETTLE_SECONDS,
+                )
+                index = remaining.pop(pick)
+            else:
+                index = remaining.pop(0)
+            stop = stops[index]
+            on_stop(visited, len(stops))
+            visited += 1
+            here = stop
             result = visit(index, stop)
             # Found: checked from elsewhere on the board, the place found
             # kept only once the looks there agree with it. A check that
@@ -1516,7 +1595,11 @@ def settings_now(look: BoardLook | None = None, job_id: str | None = None) -> di
     tolerance, and the corners taken of that board, from `look`."""
     threshold, corner_mm = look.tuning() if look is not None else (THRESHOLD, CORNER_MM)
     corners = look.corners_of(job_id) if look is not None else []
+    options = look.options() if look is not None else {}
+    method = "posterior" if options.get("method") == "posterior" else "vote"
     return {
+        "method": method,
+        "stretch": bool(options.get("stretch")) and method == "posterior",
         "agree_mm": AGREE_MM,
         "agree_deg": AGREE_DEG,
         "need": NEED,
@@ -1565,6 +1648,10 @@ def pose_fields(record, raw: dict, received: float, captured: float, where, esti
         "spread_deg": round(consensus.spread_deg, 4) if consensus.spread_deg is not None else None,
         "estimate": best.to_dict() if best is not None else None,
     }
+    if consensus.method == "posterior":
+        from .posterior import posterior_fields
+
+        fields["consensus"].update(posterior_fields(consensus))
     return fields
 
 

@@ -15,6 +15,7 @@ dependencies = [
     "laser-sweep",
     "httpx",
     "jsonschema",
+    "numpy>=2.5.4",
 ]
 
 # Parts a plain install leaves out. The 2.x APIs: the low-level MCP server
