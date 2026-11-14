@@ -568,7 +568,8 @@ moves have run. The console sends lines as typed; Stop sends `stop`. What
 needs this project's firmware (the laser, the spindle, runs, probing,
 settings, the head camera's routines) answers that the machine is a G-code
 one. The PNP tab places with it (see OPERATING.md), and the Config page
-imports one from OpenPnP's `machine.xml`.
+imports one from OpenPnP's `machine.xml`, its feeders' parts' sizes and
+heights from its `parts.xml` and `packages.xml`.
 
 ## A release's machine files
 

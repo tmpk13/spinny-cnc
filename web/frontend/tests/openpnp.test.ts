@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { buildProfile, branch, jobItems, machineItems, parseXml, readJob, readMachine } from "../src/openpnp.ts";
+import { buildProfile, branch, jobItems, machineItems, parseXml, partItems, readJob, readMachine, readParts } from "../src/openpnp.ts";
 import { gcodeMachineOf } from "../src/mock/machines.ts";
 import type { Component } from "../src/types.ts";
 
@@ -284,6 +284,51 @@ describe("reading an OpenPnP setup", () => {
         expect(device.place_z).toBeCloseTo(10.6, 6);
         expect(device.feeders.find((feeder) => feeder.id === "10k-strip")?.refs).toEqual(["R1", "R2"]);
         expect(readJob(JOB, new Map()).warnings[0]).toContain("was not given");
+    });
+
+    test("OpenPnP's parts give the feeders their parts' sizes, and with the job's board height their place Z", () => {
+        // As OpenPnP's Configuration writes them: an inline list of <part>
+        // and of <package>, attributes hyphenated, a footprint's body along X and Y.
+        const PARTS = `<openpnp-parts>
+   <part id="R0603-10k" name="" height-units="Millimeters" height="0.45" package-id="R0603" speed="1.0" pick-retry-count="0"/>
+   <part id="STM32F030" height-units="Inches" height="0.05" package-id="TSSOP-20" speed="1.0"/>
+   <part id="FID" height-units="Millimeters" height="0.0" package-id="FIDUCIAL-1x2"/>
+</openpnp-parts>`;
+        const PACKAGES = `<openpnp-packages>
+   <package version="1.1" id="R0603" description="">
+      <footprint units="Millimeters" body-width="1.6" body-height="0.8">
+         <pad name="1" x="-0.75" y="0.0" width="0.9" height="0.95" rotation="0.0" roundness="0.0"/>
+      </footprint>
+   </package>
+   <package version="1.1" id="TSSOP-20">
+      <footprint units="Inches" body-width="0.17" body-height="0.26"/>
+   </package>
+</openpnp-packages>`;
+        const { parts, warnings } = readParts(PARTS, PACKAGES);
+        expect(parts.get("R0603-10k")).toEqual({ id: "R0603-10k", height: 0.45, packageId: "R0603", body: [1.6, 0.8] });
+        expect(parts.get("STM32F030")!.height).toBeCloseTo(1.27, 6);
+        expect(parts.get("STM32F030")!.body![0]).toBeCloseTo(4.318, 6);
+        expect(warnings).toEqual(["part FID: its package FIDUCIAL-1x2 has no body size in packages.xml"]);
+        expect(() => readParts(PACKAGES, null)).toThrow("not OpenPnP's parts.xml");
+        const machine = readMachine(MACHINE);
+        const [item] = partItems(parts, machine.feeders);
+        expect(item!.value).toBe("2 feeders' parts: 2 with a body size, 2 with a height");
+        const { items } = machineItems(machine);
+        // With the job: the board's top (10.6, as N1 sees it) plus each part's height.
+        const job = readJob(JOB, new Map([["board.board.xml", BOARD]]));
+        const found = jobItems(job, [part("R1", 0, 0), part("R2", 5, 5)], machine.nozzles[0]!.offset, machine.feeders);
+        const all = [...items, item!, ...found.items];
+        const kept = new Set(all.filter((entry) => entry.keep).map((entry) => entry.id));
+        const text = buildProfile("lumen", all, kept);
+        expect(text).toContain("# OpenPnP's part R0603-10k: package R0603, 0.45 mm tall, body 1.6 x 0.8 mm");
+        const device = gcodeMachineOf(text, "lumen");
+        const strip = device.feeders.find((feeder) => feeder.id === "10k-strip")!;
+        expect(strip.size).toEqual([1.6, 0.8]);
+        expect(strip.place_z).toBeCloseTo(11.05, 6);
+        // Without it, the sizes alone: the board's height is not known.
+        const alone = gcodeMachineOf(buildProfile("lumen", [...items, item!], new Set([...items, item!].filter((entry) => entry.keep).map((entry) => entry.id))), "lumen");
+        expect(alone.feeders.find((feeder) => feeder.id === "10k-strip")?.place_z).toBeNull();
+        expect(alone.feeders.find((feeder) => feeder.id === "mcu-tray")?.size?.[1]).toBeCloseTo(6.604, 6);
     });
 });
 

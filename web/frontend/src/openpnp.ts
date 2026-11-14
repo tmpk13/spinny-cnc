@@ -3,7 +3,10 @@
 // the park and discard places, the nozzle tips' dwells and vacuum levels,
 // and the feeders), and a job with its boards (where each placement's part
 // lies on the machine, which becomes a reference, and which part each
-// placement takes, which tells the feeders their parts). Every value read
+// placement takes, which tells the feeders their parts), and its parts.xml
+// and packages.xml (each part's height and its package's body, which give
+// a feeder's parts their size for the bottom camera's check and, with the
+// job's board height, the height they are placed at). Every value read
 // is an item the page shows with a box to keep or leave it; the file is
 // written from the items kept over the shipped generic file's defaults.
 //
@@ -140,12 +143,17 @@ interface Place {
     rotation: number;
 }
 
+/** Millimeters in one of OpenPnP's length units; 1 for one it does not name. */
+function unitScale(units: string | undefined): number {
+    return { Millimeters: 1, Inches: 25.4, Centimeters: 10, Meters: 1000, Microns: 0.001 }[units ?? "Millimeters"] ?? 1;
+}
+
 /** A location element (location, head-offsets, park-location ...) in millimeters. */
 function placeOf(node: XmlNode | undefined): Place | null {
     if (!node) {
         return null;
     }
-    const scale = { Millimeters: 1, Inches: 25.4, Centimeters: 10, Meters: 1000, Microns: 0.001 }[node.attrs["units"] ?? "Millimeters"] ?? 1;
+    const scale = unitScale(node.attrs["units"]);
     return {
         x: number(node.attrs["x"]) * scale,
         y: number(node.attrs["y"]) * scale,
@@ -587,6 +595,11 @@ export interface ProfileFeeder {
     busId?: string;
     offset?: [number, number, number];
     advance?: number;
+    /** Its parts' body as the cameras see it, mm, and the height they are placed at, from OpenPnP's parts and packages. */
+    size?: [number, number];
+    placeZ?: number;
+    /** A line said over the feeder: its part as OpenPnP keeps it. */
+    note?: string;
 }
 
 /** What a file starts as before anything is kept: the shipped generic file's defaults. */
@@ -751,12 +764,18 @@ export function profileText(data: ProfileData): string {
         }
     }
     for (const feeder of data.feeders) {
-        lines.push("", "[[feeder]]", `id = ${quote(feeder.id)}`);
+        lines.push("", "[[feeder]]", ...(feeder.note ? [`# ${feeder.note}`] : []), `id = ${quote(feeder.id)}`);
         if (feeder.refs.length > 0) {
             lines.push(`refs = ${list(feeder.refs)}`);
         }
         if (feeder.match) {
             lines.push(`match = ${quote(feeder.match)}`);
+        }
+        if (feeder.size) {
+            lines.push(`size = ${pair(feeder.size)}`);
+        }
+        if (feeder.placeZ !== undefined) {
+            lines.push(`place_z = ${fixed(feeder.placeZ)}`);
         }
         if (feeder.busId) {
             // Its slot is found on the bus by its id when a run starts.
@@ -1117,11 +1136,107 @@ export function jobItems(
     return { items, references };
 }
 
+// --- parts and packages ---------------------------------------------------------------------
+
+/** A part as OpenPnP's parts.xml keeps it, its package's body from packages.xml. */
+export interface OpenPnpPart {
+    id: string;
+    /** Its height over the board, mm. */
+    height: number;
+    packageId: string;
+    /** The package's body along X and Y as packages.xml draws it, mm; null where it gives none. */
+    body: [number, number] | null;
+}
+
+/**
+ * OpenPnP's parts by their ids, from parts.xml (`<openpnp-parts>`, a
+ * `<part>` each: id, height and its units, package-id) with each part's
+ * package body from packages.xml (`<openpnp-packages>`, a `<package>` each
+ * with a `<footprint>` of body-width along X and body-height along Y) when
+ * that file is given.
+ */
+export function readParts(partsText: string, packagesText: string | null): { parts: Map<string, OpenPnpPart>; warnings: string[] } {
+    const root = parseXml(partsText);
+    if (root.name !== "openpnp-parts") {
+        throw new Error(`not OpenPnP's parts.xml: its root is <${root.name}>`);
+    }
+    const bodies = new Map<string, [number, number]>();
+    if (packagesText !== null) {
+        const packages = parseXml(packagesText);
+        if (packages.name !== "openpnp-packages") {
+            throw new Error(`not OpenPnP's packages.xml: its root is <${packages.name}>`);
+        }
+        for (const node of kids(packages, "package")) {
+            const footprint = child(node, "footprint");
+            const scale = unitScale(footprint?.attrs["units"]);
+            const width = number(footprint?.attrs["body-width"]) * scale;
+            const height = number(footprint?.attrs["body-height"]) * scale;
+            if (width > 0 && height > 0) {
+                bodies.set(node.attrs["id"] ?? "", [width, height]);
+            }
+        }
+    }
+    const parts = new Map<string, OpenPnpPart>();
+    const warnings: string[] = [];
+    for (const node of kids(root, "part")) {
+        const id = node.attrs["id"] ?? "";
+        if (id === "") {
+            continue;
+        }
+        const packageId = node.attrs["package-id"] ?? "";
+        const body = bodies.get(packageId) ?? null;
+        if (packagesText !== null && body === null) {
+            warnings.push(`part ${id}: its package ${packageId || "(none)"} has no body size in packages.xml`);
+        }
+        parts.set(id, { id, height: number(node.attrs["height"]) * unitScale(node.attrs["height-units"]), packageId, body });
+    }
+    return { parts, warnings };
+}
+
+/**
+ * The item OpenPnP's parts give against the feeders read: each feeder's
+ * parts their package's body as their size, and their height over the
+ * board added to the place Z the job's board gives, as their place height.
+ */
+export function partItems(parts: Map<string, OpenPnpPart>, feeders: OpenPnpFeeder[]): ImportItem[] {
+    const held = feeders.filter((feeder) => parts.has(feeder.partId));
+    if (held.length === 0) {
+        return [];
+    }
+    const sized = held.filter((feeder) => parts.get(feeder.partId)?.body).length;
+    const tall = held.filter((feeder) => (parts.get(feeder.partId)?.height ?? 0) > 0).length;
+    return [{
+        id: "parts", group: "Parts", label: "The feeders' parts",
+        value: `${held.length} feeders' parts: ${sized} with a body size, ${tall} with a height`,
+        keep: true,
+        note: "a body is the size the bottom camera checks; a height is added to the board's place Z, from the job",
+        apply: (data) => {
+            for (const entry of data.feeders) {
+                const part = parts.get(entry.partId);
+                if (!part) {
+                    continue;
+                }
+                const body = part.body ? `, body ${fixed(part.body[0])} x ${fixed(part.body[1])} mm` : "";
+                entry.note = `OpenPnP's part ${part.id}: package ${part.packageId || "none"}, ${fixed(part.height)} mm tall${body}`;
+                if (part.body) {
+                    entry.size = [part.body[0], part.body[1]];
+                }
+                // The board's top, as the job gives it, plus the part.
+                if (data.placeZ !== null && part.height > 0) {
+                    entry.placeZ = data.placeZ + part.height;
+                }
+            }
+        },
+    }];
+}
+
 /** The machine file of the items kept, over the defaults. */
 export function buildProfile(name: string, items: ImportItem[], kept: Set<string>): string {
     const data = defaultProfile(name);
-    // The feeders first, so the job's items can tell them their parts.
-    const order = [...items].sort((a, b) => Number(a.group === "Job") - Number(b.group === "Job"));
+    // The feeders first, so the job's items can tell them their parts, and
+    // the parts' last, so they see the board's height the job gave.
+    const rank = (item: ImportItem): number => (item.group === "Parts" ? 2 : item.group === "Job" ? 1 : 0);
+    const order = [...items].sort((a, b) => rank(a) - rank(b));
     for (const item of order) {
         if (item.needed || kept.has(item.id)) {
             item.apply(data);

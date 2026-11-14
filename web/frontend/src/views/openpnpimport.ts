@@ -1,13 +1,14 @@
 // The Config page's OpenPnP import: OpenPnP's machine.xml, and with it a
-// job and its board files, read into a new G-code machine file. Every
-// value read is shown with a box to keep or leave it, the file it makes is
-// shown as it will be saved (in machines/, beside the others, where the
-// machine file panel edits it), and the job's placements become references
-// for the board job picked.
+// job and its board files, and its parts.xml and packages.xml (the
+// feeders' parts' sizes and heights), read into a new G-code machine
+// file. Every value read is shown with a box to keep or leave it, the
+// file it makes is shown as it will be saved (in machines/, beside the
+// others, where the machine file panel edits it), and the job's
+// placements become references for the board job picked.
 
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, replace } from "../dom.ts";
-import { buildProfile, jobItems, machineItems, readJob, readMachine, type ImportItem, type OpenPnpMachine } from "../openpnp.ts";
+import { buildProfile, jobItems, machineItems, partItems, readJob, readMachine, readParts, type ImportItem, type OpenPnpMachine } from "../openpnp.ts";
 import type { Ctx } from "./context.ts";
 
 /** An id a machine file may have: lower case letters, digits, - and _. */
@@ -22,13 +23,15 @@ export function machineId(text: string): string {
 export function mountOpenPnpImport(root: HTMLElement, ctx: Ctx, made: (id: string) => void = () => undefined): void {
     const files = el("input", { type: "file", accept: ".xml", multiple: true, class: "hidden", "aria-label": "OpenPnP files" }) as HTMLInputElement;
     const importButton = button("Import from OpenPnP", () => files.click(), "btn");
-    importButton.title = "read OpenPnP's machine.xml, and a job with its boards, into a new G-code machine file";
+    importButton.title = "read OpenPnP's machine.xml (with parts.xml and packages.xml), and a job with its boards, into a new G-code machine file";
     const importBox = el("div", { class: "stack openpnp-import hidden" });
 
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Import from OpenPnP")),
         el("div", { class: "panel-body" },
-            el("p", { class: "muted hint" }, "A pick and place machine OpenPnP drives, read into a machine file with controller = \"gcode\": connected from the top bar, it is used like the other machines."),
+            el("p", { class: "muted hint" },
+                "A pick and place machine OpenPnP drives, read into a machine file with controller = \"gcode\": connected from the top bar, it is used like the other machines."
+                + " Pick its parts.xml and packages.xml with machine.xml for the feeders' parts' sizes and heights."),
             el("div", { class: "button-row" }, importButton, files),
             importBox,
         ),
@@ -39,6 +42,7 @@ export function mountOpenPnpImport(root: HTMLElement, ctx: Ctx, made: (id: strin
     interface Reading {
         machine: OpenPnpMachine | null;
         job: ReturnType<typeof readJob> | null;
+        parts: ReturnType<typeof readParts> | null;
         name: string;
     }
     let reading: Reading | null = null;
@@ -59,10 +63,13 @@ export function mountOpenPnpImport(root: HTMLElement, ctx: Ctx, made: (id: strin
         const machineFile = texts.find((file) => file.text.includes("<openpnp-machine"));
         const jobFile = texts.find((file) => file.text.includes("<openpnp-job"));
         const boards = new Map(texts.filter((file) => file.text.includes("<openpnp-board")).map((file) => [file.name, file.text]));
+        const partsFile = texts.find((file) => file.text.includes("<openpnp-parts"));
+        const packagesFile = texts.find((file) => file.text.includes("<openpnp-packages"));
         try {
             reading = {
                 machine: machineFile ? readMachine(machineFile.text) : null,
                 job: jobFile ? readJob(jobFile.text, boards) : null,
+                parts: partsFile ? readParts(partsFile.text, packagesFile?.text ?? null) : null,
                 name: machineFile ? "OpenPnP machine" : "OpenPnP job",
             };
         } catch (error) {
@@ -70,7 +77,7 @@ export function mountOpenPnpImport(root: HTMLElement, ctx: Ctx, made: (id: strin
             return;
         }
         if (!reading.machine && !reading.job) {
-            ctx.toast("error", "pick OpenPnP's machine.xml, or a .job.xml with its .board.xml files");
+            ctx.toast("error", "pick OpenPnP's machine.xml (with parts.xml and packages.xml for its feeders' parts), or a .job.xml with its .board.xml files");
             reading = null;
             return;
         }
@@ -89,7 +96,8 @@ export function mountOpenPnpImport(root: HTMLElement, ctx: Ctx, made: (id: strin
         const parts = state.components !== null && state.components.job === state.job?.id ? state.components.components : [];
         const offset = machine?.nozzles.find((each) => each.name === nozzle)?.offset ?? { x: 0, y: 0, z: 0 };
         const fromJob = reading.job ? jobItems(reading.job, parts, offset, machine?.feeders ?? []) : { items: [], references: [] };
-        items = [...found.items, ...fromJob.items];
+        const fromParts = reading.parts && machine ? partItems(reading.parts.parts, machine.feeders) : [];
+        items = [...found.items, ...fromJob.items, ...fromParts];
         references = fromJob.references;
         if (fresh) {
             kept.clear();
@@ -99,7 +107,13 @@ export function mountOpenPnpImport(root: HTMLElement, ctx: Ctx, made: (id: strin
                 }
             }
         }
-        drawImport([...found.warnings, ...(reading.job?.warnings ?? []), ...(reading.job && parts.length === 0 ? ["pick the board job on the PNP page for the job's references"] : [])]);
+        drawImport([
+            ...found.warnings,
+            ...(reading.job?.warnings ?? []),
+            ...(reading.parts?.warnings ?? []),
+            ...(reading.job && parts.length === 0 ? ["pick the board job on the PNP page for the job's references"] : []),
+            ...(fromParts.length > 0 && !reading.job ? ["the parts' heights give their place Z with the job's board height: pick the .job.xml too"] : []),
+        ]);
     }
 
     function drawImport(warnings: string[]): void {

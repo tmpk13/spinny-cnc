@@ -874,10 +874,14 @@ OpenPnP setup drives it; `machines/openpnp-marlin.toml` is a plain Marlin
 start to copy. A file is edited on the Config page like any machine file
 (*Write to board* is locked for it: its controller keeps its own
 settings), where *Import from OpenPnP* reads OpenPnP's `machine.xml` (and
-a `.job.xml` with its `.board.xml` files) into a new one: every value read
-has a box to keep or leave it, and the file shows as it will be saved. A
-job's placements become references for the board job picked on the PNP
-page. Its setup steps:
+a `.job.xml` with its `.board.xml` files, and its `parts.xml` and
+`packages.xml`) into a new one: every value read has a box to keep or
+leave it, and the file shows as it will be saved. A job's placements
+become references for the board job picked on the PNP page. A feeder's
+part, by its part id in `parts.xml`, gives it its package's body as its
+`size` (the bottom camera's check) and, with a job's board height, its
+`place_z`: the board's top plus the part's height. The parts themselves
+come from the board's KiCad file, not from OpenPnP. Its setup steps:
 
 1. Connect: the Connection tab names the machine's port after its file (the
    LumenPnP's `MARLIN_OPULO_LUMEN_REV5 ... CDC in FS Mode` port by its
