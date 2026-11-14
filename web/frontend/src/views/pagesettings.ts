@@ -8,7 +8,8 @@
 // gear, while any panel is hidden, shows the hidden panels for a while
 // (marked as hidden) and hides them again; two arrows scroll the column
 // last pointed at to its top or its end. The look: the page's own fonts or
-// the system's, and whether changes move into place. Everything here is
+// the system's, whether changes move into place, and whether each page's
+// tab and panels wear its color. Everything here is
 // kept in this browser; the peek is not.
 
 import { popUp } from "../dismiss.ts";
@@ -217,6 +218,9 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
         const motion = el("input", { type: "checkbox" }) as HTMLInputElement;
         motion.checked = look.motion === "on";
         motion.addEventListener("change", () => setLook({ motion: motion.checked ? "on" : "off" }));
+        const colors = el("input", { type: "checkbox" }) as HTMLInputElement;
+        colors.checked = look.colors === "on";
+        colors.addEventListener("change", () => setLook({ colors: colors.checked ? "on" : "off" }));
 
         replace(sheet,
             el("div", { class: "panel-head" }, el("h2", {}, "Page settings")),
@@ -235,6 +239,7 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
                 el("h3", {}, "Look"),
                 labeled("Fonts", fonts, "labeled inline"),
                 el("label", { class: "check", title: "panels unfolding, a stack's panel coming forward, menus and pages opening, the turning marks; off, everything simply appears, as with the system's reduced motion" }, motion, " Animate the page"),
+                el("label", { class: "check", title: "each page's own color under its tab and along the top of its panels" }, colors, " Colors for tabs and panels"),
             ),
         );
     }

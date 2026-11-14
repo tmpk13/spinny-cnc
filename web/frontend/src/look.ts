@@ -1,8 +1,9 @@
 // How the page looks, as the page settings set it and this browser keeps
 // it: the page's own fonts (Inter and JetBrains Mono, served with the
-// page) or the system's, and whether things move as they change (panels
+// page) or the system's, whether things move as they change (panels
 // unfolding, a stack's panel coming forward, menus and sheets opening,
-// pages coming in) or simply appear. Both are attributes on the root
+// pages coming in) or simply appear, and whether each page's tab and
+// panels wear the page's own color. All are attributes on the root
 // element the stylesheet switches on; the system's reduced motion setting
 // stops the movement too, whatever is picked here.
 
@@ -16,14 +17,17 @@ export interface Look {
     fonts: "page" | "system";
     /** Whether changes move into place or simply appear. */
     motion: "on" | "off";
+    /** Whether each page's tab and panels wear the page's color (tabs.ts PAGES). */
+    colors: "on" | "off";
 }
 
-/** The look in stored text; anything missing or malformed is the page's fonts, moving. */
+/** The look in stored text; anything missing or malformed is the page's fonts, moving, in color. */
 export function parseLook(text: string | null): Look {
     const raw = readObject(text);
     return {
         fonts: raw["fonts"] === "system" ? "system" : "page",
         motion: raw["motion"] === "off" ? "off" : "on",
+        colors: raw["colors"] === "off" ? "off" : "on",
     };
 }
 
@@ -31,8 +35,13 @@ export function readLook(): Look {
     return parseLook(readStored(LOOK_KEY));
 }
 
-/** Puts the look on the root element: `data-fonts="system"`, `data-motion="off"`, or neither. */
+/** Puts the look on the root element: `data-fonts="system"`, `data-motion="off"`, `data-colors="off"`, or none of them. */
 export function applyLook(look: Look, root: HTMLElement = document.documentElement): void {
+    if (look.colors === "off") {
+        root.setAttribute("data-colors", "off");
+    } else {
+        root.removeAttribute("data-colors");
+    }
     if (look.fonts === "system") {
         root.setAttribute("data-fonts", "system");
     } else {

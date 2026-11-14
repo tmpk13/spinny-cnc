@@ -22,17 +22,30 @@ import type { AppState, Store } from "../state.ts";
 
 export type PageId = "overview" | "jobs" | "plot" | "cam" | "pnp" | "auto" | "config" | "connection" | "plugins";
 
-export const PAGES: { id: PageId; label: string; tip: string }[] = [
-    { id: "overview", label: "Overview", tip: "every page at a glance" },
-    { id: "jobs", label: "Jobs", tip: "jobs, the preview and runs" },
-    { id: "plot", label: "Plot", tip: "operations drawn by hand" },
-    { id: "cam", label: "CAM", tip: "CAM profiles and their G-code" },
-    { id: "pnp", label: "PNP", tip: "pick and place" },
-    { id: "auto", label: "Auto", tip: "a model that makes jobs" },
-    { id: "config", label: "Config", tip: "machine files and settings" },
-    { id: "connection", label: "Connection", tip: "the port and the machine connected" },
-    { id: "plugins", label: "Plugins", tip: "page plugins and their switches" },
+/**
+ * The pages in the bar's order: each one's tab label, its tooltip, and its
+ * color, a Solarized accent by name (the Overview's is the muted text
+ * color: it stands for every page). The color is the page's own: its tab
+ * is underlined in it, its panels wear it along their top edge, and its
+ * Overview card draws in it, unless the page settings turn colors off.
+ */
+export const PAGES: { id: PageId; label: string; tip: string; accent: string }[] = [
+    { id: "overview", label: "Overview", tip: "every page at a glance", accent: "base01" },
+    { id: "jobs", label: "Jobs", tip: "jobs, the preview and runs", accent: "orange" },
+    { id: "plot", label: "Plot", tip: "operations drawn by hand", accent: "green" },
+    { id: "cam", label: "CAM", tip: "CAM profiles and their G-code", accent: "cyan" },
+    { id: "pnp", label: "PNP", tip: "pick and place", accent: "violet" },
+    { id: "auto", label: "Auto", tip: "a model that makes jobs", accent: "magenta" },
+    { id: "config", label: "Config", tip: "machine files and settings", accent: "yellow" },
+    { id: "connection", label: "Connection", tip: "the port and the machine connected", accent: "blue" },
+    { id: "plugins", label: "Plugins", tip: "page plugins and their switches", accent: "red" },
 ];
+
+/** A page's color as a CSS value, its Solarized variable; the page's accent for a page not listed. */
+export function accentOf(page: string): string {
+    const accent = PAGES.find((entry) => entry.id === page)?.accent;
+    return accent ? `var(--${accent})` : "var(--accent)";
+}
 
 const PAGE_KEY = "spinny.page";
 export const TABS_KEY = "spinny.tabs";
@@ -179,6 +192,9 @@ export function mountTabs(root: HTMLElement, store: Store<AppState>): HTMLElemen
                 root.removeAttribute("data-open");
             },
         }, page.label);
+        // The page's color, on its tab and on its page for the panels.
+        tab.style.setProperty("--page-accent", accentOf(page.id));
+        document.getElementById(`page-${page.id}`)?.style.setProperty("--page-accent", accentOf(page.id));
         list.append(tab);
         return { page: page.id, tab };
     });
@@ -197,6 +213,7 @@ export function mountTabs(root: HTMLElement, store: Store<AppState>): HTMLElemen
         const inMore = prefs.hidden.includes(page);
         more.textContent = inMore ? label : "More";
         more.setAttribute("aria-current", inMore ? "page" : "false");
+        more.style.setProperty("--page-accent", inMore ? accentOf(page) : "var(--border-strong)");
         more.title = inMore ? "the page shown; its tab is kept out of the bar" : "tabs kept out of the bar";
         root.toggleAttribute("data-fold", prefs.fold);
         // Drawn by the stylesheet, so no button's text is a tab's name twice.

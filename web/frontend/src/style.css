@@ -5302,6 +5302,34 @@ table.find-guesses tr.elsewhere td {
     vector-effect: non-scaling-stroke;
 }
 
+/* --- each page's color (tabs.ts PAGES, the page settings' Look) --------- */
+
+/* Each page has a Solarized accent of its own, which the tab bar sets as
+   --page-accent on the page's tab and on the page. A tab is underlined in
+   it, faintly until pointed at or shown; the page's panels wear it along
+   their top edge, but for one stuck under another (a block reads as one)
+   and one in front of a stack, whose tab wears it instead. Only edges take
+   the color, never words, so every accent reads in both themes. With
+   colors off (data-colors="off") only the page shown is underlined, in the
+   page's accent, and panels wear none. */
+:root:not([data-colors="off"]) .tabs .tab {
+    border-bottom-color: color-mix(in oklab, var(--page-accent) 35%, transparent);
+}
+
+:root:not([data-colors="off"]) .tabs .tab:hover {
+    border-bottom-color: color-mix(in oklab, var(--page-accent) 70%, transparent);
+}
+
+:root:not([data-colors="off"]) .tabs .tab[aria-selected="true"],
+:root:not([data-colors="off"]) .tabs .tabs-more[aria-current="page"] {
+    border-bottom-color: var(--page-accent);
+}
+
+:root:not([data-colors="off"]) .page .panel:not([data-join-up], [data-stacked]),
+:root:not([data-colors="off"]) .page .panel-tab[aria-selected="true"] {
+    border-top: 0.2rem solid var(--page-accent);
+}
+
 /* --- movement (src/look.ts) -------------------------------------------- */
 
 /* Things move into place, briefly, by opacity and transform alone, so the

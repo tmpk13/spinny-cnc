@@ -3,15 +3,15 @@
 // a line on what it holds now (the jobs kept and a run under way, the
 // parts of the board picked, the conversation, the machine connected, the
 // plugins on, edits not applied); a press on a card shows its page. The drawings are
-// inline SVG drawn with the page's text color and one Solarized accent
-// each, so they follow the light and dark themes.
+// inline SVG drawn with the page's text color and the page's own color
+// (tabs.ts PAGES), so they follow the light and dark themes.
 
 import { el, replace } from "../dom.ts";
 import { countText } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { Ctx } from "./context.ts";
 import { portLabel } from "./statusbar.ts";
-import { PAGES, pendingOn, showPage, type PageId } from "./tabs.ts";
+import { accentOf, PAGES, pendingOn, showPage, type PageId } from "./tabs.ts";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -87,18 +87,6 @@ const DRAWINGS: Record<string, Shape[]> = {
 /** The drawing of a page with none of its own: a page's outline. */
 const PLAIN: Shape[] = [["rect", { x: 30, y: 10, width: 60, height: 52, rx: 4 }], ["path", { d: "M40 24 H80 M40 36 H80 M40 48 H66", class: "accent" }]];
 
-/** The accent each page's card draws in, a Solarized color by name. */
-const ACCENTS: Record<string, string> = {
-    jobs: "var(--orange)",
-    plot: "var(--green)",
-    cam: "var(--cyan)",
-    pnp: "var(--violet)",
-    auto: "var(--magenta)",
-    config: "var(--yellow)",
-    connection: "var(--blue)",
-    plugins: "var(--red)",
-};
-
 export function drawingOf(page: string): SVGSVGElement {
     const root = document.createElementNS(SVG_NS, "svg") as SVGSVGElement;
     root.setAttribute("viewBox", "0 0 120 72");
@@ -173,7 +161,7 @@ export function mountOverview(root: HTMLElement, ctx: Ctx): void {
             class: "overview-card",
             title: `show the ${page.label} page: ${page.tip}`,
             "data-page": page.id,
-            style: `--card-accent: ${ACCENTS[page.id] ?? "var(--accent)"}`,
+            style: `--card-accent: ${accentOf(page.id)}`,
         }, drawingOf(page.id), el("span", { class: "overview-name" }, page.label), el("span", { class: "overview-tip muted" }, page.tip), note);
         card.addEventListener("click", () => showPage(page.id));
         return { page: page.id, card, note };
