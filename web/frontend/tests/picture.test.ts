@@ -319,13 +319,20 @@ describe("the picture view", () => {
             document.body.dispatchEvent(event);
             return event;
         };
-        expect(press("ArrowRight").defaultPrevented).toBe(false);
+        // (Other tests' jog panels may take the keys too: what counts is whether this picture moved the head.)
+        press("ArrowRight");
+        expect(moves).toHaveLength(0);
         box.dispatchEvent(new MouseEvent("pointerenter"));
         expect(press("ArrowRight", true).defaultPrevented).toBe(true);
         expect(moves.at(-1)!.map((v) => Number(v.toFixed(9)) + 0)).toEqual([0.1, 0]);
         box.dispatchEvent(new MouseEvent("pointerleave"));
-        expect(press("ArrowLeft").defaultPrevented).toBe(false);
+        press("ArrowLeft");
+        expect(moves).toHaveLength(1);
+        // Stopped, the picture no longer listens.
+        box.dispatchEvent(new MouseEvent("pointerenter"));
         view.stop();
+        press("ArrowLeft");
+        expect(moves).toHaveLength(1);
     });
 
     test("a drag draws its line and moves the head so the picture follows; a Shift drag draws the search box", async () => {

@@ -1231,7 +1231,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     box.addEventListener("pointerleave", () => {
         hovered = false;
     });
-    globalThis.addEventListener?.("keydown", (event: KeyboardEvent) => {
+    const arrowKey = (event: KeyboardEvent): void => {
         const way = ARROWS[event.key];
         if (!hovered || way === undefined || event.repeat || event.ctrlKey || event.metaKey || event.altKey || !options.visible()) {
             return;
@@ -1249,7 +1249,8 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         event.stopPropagation();
         const mm = event.shiftKey ? 0.1 : 1;
         void options.move(arrowMove(way, turn, mm, calibration));
-    }, true);
+    };
+    globalThis.addEventListener?.("keydown", arrowKey, true);
 
     // --- the box -------------------------------------------------------------------
 
@@ -1451,6 +1452,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
             clearInterval(timer);
             observer?.disconnect();
             pickWatchers.delete(showPick);
+            globalThis.removeEventListener?.("keydown", arrowKey, true);
         },
     };
 }
