@@ -1,11 +1,12 @@
 // The top bar: the machine's state (a press opens the Connection tab, where
-// the port is picked), the kind of machine, its firmware, the event link,
-// and the big Stop. Also the port helpers the Connection tab uses: a port
+// the port is picked), the machine file in use (else the kind of machine),
+// its firmware, the event link, and the big Stop. Also the port helpers the Connection tab uses: a port
 // a G-code machine file claims (its url, or words in the port's USB names)
 // is named after that machine and opens as it, so the same Connect serves
 // this project's board and a pick and place machine's own Marlin.
 
 import { button, el, setLocked } from "../dom.ts";
+import { machineInUse } from "../machineuse.ts";
 import { isMilling, profileBadge, profileOf } from "../profile.ts";
 import { gcodePort } from "../ports.ts";
 import type { AppState } from "../state.ts";
@@ -143,14 +144,18 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
         const label = firmwareLabel(snapshot.firmware);
         firmware.textContent = label.text;
         firmware.title = label.title;
-        const badgeName = snapshot.connected ? profileBadge(profileOf(snapshot)) : "";
+        // The machine file in use by its name, else the kind of machine.
+        const use = machineInUse(state);
+        const named = use.how === "board" || use.how === "connected" ? use.name : null;
+        const badgeName = !snapshot.connected ? "" : named ?? profileBadge(profileOf(snapshot));
         profile.textContent = badgeName;
+        profile.title = named !== null && use.id !== null ? `the machine file in use: ${use.id}.toml; the Config tab edits it` : "the kind of machine: its settings are no machine file's";
         profile.classList.toggle("hidden", badgeName === "");
         link.setAttribute("data-link", state.link);
         link.textContent = state.link === "open" ? "live" : state.link === "connecting" ? "connecting" : "disconnected";
         const progress = state.progress ?? snapshot.run;
         showMapUse(mapChip, runActive(progress) ? runMapUse(progress, isMilling(snapshot)) : null);
     }
-    ctx.store.subscribe(render, ["snapshot", "link", "progress"]);
+    ctx.store.subscribe(render, ["snapshot", "link", "progress", "settings", "machines"]);
     render(ctx.store.get());
 }

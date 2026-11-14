@@ -12,13 +12,16 @@
 import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, lockFor, readStored, replace, setLocked, writeStored } from "../dom.ts";
+import { inUseText, machineInUse } from "../machineuse.ts";
+import { isGcode } from "../profile.ts";
 import type { FileValue } from "../filekeys.ts";
 import { keyLine, setKey, tomlValue } from "../machinekeys.ts";
 import { profileOf } from "../profile.ts";
 import { setPending } from "../state.ts";
 import { setTip } from "../tooltip.ts";
 import type { MachineDocument, MachineProblem, MachineResponse, MachineSummary } from "../types.ts";
-import type { Ctx } from "./context.ts";
+import { boardPort, connectTo, disconnectFrom } from "./connection.ts";
+import { into, type Ctx } from "./context.ts";
 import { codeEditor } from "./editor.ts";
 import { keyAt, keyTip, mountSettingsList, settingRows, type SettingRow } from "./settingslist.ts";
 
@@ -75,16 +78,25 @@ const CHECK_AFTER_MS = 400;
 /** The most lines a find in every file lists. */
 const FOUND_MOST = 100;
 
+/** What the Config panel lets other panels do: open a file in its editor. */
+export interface ConfigPanel {
+    /** Opens the machine file `id`, asking first when the editor holds edits not saved. */
+    open(id: string): Promise<void>;
+}
+
 /** The machine file panel in `root`, and the list of every key a file can set in `listRoot`. */
-export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement): void {
+export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement): ConfigPanel {
     const pick = el("select", { class: "field", "aria-label": "Machine file" });
+    const useButton = button("Use this machine", () => useMachine(), "btn btn-primary");
+    useButton.title = "make this file the machine in use: connect its machine, or write it to the board";
+    const inUse = el("p", { class: "config-in-use" });
     const newId = el("input", { type: "text", class: "field", placeholder: "new id", "aria-label": "New machine id", autocomplete: "off" });
     newId.style.width = "8rem";
     const create = button("New", () => createFile(), "btn", "start a new machine file");
     const remove = button("Delete", () => removeFile(), "btn btn-quiet", "delete this machine file");
     const reload = button("Reload", () => reloadAll(), "btn btn-quiet btn-small", "read the files again from disk");
     const note = el("p", { class: "muted config-note" });
-    const load = button("Write to board", () => loadMachine(), "btn btn-primary");
+    const load = button("Write to board", () => loadMachine(), "btn");
     load.title = "write every setting to the board and its flash, [host] values to the host";
     const read = button("Read from board", () => readBoard(), "btn");
     read.title = "copy differing board values into the text; Save keeps them";
@@ -117,7 +129,8 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
 
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Machine file"), el("div", { class: "button-row" }, reload)),
-        el("div", { class: "button-row" }, labeled("Machine", pick, "labeled inline"), newId, create, remove),
+        el("div", { class: "button-row" }, labeled("Machine", pick, "labeled inline"), useButton, newId, create, remove),
+        inUse,
         note,
         el("div", { class: "button-row" }, load, read, flash),
         loadNote,
@@ -416,10 +429,12 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         notes.classList.toggle("hidden", lines.length === 0);
     }
 
-    /** The select: the files by name, and the ones that do not read, by id, so they can be mended. */
+    /** The select: the files by name, and the ones that do not read, by id, so they can be mended; the file in use says so. */
     function renderPick(): void {
+        const use = machineInUse(ctx.store.get());
+        const mark = (id: string): string => (use.id !== id ? "" : use.how === "last" ? " (last used)" : " (in use)");
         replace(pick,
-            ...files.map((file) => el("option", { value: file.id }, file.name)),
+            ...files.map((file) => el("option", { value: file.id }, `${file.name}${mark(file.id)}`)),
             ...broken.map((entry) => el("option", { value: entry.id }, `${entry.id} (does not parse)`)),
         );
         if (files.length === 0 && broken.length === 0) {
@@ -446,6 +461,12 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
                 : "a G-code machine: its controller keeps its own settings; connect it from the top bar (its port is named after this file)";
         }
         loadNote.textContent = text;
+        // The machine file in use, said where the files are picked.
+        const use = machineInUse(state);
+        inUse.textContent = `In use: ${inUseText(use)}`;
+        inUse.classList.toggle("muted", use.how !== "board" && use.how !== "connected");
+        const using = (use.how === "board" || use.how === "connected") && use.id === picked;
+        lockFor(useButton, [picked === null, "pick a machine file first"], [shown?.document == null, "the file does not parse"], [using, "this is the machine in use"]);
         const why = "a G-code machine's controller keeps its own settings";
         lockFor(load, [gcodeFile, why], [!connected, "connect first"], [picked === null, "pick a machine file first"], [shown?.document === null, "the file does not parse"]);
         lockFor(read, [gcodeFile, why], [!connected, "connect first"], [picked === null, "pick a machine file first"]);
@@ -463,7 +484,13 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
     }
 
     async function refresh(): Promise<void> {
-        const listed = await ctx.call(ctx.api.machines());
+        listing = true;
+        try {
+            await ctx.refreshMachines();
+        } finally {
+            listing = false;
+        }
+        const listed = ctx.store.get().machines;
         if (!listed) {
             return;
         }
@@ -521,13 +548,56 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
 
     /** The list again, the pick kept, after a save or a delete changed what there is. */
     async function refreshList(): Promise<void> {
-        const listed = await ctx.call(ctx.api.machines());
-        if (listed) {
-            texts.clear();
-            files = listed.machines;
-            broken = listed.problems;
-            renderPick();
-            showLoaded();
+        listing = true;
+        try {
+            await ctx.refreshMachines();
+        } finally {
+            listing = false;
+        }
+        takeList();
+    }
+
+    /** The files as the store lists them now, into the select and the board line. */
+    function takeList(): void {
+        const listed = ctx.store.get().machines;
+        if (!listed) {
+            return;
+        }
+        texts.clear();
+        files = listed.machines;
+        broken = listed.problems;
+        renderPick();
+        showLoaded();
+    }
+
+    /**
+     * The files listed again elsewhere (an import made one, a panel wrote a
+     * value into one, a machine connected): the select follows, and the
+     * file open in the editor is read again unless it holds edits, so a
+     * value written into it from another panel shows.
+     */
+    async function listChanged(): Promise<void> {
+        if (listing) {
+            return;
+        }
+        takeList();
+        const id = picked;
+        if (id === null || dirty || shown === null) {
+            return;
+        }
+        if (![...files, ...broken].some((entry) => entry.id === id)) {
+            // Gone from the directory: another file is picked.
+            picked = null;
+            await refresh();
+            return;
+        }
+        try {
+            const response = await ctx.api.machineFile(id);
+            if (picked === id && !dirty && response.text !== shown?.text) {
+                show(response);
+            }
+        } catch {
+            // Read again at the next change, or by Reload.
         }
     }
 
@@ -696,7 +766,109 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         }
     }
 
-    ctx.store.subscribe(() => showLoaded(), ["snapshot", "settings"]);
+    // --- the machine in use -----------------------------------------------------
+
+    /**
+     * Makes the picked file the machine in use. A G-code machine's is
+     * connected on the port its file claims, the machine connected now let
+     * go first; one of this project's firmware's is written to the board
+     * (Write to board, which asks), the board connected first when it is
+     * not and its port is known. With no port to open, the file is
+     * remembered as the one in use: the PNP tab places with a G-code
+     * machine's, and the jog panel keeps a board file's controls.
+     */
+    async function useMachine(): Promise<void> {
+        const document = shown?.document ?? null;
+        if (picked === null || document === null) {
+            return;
+        }
+        const id = picked;
+        if (dirty) {
+            try {
+                const saved = await ctx.api.saveMachineFile(id, editor.getText());
+                if (picked === id) {
+                    show(saved);
+                }
+            } catch (error) {
+                setStatus(errorText(error), true);
+                showProblems([errorText(error)]);
+                return;
+            }
+        }
+        const state = ctx.store.get();
+        const snapshot = state.snapshot;
+        const now = machineInUse(state);
+        const current = now.name ?? snapshot.url ?? "the machine connected";
+        if (document.controller === "gcode") {
+            const port = state.ports.find((entry) => entry.machine === id);
+            if (!port) {
+                await remember(id, `no port is ${document.name}'s now: give its [port] a url or match words, or connect it on the Connection tab`);
+                return;
+            }
+            if (snapshot.connected && !(await askConfirm(`Let ${current} go and connect ${document.name} on ${port.url}?`, "Connect"))) {
+                return;
+            }
+            if ((!snapshot.connected || (await disconnectFrom(ctx))) && (await connectTo(ctx, port.url, id))) {
+                ctx.toast("info", `${document.name} connected: the machine in use`);
+            }
+            await ctx.refreshMachines();
+            return;
+        }
+        if (!snapshot.connected || isGcode(snapshot)) {
+            const url = boardPort(state.ports);
+            if (url === null) {
+                await remember(id, `connect the board on the Connection tab, then Use writes ${document.name} to it`);
+                return;
+            }
+            if (snapshot.connected && !(await askConfirm(`Let ${current} go and connect the board on ${url}?`, "Connect"))) {
+                return;
+            }
+            if (snapshot.connected && !(await disconnectFrom(ctx))) {
+                return;
+            }
+            if (!(await connectTo(ctx, url, null))) {
+                return;
+            }
+        }
+        await ctx.refreshSettings();
+        if (ctx.store.get().settings?.machine === id) {
+            await remember(id, `the board runs ${document.name} already`);
+            return;
+        }
+        await loadMachine();
+        await ctx.refreshMachines();
+    }
+
+    /** The file remembered as the machine in use, with no machine touched, and why that is all. */
+    async function remember(id: string, why: string): Promise<void> {
+        if (await into(ctx, "machines", ctx.api.useMachine(id))) {
+            ctx.toast("info", `${files.find((file) => file.id === id)?.name ?? id} is the machine in use: ${why}`);
+            await ctx.refreshPlacing();
+        }
+    }
+
+    let listing = false;
+    ctx.store.subscribe(() => {
+        showLoaded();
+        renderPick();
+    }, ["snapshot", "settings"]);
+    ctx.store.subscribe(() => void listChanged(), ["machines"]);
     lockAll();
     void refresh();
+    return {
+        async open(id: string): Promise<void> {
+            if (id === picked) {
+                await open(id);
+                return;
+            }
+            if (dirty && picked !== null && !(await askConfirm(`Leave ${picked}? Unsaved edits are lost.`, "Leave"))) {
+                return;
+            }
+            picked = id;
+            writeStored(PICK_KEY, id);
+            await refreshList();
+            pick.value = id;
+            await open(id);
+        },
+    };
 }

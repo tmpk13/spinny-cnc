@@ -1427,6 +1427,59 @@ describe("machine files", () => {
         localStorage.removeItem("spinny.machine");
     });
 
+    test("the file in use is named where the files are picked, and Use connects its machine or writes it to the board", async () => {
+        localStorage.removeItem("spinny.machine");
+        localStorage.removeItem("spinny.recent");
+        const { store, ctx, root, calls } = setup();
+        await ctx.refreshPorts();
+        mountConfig(root, ctx, document.createElement("section"));
+        await settle();
+        const inUse = (): string => root.querySelector(".config-in-use")?.textContent ?? "";
+        const pick = root.querySelector("select[aria-label='Machine file']") as HTMLSelectElement;
+        const useButton = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Use this machine") as HTMLButtonElement;
+        const settled = async (): Promise<void> => {
+            for (let i = 0; i < 6; i += 1) {
+                await settle();
+            }
+        };
+        expect(inUse()).toBe("In use: none yet");
+        // A G-code machine's file: Use connects it on the port its file claims.
+        pick.value = "opulo-lumen-rev5";
+        pick.dispatchEvent(new Event("change"));
+        await settle();
+        useButton.click();
+        await settled();
+        const lumenPort = store.get().ports.find((port) => port.machine === "opulo-lumen-rev5")!;
+        expect(calls.filter((c) => c.name === "connect").map((c) => c.args)).toEqual([[lumenPort.url, "opulo-lumen-rev5"]]);
+        expect(inUse()).toBe("In use: Opulo LumenPnP (Rev05, Marlin), connected");
+        expect(pick.selectedOptions[0]?.textContent).toBe("Opulo LumenPnP (Rev05, Marlin) (in use)");
+        expect(useButton.disabled).toBe(true);
+        // A file of this project's firmware: the G-code machine let go and
+        // the board connected, each after a confirm, the file written.
+        pick.value = "cartesian-mill";
+        pick.dispatchEvent(new Event("change"));
+        await settle();
+        useButton.click();
+        await settled();
+        expect(document.querySelector("dialog[open]")?.textContent).toContain("connect the board on");
+        dialogButton("Connect").click();
+        await settled();
+        dialogButton("Write").click();
+        await settled();
+        expect(calls.filter((c) => c.name === "applyMachine").map((c) => c.args)).toEqual([["cartesian-mill", true]]);
+        expect(store.get().snapshot.connected).toBe(true);
+        expect(inUse()).toBe("In use: Cartesian mill: the board runs it");
+        // Not connected: the file last used here is named.
+        await ctx.api.disconnect();
+        store.set({ snapshot: await ctx.api.state() });
+        await ctx.refreshMachines();
+        await settled();
+        expect(inUse()).toBe("In use: Cartesian mill, last used here; not connected");
+        expect(pick.selectedOptions[0]?.textContent).toBe("Cartesian mill (last used)");
+        localStorage.removeItem("spinny.machine");
+        localStorage.removeItem("spinny.recent");
+    });
+
     test("a word is found in the file, stepped through, and in every file, a line of another file opening it there", async () => {
         localStorage.removeItem("spinny.machine");
         const { ctx, root } = setup();

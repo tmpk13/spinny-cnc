@@ -109,6 +109,7 @@ class GcodePart:
             self.url = url
             self.config["last_url"] = url
             self.config["placing_machine"] = machine_id
+            self.config["machine_used"] = machine_id
             self._save_config()
             self.autoconnect_paused = False
         wire_note(f"link opened: {url} as {machine_id}, G-code")

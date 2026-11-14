@@ -273,6 +273,28 @@ def test_loading_a_machine_writes_its_settings_and_names_it_as_the_current_one(c
     assert fake.saved == 1 and response.json()["machine"] == "rig"
 
 
+def test_the_file_last_used_is_named_and_one_is_made_the_one_in_use_without_a_machine(client, fake, tmp_path):
+    assert client.get("/api/machines").json()["used"] is None
+    # Made the one in use with nothing connected: remembered, nothing written.
+    listed = client.post("/api/machines/rig/use")
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["used"] == "rig" and listed.json()["current"] is None
+    kept = json.loads((tmp_path / "config.json").read_text())
+    assert kept["machine_used"] == "rig" and kept["last_machine"] == "rig"
+    assert not any(line.startswith("$") for line in fake.received_lines)
+    # A board of its kind whose settings are no file's then draws its controls.
+    connect(client)
+    client.put("/api/settings", json={"values": {"cartesian": 1, "spindle": 1, "h_axis": 1}})
+    assert client.get("/api/settings").json()["controls_from"] == "rig"
+    # Written to a board, a file is the one last used too.
+    assert client.post("/api/machines/bare/apply").status_code == 200
+    assert client.get("/api/machines").json()["used"] == "bare"
+    # A file that is gone is not named, nor one that does not read made the one in use.
+    (client.machines_dir / "bare.toml").unlink()
+    assert client.get("/api/machines").json()["used"] is None
+    assert client.post("/api/machines/broken/use").status_code == 404
+
+
 def test_a_file_that_goes_bad_after_listing_is_refused_whole(client, fake):
     connect(client)
     (client.machines_dir / "rig.toml").write_text("[rail]\nmax_rate = 0\n", encoding="utf-8")

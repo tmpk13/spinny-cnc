@@ -380,6 +380,8 @@ export interface MachinesResponse {
     machines: MachineSummary[];
     /** The file the connected machine's settings are; null with no machine connected, or settings of no file's. */
     current: string | null;
+    /** The file last used from this host (written to a board, connected, or made the one in use); null for none, missing from an older backend. */
+    used?: string | null;
     /** Files that could not be read, each with what is wrong; they can still be opened to be mended. */
     problems: MachineProblem[];
 }

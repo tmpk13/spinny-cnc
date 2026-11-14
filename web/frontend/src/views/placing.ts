@@ -277,6 +277,8 @@ export function mountHead(root: HTMLElement, ctx: Ctx): void {
         if (file) {
             tuneNote.textContent = `${path.join(".")} saved in ${id}.toml`;
             await ctx.refreshPlacing();
+            // The Config tab's editor shows the file with the value in it.
+            await ctx.refreshMachines();
         }
         return file !== undefined;
     }

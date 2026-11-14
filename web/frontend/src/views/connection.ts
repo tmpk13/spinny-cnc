@@ -7,6 +7,7 @@
 // as it. The top bar shows the state only; a press on it opens this tab.
 
 import { button, el, readStored, replace, setLocked, writeStored } from "../dom.ts";
+import { inUseText, machineInUse } from "../machineuse.ts";
 import type { Port } from "../types.ts";
 import type { Ctx } from "./context.ts";
 import { defaultPort, machineOfPort, PORT_POLL_MS, portLabel, visiblePorts } from "./statusbar.ts";
@@ -53,6 +54,46 @@ export function recentLabel(ports: Port[], url: string, profileName: string | nu
     return port?.product || port?.description || url;
 }
 
+/**
+ * Connects to `url` as `machine` (a G-code machine's file; null for this
+ * project's firmware) and remembers it for its button; whether it is
+ * connected. The machine connected before is let go by the backend.
+ */
+export async function connectTo(ctx: Ctx, url: string, machine: string | null): Promise<boolean> {
+    const next = await ctx.call(ctx.api.connect(url, machine));
+    if (!next) {
+        return false;
+    }
+    ctx.store.set({ snapshot: next });
+    if (next.connected) {
+        const label = recentLabel(ctx.store.get().ports, url, next.profile?.controller === "gcode" ? next.profile.name ?? null : null);
+        writeStored(RECENT_KEY, JSON.stringify(rememberRecent(readRecent(readStored(RECENT_KEY)), { url, machine, label })));
+        await ctx.refreshSettings();
+    }
+    return next.connected;
+}
+
+/** Lets the machine connected go; whether nothing is connected after. */
+export async function disconnectFrom(ctx: Ctx): Promise<boolean> {
+    const next = await ctx.call(ctx.api.disconnect());
+    if (next) {
+        ctx.store.set({ snapshot: next });
+    }
+    return next ? !next.connected : false;
+}
+
+/**
+ * The port to open this project's board on: a port named as its board,
+ * else the url last connected as this project's firmware; null for none.
+ */
+export function boardPort(ports: Port[]): string | null {
+    const named = ports.find((port) => port.spinny && !port.machine);
+    if (named) {
+        return named.url;
+    }
+    return readRecent(readStored(RECENT_KEY)).find((entry) => entry.machine === null)?.url ?? null;
+}
+
 function readHideSystem(): boolean {
     const stored = readStored(HIDE_SYSTEM_KEY);
     return stored === null ? true : stored === "1";
@@ -83,12 +124,14 @@ export function mountConnection(root: HTMLElement, ctx: Ctx): void {
     const recentRow = el("div", { class: "button-row connection-recent" });
     const recentHead = el("h3", {}, "Switch to");
     const detail = el("p", { class: "muted connection-detail" });
+    const inUse = el("p", { class: "muted connection-machine", title: "the Config tab picks and edits the machine files" });
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Connection")),
         el("div", { class: "panel-body" },
             el("div", { class: "button-row connection" }, select, urlInput, refresh, connect),
             el("div", { class: "button-row" }, hideLabel),
             detail,
+            inUse,
             recentHead,
             recentRow,
             el("p", { class: "muted hint" }, "One machine at a time: switching lets the one connected go first."),
@@ -101,26 +144,13 @@ export function mountConnection(root: HTMLElement, ctx: Ctx): void {
 
     /** Connects to `url` as `machine`, and remembers it for its button. */
     async function open(url: string, machine: string | null): Promise<boolean> {
-        const next = await ctx.call(ctx.api.connect(url, machine));
-        if (!next) {
-            return false;
-        }
-        ctx.store.set({ snapshot: next });
-        if (next.connected) {
-            const label = recentLabel(ctx.store.get().ports, url, next.profile?.controller === "gcode" ? next.profile.name ?? null : null);
-            writeStored(RECENT_KEY, JSON.stringify(rememberRecent(readRecent(readStored(RECENT_KEY)), { url, machine, label })));
-            await ctx.refreshSettings();
-            renderRecent();
-        }
-        return next.connected;
+        const connected = await connectTo(ctx, url, machine);
+        renderRecent();
+        return connected;
     }
 
     async function close(): Promise<boolean> {
-        const next = await ctx.call(ctx.api.disconnect());
-        if (next) {
-            ctx.store.set({ snapshot: next });
-        }
-        return next ? !next.connected : false;
+        return disconnectFrom(ctx);
     }
 
     async function toggle(): Promise<void> {
@@ -212,5 +242,10 @@ export function mountConnection(root: HTMLElement, ctx: Ctx): void {
         detail.textContent = snapshot.connected ? `Connected to ${snapshot.url ?? "?"} as ${name}${firmware}.` : "Not connected.";
         renderRecent();
     }, ["snapshot"]);
+    // Which machine file is in use, beside the connection.
+    ctx.store.subscribe((state) => {
+        inUse.textContent = `Machine file: ${inUseText(machineInUse(state))}.`;
+    }, ["snapshot", "settings", "machines"]);
+    inUse.textContent = `Machine file: ${inUseText(machineInUse(ctx.store.get()))}.`;
     renderRecent();
 }

@@ -290,11 +290,17 @@ describe("reading an OpenPnP setup", () => {
 describe("the import on the Config page", () => {
     test("reads the files picked, shows each value with its box, and makes the machine file", async () => {
         const { mountOpenPnpImport } = await import("../src/views/openpnpimport.ts");
+        const { mountConfig } = await import("../src/views/config.ts");
         const { setup, settle, click } = await import("./harness.ts");
+        localStorage.removeItem("spinny.machine");
         const { ctx, backend } = setup();
         const root = document.createElement("section");
         document.body.append(root);
-        mountOpenPnpImport(root, ctx);
+        // The machine file panel beside it, as on the Config page.
+        const configRoot = document.createElement("section");
+        document.body.append(configRoot);
+        const config = mountConfig(configRoot, ctx, document.createElement("section"));
+        mountOpenPnpImport(root, ctx, (id) => void config.open(id));
         await settle();
         const input = root.querySelector('input[aria-label="OpenPnP files"]') as HTMLInputElement;
         Object.defineProperty(input, "files", { configurable: true, value: [new File([MACHINE], "machine.xml")] });
@@ -318,6 +324,16 @@ describe("the import on the Config page", () => {
         const file = await backend.machineFile("openpnp-import");
         expect(file.document?.gcode?.safe_z).toBe(31.5);
         expect(file.document?.gcode?.top?.offset).toEqual([23.544, 65.188]);
+        // The machine file panel lists the new file and opens it, with no reload.
+        for (let i = 0; i < 4; i += 1) {
+            await settle();
+        }
+        const pick = configRoot.querySelector("select[aria-label='Machine file']") as HTMLSelectElement;
+        expect(Array.from(pick.options).map((option) => option.value)).toContain("openpnp-import");
+        expect(pick.value).toBe("openpnp-import");
+        expect((configRoot.querySelector("textarea") as HTMLTextAreaElement).value).toContain("safe_z = 31.5");
         root.remove();
+        configRoot.remove();
+        localStorage.removeItem("spinny.machine");
     });
 });

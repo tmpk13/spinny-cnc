@@ -88,6 +88,7 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
         }
         if (await ctx.call(ctx.api.patchMachineFile(id, ["feeder", index, "slot"], address))) {
             await ctx.refreshPlacing();
+            await ctx.refreshMachines();
         }
     }
 
@@ -115,6 +116,7 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
         const text = withSlot(file.text, doc, address, [joint.r, joint.z, joint.h ?? 0]);
         if (await ctx.call(ctx.api.saveMachineFile(id, text))) {
             await ctx.refreshPlacing();
+            await ctx.refreshMachines();
         }
     }
 

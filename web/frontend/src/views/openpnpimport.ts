@@ -15,7 +15,11 @@ export function machineId(text: string): string {
     return text.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
 }
 
-export function mountOpenPnpImport(root: HTMLElement, ctx: Ctx): void {
+/**
+ * The import panel in `root`; `made` is told the id of a machine file it
+ * made, for the machine file panel to open it.
+ */
+export function mountOpenPnpImport(root: HTMLElement, ctx: Ctx, made: (id: string) => void = () => undefined): void {
     const files = el("input", { type: "file", accept: ".xml", multiple: true, class: "hidden", "aria-label": "OpenPnP files" }) as HTMLInputElement;
     const importButton = button("Import from OpenPnP", () => files.click(), "btn");
     importButton.title = "read OpenPnP's machine.xml, and a job with its boards, into a new G-code machine file";
@@ -171,6 +175,9 @@ export function mountOpenPnpImport(root: HTMLElement, ctx: Ctx): void {
                 return;
             }
             ctx.toast("info", `machines/${id}.toml made from OpenPnP: give its port a url or match words, then connect it from the top bar`);
+            // The machine file panel lists it and opens it at once.
+            await ctx.refreshMachines();
+            made(id);
             await ctx.refreshPorts();
             await ctx.refreshPlacing();
         }

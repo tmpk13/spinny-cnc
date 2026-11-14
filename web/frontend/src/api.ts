@@ -165,6 +165,8 @@ export interface Api {
     machines(): Promise<MachinesResponse>;
     /** Writes a machine file's every setting, and saves them to flash when asked; answers the settings as they are then. */
     applyMachine(id: string, save?: boolean): Promise<SettingsResponse>;
+    /** Makes a file the machine in use from this host without touching a machine; answers the files as they are then. */
+    useMachine(id: string): Promise<MachinesResponse>;
 
     /** A machine file as written, with what it reads as or why it does not. */
     machineFile(id: string): Promise<MachineResponse>;
@@ -626,6 +628,10 @@ export class HttpApi implements Api {
 
     applyMachine(id: string, save = false): Promise<SettingsResponse> {
         return this.request<SettingsResponse>("POST", `/api/machines/${encodeURIComponent(id)}/apply`, { save });
+    }
+
+    useMachine(id: string): Promise<MachinesResponse> {
+        return this.request<MachinesResponse>("POST", `/api/machines/${encodeURIComponent(id)}/use`);
     }
 
     machineFile(id: string): Promise<MachineResponse> {

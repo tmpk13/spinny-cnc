@@ -14,6 +14,8 @@ export interface Ctx {
     refreshPorts(): Promise<void>;
     refreshJobs(): Promise<void>;
     refreshSettings(): Promise<void>;
+    /** The machine files listed again: after one is saved, made, removed or written elsewhere, or a machine connects or goes. */
+    refreshMachines(): Promise<void>;
     refreshHeightMap(): Promise<void>;
     refreshCamera(): Promise<void>;
     refreshAlign(): Promise<void>;

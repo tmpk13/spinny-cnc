@@ -2188,6 +2188,8 @@ export class MockBackend implements Api, EventFeed {
     private placings = new Map<string, MockPlacing>();
     private gcodeId: string | null = null;
     private lastGcode: string | null = null;
+    /** The machine file last used here: written to the board, connected, or made the one in use. */
+    private machineUsed: string | null = null;
     /** Whether the G-code machine's motors were last switched on, and what its firmware said it is. */
     private gcodeMotors = true;
     private gcodeFirmware: string | null = null;
@@ -3712,11 +3714,31 @@ export class MockBackend implements Api, EventFeed {
 
     async machines(): Promise<MachinesResponse> {
         const { documents, problems } = this.machineDocuments();
+        const used = this.machineUsed;
         return {
             machines: documents.map((document) => machineSummaryOf(document)),
             current: this.gcodeId !== null ? this.gcodeId : this.connected ? this.machineOf()?.id ?? null : null,
+            used: used !== null && this.machineTexts.has(used) ? used : null,
             problems,
         };
+    }
+
+    /** A file made the machine in use without touching a machine, as the backend's use_machine. */
+    async useMachine(id: string): Promise<MachinesResponse> {
+        const read = this.machineRead(id, this.machineText(id));
+        if (!read.document) {
+            throw new ApiError(404, `no machine file '${id}'`);
+        }
+        if (read.document.controller === "gcode") {
+            this.lastGcode = id;
+        } else {
+            this.loaded = id;
+        }
+        this.machineUsed = id;
+        if (read.document.controller === "gcode") {
+            this.emitPlacing();
+        }
+        return this.machines();
     }
 
     private machineText(id: string): string {
@@ -3794,6 +3816,7 @@ export class MockBackend implements Api, EventFeed {
         }
         await this.updateSettings({ values: { ...read.document.settings }, host: { tolerance: this.tolerance, ...read.document.host } });
         this.loaded = id;
+        this.machineUsed = id;
         // A load puts the file's camera into the backend's camera settings;
         // a running camera goes on with the old device until restarted.
         this.cameraConfig = { ...read.document.camera, offset: [read.document.camera.offset[0], read.document.camera.offset[1]] };
@@ -7375,6 +7398,7 @@ export class MockBackend implements Api, EventFeed {
         this.gcodeClose();
         this.gcodeId = id;
         this.lastGcode = id;
+        this.machineUsed = id;
         this.url = url;
         this.deviceLink = { ...this.deviceLink, connected: true, url, homed: false, light: null, reading: null, vacuumSwitched: null };
         this.gcodeMotors = true;

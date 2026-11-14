@@ -2387,7 +2387,9 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
     def machines(self) -> dict:
         """Every machine file, and which one the connected machine's
         settings are; `None` with no machine connected or settings of no
-        file's. A file that cannot be read is named with its problem."""
+        file's. A file that cannot be read is named with its problem.
+        `used` is the file last used from this host (written to a board,
+        connected, or made the one in use), while it is there."""
         found, problems = self.machine_list()
         current = None
         if self.gcode.connected:
@@ -2397,7 +2399,38 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
                 current = self.read_settings()["machine"]
             except (LinkError, HTTPException):
                 current = None
-        return {"machines": [machine.summary() for machine in found], "current": current, "problems": problems}
+        used = self.config.get("machine_used")
+        ids = {machine.id for machine in found} | {problem["id"] for problem in problems}
+        return {
+            "machines": [machine.summary() for machine in found],
+            "current": current,
+            "used": used if isinstance(used, str) and used in ids else None,
+            "problems": problems,
+        }
+
+    def _note_used(self, machine_id: str) -> None:
+        """Remembers the file as the one last used from this host."""
+        if self.config.get("machine_used") != machine_id:
+            self.config["machine_used"] = machine_id
+            self._save_config()
+
+    def use_machine(self, machine_id: str) -> dict:
+        """Makes a file the machine in use from this host without touching a
+        machine: a G-code machine's becomes the one the PNP tab places with,
+        one of this project's firmware's the one whose controls the page
+        keeps when a board runs settings of no file's (as a load makes it).
+        Writing it to a board, or connecting the G-code machine, is the
+        page's next step; the machines list after."""
+        machine = self.machine(machine_id)
+        if machine.controller == machine_files.GCODE:
+            self.config["placing_machine"] = machine_id
+        else:
+            self.config["last_machine"] = machine_id
+        self.config["machine_used"] = machine_id
+        self._save_config()
+        if machine.controller == machine_files.GCODE:
+            self.publish_placing()
+        return self.machines()
 
     def machine_from_board(self, machine_id: str, text: str) -> dict:
         """The text with every key whose value differs from the connected
@@ -2450,6 +2483,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
                 # Kept, with the camera stopped: its restart on them failed.
                 self.publish_message("error", f"the camera did not start again on {self.camera.settings().device}: {exc}")
             self.publish_camera()
+        self._note_used(machine_id)
         if self.config.get("last_machine") != machine_id:
             # Remembered, so the page keeps this file's controls once a
             # setting changed by hand makes the values no file's.
@@ -4674,6 +4708,10 @@ def create_app(
     @app.post("/api/machines/{machine_id}/apply")
     def apply_machine(machine_id: str, body: ApplyMachineBody | None = None):
         return guarded(lambda: backend.apply_machine(machine_id, bool(body and body.save)))
+
+    @app.post("/api/machines/{machine_id}/use")
+    def use_machine(machine_id: str):
+        return guarded(lambda: backend.use_machine(machine_id))
 
     @app.post("/api/settings/save")
     def save_settings():

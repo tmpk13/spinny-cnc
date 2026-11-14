@@ -21,6 +21,7 @@ import type {
     HeightMapState,
     Job,
     JobSummary,
+    MachinesResponse,
     Marker,
     MessageLevel,
     PnpState,
@@ -107,6 +108,8 @@ export interface AppState {
     highlight: (JobPlace & { job: string }) | null;
     progress: Progress | null;
     settings: SettingsResponse | null;
+    /** The machine files as the backend lists them: which the connected machine is, which was last used; null until read. */
+    machines: MachinesResponse | null;
     /** The height map, the probing under way and the probe settings; null until read. */
     heightMap: HeightMapState | null;
     /** The grid the height map panel's fields describe, drawn on the preview before it is probed. */
@@ -173,6 +176,7 @@ export function initialState(mock: boolean): AppState {
         highlight: null,
         progress: null,
         settings: null,
+        machines: null,
         heightMap: null,
         probeDraft: null,
         camera: null,

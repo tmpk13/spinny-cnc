@@ -319,6 +319,17 @@ def test_the_files_camera_settings_go_into_the_cameras_as_the_machine_connects(c
         assert words in str(error.value)
 
 
+def test_a_g_code_machine_connected_or_made_the_one_in_use_is_the_one_placed_with(client):
+    rig(client, profile())
+    listed = client.get("/api/machines").json()
+    assert listed["current"] == "rig" and listed["used"] == "rig"
+    (client.backend.machine_store.directory / "other.toml").write_text(gcode_file(profile()), encoding="utf-8")
+    assert client.post("/api/disconnect").status_code == 200
+    listed = client.post("/api/machines/other/use").json()
+    assert listed["used"] == "other" and listed["current"] is None
+    assert client.get("/api/pnp/placing").json()["machine"] == "other"
+
+
 def test_the_files_bottom_camera_roll_and_mirror_stand_until_centering_measures_them(client):
     rig(client, profile(rest=CAMERA + "position = [150.0, 30.0]\nroll = 90\nmirror = false\n"))
     machine = client.backend.placing_machine()

@@ -95,6 +95,9 @@ export function createContext(api: Api, store: Store<AppState>): Ctx {
         async refreshSettings() {
             await into(ctx, "settings", api.settings());
         },
+        async refreshMachines() {
+            await into(ctx, "machines", api.machines());
+        },
         async refreshHeightMap() {
             await into(ctx, "heightMap", api.heightMap());
         },
@@ -179,6 +182,11 @@ export function applyEvent(ctx: Ctx, event: WsEvent): void {
             if (settingsMayHaveChanged(before, event.data)) {
                 void ctx.refreshSettings();
             }
+            // Which machine file is the connected machine's, and which was
+            // last used, moves with a connect or a disconnect.
+            if (before.connected !== event.data.connected || before.url !== event.data.url) {
+                void ctx.refreshMachines();
+            }
             break;
         }
         case "console":
@@ -252,7 +260,10 @@ export function applyEvent(ctx: Ctx, event: WsEvent): void {
 
 /** Everything the page needs after a (re)connect of the event feed. */
 async function refreshAll(ctx: Ctx): Promise<void> {
-    await Promise.all([ctx.refreshState(), ctx.refreshPorts(), ctx.refreshJobs(), ctx.refreshHeightMap(), ctx.refreshCamera(), ctx.refreshAlign(), ctx.refreshPnp(), ctx.refreshPlacing(), ctx.refreshMarkers(), ctx.refreshAuto()]);
+    await Promise.all([
+        ctx.refreshState(), ctx.refreshPorts(), ctx.refreshJobs(), ctx.refreshHeightMap(), ctx.refreshCamera(), ctx.refreshAlign(), ctx.refreshPnp(), ctx.refreshPlacing(),
+        ctx.refreshMarkers(), ctx.refreshAuto(), ctx.refreshMachines(),
+    ]);
     // The settings live on the machine: asking with no machine connected
     // is answered with an error, which is not news.
     if (ctx.store.get().snapshot.connected) {
@@ -358,8 +369,8 @@ function main(): void {
     mountAuto({ chat: panel("auto-chat"), about: panel("auto-about") }, ctx);
     // The Config page: the machine files beside the list of every key a
     // file can set, the file's value next to the board's.
-    mountConfig(panel("machine-file"), ctx, panel("settings"));
-    mountOpenPnpImport(panel("openpnp-import"), ctx);
+    const config = mountConfig(panel("machine-file"), ctx, panel("settings"));
+    mountOpenPnpImport(panel("openpnp-import"), ctx, (id) => void config.open(id));
     // The release running and its update from GitHub.
     mountVersion(panel("version"), ctx);
     mountReportLink(panel("reports"), ctx);
