@@ -11,7 +11,7 @@ import { activePage, button, el, labeled, lockFor, numberField, readStored, repl
 import { formatFixed, formatPercent, parseNumber } from "../format.ts";
 import { isCartesian } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
-import type { BoardLook, Component, Job, PnpSettings, PnpState, SpotPolarity } from "../types.ts";
+import type { BoardLook, Component, Job, JobSummary, PnpSettings, PnpState, SpotPolarity } from "../types.ts";
 import { mountCameraControls, placeFolds, type CameraFolds } from "./cameracontrols.ts";
 import { mountCameraSight } from "./camerasight.ts";
 import { mountCameraPick } from "./camerapick.ts";
@@ -177,6 +177,11 @@ export interface BoardScene {
  * drawn into it by `placeHead`, which follows the machine without drawing
  * the board again.
  */
+/** The jobs made from a KiCad board, the newest first, at most four: what the empty board drawing offers to pick. */
+export function boardJobs(state: AppState): JobSummary[] {
+    return state.jobs.filter((job) => job.source === "kicad").slice(-4).reverse();
+}
+
 export function boardSvg(scene: BoardScene, onPick: (ref: string) => void): { root: SVGElement; box: Box } | null {
     const box = drawingBox(scene.job, scene.parts, scene.camera ? [scene.camera] : []);
     if (box === null) {
@@ -1127,13 +1132,13 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         const machine = state.snapshot.machine;
         const camera = !gcodePlacing(state) && isCartesian(state.snapshot) ? cameraOnBoard(state.pnp?.position ?? null, machine?.joint.a ?? 0) : null;
         const parts = sideParts(state);
-        const key = JSON.stringify([state.job?.id ?? null, state.job?.outline.length ?? 0, state.job?.pads?.length ?? 0, state.job?.rotation ?? 0, state.components, selected, camera, sidePick.value, showKeptOut.checked, loading]);
+        const key = JSON.stringify([state.job?.id ?? null, state.job?.outline.length ?? 0, state.job?.pads?.length ?? 0, state.job?.rotation ?? 0, state.components, selected, camera, sidePick.value, showKeptOut.checked, loading, boardJobs(state).map((job) => [job.id, job.name])]);
         if (key !== boardKey) {
             boardKey = key;
             boardSearch.refresh();
             const before = drawn?.box ?? null;
             drawn = boardSvg({ job: state.job, parts, selected, camera }, pick);
-            replace(drawing, drawn?.root ?? el("p", { class: `muted${loading ? " loading" : ""}` }, loading ? "Loading the board..." : "Nothing to draw: pick a board job."));
+            replace(drawing, drawn?.root ?? (loading ? el("p", { class: "muted loading" }, "Loading the board...") : noBoard(state)));
             // A pick keeps the zoom; another board starts whole.
             if (drawn && view && before && JSON.stringify(before) === JSON.stringify(drawn.box)) {
                 setView(view);
@@ -1194,6 +1199,20 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         panFrom = null;
     });
     drawing.addEventListener("dblclick", () => resetView());
+
+    /**
+     * What the board drawing holds with no board to draw: a press that opens
+     * a board file, and one for each board job kept, the newest first.
+     */
+    function noBoard(state: AppState): HTMLElement {
+        const boards = boardJobs(state);
+        const open = button("Open a board", () => upload.click(), "btn btn-primary btn-small", "upload a .kicad_pcb as a job and draw it here");
+        const picks = boards.map((job) => button(job.name, () => ctx.selectJob(job.id), "btn btn-small", `draw ${job.name} and list its parts`));
+        const said = state.job ? `${state.job.name} has no board to draw.` : "No board picked.";
+        return el("div", { class: "stack pnp-board-empty" },
+            el("p", { class: "muted" }, boards.length > 0 ? `${said} Open a board file, or pick a board job:` : `${said} Open a board file (.kicad_pcb).`),
+            el("div", { class: "button-row" }, open, ...picks));
+    }
 
     function renderJobs(state: AppState): void {
         const current = state.job?.id ?? "";
@@ -1309,7 +1328,10 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         renderParts(state);
         renderBoard(state);
     }, ["job", "components"]);
-    ctx.store.subscribe((state) => renderJobs(state), ["jobs", "job"]);
+    ctx.store.subscribe((state) => {
+        renderJobs(state);
+        renderBoard(state);
+    }, ["jobs", "job"]);
     ctx.store.subscribe((state) => {
         renderCamera(state);
         renderActions(state);

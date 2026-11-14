@@ -189,6 +189,33 @@ describe("the pnp page", () => {
         expect(backend.machine.queue.length + (backend.machine.state === "Jog" ? 1 : 0)).toBeGreaterThan(0);
     });
 
+    test("with no board picked, the drawing offers to open a board file or pick a board job", async () => {
+        const { store, ctx, backend } = setup();
+        const roots = pnpRoots();
+        mountPnp(roots, ctx);
+        await settle();
+        const empty = roots.board.querySelector(".pnp-board-empty")!;
+        expect(empty.textContent).toContain("No board picked.");
+        const buttons = (): string[] => Array.from(roots.board.querySelectorAll<HTMLButtonElement>(".pnp-board-empty button")).map((node) => node.textContent ?? "");
+        expect(buttons()).toEqual(["Open a board"]);
+        // The press opens the file picker the Parts panel uploads boards with.
+        const upload = roots.parts.querySelector<HTMLInputElement>('input[type="file"]')!;
+        let opened = 0;
+        upload.addEventListener("click", () => opened++);
+        click(roots.board, "Open a board");
+        expect(opened).toBe(1);
+        // A board job kept is offered by name, and a press draws it.
+        const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
+        await ctx.refreshJobs();
+        await settle();
+        expect(buttons()).toEqual(["Open a board", job.name]);
+        click(roots.board, job.name);
+        await settle();
+        await settle();
+        expect(store.get().job?.id).toBe(job.id);
+        expect(roots.board.querySelector(".pnp-board-empty")).toBeNull();
+    });
+
     test("the bottom camera is picked from the cameras found, started on what the fields show, and started again on another", async () => {
         localStorage.removeItem("spinny.pnp.target");
         const { store, ctx, calls } = setup();
