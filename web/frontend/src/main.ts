@@ -7,6 +7,7 @@ import { MockBackend } from "./mock/backend.ts";
 import { appendConsole, autoClears, initialState, mergeAuto, noteAutoCleared, pendingTotal, pushToast, Store, withEntry, type AppState } from "./state.ts";
 import type { MessageLevel, Profile, Snapshot, WsEvent } from "./types.ts";
 import { applyLook, readLook } from "./look.ts";
+import { stopPageScroll } from "./pagekeys.ts";
 import { mountTooltips } from "./tooltip.ts";
 import { EventSocket, wsUrl, type EventFeed } from "./ws.ts";
 import { mountAlign } from "./views/align.ts";
@@ -373,6 +374,8 @@ function main(): void {
     mountSearch(tabTools);
     mountBugReport(tabTools, ctx);
     mountTooltips();
+    // PageUp and PageDown jog a mill's Z; they never scroll the page.
+    stopPageScroll();
 
     // Leaving with edits not applied asks first; the browser words it.
     window.addEventListener("beforeunload", (event) => {
