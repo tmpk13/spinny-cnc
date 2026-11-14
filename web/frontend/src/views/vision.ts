@@ -22,6 +22,7 @@ import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
 import { boardMarks, frameSize, roughOf, shownSpots } from "./camview.ts";
 import { into, type Ctx } from "./context.ts";
+import { explain, termsFold } from "../terms.ts";
 import { headKnown, knownMarks } from "./known.ts";
 import { type Calibration, mountPicture, type PictureView } from "./picture.ts";
 
@@ -227,7 +228,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
     // The fold, once made: the picture asks whether it is open.
     let folded: HTMLDetailsElement | null = null;
     const view = mountVisionView(pictureRoot, ctx, () => visibleView());
-    const poseLine = el("p", { class: "muted vision-pose" }, poseText(null));
+    const poseLine = explain(explain(explain(el("p", { class: "muted vision-pose" }, poseText(null)), "pose"), "inliers"), "rms");
     const start = button("Start", () => startCamera(), "btn btn-primary");
     start.title = "start the camera with these settings";
     const stop = button("Stop", () => into(ctx, "camera", ctx.api.cameraStop()), "btn", "stop the camera");
@@ -296,16 +297,16 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
             labeled("Device", device),
             labeled("Size", size),
             labeled("fps", fps),
-            labeled("Side", side),
-            labeled("Finish", finish),
+            explain(labeled("Side", side), "side"),
+            explain(labeled("Finish", finish), "finish"),
         ),
         el("div", { class: "button-row" }, applySettings, pendingChips[0]),
         ...placeFolds(folds, "head", controls.root, sight.root),
         el("div", { class: "field-grid" },
-            labeled("Offset x mm", offsetX),
-            labeled("Offset y mm", offsetY),
-            labeled("Roll deg", roll),
-            labeled("mm per px", scale),
+            explain(labeled("Offset x mm", offsetX), "offset"),
+            explain(labeled("Offset y mm", offsetY), "offset"),
+            explain(labeled("Roll deg", roll), "roll"),
+            explain(labeled("mm per px", scale), "scale"),
         ),
         el("div", { class: "button-row" }, applyMeasured, pendingChips[1], el("span", { class: "muted" }, "set by Find mark; copy them into the machine file to keep them")),
         el("div", { class: "button-row" },
@@ -325,6 +326,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
         el("p", { class: "muted hint" },
             "Make mark drills a mark at the tool; Mark is here uses a mark or hole already under it."
             + " Find mark lifts the head, centers the camera on the mark and measures the offset, scale and roll."),
+        termsFold(["offset", "roll", "scale", "side", "finish", "spot", "pose", "locked", "inliers", "rms"]),
     );
     // Unfolded, the picture (when it is in this panel) is asked for at once rather than at the next tick.
     const fold = foldPanel("spinny.camera.open", el("summary", { class: "panel-head" }, el("h2", {}, "Camera"), badge), body, () => view.refresh(true));

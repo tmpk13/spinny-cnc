@@ -12,6 +12,7 @@ import { formatFixed, formatPercent, parseNumber } from "../format.ts";
 import { isCartesian } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
 import type { BoardLook, Component, Job, JobSummary, PnpSettings, PnpState, SpotPolarity } from "../types.ts";
+import { explain } from "../terms.ts";
 import { mountCameraControls, placeFolds, type CameraFolds } from "./cameracontrols.ts";
 import { mountCameraSight } from "./camerasight.ts";
 import { mountCameraPick } from "./camerapick.ts";
@@ -761,11 +762,11 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
                 labeled("Device", device),
                 labeled("Size", size),
                 labeled("fps", fps),
-                labeled("Nozzle spot", nozzleSpot),
-                labeled("Part spot", partSpot),
+                explain(labeled("Nozzle spot", nozzleSpot), "shade"),
+                explain(labeled("Part spot", partSpot), "shade"),
             ),
             el("div", { class: "button-row" }, cameraApply, cameraChip),
-            el("div", { class: "button-row" }, labeled("Look for", lookSpot, "labeled inline"), lookOnce),
+            el("div", { class: "button-row" }, explain(labeled("Look for", lookSpot, "labeled inline"), "spot"), lookOnce),
             lookLine,
             ...placeFolds(roots.cameraFolds, "up", upControls.root, upSight.root),
             el("p", { class: "muted hint" }, "A fixed camera looking up at the nozzle. Set Nozzle spot and Part spot to how the bore and a held part look against their background."),

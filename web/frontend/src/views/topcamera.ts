@@ -18,6 +18,7 @@ import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
 import { into, type Ctx } from "./context.ts";
 import { topCameraText, topRoutineText } from "./placing.ts";
+import { explain, termsFold } from "../terms.ts";
 import { infoTip } from "./infotip.ts";
 import { lookOnceText, polaritySelect } from "./pnp.ts";
 
@@ -82,10 +83,10 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
                 labeled("Device", device),
                 labeled("Size", size),
                 labeled("fps", fps),
-                labeled("Mark spot", markSpot),
-                labeled("Side", side),
-                labeled("Finish", finish),
-                labeled("Paste", paste),
+                explain(labeled("Mark spot", markSpot), "shade"),
+                explain(labeled("Side", side), "side"),
+                explain(labeled("Finish", finish), "finish"),
+                explain(labeled("Paste", paste), "paste"),
             ),
             el("div", { class: "button-row" }, apply, lookOnce),
             lookLine,
@@ -95,6 +96,7 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
             el("div", { class: "button-row" }, homeFiducial, findFiducial, fiducialLine),
             routineLine,
             log,
+            termsFold(["offset", "roll", "scale", "mirror", "spot", "shade", "within", "side", "finish", "paste"]),
         ),
     );
 

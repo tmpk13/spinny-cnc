@@ -3907,6 +3907,31 @@ table.pnp-parts tr.dnp td {
     color: var(--muted);
 }
 
+/* A word whose meaning shows on hover (src/terms.ts). */
+.term {
+    text-decoration: underline dotted;
+    text-underline-offset: 0.2em;
+    cursor: help;
+}
+
+/* The words a panel uses and what each means, in a fold of their own. */
+.terms-list {
+    display: grid;
+    grid-template-columns: minmax(6rem, max-content) 1fr;
+    gap: 0.3rem 0.8rem;
+    margin: 0;
+    font-size: 0.85rem;
+}
+
+.terms-list dt {
+    font-weight: 600;
+}
+
+.terms-list dd {
+    margin: 0;
+    color: var(--muted);
+}
+
 .camera-control {
     display: grid;
     grid-template-columns: minmax(8rem, 1fr) minmax(6rem, 2fr) 3.5rem auto;

@@ -1,0 +1,44 @@
+import { describe, expect, test } from "bun:test";
+
+import { labeled, el } from "../src/dom.ts";
+import { explain, meaning, TERMS, termsFold } from "../src/terms.ts";
+import { mountCameraSight } from "../src/views/camerasight.ts";
+import { setup } from "./harness.ts";
+
+describe("the cameras' words", () => {
+    test("each term says what it means in a phrase, in plain ASCII", () => {
+        for (const [key, [word, said]] of Object.entries(TERMS)) {
+            expect(word.length).toBeGreaterThan(0);
+            expect(said.length).toBeGreaterThan(20);
+            expect(/^[\x20-\x7e]*$/.test(`${word} ${said}`)).toBe(true);
+            expect(meaning(key as keyof typeof TERMS)).toBe(said);
+        }
+    });
+
+    test("a labeled label's words take the meaning, its control keeps its own tooltip; a tooltip there already comes first", () => {
+        const select = el("select", { title: "front or back" });
+        const label = explain(labeled("Side", select), "side");
+        const words = label.querySelector(".labeled-text") as HTMLElement;
+        expect(words.classList.contains("term")).toBe(true);
+        expect(words.title).toBe(`side: ${meaning("side")}`);
+        expect(label.title).toBe("");
+        expect(select.title).toBe("front or back");
+        const line = explain(explain(el("p", { title: "the pose" }), "pose"), "rms");
+        expect(line.title).toBe(`the pose; pose: ${meaning("pose")}; rms: ${meaning("rms")}`);
+    });
+
+    test("a fold lists the words asked for, in order", () => {
+        const fold = termsFold(["spot", "lens"]);
+        expect([...fold.querySelectorAll("dt")].map((node) => node.textContent)).toEqual(["spot", "lens"]);
+        expect(fold.querySelectorAll("dd")[0]!.textContent).toBe(meaning("spot"));
+    });
+
+    test("the lens and colors fold says what spots are", () => {
+        const { ctx } = setup();
+        const sight = mountCameraSight(ctx, { camera: "head", label: "the head camera", settings: () => null, running: () => false });
+        const spots = [...sight.root.querySelectorAll(".labeled-text")].find((node) => node.textContent === "Spots") as HTMLElement;
+        expect(spots.classList.contains("term")).toBe(true);
+        expect(spots.title).toContain("a small blob the finder looks for");
+        expect([...sight.root.querySelectorAll(".terms-list dt")].map((node) => node.textContent)).toContain("spot");
+    });
+});

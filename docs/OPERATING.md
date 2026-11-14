@@ -590,6 +590,13 @@ fiducial *Home by fiducial* finds; the bottom camera's rings the nozzle
 where the head's place puts it. A ring keeps one size at any zoom; its
 label shows only where it has room.
 
+The cameras' own words (spot, shade, lens, roll, mm per px, offset, pose,
+inliers, rms, look, lock, guess, threshold, rival and the like) are
+underlined with dots where the panels use them: the pointer over one
+says what it means, and each camera panel, its Lens and colors and the
+Find board panel end with *What the words mean*, a fold listing the
+ones they use (one list in `src/terms.ts`).
+
 *Picture controls*, a panel stacked with each camera's panel (a tab
 beside it; *Bottom picture controls* and *Top picture controls* on the
 PNP page), lists what the

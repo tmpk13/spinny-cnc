@@ -12,13 +12,14 @@ import { formatFixed, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { CameraColors, CameraLens, ColorItem, ControlledCamera, SpotPolarity } from "../types.ts";
 import type { Ctx } from "./context.ts";
+import { explain, type Term, termsFold } from "../terms.ts";
 import { armPick, armedPick, disarmPick } from "./picture.ts";
 
 /** What each color is for, in words. */
-export const COLOR_ITEMS: { item: ColorItem; label: string; what: string }[] = [
-    { item: "spots", label: "Spots", what: "a mark, a fiducial or a pad shows" },
-    { item: "board", label: "Board pads", what: "the board's pads show" },
-    { item: "edges", label: "Edges", what: "the blank board (or the bed beside it) shows" },
+export const COLOR_ITEMS: { item: ColorItem; label: string; what: string; term: Term }[] = [
+    { item: "spots", label: "Spots", what: "a mark, a fiducial or a pad shows", term: "spot" },
+    { item: "board", label: "Board pads", what: "the board's pads show", term: "color" },
+    { item: "edges", label: "Edges", what: "the blank board (or the bed beside it) shows", term: "edges" },
 ];
 
 /** A lens's terms in words; empty with none. */
@@ -53,23 +54,25 @@ export function mountCameraSight(ctx: Ctx, options: CameraSightOptions): { root:
     const measure = button("Measure lens", () => void measureLens(), "btn",
         "with the dot grid filling the picture, measure how the lens bends it and correct every point from now on");
     const clear = button("Clear lens", () => void clearLens(), "btn btn-quiet", "forget the lens correction");
-    const colorRows = COLOR_ITEMS.map(({ item, label, what }) => {
+    const colorRows = COLOR_ITEMS.map(({ item, label, what, term }) => {
         const swatch = el("span", { class: "color-swatch none", role: "img", "aria-label": `${label} color` });
         const text = el("span", { class: "muted mono" }, "none");
         const pick = button("Pick", () => armPick(options.camera, `${what} (for ${label.toLowerCase()})`, (point) => void pickAt(item, point)), "btn btn-small",
             `click this, then the camera's picture where ${what}: the camera looks for that color`);
         const forget = button("Clear", () => void ctx.call(ctx.api.cameraColor(options.camera, item, null)), "btn btn-quiet btn-small",
             `look for ${label.toLowerCase()} by shade again`);
-        return { item, swatch, text, pick, forget, row: el("div", { class: "button-row" }, labeled(label, swatch, "labeled inline"), text, pick, forget) };
+        return { item, swatch, text, pick, forget, row: el("div", { class: "button-row" }, explain(labeled(label, swatch, "labeled inline"), term), text, pick, forget) };
     });
     const summary = el("summary", { class: "camera-controls-head" }, "Lens and colors");
     summary.title = `${options.label}'s lens correction and the colors it looks for`;
+    explain(lensLine, "lens");
     const root = el("details", { class: "camera-controls camera-sight" },
         summary,
         lensLine,
-        el("div", { class: "button-row" }, labeled("Dots", polarity, "labeled inline"), labeled("Pitch mm", pitch, "labeled inline"), measure, clear),
+        el("div", { class: "button-row" }, explain(labeled("Dots", polarity, "labeled inline"), "dots"), explain(labeled("Pitch mm", pitch, "labeled inline"), "dots"), measure, clear),
         ...colorRows.map((row) => row.row),
         el("p", { class: "muted hint" }, "A color picked is looked for in place of light or dark: copper on bare FR4, a fiducial under odd light, the board against the bed."),
+        termsFold(["lens", "dots", "spot", "shade", "color", "edges"]),
     ) as HTMLDetailsElement;
 
     async function measureLens(): Promise<void> {

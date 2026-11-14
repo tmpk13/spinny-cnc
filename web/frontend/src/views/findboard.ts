@@ -23,6 +23,7 @@ import { button, el, labeled, lockFor, numberField, readStored, setLocked, Track
 import { formatFixed, formatPercent as percent, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { BoardCorners, BoardGuess, BoardKnown, BoardLook, BoardStretch, CornerName, LookMethod, RefineUse, ScanMosaic, SkewState } from "../types.ts";
+import { explain, termsFold } from "../terms.ts";
 import { into, type Ctx } from "./context.ts";
 import type { MachineBox } from "./picture.ts";
 import { gcodePlacing } from "./placing.ts";
@@ -379,7 +380,7 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
         "move the camera over the whole board where a rough place puts it (a find, the corners, the Align marks or references), row by row: every picture is weighed and kept for the mosaic below");
     const placeButton = button("Use as board place", () => usePlace(), "btn");
     const unloadButton = button("Unload", () => unload(), "btn btn-quiet", "stop looking for the board");
-    const lookLine = el("p", { class: "muted find-look" });
+    const lookLine = explain(explain(explain(el("p", { class: "muted find-look" }), "look"), "lock"), "rival");
     const knownLine = el("p", { class: "muted find-known" });
 
     // The threshold: dragged on the graph or slid, sent once let go.
@@ -418,7 +419,7 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
     use.title = "which features the camera centers on";
     const refineButton = button("Center features", () => refine(), "btn",
         "center the camera on three features far apart where the place found puts them, and make them the Align marks: the board's turn from a long baseline");
-    const refineRow = el("div", { class: "button-row" }, labeled("Features", use, "labeled inline"), refineButton);
+    const refineRow = el("div", { class: "button-row" }, explain(labeled("Features", use, "labeled inline"), "features"), refineButton);
     const refineHead = el("h3", {}, "Exact place by features");
     const clearButton = button("Clear corners", () => clearCorners(), "btn btn-quiet", "forget the corners taken");
     const within = numberField({ min: 0.1, max: 50, step: 0.5, width: "5rem" });
@@ -457,15 +458,15 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             el("div", { class: "button-row" }, lookButton, searchButton, scanButton, placeButton, unloadButton, motionField),
             lookLine,
             knownLine,
-            el("h3", {}, "Guesses"),
+            explain(el("h3", {}, "Guesses"), "guess"),
             graph.root,
-            el("div", { class: "button-row find-slider-row" }, labeled("Threshold", slider, "labeled inline"), sliderValue),
-            el("div", { class: "button-row" }, labeled("Method", method, "labeled inline"), stretchLabel),
+            el("div", { class: "button-row find-slider-row" }, explain(labeled("Threshold", slider, "labeled inline"), "threshold"), sliderValue),
+            el("div", { class: "button-row" }, explain(labeled("Method", method, "labeled inline"), "method"), explain(stretchLabel, "stretch")),
             stretchLine,
             tableBox,
             more,
             el("h3", {}, "Rough place by corners"),
-            el("div", { class: "button-row" }, labeled("Corner", corner, "labeled inline"), cornerButton, edgeButton, clearButton, labeled("Within mm", within, "labeled inline")),
+            el("div", { class: "button-row" }, explain(labeled("Corner", corner, "labeled inline"), "corner"), cornerButton, edgeButton, clearButton, labeled("Within mm", within, "labeled inline")),
             cornersLine,
             refineHead,
             refineRow,
@@ -482,6 +483,7 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
                 + " board's references, so Go to part and Find fiducials work from it at once; Use as board place takes a place found instead."
                 + " With Probability over the pose each column is a place's probability, the last (?) what no place holds yet, where nothing has looked;"
                 + " Full scan, once a rough place is known, covers the whole board and lays its pictures out below."),
+            termsFold(["look", "lock", "guess", "threshold", "method", "rival", "stretch", "corner", "edges", "features", "pose", "locked"]),
         ),
     );
 
