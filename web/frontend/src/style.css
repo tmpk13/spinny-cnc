@@ -3567,6 +3567,13 @@ table.pnp-parts tr.dnp td {
     text-anchor: start;
 }
 
+/* The head's and the bottom camera's crosses only show where they are: a
+   press on them reaches the part under them. */
+.pnp-board .pnp-head,
+.pnp-board .pnp-camera-mark {
+    pointer-events: none;
+}
+
 /* A label that would crowd another at this zoom. */
 .pnp-board text.crowded {
     display: none;

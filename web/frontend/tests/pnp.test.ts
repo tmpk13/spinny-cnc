@@ -14,6 +14,9 @@ import {
     partOffsetText,
     placeHead,
     boardSvg,
+    boardPointAt,
+    nearestPart,
+    placeLookView,
     pnpRoutineText,
     scrollToShow,
 } from "../src/views/pnp.ts";
@@ -92,6 +95,27 @@ describe("pnp helpers", () => {
         expect(drawn.root.querySelectorAll(".pnp-head").length).toBe(1);
         placeHead(drawn.root, drawn.box, { x: 500, y: 2 });
         expect(drawn.root.querySelectorAll(".pnp-head").length).toBe(0);
+    });
+
+    test("a press beside the dots picks the nearest part, and a look's outline lies under the parts", () => {
+        // A 200 x 100 px element showing a 20 x 20 mm view: 5 px a mm, the
+        // drawing centered across, 50 px either side.
+        const view = { x0: 0, y0: 0, x1: 20, y1: 20 };
+        const at = boardPointAt({ left: 10, top: 20, width: 200, height: 100 }, view, 10 + 50 + 25, 20 + 30)!;
+        expect(at.scale).toBe(5);
+        expect(at.x).toBeCloseTo(5, 9);
+        expect(at.y).toBeCloseTo(14, 9);
+        expect(boardPointAt({ left: 0, top: 0, width: 0, height: 0 }, view, 1, 1)).toBeNull();
+        const parts = [part("R1", { x: 4, y: 14 }), part("R2", { x: 5.5, y: 12 })];
+        expect(nearestPart(parts, at, 1)?.ref).toBe("R1");
+        expect(nearestPart(parts, { x: 15, y: 15 }, 1)).toBeNull();
+        // The camera's picture outline drawn after the parts goes under them.
+        const drawn = boardSvg({ job: null, parts, selected: null, camera: null }, () => undefined)!;
+        const look = { job: "j1", found: false, view: [[0, 0], [10, 0], [10, 10], [0, 10]], seen: [5, 5] } as unknown as Parameters<typeof placeLookView>[2];
+        placeLookView(drawn.root, drawn.box, look, "top camera", 0.5, "j1");
+        const order = Array.from(drawn.root.children).map((node) => node.getAttribute("class") ?? "");
+        expect(order.indexOf("pnp-look")).toBeGreaterThanOrEqual(0);
+        expect(order.indexOf("pnp-look")).toBeLessThan(order.findIndex((name) => name.startsWith("pnp-part")));
     });
 
     test("the routine and the part are said in words", () => {

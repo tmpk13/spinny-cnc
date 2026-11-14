@@ -79,8 +79,31 @@ export function partsLeft(placing: PlacingState | null, plan: PlacingPlan | null
     return plan.parts.map((part) => part.ref).filter((ref) => !placed.has(ref));
 }
 
+/**
+ * Why a plan places no part, in words: its reasons, each with how many
+ * parts it leaves out, the commonest first, and where feeders are added
+ * when none holds the parts.
+ */
+export function nothingText(plan: PlacingPlan): string {
+    if (plan.skipped.length === 0) {
+        return "Nothing to place: the board has no part to place.";
+    }
+    const counts = new Map<string, number>();
+    for (const entry of plan.skipped) {
+        counts.set(entry.reason, (counts.get(entry.reason) ?? 0) + 1);
+    }
+    const reasons = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([reason, count]) => `${count} ${count === 1 ? "part" : "parts"} ${reason}`);
+    const feeders = plan.skipped.some((entry) => entry.reason === "no feeder holds it")
+        ? " Feeders are [[feeder]] tables in the machine file (Config page): one holds the parts whose value and footprint hold its match words, or that its refs name."
+        : "";
+    return `Nothing to place: ${reasons.join("; ")}.${feeders}`;
+}
+
 /** The plan in words: what it places, and what it leaves and why. */
 export function planText(plan: PlacingPlan): string {
+    if (plan.parts.length === 0) {
+        return nothingText(plan);
+    }
     const fit = plan.fit.marks > 1 ? `, board turned ${formatFixed(plan.fit.rotation, 2)} deg (rms ${formatFixed(plan.fit.rms, 3)} mm)` : "";
     const looked = plan.parts.filter((part) => part.vision).length;
     return `${plan.parts.length} parts in ${plan.lines} lines${fit}${looked > 0 ? `, ${looked} checked on the bottom camera` : ""}.`;

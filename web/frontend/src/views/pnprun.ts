@@ -14,7 +14,7 @@ import type { AppState } from "../state.ts";
 import type { PlacingPlan, PlacingState, PlacingStep } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
 import { pickedToPlace, placeRefs } from "./partsfilter.ts";
-import { partsLeft, placingRunText, planText } from "./placing.ts";
+import { nothingText, partsLeft, placingRunText, planText } from "./placing.ts";
 
 const REPEAT_KEY = "spinny.pnp.repeat";
 const WINDOW_KEY = "spinny.pnp.window";
@@ -189,6 +189,11 @@ export function mountPnpRun(root: HTMLElement, ctx: Ctx): void {
         planJob = job.id;
         planRefs = refs;
         renderPlan();
+        if (planned.parts.length === 0) {
+            // Nothing to ask about: the plan says why below.
+            ctx.toast("error", nothingText(planned));
+            return;
+        }
         const device = state.placing?.name ?? state.placing?.machine ?? "the machine";
         const left = planned.skipped.length > 0 ? ` ${planned.skipped.length} parts left out (listed below).` : "";
         const first = fiducialsFirst.checked ? " Fiducials are found first." : "";

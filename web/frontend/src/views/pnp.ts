@@ -366,7 +366,8 @@ export function placeLookView(root: SVGElement, box: Box, look: BoardLook | null
         });
     }
     if (group.childNodes.length > 0) {
-        root.append(group);
+        // Under the parts: a part inside an outline still takes its click.
+        root.insertBefore(group, root.querySelector(".pnp-part"));
     }
 }
 
@@ -391,6 +392,41 @@ export function placeHead(root: SVGElement, box: Box, head: { x: number; y: numb
         return;
     }
     root.append(crossMark(head, box, "pnp-head", "head"));
+}
+
+/** How far from a click a part is picked, rem on the screen: a dot is much smaller than a finger or a quick pointer. */
+export const PICK_REM = 1.2;
+
+/**
+ * The board point under a pointer at (`clientX`, `clientY`) on a drawing
+ * whose element lies at `rect` and shows `view` (scaled to fit, centered,
+ * as an SVG's viewBox is by default), with the drawing's px per board mm;
+ * null for an element with no size.
+ */
+export function boardPointAt(rect: { left: number; top: number; width: number; height: number }, view: Box, clientX: number, clientY: number): { x: number; y: number; scale: number } | null {
+    const width = view.x1 - view.x0;
+    const height = view.y1 - view.y0;
+    if (!(rect.width > 0 && rect.height > 0 && width > 0 && height > 0)) {
+        return null;
+    }
+    const scale = Math.min(rect.width / width, rect.height / height);
+    const left = rect.left + (rect.width - width * scale) / 2;
+    const top = rect.top + (rect.height - height * scale) / 2;
+    return { x: view.x0 + (clientX - left) / scale, y: view.y1 - (clientY - top) / scale, scale };
+}
+
+/** The part nearest a board point, within `reach` mm of it; null for none that near. */
+export function nearestPart(parts: Component[], point: { x: number; y: number }, reach: number): Component | null {
+    let best: Component | null = null;
+    let bestDistance = reach;
+    for (const part of parts) {
+        const distance = Math.hypot(part.x - point.x, part.y - point.y);
+        if (distance <= bestDistance) {
+            best = part;
+            bestDistance = distance;
+        }
+    }
+    return best;
 }
 
 /** A view box zoomed by `factor` about a point of it (fractions of its width and height from its top left), kept within `limit` and no smaller than a 64th of it. */
@@ -1243,6 +1279,23 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         }
         panFrom = { x: event.clientX, y: event.clientY, view };
         drawing.setPointerCapture?.(event.pointerId);
+    });
+    // A press beside the dots that barely moved picks the part nearest it,
+    // within PICK_REM on the screen: a dot itself takes its own click.
+    drawing.addEventListener("pointerup", (event) => {
+        const from = panFrom;
+        if (!from || !drawn || Math.hypot(event.clientX - from.x, event.clientY - from.y) >= 4) {
+            return;
+        }
+        const at = boardPointAt(drawn.root.getBoundingClientRect(), from.view, event.clientX, event.clientY);
+        if (at === null) {
+            return;
+        }
+        const rem = parseFloat(globalThis.getComputedStyle?.(document.documentElement).fontSize ?? "") || 16;
+        const near = nearestPart(sideParts(ctx.store.get()), at, (PICK_REM * rem) / at.scale);
+        if (near !== null) {
+            choose(near.ref, true);
+        }
     });
     drawing.addEventListener("pointermove", (event) => {
         if (!panFrom || !drawn) {

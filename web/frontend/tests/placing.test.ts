@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { DEVICE_LINES_PER_SECOND, MockBackend } from "../src/mock/backend.ts";
 import { blockLines, deviceFit, planDevice, planSummary, VISION_NOTE } from "../src/mock/openpnp.ts";
 import type { Component } from "../src/types.ts";
-import { PLACING_SETUP, placingBadge, placingRunText, referencesOf } from "../src/views/placing.ts";
+import { nothingText, PLACING_SETUP, placingBadge, placingRunText, planText, referencesOf } from "../src/views/placing.ts";
 import { mountPnp } from "../src/views/pnp.ts";
 import { parseDevice } from "./gcoderig.ts";
 import { click, dialogButton, settle, setup, pnpRoots } from "./harness.ts";
@@ -246,6 +246,42 @@ describe("the bottom camera on the mock's G-code machine", () => {
         // The look's lines are counted as the backend counts them.
         expect(done.progress?.sent).toBe(done.progress?.total);
         expect(done.taken).toEqual({ "r-10k-0603": 1 });
+    });
+});
+
+describe("a plan that places nothing", () => {
+    test("says why, the commonest reason first, and where feeders are added", () => {
+        const plan = { parts: [], skipped: [{ ref: "R1", reason: "no feeder holds it" }, { ref: "R2", reason: "no feeder holds it" }, { ref: "C1", reason: "on the back" }], fit: { rotation: 0, shift: [0, 0], rms: 0, marks: 1, scale: 1 }, lines: 0, text: "" } as unknown as Parameters<typeof planText>[0];
+        expect(planText(plan)).toBe(nothingText(plan));
+        expect(nothingText(plan)).toStartWith("Nothing to place: 2 parts no feeder holds it; 1 part on the back.");
+        expect(nothingText(plan)).toContain("[[feeder]]");
+        expect(nothingText({ ...plan, skipped: [] })).toBe("Nothing to place: the board has no part to place.");
+    });
+
+    test("is not run: Run says why and asks nothing", async () => {
+        const { store, ctx, backend } = setup();
+        const roots = pnpRoots();
+        const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
+        // A feeder that holds none of the board's parts.
+        const file = await backend.machineFile("openpnp-marlin");
+        await backend.saveMachineFile("openpnp-marlin", file.text.replace('match = "10k 0603"', 'match = "nothing on this board"'));
+        mountPnp(roots, ctx);
+        await ctx.refreshJobs();
+        await ctx.selectJob(job.id);
+        store.set({ snapshot: await backend.connect("/dev/ttyACM1", "openpnp-marlin") });
+        await ctx.refreshPlacing();
+        await settle();
+        (roots.parts.querySelector("table.pnp-parts tbody tr") as HTMLElement).click();
+        click(roots.refs, `Nozzle here: ${store.get().pnpPart}`);
+        await settle();
+        await settle();
+        click(roots.run, "Run");
+        await settle();
+        await settle();
+        expect(document.querySelector("dialog[open]")).toBeNull();
+        expect(store.get().toasts.at(-1)?.text).toStartWith("Nothing to place:");
+        expect(roots.run.textContent).toContain("no feeder holds it");
+        expect(store.get().placing?.running).toBe(false);
     });
 });
 
