@@ -838,7 +838,7 @@ class PlacingPart:
         self.top.home_by_fiducial(mover, profile.home_fiducial, profile.fiducial, profile.within, profile.z, homing if home else None, declare)
         return self.placing_state()
 
-    def top_look(self) -> dict:
+    def top_look_once(self) -> dict:
         """The top camera's mark spot found once, no move: kept in its state
         for the page to draw over the picture."""
         self.top.look_once(self.top.settings().mark_spot)

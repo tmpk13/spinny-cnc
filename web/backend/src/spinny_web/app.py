@@ -5575,7 +5575,7 @@ def create_app(
 
     @app.post("/api/pnp/top/look")
     def top_look():
-        return guarded(backend.top_look)
+        return guarded(backend.top_look_once)
 
     @app.post("/api/pnp/top/board")
     def top_board(body: CameraBoardBody):

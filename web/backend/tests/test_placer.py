@@ -581,6 +581,19 @@ def measured_offset(client) -> None:
     assert routine["state"] == "done", routine
 
 
+def test_the_top_camera_looks_once_for_its_mark_spot(client):
+    # The route once called the board look (an attribute of the same name)
+    # instead of Look once, and answered 500.
+    rig(client, profile(rest=TOP))
+    camera = DeviceTopCamera(client.fake, CAMERA_OFFSET, [("dark", 120.0 + CAMERA_OFFSET[0], 80.0 + CAMERA_OFFSET[1], 1.0, 1.0)])
+    client.backend.top.client = camera
+    client.post("/api/command", json={"line": "G0 X120 Y80"})
+    response = client.post("/api/pnp/top/look")
+    assert response.status_code == 200, response.text
+    look = response.json()["top"]["look"]
+    assert look is not None and (look.get("spot") or look).get("found") is True
+
+
 def test_the_top_camera_measures_its_offset_and_finds_the_fiducials(client):
     job_id = rig(client, profile(rest=TOP))
     with_top_camera(client, job_id)
