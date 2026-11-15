@@ -141,6 +141,10 @@ pcbv = "pcbv"
 nozzle_spot = "dark"
 part_spot = "bright"
 
+[up_camera.crops]
+nozzle = [0.35, 0.3, 0.65, 0.7]
+part = [0.2, 0.1, 0.8, 0.9]
+
 [top_camera]
 z = 0
 offset = [40.0, 0.0]
@@ -157,6 +161,12 @@ size = "640x480"
 fps = 30
 pcbv = "pcbv"
 mark_spot = "dark"
+
+[top_camera.crops]
+board = [0.0, 0.0, 1.0, 1.0]
+spot = [0.3, 0.25, 0.7, 0.75]
+edges = [0.1, 0.1, 0.9, 0.9]
+measure = [0.1, 0.1, 0.9, 0.9]
 
 [bus]
 send = "M485 {packet}"

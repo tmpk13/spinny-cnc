@@ -836,7 +836,9 @@ export function summaryOf(profile: CamProfile): CamSummary {
 // --- editing the text -------------------------------------------------------------
 
 const HEADER = /^\s*\[\[\s*([A-Za-z0-9_-]+)\s*\]\]\s*(#.*)?$/;
-const TABLE = /^\s*\[\s*([A-Za-z0-9_-]+)\s*\]\s*(#.*)?$/;
+// A plain table's header, its name dotted for a table in a table
+// ([top_camera.crops]); the name is read with the spaces about its dots out.
+const TABLE = /^\s*\[\s*([A-Za-z0-9_-]+(?:\s*\.\s*[A-Za-z0-9_-]+)*)\s*\]\s*(#.*)?$/;
 
 function tableRange(lines: string[], table: (string | number)[]): [number, number] {
     const counts: Record<string, number> = {};
@@ -857,7 +859,7 @@ function tableRange(lines: string[], table: (string | number)[]): [number, numbe
                 start = index + 1;
             }
             counts[name] = (counts[name] ?? 0) + 1;
-        } else if (plain && table.length === 1 && table[0] === plain[1]) {
+        } else if (plain && table.length === 1 && table[0] === plain[1]!.replace(/\s+/g, "")) {
             start = index + 1;
         }
     }
@@ -954,8 +956,14 @@ export function setValue(text: string, path: CamPath, value: CamValue): string {
     if (path.length === 0 || typeof key !== "string" || !/^[A-Za-z0-9_-]+$/.test(key)) {
         throw new Error("the path must end in a key");
     }
-    const table = path.slice(0, -1);
-    if (table.length > 2 || (table.length === 2 && (typeof table[0] !== "string" || typeof table[1] !== "number")) || (table.length === 1 && typeof table[0] !== "string")) {
+    let table = path.slice(0, -1);
+    if (table.length > 0 && table.every((step) => typeof step === "string")) {
+        // A plain table, a table in a table by its dotted name.
+        if (!table.every((step) => /^[A-Za-z0-9_-]+$/.test(step as string))) {
+            throw new Error("a table is named by its name");
+        }
+        table = [table.join(".")];
+    } else if (table.length > 2 || (table.length === 2 && (typeof table[0] !== "string" || typeof table[1] !== "number")) || (table.length === 1 && typeof table[0] !== "string")) {
         throw new Error("a table is named by its name, or its name and its index");
     }
     const lines = text.split("\n");

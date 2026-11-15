@@ -35,12 +35,18 @@
 // kept at once, in the log of changes) shows for a few seconds in a row of
 // its words and Undo under the picture, its marks drawn dashed in magenta
 // while the row shows.
+// A G-code machine's cameras have a crop per task (crops.ts): the View
+// menu's Crop entries pick a task, whose box the picture then shows with
+// the rest dimmed; a drag draws a new box, Save writes it into the machine
+// file and Clear takes it out. While a routine runs, the picture shows the
+// crop of the task it keeps to.
 
 import { button, el, numberField, readStored, setLocked, stepperBox, writeStored } from "../dom.ts";
 import { errorText } from "../api.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import { openMenu } from "../menu.ts";
 import { appliedText, changeText } from "./changes.ts";
+import { cropOf, cropText, TASK_WORDS, type CropBox } from "../crops.ts";
 import { knownMarks } from "./known.ts";
 import type { AppState } from "../state.ts";
 import type { CameraEdges, FindingEntry, FindingMarks } from "../types.ts";
@@ -331,7 +337,7 @@ export function growBox(box: MachineBox | null, by: MachineBox): MachineBox {
 }
 
 /** What a mark is: its color and line follow the tone. */
-export type Tone = "center" | "ring" | "spot" | "look" | "box" | "board" | "rough" | "drag" | "miss" | "known" | "part" | "edge" | "nozzle" | "finding";
+export type Tone = "center" | "ring" | "spot" | "look" | "box" | "board" | "rough" | "drag" | "miss" | "known" | "part" | "edge" | "nozzle" | "finding" | "crop" | "dim";
 
 /**
  * A mark over the picture, in its full size px from the top left (y down);
@@ -557,6 +563,32 @@ type Pick =
 const picks = new Map<string, Pick>();
 const pickWatchers = new Set<() => void>();
 
+/**
+ * A crop's marks over a picture of `size` px: the parts of the picture
+ * outside it dimmed, its outline, and its task's name inside its top left
+ * corner (`font` px tall). A box being drawn (`draft`) is said so.
+ */
+export function cropMarks(box: CropBox, size: [number, number], task: string, font: number, draft = false): Mark[] {
+    const [width, height] = size;
+    const [x0, y0, x1, y1] = [box[0] * width, box[1] * height, box[2] * width, box[3] * height];
+    // Four bands about the box: above and below it the whole width, beside it its height.
+    const bands: [number, number, number, number][] = [
+        [0, 0, width, y0],
+        [0, y1, width, height],
+        [0, y0, x0, y1],
+        [x1, y0, width, y1],
+    ];
+    const marks: Mark[] = bands
+        .filter(([a, b, c, d]) => c > a && d > b)
+        .map(([a, b, c, d]) => ({ kind: "rect", x: (a + c) / 2, y: (b + d) / 2, w: c - a, h: d - b, angle: 0, tone: "dim" }));
+    const words = TASK_WORDS[task] ? `: ${TASK_WORDS[task]}` : "";
+    marks.push(
+        { kind: "line", points: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], closed: true, tone: "crop", title: `the ${task} crop${draft ? " drawn, not saved yet" : ""}${words}` },
+        { kind: "text", x: x0 + font / 3, y: y0 + font * 1.1, text: draft ? `${task} crop, not saved` : `${task} crop`, size: font, anchor: "start", tone: "crop" },
+    );
+    return marks;
+}
+
 /** Arms a pick on the picture of `key` (head, up, top): its next click is handed to `take`; `label` says what is picked. */
 export function armPick(key: string, label: string, take: (point: [number, number]) => void): void {
     picks.set(key, { label, take });
@@ -659,6 +691,23 @@ export interface PictureOptions {
     visible(): boolean;
     /** Takes a box drawn with Shift and a drag; with none, Shift does nothing. */
     boxes?: boolean;
+    /** The camera's crops by task; given, the View menu offers them. */
+    crops?: PictureCrops;
+}
+
+/**
+ * A G-code machine camera's crops by task (crops.ts), as its machine file
+ * has them: what the View menu's Crop entries show, draw and save.
+ */
+export interface PictureCrops {
+    /** The camera's tasks, in the menu's order. */
+    tasks: readonly string[];
+    /** Each task's box in the file now; null while no G-code machine's file is known. */
+    boxes(state: AppState): Partial<Record<string, CropBox>> | null;
+    /** The task the routine under way keeps to; null while none runs. */
+    running(state: AppState): string | null;
+    /** Writes a task's box into the machine file (null takes it out); whether it was written. */
+    save(task: string, box: CropBox | null): Promise<boolean>;
 }
 
 export interface PictureView {
@@ -739,6 +788,9 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     // The turn the picture is shown at, set at each fit.
     let turn: Turn = UNTURNED;
     let searchBox: MachineBox | null = options.boxes ? readBox(boxKey) : null;
+    // The crop being shown and drawn: its task, and the box drawn on the
+    // picture and not saved yet (null shows the file's).
+    let cropEdit: { task: string; draft: CropBox | null } | null = null;
     let held: number | null = (() => {
         const value = parseFloat(readStored(heightKey) ?? "");
         return Number.isFinite(value) ? Math.max(MIN_BOX_REM, Math.min(MAX_BOX_REM, value)) : null;
@@ -808,6 +860,12 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     const cancelPick = button("Cancel", () => disarmPick(options.key), "btn btn-quiet btn-small");
     cancelPick.title = "pick nothing";
     const pickRow = el("div", { class: "button-row picture-pick-row hidden" }, pickLine, cancelPick);
+    // The crop picked in the View menu: what it is, and Save, Clear and Done.
+    const cropLine = el("span", { class: "picture-crop-text" });
+    const cropSave = button("Save crop", () => void saveCrop(), "btn btn-small", "write the box drawn into the machine file as this task's crop");
+    const cropClear = button("Clear crop", () => void clearCrop(), "btn btn-quiet btn-small", "take this task's crop out of the machine file: it looks at the whole picture");
+    const cropDone = button("Done", () => editCrop(null), "btn btn-quiet btn-small", "stop showing the crop; a box drawn and not saved is dropped");
+    const cropRow = el("div", { class: "button-row picture-crop hidden" }, cropLine, cropSave, cropClear, cropDone);
     // What a routine just applied: its words and Undo, for a few seconds.
     const appliedLine = el("span", { class: "picture-applied-text" });
     const undoApplied = button("Undo", () => void undoShownEntry(), "btn btn-small");
@@ -841,7 +899,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     if (options.boxes) {
         caption.append(growView, clearBox, boxLine);
     }
-    const root = el("figure", { class: "picture-view" }, box, grip, pickRow, appliedRow, caption);
+    const root = el("figure", { class: "picture-view" }, box, grip, pickRow, cropRow, appliedRow, caption);
 
     // --- sizing ------------------------------------------------------------------
 
@@ -917,7 +975,89 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
             },
             "-",
             ...ARROW_WAYS.map((entry) => ({ label: entry.label, run: pickArrows(entry.value), checked: arrows === entry.value })),
+            ...(options.crops
+                ? [
+                    "-" as const,
+                    ...options.crops.tasks.map((task) => ({
+                        label: `Crop for ${task}`,
+                        run: () => editCrop(cropEdit?.task === task ? null : task),
+                        checked: cropEdit?.task === task,
+                    })),
+                ]
+                : []),
         ], view, `${options.label} view`);
+    }
+
+    // --- crops ----------------------------------------------------------------------
+
+    /** Shows the crop of `task` to draw over (null: none), dropping a box drawn and not saved. */
+    function editCrop(task: string | null): void {
+        cropEdit = task === null ? null : { task, draft: null };
+        showCrop(ctx.store.get());
+        draw(ctx.store.get());
+    }
+
+    /** The box of a task in the file now; null for none. */
+    function fileCrop(state: AppState, task: string): CropBox | null {
+        return options.crops?.boxes(state)?.[task] ?? null;
+    }
+
+    /** The row under the picture: the crop shown, and what can be done with it. */
+    function showCrop(state: AppState): void {
+        cropRow.classList.toggle("hidden", cropEdit === null);
+        if (cropEdit === null || !options.crops) {
+            return;
+        }
+        const known = options.crops.boxes(state) !== null;
+        const saved = fileCrop(state, cropEdit.task);
+        const words = TASK_WORDS[cropEdit.task] ?? cropEdit.task;
+        cropLine.textContent = cropEdit.draft !== null
+            ? `Crop for ${cropEdit.task} (${words}) drawn: ${cropText(cropEdit.draft)}. Save writes it into the machine file.`
+            : `Crop for ${cropEdit.task} (${words}): ${cropText(saved)}. Drag a box on the picture to draw another.`;
+        setLocked(cropSave, !known || cropEdit.draft === null, !known ? "no G-code machine's file to write it into" : "drag a box on the picture first");
+        setLocked(cropClear, !known || saved === null, !known ? "no G-code machine's file" : "the file has no crop for this task: it looks at the whole picture");
+    }
+
+    async function saveCrop(): Promise<void> {
+        const edit = cropEdit;
+        if (edit === null || edit.draft === null || !options.crops) {
+            return;
+        }
+        if (await options.crops.save(edit.task, edit.draft)) {
+            if (cropEdit === edit) {
+                cropEdit = { task: edit.task, draft: null };
+            }
+            showCrop(ctx.store.get());
+            draw(ctx.store.get());
+        }
+    }
+
+    async function clearCrop(): Promise<void> {
+        const edit = cropEdit;
+        if (edit === null || !options.crops) {
+            return;
+        }
+        if (await options.crops.save(edit.task, null)) {
+            if (cropEdit === edit) {
+                cropEdit = { task: edit.task, draft: null };
+            }
+            showCrop(ctx.store.get());
+            draw(ctx.store.get());
+        }
+    }
+
+    /** The crop the picture shows now: the one picked in the View menu (its box drawn, else the file's), else the one the routine under way keeps to. */
+    function shownCrop(state: AppState): { task: string; box: CropBox; draft: boolean } | null {
+        if (!options.crops) {
+            return null;
+        }
+        if (cropEdit !== null) {
+            const box = cropEdit.draft ?? fileCrop(state, cropEdit.task);
+            return box === null ? null : { task: cropEdit.task, box, draft: cropEdit.draft !== null };
+        }
+        const task = options.crops.running(state);
+        const box = task === null ? null : fileCrop(state, task);
+        return task === null || box === null ? null : { task, box, draft: false };
     }
 
     /** Takes back what the row shows, then draws what the state says now. */
@@ -1206,7 +1346,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
 
     // A press: where it began and is now, and whether it draws a box (a
     // search box with Shift, or the box an armed box pick waits for).
-    let press: { from: [number, number]; to: [number, number]; client: [number, number]; boxing: boolean } | null = null;
+    let press: { from: [number, number]; to: [number, number]; client: [number, number]; boxing: boolean; cropping: boolean } | null = null;
     // A drag with the middle button, or with Alt, pans the view instead:
     // where it began and the pan then.
     let panning: { client: [number, number]; pan: [number, number] } | null = null;
@@ -1223,7 +1363,9 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         }
         const at = pictureAt(event.clientX, event.clientY);
         const boxPick = picks.get(options.key)?.box === true;
-        press = { from: at, to: at, client: [event.clientX, event.clientY], boxing: boxPick || (event.shiftKey && options.boxes === true) };
+        // With a crop picked in the View menu a drag draws its box, unless a pick is armed.
+        const cropping = !boxPick && !picks.has(options.key) && cropEdit !== null;
+        press = { from: at, to: at, client: [event.clientX, event.clientY], boxing: boxPick || cropping || (event.shiftKey && options.boxes === true), cropping };
         stage.setPointerCapture?.(event.pointerId);
         stage.classList.add(press.boxing ? "boxing" : "dragging");
     });
@@ -1272,6 +1414,17 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         if (pick?.box) {
             disarmPick(options.key);
             pick.take([Math.min(done.from[0], done.to[0]), Math.min(done.from[1], done.to[1]), Math.max(done.from[0], done.to[0]), Math.max(done.from[1], done.to[1])]);
+            return;
+        }
+        if (done.cropping && cropEdit !== null) {
+            const drawn = cropOf(done.from, done.to, fullSize(ctx.store.get()));
+            if (drawn === null) {
+                ctx.toast("info", "the box has no width or height inside the picture: drag across what the task should look at");
+                return;
+            }
+            cropEdit = { task: cropEdit.task, draft: drawn };
+            showCrop(ctx.store.get());
+            draw(ctx.store.get());
             return;
         }
         const state = ctx.store.get();
@@ -1456,6 +1609,12 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         if (edgesOn && edgesSeen !== null && options.running(state)) {
             marks.push(...edgeMarks(edgesSeen, [width, height]));
         }
+        const crop = options.running(state) ? shownCrop(state) : null;
+        if (crop !== null) {
+            const screen = stageSize()[0] || box.getBoundingClientRect().width || 640;
+            const font = (1.1 * (rem || (rem = remPx()))) / (screen / shownWidth);
+            marks.push(...cropMarks(crop.box, [width, height], crop.task, font, crop.draft));
+        }
         const calibration = options.calibration(state);
         const center = options.center(state);
         if (searchBox !== null && calibration !== null && center !== null) {
@@ -1465,7 +1624,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         if (press !== null) {
             const [a, b] = [press.from, press.to];
             marks.push(press.boxing
-                ? { kind: "line", points: [a, [a[0], b[1]], b, [b[0], a[1]]], closed: true, tone: "box" }
+                ? { kind: "line", points: [a, [a[0], b[1]], b, [b[0], a[1]]], closed: true, tone: press.cropping ? "crop" : "box" }
                 : { kind: "line", points: [a, b], tone: "drag" });
             if (!press.boxing) {
                 marks.push({ kind: "circle", x: a[0], y: a[1], r: shownWidth / 150, tone: "drag" });
@@ -1535,6 +1694,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     function render(state: AppState): void {
         const running = options.running(state);
         root.classList.toggle("hidden", !running);
+        showCrop(state);
         if (!running) {
             picture.removeAttribute("src");
         }

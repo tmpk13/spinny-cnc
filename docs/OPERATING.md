@@ -1011,6 +1011,14 @@ camera, so the box stays put there and is drawn dashed orange with the
 word *nozzle*, kept with the top camera's settings (*Clear nozzle box*
 forgets it). The dashed circle is how far from
 the center a part is looked for (`[up_camera] crop`, or a feeder's `crop`).
+Each picture's *View* menu has a *Crop for* entry per task of that camera
+(bottom: nozzle, part; top: board, spot, edges, measure): picked, the
+picture shows that task's box with the rest dimmed, a drag draws another,
+*Save crop* writes it into the machine file's `[up_camera.crops]` or
+`[top_camera.crops]` and *Clear crop* takes it out, so the task looks at
+the whole picture again (MACHINES.md). While a routine runs, its picture
+shows the crop of the task it keeps to; a nozzle crop a couple of mm about
+the center keeps *Center nozzle* off a still speck beside the tip.
 Every look a routine takes waits for a picture taken a quarter of a
 second after the head stopped, and *Center nozzle* refuses a measure
 whose two steps did not show as equal moves at right angles (a picture

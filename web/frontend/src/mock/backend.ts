@@ -4,6 +4,7 @@
 import { fitRigid, turnPoint } from "../align.ts";
 import { ApiError, errorText, frameWidth, thumbKey, type Api } from "../api.ts";
 import { defaultControls } from "../controls.ts";
+import type { CropBox } from "../crops.ts";
 import { formatFixed } from "../format.ts";
 import { fromBoard, type FromBoard } from "../machinekeys.ts";
 import {
@@ -311,6 +312,18 @@ import type { EventFeed } from "../ws.ts";
 
 export const MOCK_VERSION = "0.1.0-mock";
 const CLOCK_EPSILON = 1e-9;
+
+// The task (crops.ts) each kind of top camera routine keeps to, as the backend's TopCamera.crop_tasks.
+const TOP_ROUTINE_TASKS: Record<string, string> = { offset: "spot", fiducials: "spot", home: "spot", search: "board", scan: "board", picture: "measure" };
+
+/** A routine's crop as the backend's progress carries it: its task and the file's box, null for the whole picture. */
+function routineCrop(task: string | undefined, crops: Record<string, CropBox>): { task: string; box: CropBox | null } | null {
+    if (task === undefined) {
+        return null;
+    }
+    const box = crops[task];
+    return { task, box: box ? [...box] as CropBox : null };
+}
 
 /** A camera's look settings, or the backend's defaults where it has none. */
 function lookTuning(settings: { look_threshold?: number; corner_mm?: number; look_method?: LookMethod; board_stretch?: boolean }): LookTuning {
@@ -7807,7 +7820,7 @@ export class MockBackend implements Api, EventFeed {
         if (!this.placing().upPlace.position && !upInPicture([at.x - DEVICE_CAMERA_WHERE[0], at.y - DEVICE_CAMERA_WHERE[1]], UP_TRUTH, this.pnpConfig.size)) {
             throw new ApiError(400, "no nozzle in the picture: jog it over the bottom camera and center again");
         }
-        const progress: PnpRoutine = { kind: "nozzle", target: "gcode", state: "running", step: "lifting", done: 0, total: 5, error: null, spot: null, seconds: 0 };
+        const progress: PnpRoutine = { kind: "nozzle", target: "gcode", state: "running", step: "lifting", done: 0, total: 5, error: null, spot: null, crop: routineCrop("nozzle", device.camera_crops), seconds: 0 };
         this.pnpRoutine = progress;
         this.deviceRoutine = { kind: "nozzle", elapsed: 0, device, progress };
         this.emitPnp();
@@ -7828,7 +7841,7 @@ export class MockBackend implements Api, EventFeed {
         if (this.pnpSession) {
             throw new ApiError(409, "a bottom camera routine is already under way");
         }
-        const progress: PnpRoutine = { kind: "runout", target: "gcode", state: "running", step: "lifting", done: 0, total: 4, error: null, spot: null, seconds: 0 };
+        const progress: PnpRoutine = { kind: "runout", target: "gcode", state: "running", step: "lifting", done: 0, total: 4, error: null, spot: null, crop: routineCrop("nozzle", device.camera_crops), seconds: 0 };
         this.pnpRoutine = progress;
         this.deviceRoutine = { kind: "runout", elapsed: 0, device, progress };
         this.emitPnp();
@@ -7924,7 +7937,8 @@ export class MockBackend implements Api, EventFeed {
         if (this.topSession) {
             throw new ApiError(409, "a top camera routine is already under way");
         }
-        const progress: TopRoutine = { kind, target: "gcode", state: "running", step: steps[0]!, done: 0, total: steps.length - 1, error: null, spot: null, seconds: 0 };
+        const task = TOP_ROUTINE_TASKS[kind];
+        const progress: TopRoutine = { kind, target: "gcode", state: "running", step: steps[0]!, done: 0, total: steps.length - 1, error: null, spot: null, crop: routineCrop(task, device.top?.crops ?? {}), seconds: 0 };
         this.topRoutine = progress;
         this.topSession = { kind, steps, elapsed: 0, device, job, progress };
         this.emitPlacing();
@@ -9778,8 +9792,13 @@ export class MockBackend implements Api, EventFeed {
     async patchMachineFile(id: string, path: CamPath, value: CamValue): Promise<MachineResponse> {
         let text = this.machineText(id);
         const table = path.slice(0, -1);
-        if (table.length === 1 && typeof table[0] === "string" && value !== null && !new RegExp(`^\\s*\\[${table[0]}\\]\\s*(#.*)?$`, "m").test(text)) {
-            text = `${text.replace(/\n+$/, "")}\n\n[${table[0]}]\n`;
+        // A plain table not in the file yet is added at its end, a table in
+        // a table ([top_camera.crops]) by its dotted name.
+        if (table.length > 0 && table.every((step) => typeof step === "string") && value !== null) {
+            const dotted = (table as string[]).join("\\s*\\.\\s*");
+            if (!new RegExp(`^\\s*\\[\\s*${dotted}\\s*\\]\\s*(#.*)?$`, "m").test(text)) {
+                text = `${text.replace(/\n+$/, "")}\n\n[${table.join(".")}]\n`;
+            }
         }
         let changed: string;
         try {

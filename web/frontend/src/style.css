@@ -3794,6 +3794,21 @@ table.pnp-parts tr.dnp td {
 .picture-marks .mark-edge { stroke: var(--yellow); stroke-width: 2; }
 .picture-marks .mark-nozzle { stroke: var(--orange); stroke-dasharray: 4 3; stroke-width: 2; }
 .picture-marks .mark-finding { stroke: var(--magenta); stroke-dasharray: 5 3; stroke-width: 2.5; }
+/* A task's crop: its outline, and the picture outside it dimmed. */
+.picture-marks .mark-crop { stroke: var(--cyan); stroke-dasharray: 10 3 2 3; stroke-width: 2; }
+.picture-marks .mark-dim { fill: color-mix(in oklab, var(--base03) 45%, transparent); stroke: none; }
+
+/* The crop picked in a picture's View menu: what it is, Save, Clear and Done. */
+.picture-crop {
+    padding: 0.4rem 0.6rem;
+    border: thin solid var(--cyan);
+    border-radius: var(--radius);
+    background: var(--panel-2);
+}
+
+.picture-crop-text {
+    flex: 1 1 14rem;
+}
 
 /* What a routine just applied, under its picture for a few seconds, with Undo. */
 .picture-applied {

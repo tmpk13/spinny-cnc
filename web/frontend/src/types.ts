@@ -1,6 +1,7 @@
 // Shapes of the backend's JSON, one type per route body or response.
 
 import type { PluginInfo } from "./plugins.ts";
+import type { CropBox } from "./crops.ts";
 
 export interface Port {
     url: string;
@@ -1271,7 +1272,15 @@ export interface PnpRoutine {
     total: number;
     error: string | null;
     spot: RoutineSpot | null;
+    /** The crop its looks keep to: the task and its box, null for the whole picture. Missing from an older backend. */
+    crop?: RoutineCrop | null;
     seconds?: number;
+}
+
+/** A routine's or a look's crop: the task and its box (shares of the picture), null for the whole picture. */
+export interface RoutineCrop {
+    task: string;
+    box: CropBox | null;
 }
 
 /** Where the last part looked at sits against the nozzle's center, mm in the machine's frame, how big it looked, and its long side's direction in the machine's frame, degrees (null when the picture gave none). */
@@ -1443,6 +1452,8 @@ export interface GcodeTopCamera {
     home_fiducial?: [number, number] | null;
     /** The camera's own settings the file names, put into the camera as the machine connects; missing from an older backend. */
     settings?: Partial<Pick<TopSettings, "device" | "size" | "fps" | "pcbv" | "mark_spot">>;
+    /** The part of the picture each task looks in ([top_camera.crops]: board, spot, edges, measure), shares of the picture; a task left out looks at the whole picture. Missing from an older backend. */
+    crops?: Record<string, CropBox>;
 }
 
 /** What the Machine view draws besides the machine file: a picture of the machine, or a 3D model of it (an STL). */
@@ -1500,6 +1511,8 @@ export interface GcodeDocument {
     camera_mirror?: boolean | null;
     /** The up camera's own settings the file names, put into the camera as the machine connects; missing from an older backend. */
     camera_settings?: Partial<Pick<PnpSettings, "device" | "size" | "fps" | "pcbv" | "nozzle_spot" | "part_spot">>;
+    /** The part of the up camera's picture each task looks in ([up_camera.crops]: nozzle, part), shares of the picture; missing from an older backend. */
+    camera_crops?: Record<string, CropBox>;
     /** The file switches lights for the cameras. */
     light: boolean;
     /** Where a part that failed a check is let go; null puts it back in its pocket. */
@@ -1616,6 +1629,8 @@ export interface TopRoutine {
     total: number;
     error: string | null;
     spot: RoutineSpot | null;
+    /** The crop its looks keep to: the task and its box, null for the whole picture. Missing from an older backend. */
+    crop?: RoutineCrop | null;
     seconds?: number;
 }
 
@@ -1879,6 +1894,8 @@ export interface SpotLook extends SpotShape {
     radius: number | null;
     dx?: number;
     dy?: number;
+    /** The crop the look kept to, when its task has one. */
+    crop?: RoutineCrop;
 }
 
 /** Where looks at a board put it on the machine: the turn and shift that take the job's frame onto the machine's, its middle there, the fit's rms, and how well pcbv matched the looks behind it (0 to 1). */
@@ -2082,6 +2099,8 @@ export interface CameraEdges {
     lines: CameraEdge[];
     width: number | null;
     height: number | null;
+    /** The edges crop the lines kept to (the top camera's), when there is one. */
+    crop?: CropBox;
 }
 
 export interface CameraControls {

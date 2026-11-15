@@ -167,6 +167,10 @@ export const FILE_KEYS: FileKey[] = [
         ["nozzle_spot", "dark or bright: how the nozzle's bore looks to the bottom camera", "bottom camera shade tip", "dark"],
         ["part_spot", "dark or bright: how a part on the nozzle looks to the bottom camera", "bottom camera shade", "dark"],
     ]),
+    ...keys("up_camera.crops", "gcode", "camera", [
+        ["nozzle", "the part of the bottom camera's picture Center nozzle and Measure runout look for the tip in: x0 y0 x1 y1, shares of the picture from its top left; left out, the whole picture", "bottom camera crop box region area nozzle tip", [0, 0, 1, 1]],
+        ["part", "the part of the bottom camera's picture a part on the nozzle is looked for in, inside its crop circle too: x0 y0 x1 y1, shares of the picture", "bottom camera crop box region area part", [0, 0, 1, 1]],
+    ]),
     ...keys("top_camera", "gcode", "G-code", [
         ["z", "the height the head looks from with the top camera; left out, the safe height", "top camera focus height", null],
         ["offset", "the top camera's center from the nozzle, as designed; Measure offset finds it", "top camera nozzle offset", null],
@@ -182,6 +186,12 @@ export const FILE_KEYS: FileKey[] = [
     ...cameraKeys("top_camera", "gcode", "/dev/video4"),
     ...keys("top_camera", "gcode", "camera", [
         ["mark_spot", "dark or bright: how the mark Measure offset centers looks to the top camera", "top camera shade mark", "dark"],
+    ]),
+    ...keys("top_camera.crops", "gcode", "camera", [
+        ["board", "the part of the top camera's picture the board look, its searches and scans keep to: x0 y0 x1 y1, shares of the picture from its top left; left out, the whole picture", "top camera crop box region area board search scan", [0, 0, 1, 1]],
+        ["spot", "the part of the top camera's picture Find mark, Measure offset, Find fiducials, Home by fiducial and Look once look in", "top camera crop box region area mark fiducial spot", [0, 0, 1, 1]],
+        ["edges", "the part of the top camera's picture Corner by edges and the edge view keep to (an edge's middle inside)", "top camera crop box region area corner edges", [0, 0, 1, 1]],
+        ["measure", "the part of the top camera's picture Measure camera and the empty picture test compare", "top camera crop box region area measure camera empty busy", [0, 0, 1, 1]],
     ]),
     ...keys("bus", "gcode", "G-code", [
         ["send", "the line a feeder packet goes out in; {packet} is its hex", "feeder bus rs485 photon", "M485 {packet}"],

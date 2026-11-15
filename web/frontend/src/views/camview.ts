@@ -19,7 +19,8 @@ import { undoEntry } from "./changes.ts";
 import { type Ctx, into } from "./context.ts";
 import { bottomHead, bottomKnown, knownMarks, LABEL_REM, topKnown } from "./known.ts";
 import { boardTurn, partShapes, readShowShape, shapeMarks } from "./partshape.ts";
-import { armBox, type Calibration, machineToPicturePoints, type Mark, mountPicture, type PictureShown, type PictureView, type ShownSpot } from "./picture.ts";
+import { armBox, type Calibration, machineToPicturePoints, type Mark, mountPicture, type PictureCrops, type PictureShown, type PictureView, type ShownSpot } from "./picture.ts";
+import { TOP_TASKS, UP_TASKS, type CropBox } from "../crops.ts";
 import { gcodePlacing } from "./placing.ts";
 
 export { dragMove, pictureToMachine } from "./picture.ts";
@@ -187,6 +188,45 @@ export function topCenter(state: AppState): [number, number] | null {
     return [x + offset[0], y + offset[1]];
 }
 
+/**
+ * A G-code machine camera's crops for its picture: the tasks of the
+ * machine file's `section` ([up_camera] or [top_camera]), their boxes as the
+ * placing state's document has them, the task the routine under way keeps
+ * to, and a save that writes `[section.crops] task` into the file.
+ */
+export function machineCrops(
+    ctx: Ctx,
+    section: "up_camera" | "top_camera",
+    tasks: readonly string[],
+    boxes: (state: AppState) => Partial<Record<string, CropBox>> | undefined,
+    routine: (state: AppState) => { state: string; crop?: { task: string } | null } | null | undefined,
+): PictureCrops {
+    return {
+        tasks,
+        boxes: (state) => (gcodePlacing(state) && state.placing?.document ? boxes(state) ?? {} : null),
+        running: (state) => {
+            const now = routine(state);
+            return now?.state === "running" ? now.crop?.task ?? null : null;
+        },
+        save: async (task, box) => {
+            const id = ctx.store.get().placing?.machine ?? null;
+            if (id === null) {
+                ctx.toast("info", "no G-code machine's file to write the crop into");
+                return false;
+            }
+            const saved = await ctx.call(ctx.api.patchMachineFile(id, [section, "crops", task], box));
+            if (saved === undefined) {
+                return false;
+            }
+            ctx.toast("info", box === null ? `[${section}.crops] ${task} taken out of ${id}.toml` : `[${section}.crops] ${task} saved in ${id}.toml`);
+            await ctx.refreshPlacing();
+            // The Config tab's editor shows the file with the crop in it.
+            await ctx.refreshMachines();
+            return true;
+        },
+    };
+}
+
 export interface CameraViews {
     bottom: PictureView;
     top: PictureView;
@@ -233,6 +273,7 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
         move: jog,
         noScale: "the bottom camera's scale is not measured yet: Center nozzle first",
         visible,
+        crops: machineCrops(ctx, "up_camera", UP_TASKS, (state) => state.placing?.document?.camera_crops, (state) => state.pnp?.routine),
     }, ctx);
     const bottomEmpty = el("p", { class: "muted camera-view-empty" }, "The bottom camera is not running: start it in its panel.");
     // The part class whose crop the picture rings and a Look once at a
@@ -318,6 +359,7 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
         noScale: "the top camera's scale is not measured yet: Measure offset first",
         visible: () => visible() && gcodePlacing(ctx.store.get()),
         boxes: true,
+        crops: machineCrops(ctx, "top_camera", TOP_TASKS, (state) => state.placing?.document?.top?.crops, (state) => state.placing?.top?.routine),
     }, ctx);
     const topEmpty = el("p", { class: "muted camera-view-empty" }, "The top camera is not running: start it in its panel.");
     // The nozzle's place in the top camera's picture, drawn by hand: the

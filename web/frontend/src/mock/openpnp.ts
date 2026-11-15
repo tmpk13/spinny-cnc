@@ -7,6 +7,7 @@
 
 import { fitRigid, turnPoint } from "../align.ts";
 import { errorText } from "../api.ts";
+import { checkTasks, TOP_TASKS, UP_TASKS, type CropBox } from "../crops.ts";
 import { type TomlTable, type TomlValue } from "../toml.ts";
 import { HEADER_FIELDS, slotPlace } from "../feederbus.ts";
 import type { AlignFit, Component, GcodeDocument, PartClass, PlacingPlan, SpotPolarity } from "../types.ts";
@@ -125,6 +126,8 @@ export interface MockTopProfile {
     home_fiducial: [number, number] | null;
     /** The camera's own settings the file names, put into it as the machine connects. */
     settings: CameraTake;
+    /** The part of the picture each task looks in ([top_camera.crops]); a task left out, the whole picture. */
+    crops: Record<string, CropBox>;
 }
 
 export interface MockDevice {
@@ -182,6 +185,8 @@ export interface MockDevice {
     camera_mirror: boolean | null;
     /** The up camera's own settings the file names, put into it as the machine connects. */
     camera_settings: CameraTake;
+    /** The part of the up camera's picture each task looks in ([up_camera.crops]). */
+    camera_crops: Record<string, CropBox>;
     /** A jog taking the nozzle from within this many mm of the up camera to farther, off the safe height, rises first; null never. */
     leave: number | null;
     /** Where the head waits out of the way. */
@@ -349,6 +354,22 @@ class Reader {
         return [x0, y0, x1, y1];
     }
 
+    /** A camera's crops by task, its `crops` table, as the backend reads them (crops.ts). */
+    crops(table: TomlTable, section: string, tasks: readonly string[]): Record<string, CropBox> {
+        if (!("crops" in table)) {
+            return {};
+        }
+        const value = table.crops;
+        if (typeof value !== "object" || value === null || Array.isArray(value)) {
+            throw this.fail(section, "crops", `must be a table [${section}.crops] of tasks: ${tasks.join(", ")}`);
+        }
+        try {
+            return checkTasks(value, tasks);
+        } catch (error) {
+            throw new Error(`${this.where}: [${section}.crops] ${errorText(error)}`);
+        }
+    }
+
     done(table: TomlTable, section: string | null, known: string[]): void {
         const unknown = Object.keys(table).filter((key) => !known.includes(key)).sort();
         if (unknown.length > 0) {
@@ -484,8 +505,9 @@ export function parseGcodeTables(top: TomlTable, id: string, name: string, descr
             within: read.number(looking, "within", "top_camera", 2, 0.1, 50),
             home_fiducial: "home_fiducial" in looking ? (read.point(looking, "home_fiducial", "top_camera", 2, null) as [number, number]) : null,
             settings: read.camera(looking, "top_camera", TOP_CAMERA_SETTINGS),
+            crops: read.crops(looking, "top_camera", TOP_TASKS),
         };
-        read.done(looking, "top_camera", ["z", "offset", "roll", "mm_per_px", "bed", "board_area", "board_area_only", "fiducial", "within", "home_fiducial", ...TOP_CAMERA_SETTINGS]);
+        read.done(looking, "top_camera", ["z", "offset", "roll", "mm_per_px", "bed", "board_area", "board_area_only", "fiducial", "within", "home_fiducial", "crops", ...TOP_CAMERA_SETTINGS]);
     }
     device.bus = null;
     const wire = read.table(top, "bus");
@@ -685,8 +707,14 @@ export function parseGcodeTables(top: TomlTable, id: string, name: string, descr
     device.camera_roll = "roll" in camera ? read.number(camera, "roll", "up_camera", null, -360, 360) : null;
     device.camera_mirror = "mirror" in camera ? read.flag(camera, "mirror", "up_camera", true) : null;
     device.camera_settings = read.camera(camera, "up_camera", UP_CAMERA_SETTINGS);
-    read.done(camera, "up_camera", ["z", "position", "crop", "max_offset", "max_turn", "size_tolerance", "leave", "roll", "mirror", ...UP_CAMERA_SETTINGS]);
+    device.camera_crops = read.crops(camera, "up_camera", UP_TASKS);
+    read.done(camera, "up_camera", ["z", "position", "crop", "crops", "max_offset", "max_turn", "size_tolerance", "leave", "roll", "mirror", ...UP_CAMERA_SETTINGS]);
     return device as MockDevice;
+}
+
+/** Crops by task, each box copied. */
+function cropsCopy(crops: Record<string, CropBox>): Record<string, CropBox> {
+    return Object.fromEntries(Object.entries(crops).map(([task, box]) => [task, [...box] as CropBox]));
 }
 
 /** A pattern as the backend keeps it (Python's named groups) as JavaScript takes it. */
@@ -737,6 +765,7 @@ export function deviceDocument(device: MockDevice): GcodeDocument {
         camera_roll: device.camera_roll,
         camera_mirror: device.camera_mirror,
         camera_settings: { ...device.camera_settings },
+        camera_crops: cropsCopy(device.camera_crops),
         light: device.light_on.length > 0,
         discard: device.discard ? [...device.discard] : null,
         pick_tries: device.pick_tries,
@@ -770,6 +799,7 @@ export function deviceDocument(device: MockDevice): GcodeDocument {
                 within: device.top.within,
                 home_fiducial: device.top.home_fiducial ? [...device.top.home_fiducial] : null,
                 settings: { ...device.top.settings },
+                crops: cropsCopy(device.top.crops),
             }
             : null,
         feeders: device.feeders.map((f) => ({
