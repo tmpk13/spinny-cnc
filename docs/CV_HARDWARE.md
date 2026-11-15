@@ -126,14 +126,54 @@ wrong scales used up the search's budget.
   homed the machine (fdf93a3): the LumenPnP's G28 moves X and Y where Z
   stands.
 
+## Second session: CV_DIRECTION.md on the machine
+
+The same night, the same machine and board (it had not moved: the look
+at rest put it 0.09 mm and 0.05 degrees from the first session's survey
+truth, which every number below is measured against: middle 151.83,
+335.65, turned 0.17 degrees).
+
+| | Before | After |
+| --- | --- | --- |
+| Camera scale and roll | a session script | Measure camera, 16 to 19 s, no mark; repeats to 0.2% and 0.02 degrees at a place |
+| Whole bed, nothing known (vote) | 400 s | 43.6 s; 23 s with a board area in the file |
+| Whole bed, nothing known (posterior) | not run | 39.8 s |
+| Place known (vote) | 8 to 11 s | 3.1 to 4.2 s, 0.025 to 0.052 mm (five starts) |
+| Place known (posterior) | not run | 2.2 to 3.4 s (one 17 s), 0.07 to 0.09 mm |
+| Empty stop | 2.8 s | 0.28 s |
+| Posterior replay of the 400 s scan | over 240 s | 51 s |
+
+- Measure camera (3 x 3 grid, twice, places reached from one side,
+  pictures taken once two in a row agree): 15.98 um a pixel and roll
+  180.395 at one place, 16.07 to 16.10 and 180.31 to 180.33 at another,
+  each repeating to 0.2%. The difference follows what fills the picture:
+  parts' tops lie nearer the camera than the board's surface, and pcbv's
+  16.09 to 16.16 off the pads matches the surface.
+- Empty pictures: the share of strong edges told the battery card (126
+  pictures, 1 under 0.03) from the bed, its holder and feeders' tapes
+  (100 pictures, 88 under 0.03). On the whole bed 32 of 37 stops ended
+  empty in 0.28 s each; the rest of the time is moves.
+- The board's bare middle as a check gave only quarter turns 10 to 19 mm
+  off and ran out its time; checks at the dense places agree in 0.5 to
+  0.8 s.
+- One search ran 448 s against a pcbv whose service had panicked (a scale
+  range emptied by a wrong lock's scale; pcb-vision 2665515); searches now
+  end on a dead pcbv.
+- The 18 records, replayed through both methods against the truth: of 12
+  searches each found the same 11 (the twelfth ran against the dead
+  pcbv), none wrong, the posterior's place closer at the moment of
+  calling in 9; of 6 looks at rest the vote called 2 found, the posterior
+  none (0.44 and 0.45: one place cannot settle it).
+- The bottom camera is not at the file's place: the top camera found its
+  lens at about 241.98, 217.10 (the file says 61.92, 219.82). N1 sent
+  there and lowered to Z 4 showed its tip centered within a few pixels in
+  the bottom camera, so the top camera's offset is the file's within
+  about 0.1 to 0.2 mm. Center nozzle then failed at its scale step (the
+  spot it tracked was not the tip).
+
 ## Not measured yet
 
-- The bottom camera: Opulo's stock place for it (N1 at 61.92, 219.82)
-  holds a parts tape on this machine, and so does the stock homing
-  fiducial's place; N1 went down to Z 8 at the first and saw nothing.
-  This machine's frame differs from the stock file's: both places must be
-  found again (the top camera can see the bottom camera's ring from
-  above) before the nozzle routines can be graded.
-- The offset from the camera to N1 is still the file's; its error moves
-  every place found by the same amount and no number here shows it.
+- The bottom camera's place to better than a millimeter, its scale and
+  roll, nozzle centering and runout: Center nozzle failed on its spot.
+- The homing fiducial's place on this machine.
 - No part was picked or placed.
