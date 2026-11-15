@@ -495,6 +495,48 @@ def test_a_stop_with_the_scale_known_ends_on_pcbvs_searches_not_on_its_clocks():
         assert rule.see("none", LOCK_SECONDS + boardlook.camera_module.SETTLE_SECONDS) == "no lock"
 
 
+def test_the_vote_with_the_scale_known_ends_a_stop_without_a_lock_on_pcbvs_searches_and_stays_for_a_lock():
+    from spinny_web.boardlook import LOCK_SECONDS, STOP_SEARCHES, TRACKED_POSES, StopEnd
+
+    # A scan's stop off the board: pcbv searches each frame and never locks.
+    # The vote, the camera's scale known, ends it once pcbv searched it
+    # STOP_SEARCHES times, its frames made again pose by pose as a replay
+    # makes them (a LumenPnP scan waited LOCK_SECONDS at 49 of 84 stops).
+    consensus = boardlook.Consensus(MIDDLE)
+    consensus.numbers_searches = True
+    far = PictureFrame((100.0, 50.0), 0.0, False)
+    pcbv = FakePcbv()
+    rule = StopEnd(consensus, far, None, 0.0)
+    ends = []
+    for i in range(STOP_SEARCHES + 2):
+        feed(consensus, pcbv.pose(far.center), PictureFrame((100.0, 50.0), 0.0, False))
+        ends.append(rule.see("none", 0.01 * (i + 1)))
+    assert ends[: STOP_SEARCHES - 1] == [None] * (STOP_SEARCHES - 1) and ends[STOP_SEARCHES - 1] == "no lock"
+    assert 0.01 * STOP_SEARCHES < LOCK_SECONDS
+    # Searches of frames taken while the head came to rest, or at another
+    # place, count for nothing here.
+    rule = StopEnd(consensus, far, None, 0.0)
+    for i in range(STOP_SEARCHES + 2):
+        consensus.take(pcbv.pose(far.center), "the head is coming to rest", 0.0, DESIGN.board_to_job, None, None)
+        assert rule.see("none", 0.01 * (i + 1)) is None
+        feed(consensus, pcbv.pose(far.center), PictureFrame((100.5, 50.0), 0.0, False))
+        assert rule.see("none", 0.01 * (i + 1)) is None
+    # A lock tracked pose after pose holds the vote's stop: each pose is a
+    # look the vote counts, so the stop is not ended `searched`.
+    consensus = boardlook.Consensus(MIDDLE)
+    consensus.numbers_searches = True
+    here = PictureFrame(truth_middle(), 0.0, False)
+    pcbv = FakePcbv()
+    rule = StopEnd(consensus, here, None, 0.0)
+    raw = pcbv.pose(here.center)
+    feed(consensus, raw, here)
+    ends = [rule.see("used", 0.01)]
+    for i in range(TRACKED_POSES + 2):
+        feed(consensus, tracked(raw, 100 + i), here)
+        ends.append(rule.see("used", 0.02 + 0.01 * i) if not consensus.found else "found")
+    assert "searched" not in ends and "no lock" not in ends
+
+
 def test_a_weak_lock_tracked_holds_the_stop_for_pcbvs_next_search():
     from spinny_web.boardlook import MIN_MATCH, STOP_SEARCHES, StopEnd
 

@@ -628,6 +628,10 @@ def replay_stops(record: Record, method: str | None = None) -> dict:
             history=settings.get("history"), threshold=settings.get("threshold"), corner_mm=settings.get("corner_mm"),
             corners=corners_from(settings.get("corners")), min_match=settings.get("min_match", 0.0), sessions=settings.get("sessions") or 1,
         )
+        # Its stops end on pcbv's searches when the camera's scale was
+        # measured, as the look's do (BoardLook._consensus).
+        measured = (record.header.get("picture") or {}).get("mm_per_px")
+        consensus.numbers_searches = _number(measured) and float(measured) > 0.0
     picture = record.header.get("picture") or {}
     roll = float(picture.get("roll") or 0.0) if _number(picture.get("roll")) else 0.0
     mirror = bool(picture.get("mirror"))

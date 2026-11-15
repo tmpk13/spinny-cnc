@@ -404,6 +404,8 @@ class Posterior(Consensus):
         # One view can call the board found, from as many pcbv searches as
         # the vote asks locks of (the vote caps them at its looks).
         self.sessions = max(1, SESSIONS if sessions is None else int(sessions))
+        # Its stops end on pcbv's searches with the scale known (StopEnd).
+        self.numbers_searches = self._scale_given
 
     # --- state kept ---------------------------------------------------------------
 

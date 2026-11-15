@@ -162,12 +162,16 @@ MAX_CHECKS = 3
 # apart, the board's middle came out 0.18 mm off (rms) from two places,
 # 0.11 from three and 0.08 from four; a check costs about a second.
 FINAL_PLACES = 3
-# A stop of a look that counts pcbv's searches (the posterior, with the
+# A stop of a look that numbers pcbv's searches (either method, with the
 # camera's scale known) ends on evidence before its clocks: with no lock
-# once pcbv ran this many searches on settled frames there, and with a
-# lock at the least match or better once pcbv tracked it this many poses
+# once pcbv ran this many searches on settled frames there; and, for a
+# look whose evidence comes once per search (the posterior), with a lock
+# at the least match or better once pcbv tracked it this many poses
 # with no new search, since searches of one picture pool into one view
-# (posterior.py) and tracked poses bring nothing new. pcbv searches a
+# (posterior.py) and tracked poses bring nothing new (the vote counts
+# tracked poses as looks, so it stays for them). On a LumenPnP board
+# scan 49 of 84 stops found no lock: the vote waited LOCK_SECONDS at each
+# (197 s in all), the posterior ended them in 0.65 s (86 s). pcbv searches a
 # frame at a time when it holds no lock, about 30 a second. On a LumenPnP
 # with the scale known every stop that locked did so within 4 searches (59
 # stops), while six of 18 searches with the place known spent 5 to 27 s
@@ -214,6 +218,15 @@ class PictureFrame:
     # the place is the head's for the camera's delay first guessed, and a
     # posterior on a flying scan fits the delay along it.
     velocity: Point = (0.0, 0.0)
+
+
+def same_place(a: PictureFrame, b: PictureFrame) -> bool:
+    """Whether two frames lay at one place at rest: a stop's frame, made
+    again for each pose a replay reads."""
+    return (
+        math.dist(a.center, b.center) < 1e-6 and abs(a.roll - b.roll) < 1e-9 and a.mirror == b.mirror
+        and a.velocity == (0.0, 0.0) and b.velocity == (0.0, 0.0)
+    )
 
 
 @dataclass
@@ -695,6 +708,10 @@ class Consensus:
         self.threshold = THRESHOLD if threshold is None else threshold
         self.corner_mm = CORNER_MM if corner_mm is None else corner_mm
         self.corners: list[Corner] = list(corners or [])
+        # Whether a stop may end without a lock on pcbv's searches there
+        # (StopEnd): set by the look when the camera's scale is known, so
+        # pcbv searches one scale window instead of trying them in turn.
+        self.numbers_searches = False
         # The watcher sees poses while a request tunes or reads.
         self._mutex = threading.RLock()
         self.reset()
@@ -713,6 +730,10 @@ class Consensus:
         # The newest picture's place on the machine, its size (px) and its
         # scale (mm per px): where each guess says it lies on the board.
         self.picture: tuple[PictureFrame, float, float, float] | None = None
+        # The place of the frame pcbv's newest search ran on and that
+        # search's number (counted_search); None when the newest pose
+        # brought no search of a placed frame.
+        self._searched_at: tuple[PictureFrame, int] | None = None
 
     @property
     def lead(self) -> Guess | None:
@@ -787,9 +808,20 @@ class Consensus:
 
     def take(self, raw: dict, where, captured: float, to_job, estimate: Estimate | None, problem: str | None, session: int | None = None, searched_where=None) -> None:
         """One pose pcbv reported, with what was made of it: the vote reads
-        only its state and estimate (the probability, posterior.py, reads
-        the rest)."""
+        its state and estimate (the probability, posterior.py, reads the
+        rest), and the number of the search it brought, placed where the
+        searched frame was taken (`searched_where` when its candidates say
+        which frame that was, else `where`) for counted_search."""
         self.see(raw.get("state"), estimate, problem)
+        number = raw.get("search")
+        counted = None
+        if isinstance(number, (int, float)) and not isinstance(number, bool):
+            listed = bool(raw.get("candidates")) and raw.get("candidates_search") == number
+            at = searched_where if listed and searched_where is not None else where
+            if isinstance(at, PictureFrame) and at.velocity == (0.0, 0.0):
+                counted = (at, int(number))
+        with self._mutex:
+            self._searched_at = counted
 
     def tune(self, threshold: float | None = None, corner_mm: float | None = None, corners: list[Corner] | None = None) -> None:
         """Another threshold, tolerance or set of corners (None keeps
@@ -824,14 +856,18 @@ class Consensus:
         return math.dist(other.apply(look.seen), look.place) <= self.agree_mm
 
     # Whether the look's evidence comes once per pcbv search (the
-    # posterior) rather than once per pose (the vote): a stop then ends on
-    # the searches made there (StopEnd).
+    # posterior) rather than once per pose (the vote): a stop with a lock
+    # then ends once pcbv only tracks it (StopEnd's `searched`).
     counts_searches = False
 
     def counted_search(self, frame: PictureFrame) -> int | None:
-        """pcbv's number of the search the newest pose brought as evidence
-        at `frame`'s place; None when it brought none there."""
-        return None
+        """pcbv's number of the search the newest pose brought, when that
+        search ran on a frame taken at `frame`'s place; None otherwise."""
+        with self._mutex:
+            counted = self._searched_at
+        if counted is None or not same_place(counted[0], frame):
+            return None
+        return counted[1]
 
     def _settle(self) -> None:
         """Sorts the estimates into guesses: the estimate with the most
@@ -1243,7 +1279,10 @@ class BoardLook:
             )
             posterior.crop = self.board_crop()
             return posterior
-        return Consensus(middle, threshold=threshold, corner_mm=corner_mm, corners=self.corners_of(job_id))
+        consensus = Consensus(middle, threshold=threshold, corner_mm=corner_mm, corners=self.corners_of(job_id))
+        scale = options.get("scale")
+        consensus.numbers_searches = isinstance(scale, (int, float)) and not isinstance(scale, bool) and scale > 0.0
+        return consensus
 
     def corners_of(self, job_id: str | None) -> list[Corner]:
         """The corners taken of a job's board; none for another job's."""
@@ -1638,13 +1677,14 @@ class StopEnd:
     this stop's lock but cannot call it found from one place
     (Posterior.worth_checking); with `check` (a place found elsewhere)
     `agreed` once CHECK_LOOKS looks here agree with it (_agrees),
-    `disagreed` once as many put it elsewhere. A look whose evidence comes
-    once per pcbv search (counts_searches) ends it on evidence too: `no
-    lock` once pcbv ran STOP_SEARCHES searches on the stop's settled
-    pictures without a lock, `searched` (not at a check, which counts its
-    own looks) once a lock at the least match or better is tracked
-    TRACKED_POSES poses with no new search; neither while a guess waits for
-    another independent lock (wants_another_lock). The
+    `disagreed` once as many put it elsewhere. A look that numbers pcbv's
+    searches (numbers_searches: the camera's scale known) ends it on
+    evidence too: `no lock` once pcbv ran STOP_SEARCHES searches on the
+    stop's settled pictures without a lock; and one whose evidence comes
+    once per search (counts_searches, the posterior) `searched` (not at a
+    check, which counts its own looks) once a lock at the least match or
+    better is tracked TRACKED_POSES poses with no new search; neither
+    while a guess waits for another independent lock (wants_another_lock). The
     clocks from `began` end it at the latest: `no lock` without a lock
     after LOCK_SECONDS, `time up` after STOP_SECONDS, each past the
     camera's settle time. The replays of search records use it on their
@@ -1705,7 +1745,7 @@ class StopEnd:
                     return "agreed"
                 if self.disagreed >= CHECK_LOOKS:
                     return "disagreed"
-        if consensus.counts_searches:
+        if consensus.numbers_searches:
             number = consensus.counted_search(self.frame)
             if number is not None:
                 self.first = number if self.first is None else min(self.first, number)
@@ -1716,8 +1756,9 @@ class StopEnd:
             elif seen != "same":
                 self.tracked = 0
             if not consensus.wants_another_lock:
-                # A check counts its own looks (CHECK_LOOKS), tracked or not.
-                if check is None and self.searches and self.tracked >= TRACKED_POSES:
+                # A check counts its own looks (CHECK_LOOKS), tracked or not;
+                # the vote counts tracked poses as looks, so it stays for them.
+                if consensus.counts_searches and check is None and self.searches and self.tracked >= TRACKED_POSES:
                     return "searched"
                 if not self.locked and not strong and self.searches >= STOP_SEARCHES:
                     return "no lock"
@@ -2185,7 +2226,7 @@ def look_scan_stop(look: BoardLook, frame: PictureFrame, stopped: Callable[[], b
         look.publish()
         if used >= SCAN_LOOKS:
             return "locked"
-        if look.consensus.counts_searches:
+        if look.consensus.numbers_searches:
             number = look.consensus.counted_search(frame)
             if number is not None:
                 rule.first = number if rule.first is None else min(rule.first, number)
