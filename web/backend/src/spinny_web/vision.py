@@ -24,6 +24,7 @@ import threading
 import time
 from pathlib import Path
 
+from .crops import NO_CROPS
 from .log import log
 
 # How long pcbv has to answer: a board load reads and rasterizes a file, a
@@ -223,6 +224,10 @@ class VisionClient:
         # id a request waits for.
         self._ids = itertools.count(1)
         self.device: str | None = None
+        # Whether the pcbv running takes crops: its `hello` names its crop
+        # (null for none). An older one ignores a crop on `spot` and
+        # `edges` and refuses the `crop` request.
+        self.can_crop = False
 
     @property
     def running(self) -> bool:
@@ -261,6 +266,7 @@ class VisionClient:
             self._reader.start()
         try:
             hello = self.request("hello", timeout=REQUEST_SECONDS)
+            self.can_crop = "crop" in hello
         except VisionError as exc:
             self.close()
             if device.startswith("socket://"):
@@ -385,13 +391,36 @@ class VisionClient:
             return self.request("board", path=None)
         return self.request("board", timeout=LOAD_SECONDS, **board_fields(path, side, finish, scale, paste, placed, color))
 
-    def edges(self, most: int = 8, color: list[int] | None = None) -> dict:
+    def edges(self, most: int = 8, color: list[int] | None = None, crop: tuple | None = None) -> dict:
         """The straight edges in the newest frame, strongest first (pcbv's
-        `edges`): on the likeness to a picked color when given."""
+        `edges`): on the likeness to a picked color when given, only those
+        whose middle lies in `crop` (crops.py) when given. A pcbv that takes
+        no crops looks at the whole picture, and the reply says
+        `uncropped`."""
         fields: dict = {"max": int(most)}
         if color is not None:
             fields["color"] = [int(c) for c in color]
-        return self.request("edges", **fields)
+        uncropped = self._crop_field(fields, crop)
+        reply = self.request("edges", **fields)
+        return {**reply, "uncropped": True} if uncropped else reply
+
+    def set_crop(self, crop: tuple | None) -> dict:
+        """pcbv's board look keeps to the spots inside `crop` (crops.py)
+        from now on, through board loads; None looks at the whole picture.
+        A VisionError when this pcbv takes no crops (crops.NO_CROPS)."""
+        if not self.can_crop:
+            raise VisionError(NO_CROPS)
+        return self.request("crop", box=list(crop) if crop is not None else None)
+
+    def _crop_field(self, fields: dict, crop: tuple | None) -> bool:
+        """Puts a crop into a request's fields when this pcbv takes one;
+        whether one was asked for and left out."""
+        if crop is None:
+            return False
+        if not self.can_crop:
+            return True
+        fields["crop"] = [float(v) for v in crop]
+        return False
 
     def color(self, x: float, y: float, radius: float = 3.0) -> list[int]:
         """The mean color of the newest frame within `radius` px of a point
@@ -457,12 +486,17 @@ class VisionClient:
         max_area: float | None = None,
         min_roundness: float | None = None,
         color: list[int] | tuple[int, int, int] | None = None,
+        crop: tuple | None = None,
     ) -> dict:
         """The spot of that shade nearest the picture's center, within
         `radius` px, of `min_area` to `max_area` px and at least
         `min_roundness` round (minor over major axis) when given; of a
-        color picked from a picture instead of a shade when `color` is."""
+        color picked from a picture instead of a shade when `color` is;
+        whose center lies in `crop` (crops.py) when given. A pcbv that
+        takes no crops looks at the whole picture, and the reply says
+        `uncropped`."""
         fields: dict = {"polarity": polarity}
+        uncropped = self._crop_field(fields, crop)
         if min_roundness is not None:
             fields["min_roundness"] = float(min_roundness)
         if color is not None:
@@ -473,7 +507,8 @@ class VisionClient:
             fields["min_area"] = float(min_area)
         if max_area is not None:
             fields["max_area"] = float(max_area)
-        return self.request("spot", **fields)
+        reply = self.request("spot", **fields)
+        return {**reply, "uncropped": True} if uncropped else reply
 
     # --- the threads ----------------------------------------------------------
 

@@ -41,6 +41,7 @@ from spinny_laser import machines as machine_files
 from spinny_laser.align import Fit, fit_rigid, turn
 from spinny_laser.machines import GCODE, Machine, MachineError, is_id
 
+from .crops import TOP_TASKS, UP_TASKS, Crop, check_tasks
 from .feederbus import HEADER_FIELDS, BusProfile, check_id as check_bus_id, slot_place
 from .kinematics import num
 
@@ -219,7 +220,10 @@ class TopCameraProfile:
     then the rest of the bed; true says boards are only ever placed inside
     it, so a search never looks outside it. None for none, the whole bed.
     `settings` are the camera's own settings the file names (of
-    TOP_CAMERA_SETTINGS), put into the camera as the machine connects."""
+    TOP_CAMERA_SETTINGS), put into the camera as the machine connects.
+    `crops` are the parts of the picture each task looks in
+    ([top_camera.crops], crops.TOP_TASKS), shares of the picture; a task
+    left out looks at the whole picture."""
 
     z: float | None = None
     offset: tuple[float, float] | None = None
@@ -232,6 +236,7 @@ class TopCameraProfile:
     within: float = 2.0
     home_fiducial: tuple[float, float] | None = None
     settings: dict = field(default_factory=dict)
+    crops: dict[str, Crop] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -315,6 +320,11 @@ class GcodeMachine:
     # The up camera's own settings the file names (of UP_CAMERA_SETTINGS),
     # put into the camera as the machine connects.
     camera_settings: dict = field(default_factory=dict)
+    # The parts of the up camera's picture each task looks in
+    # ([up_camera.crops], crops.UP_TASKS), shares of the picture; a task
+    # left out looks at the whole picture. The part's crop is cut further
+    # by the circular crops (`crop`, part classes, feeders).
+    camera_crops: dict[str, Crop] = field(default_factory=dict)
     # A jog that takes the nozzle from over the up camera (within this
     # many mm of its place) to farther than that, with the nozzle off the
     # safe height, goes up to the safe height first; None never lifts a
@@ -406,6 +416,7 @@ class GcodeMachine:
             "camera_roll": self.camera_roll,
             "camera_mirror": self.camera_mirror,
             "camera_settings": dict(self.camera_settings),
+            "camera_crops": {task: list(box) for task, box in self.camera_crops.items()},
             "light": bool(self.light_on),
             "discard": list(self.discard) if self.discard is not None else None,
             "pick_tries": self.pick_tries,
@@ -441,6 +452,7 @@ class GcodeMachine:
                     "within": top.within,
                     "home_fiducial": list(top.home_fiducial) if top.home_fiducial is not None else None,
                     "settings": dict(top.settings),
+                    "crops": {task: list(box) for task, box in top.crops.items()},
                 }
                 if top is not None
                 else None
@@ -540,6 +552,19 @@ class _Reader:
         if not (x0 < x1 and y0 < y1):
             raise self.fail(section, key, "must be x0, y0, x1, y1 with x0 below x1 and y0 below y1")
         return (x0, y0, x1, y1)
+
+    def crops(self, table: dict, section: str, tasks: tuple[str, ...]) -> dict[str, Crop]:
+        """A camera's crops by task, the `crops` table under its section: each
+        task's [x0, y0, x1, y1] in shares of the picture (crops.check_tasks)."""
+        if "crops" not in table:
+            return {}
+        value = table["crops"]
+        if not isinstance(value, dict):
+            raise self.fail(section, "crops", f"must be a table [{section}.crops] of tasks: {', '.join(tasks)}")
+        try:
+            return check_tasks(value, tasks)
+        except ValueError as exc:
+            raise MachineError(f"{self.where}: [{section}.crops] {exc}") from None
 
     def flag(self, table: dict, key: str, section: str, default: bool) -> bool:
         value = table.get(key, default)
@@ -737,11 +762,12 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
             within=read.number(looking, "within", "top_camera", 2.0, 0.1, 50.0),
             home_fiducial=read.point(looking, "home_fiducial", "top_camera", 2, None) if "home_fiducial" in looking else None,
             settings=read.camera(looking, "top_camera", TOP_CAMERA_SETTINGS),
+            crops=read.crops(looking, "top_camera", TOP_TASKS),
         )
         read.done(
             looking,
             "top_camera",
-            {"z", "offset", "roll", "mm_per_px", "bed", "board_area", "board_area_only", "fiducial", "within", "home_fiducial", *TOP_CAMERA_SETTINGS},
+            {"z", "offset", "roll", "mm_per_px", "bed", "board_area", "board_area_only", "fiducial", "within", "home_fiducial", "crops", *TOP_CAMERA_SETTINGS},
         )
 
     bus = None
@@ -915,7 +941,8 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
     camera_roll = read.number(camera, "roll", "up_camera", None, -360.0, 360.0) if "roll" in camera else None
     camera_mirror = read.flag(camera, "mirror", "up_camera", True) if "mirror" in camera else None
     camera_settings = read.camera(camera, "up_camera", UP_CAMERA_SETTINGS)
-    read.done(camera, "up_camera", {"z", "position", "crop", "max_offset", "max_turn", "size_tolerance", "leave", "roll", "mirror", *UP_CAMERA_SETTINGS})
+    camera_crops = read.crops(camera, "up_camera", UP_TASKS)
+    read.done(camera, "up_camera", {"z", "position", "crop", "crops", "max_offset", "max_turn", "size_tolerance", "leave", "roll", "mirror", *UP_CAMERA_SETTINGS})
     return GcodeMachine(
         id=machine.id,
         name=name or machine.id,
@@ -958,6 +985,7 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
         camera_roll=camera_roll,
         camera_mirror=camera_mirror,
         camera_settings=camera_settings,
+        camera_crops=camera_crops,
         leave=leave,
         park=park,
         travel=travel,

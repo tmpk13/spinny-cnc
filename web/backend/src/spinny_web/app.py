@@ -949,6 +949,10 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         self.camera = Camera(self.config, self._save_config, self.publish_camera, self.publish_message)
         self.pnp = UpCamera(self.config, self._save_config, self.publish_pnp, self.publish_message)
         self.top = TopCamera(self._placing_config, self._save_config, self.publish_placing, self.publish_message)
+        # The parts of their pictures the cameras' tasks look in, from the
+        # G-code machine's file (crops.py).
+        self.top.crops = self._top_crops
+        self.pnp.crops = self._up_crops
         # What the cameras' routines applied, each with its values before
         # and after, to be undone (findings.py): one log for every camera,
         # its targets the cameras' settings, the up camera's place on the
@@ -977,6 +981,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         self.top_look = BoardLook(
             lambda: self.top.client, self.publish_placing, paused=lambda: self.top.routine_active,
             tuning=lambda: _look_tuning(self.top.settings()), options=lambda: _look_options(self.top.settings()),
+            crop=lambda: self.top.crop("measure"),
         )
         self._head_rest = RestTracker()
         self._top_rest = RestTracker()
@@ -3504,23 +3509,31 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         """The straight edges pcbv finds in a camera's newest picture,
         strongest first and on the edges' picked color when there is one:
         what Corner by edges reads, for the page to draw over the picture
-        (its ends in full size px, through the lens correction)."""
+        (its ends in full size px, through the lens correction); the top
+        camera's only those inside its edges crop, which comes with them."""
         owner, _ = self._controlled(camera)
         if not owner.client.running:
             raise ValueError("the camera is not running: start it first")
-        reply = owner.client.edges(EDGE_LINES, owner.settings().colors.get("edges"))
-        return {"camera": camera, "lines": reply.get("lines") or [], "width": reply.get("width"), "height": reply.get("height")}
+        crop = self.top.crop("edges") if camera == "top" else None
+        reply = owner.client.edges(EDGE_LINES, owner.settings().colors.get("edges"), **({"crop": crop} if crop is not None else {}))
+        found = {"camera": camera, "lines": reply.get("lines") or [], "width": reply.get("width"), "height": reply.get("height")}
+        return {**found, "crop": list(crop)} if crop is not None and not reply.get("uncropped") else found
 
-    def _edge_corner(self, client, camera: str, look: BoardLook, corner: str, frame: PictureFrame, settings) -> tuple[tuple[float, float], float, dict]:
+    def _edge_corner(
+        self, client, camera: str, look: BoardLook, corner: str, frame: PictureFrame, settings, crop: tuple | None = None, uncropped: Callable[[], None] | None = None,
+    ) -> tuple[tuple[float, float], float, dict]:
         """Where a board's corner is in a camera's picture now, and its turn,
         from the straight edges pcbv finds (on the edges' picked color when
-        there is one), with the marks a finding of it draws (the edges, the
-        corner in the picture and the picture's size). The picture, the
-        edges and the corner they made (or why none) go into the camera log
-        while it logs, and the edges and the corner into the board look's
-        search record when one is open."""
+        there is one, only those whose middle lies in `crop` when given),
+        with the marks a finding of it draws (the edges, the corner in the
+        picture, the picture's size and the crop). The picture, the edges
+        and the corner they made (or why none) go into the camera log while
+        it logs, and the edges and the corner into the board look's search
+        record when one is open. `uncropped` hears a pcbv that took no crop."""
         wait_settled(client)
-        reply = client.edges(EDGE_LINES, settings.colors.get("edges"))
+        reply = client.edges(EDGE_LINES, settings.colors.get("edges"), **({"crop": crop} if crop is not None else {}))
+        if reply.get("uncropped") and uncropped is not None:
+            uncropped()
         width, height = reply.get("width"), reply.get("height")
         if not isinstance(width, (int, float)) or not isinstance(height, (int, float)):
             raise VisionError("pcbv's edges came without the picture's size")
@@ -3540,6 +3553,8 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         if record is not None:
             record.event("edges", corner=corner, lines=lines, found=[round(point[0], 4), round(point[1], 4)], angle=round(rotation, 4), picture=[round(seen[0], 2), round(seen[1], 2)])
         marks = {"lines": lines, "corner": [round(seen[0], 2), round(seen[1], 2)], "size": [float(width), float(height)]}
+        if crop is not None:
+            marks["crop"] = list(crop)
         return point, rotation, marks
 
     def camera_lens_clear(self, camera: str) -> dict:
@@ -4182,7 +4197,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         `radius` px of the picture's center when given: kept in its state
         for the page to draw over the picture."""
         settings = self.pnp.settings()
-        self.pnp.look_once(settings.nozzle_spot if spot == "nozzle" else settings.part_spot, radius)
+        self.pnp.look_once(settings.nozzle_spot if spot == "nozzle" else settings.part_spot, radius, "nozzle" if spot == "nozzle" else "part")
         return self.pnp.state()
 
     def pnp_abort(self) -> dict:
@@ -4844,7 +4859,9 @@ def create_app(
 
     @app.put("/api/machines/{machine_id}")
     def machine_save(machine_id: str, body: MachineTextBody):
-        return guarded(lambda: backend.machine_store.save(machine_id, body.text))
+        result = guarded(lambda: backend.machine_store.save(machine_id, body.text))
+        backend.machine_written(machine_id)
+        return result
 
     @app.post("/api/machines/{machine_id}/check")
     def machine_check(machine_id: str, body: MachineTextBody):
@@ -4867,6 +4884,7 @@ def create_app(
     @app.patch("/api/machines/{machine_id}")
     def machine_patch(machine_id: str, body: MachinePatchBody):
         result = guarded(lambda: backend.machine_store.patch(machine_id, body.path, body.value))
+        backend.machine_written(machine_id)
         backend.publish_placing()
         return result
 

@@ -32,6 +32,7 @@ from spinny_laser import machines as machine_files
 
 from .camera import CORNER_MM, LOOK_THRESHOLD, SETTLE_SECONDS, Spot, check_look, feature_limits, picture_to_machine, round_problem, spot_of
 from .cameras import check_controls
+from .crops import cut
 from .openpnp import SHADES
 from .pictures import CameraMap, fit_camera, fresh_gray, phase_shift
 from .pnp import Mover, PickCamera, PnpError, RoutineProgress, calibrate
@@ -197,6 +198,9 @@ class TopCamera(PickCamera):
         "offset": "measuring the top camera's offset", "fiducials": "finding the fiducials", "search": "looking for the board",
         "scan": "scanning the board", "home": "homing by the fiducial", "picture": "measuring the top camera's picture",
     }
+    crop_tasks = {"offset": "spot", "fiducials": "spot", "home": "spot", "search": "board", "scan": "board", "picture": "measure"}
+    look_task = "spot"
+    board_task = "board"
 
     def __init__(self, store: Callable[[], dict], save: Callable[[], None], publish: Callable[[], None], message: Callable[[str, str], None]) -> None:
         super().__init__(store, save, publish, message)
@@ -259,7 +263,7 @@ class TopCamera(PickCamera):
         for _ in range(1 + (LOOK_TRIES if center else 0)):
             if mover.stopped():
                 raise PnpError("stopped")
-            reply = self._find_spot(radius=within / scale, polarity=shade, **limits)
+            reply = self._find_spot("spot", radius=within / scale, polarity=shade, **limits)
             self._log_look(routine, step, reply, shade)
             if not reply.get("found"):
                 return None
@@ -353,15 +357,20 @@ class TopCamera(PickCamera):
         if z is not None:
             mover.lower(z)
         start = mover.here()
+        # Only the measure task's crop of each picture is compared: the
+        # nozzle or the head's own parts in view do not move with the bed.
+        crop = self.crop("measure")
 
         def picture():
             # The head still rings after a move: pictures are taken until
             # two in a row agree within STILL_PX, for at most STILL_SECONDS.
             gray, reply = fresh_gray(self.client, time.monotonic() + SETTLE_SECONDS + settle, MEASURE_WIDTH, mover.stopped)
+            gray = cut(gray, crop)
             factor = _full_width(settings.size, reply) / float(reply["width"])
             until = time.monotonic() + STILL_SECONDS
             while time.monotonic() < until:
                 later, reply = fresh_gray(self.client, time.monotonic(), MEASURE_WIDTH, mover.stopped)
+                later = cut(later, crop)
                 dx, dy, _ = phase_shift(gray, later)
                 gray = later
                 if math.hypot(dx, dy) * factor <= STILL_PX:
@@ -432,6 +441,7 @@ class TopCamera(PickCamera):
             "worst_px": round(worst_px, 3), "step": step, "pictures": len(moves) + 1, "returned_um": round(returned_um, 1),
             "least_peak": round(min(peaks), 4), "head": [round(start[0], 4), round(start[1], 4)],
             "approach": approach, "settle": settle, "returned_px": [round(back[0] * factor, 3), round(back[1] * factor, 3)],
+            "crop": list(crop) if crop is not None else None,
             # Each grid picture: the head's move (mm), the shift seen (full size px), the correlation's peak.
             "rows": rows,
         }
@@ -576,7 +586,7 @@ class TopCamera(PickCamera):
     def _spot(self, mover: Mover, progress: RoutineProgress, shade: str, scale: float, roll: float, mirror: bool, missing: str) -> Spot:
         if mover.stopped():
             raise PnpError("stopped")
-        reply = self._find_spot(polarity=shade)
+        reply = self._find_spot("spot", polarity=shade)
         self._log_look("measuring the top camera's offset", progress.step, reply, shade)
         if not reply.get("found"):
             raise PnpError(missing)

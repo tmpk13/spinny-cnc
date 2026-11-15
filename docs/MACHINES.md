@@ -525,6 +525,10 @@ pcbv = "pcbv"            # the pcbv program,
 nozzle_spot = "dark"     # how the nozzle's bore looks to it,
 part_spot = "dark"       # and a part on the nozzle
 
+[up_camera.crops]        # the parts of the bottom camera's picture its tasks look in (below); a task left out looks at the whole picture
+nozzle = [0.35, 0.3, 0.65, 0.7]  # Center nozzle and Measure runout: the tip only inside
+part = [0.2, 0.1, 0.8, 0.9]      # a part on the nozzle, inside this box and the circle of its crop
+
 [top_camera]             # a camera on the head looking down
 z = 0                    # the height the head looks from; left out, the safe height
 offset = [40.0, 0.0]     # its picture's center from the nozzle as designed; Measure offset finds it
@@ -538,6 +542,12 @@ within = 2.0             # mm from where it is expected that a fiducial, mark or
 home_fiducial = [60.0, 170.0]  # a fiducial fixed on the bed, as the nozzle's place over it: Home by fiducial finds it with this camera; left out, none
 device = "/dev/video4"   # the camera itself, taken by the top camera as the machine connects: device, size, fps and pcbv as [up_camera]'s,
 mark_spot = "dark"       # and how the mark Measure offset centers looks to it
+
+[top_camera.crops]       # the parts of the top camera's picture its tasks look in (below); a task left out looks at the whole picture
+board = [0.0, 0.0, 1.0, 1.0]     # the board look, its searches and scans: pcbv keeps to the pads and holes it sees inside
+spot = [0.3, 0.25, 0.7, 0.75]    # Find mark, Measure offset, Find fiducials, Home by fiducial, Look once
+edges = [0.1, 0.1, 0.9, 0.9]     # Corner by edges and the edge view: edges whose middle lies inside
+measure = [0.1, 0.1, 0.9, 0.9]   # Measure camera and the empty picture test: only these pixels are compared
 
 [[feeder]]               # a part is picked from the first one whose words its value and footprint all hold
 id = "r-10k-0603"
@@ -568,9 +578,25 @@ names its two cameras' addresses, and connecting it sets both up.
 A part looked at over the bottom camera keeps to a circle about the
 picture's center: its feeder's `crop`, else its `[[part_class]]`'s, else
 `[up_camera] crop`, else pcbv's own reach (a third of the picture's
-height). pcbv's spot finder takes a circle about the center, not a box,
-so a crop is a radius. The bottom camera view rings the crop of the class
-picked under it, and its *Look once* at a part keeps to that crop.
+height). The bottom camera view rings the crop of the class picked under
+it, and its *Look once* at a part keeps to that crop.
+
+A camera's `crops` table gives each of its tasks a box of the picture to
+look in: `[x0, y0, x1, y1]` in shares of the picture's width and height
+from its top left corner, `0 <= x0 < x1 <= 1` and `0 <= y0 < y1 <= 1`, so
+another capture size keeps it. The bottom camera's tasks are `nozzle` and
+`part` (the part's box and its circle both hold); the top camera's are
+`board`, `spot`, `edges` and `measure`. A task left out looks at the whole
+picture, and an unknown task is refused with the known ones named. A spot
+is taken only when its center lies inside, an edge when its middle does,
+the board look keeps to the pads and holes pcbv sees inside (pcbv is told
+the `board` box at every camera start and board load, and when the file
+is written), and Measure camera and the empty picture test compare only
+the pixels inside. A spot look's circle is clipped to the farthest corner
+of the box. A pcbv built before crops takes none: the camera says so once
+and looks at the whole picture. Each camera picture's View menu draws a
+task's box and saves it here ([OPERATING.md](OPERATING.md)); a search
+record keeps the crops it looked with.
 
 A feeder bus (`[bus]`, `[[slot]]`, and a feeder's `bus_id`, `slot`,
 `offset` and `advance` in place of `at`, `pitch` and `count`) carries

@@ -141,6 +141,17 @@ leave = 2.0        # a jog leaving the camera with the tip down goes up to Z 31.
 # fps = 30
 # nozzle_spot = "dark"   # how the nozzle's bore looks to it
 # part_spot = "dark"     # how a part on the nozzle looks to it
+# The part of the picture each of its tasks looks in, [x0, y0, x1, y1] in
+# shares of the picture's width and height from its top left (so another
+# capture size keeps it); a task left out looks at the whole picture. nozzle:
+# Center nozzle and Measure runout take the tip only inside (a box a couple
+# of mm about the center keeps a still speck to the side out); part: a part
+# on the nozzle, inside its crop circle too. The View menu of the bottom
+# camera's picture draws and saves them; this table goes after the keys of
+# [up_camera].
+# [up_camera.crops]
+# nozzle = [0.35, 0.3, 0.65, 0.7]
+# part = [0.2, 0.1, 0.8, 0.9]
 
 # The top camera: its picture's center 23.544, 65.188 from N1 as designed;
 # Measure offset finds it on the machine.
@@ -180,6 +191,16 @@ bed = [24.0, 66.0, 456.0, 552.0]
 # the top camera looks), as N1's place over it. Opulo's stock setup does
 # not home by it (visual homing None); Home by fiducial does on request.
 home_fiducial = [60.91, 175.23]
+# The part of the top camera's picture each of its tasks looks in, as the
+# bottom camera's crops: board (the board look, its searches and scans),
+# spot (Find mark, Measure offset, Find fiducials, Home by fiducial, Look
+# once), edges (Corner by edges), measure (Measure camera and the empty
+# picture test). Drawn and saved from the top camera picture's View menu.
+# [top_camera.crops]
+# board = [0.0, 0.0, 1.0, 1.0]
+# spot = [0.3, 0.25, 0.7, 0.75]
+# edges = [0.1, 0.1, 0.9, 0.9]
+# measure = [0.1, 0.1, 0.9, 0.9]
 
 # Opulo's Photon feeders on the LumenPnP's RS-485 bus, through Marlin's
 # M485: a packet goes out as hex and comes back in an rs485-reply line.

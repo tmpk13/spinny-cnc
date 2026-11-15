@@ -69,12 +69,15 @@ class MachineStore(TomlStore):
         """One value of a file changed in its text, comments and all, and
         saved once the whole file reads. A plain table not in the file yet
         ([vacuum], [up_camera]) is added at its end; `None` takes the key
-        out."""
+        out. A table in a table ([top_camera.crops]) is named by its
+        dotted name's parts and added the same way."""
         with self._writing:
             text = self.text(machine_id)
             table = path[:-1]
-            if len(table) == 1 and isinstance(table[0], str) and value is not None:
-                header = re.compile(rf"^\s*\[{re.escape(table[0])}\]\s*(#.*)?$", re.MULTILINE)
+            if table and all(isinstance(step, str) for step in table) and value is not None:
+                name = ".".join(table)
+                dotted = r"\s*\.\s*".join(re.escape(step) for step in table)
+                header = re.compile(rf"^\s*\[\s*{dotted}\s*\]\s*(#.*)?$", re.MULTILINE)
                 if not header.search(text):
-                    text = text.rstrip("\n") + f"\n\n[{table[0]}]\n"
+                    text = text.rstrip("\n") + f"\n\n[{name}]\n"
             return self.save(machine_id, set_value(text, tuple(path), value))

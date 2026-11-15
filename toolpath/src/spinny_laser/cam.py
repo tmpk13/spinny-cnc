@@ -1111,7 +1111,9 @@ def resolve(tool: Tool, settings: dict[str, Any], defaults: dict[str, float], so
 # --- editing the text -------------------------------------------------------
 
 _HEADER = re.compile(r"^\s*\[\[\s*([A-Za-z0-9_-]+)\s*\]\]\s*(#.*)?$")
-_TABLE = re.compile(r"^\s*\[\s*([A-Za-z0-9_-]+)\s*\]\s*(#.*)?$")
+# A plain table's header, its name dotted for a table in a table
+# ([top_camera.crops]); the name is read with the spaces about its dots out.
+_TABLE = re.compile(r"^\s*\[\s*([A-Za-z0-9_-]+(?:\s*\.\s*[A-Za-z0-9_-]+)*)\s*\]\s*(#.*)?$")
 
 
 def _key_pattern(key: str) -> re.Pattern:
@@ -1198,7 +1200,7 @@ def _table_range(lines: list[str], table: tuple) -> tuple[int, int]:
             if table == (name, counts.get(name, 0)):
                 start = index + 1
             counts[name] = counts.get(name, 0) + 1
-        elif plain is not None and table == (plain.group(1),):
+        elif plain is not None and table == (re.sub(r"\s+", "", plain.group(1)),):
             start = index + 1
     if start is None:
         if len(table) == 2:
@@ -1212,7 +1214,8 @@ def set_value(text: str, path: tuple, value: Any) -> str:
     included, as it was.
 
     `path` names the table and the key: `("name",)` for a key at the top,
-    `("post", "spinup")` for one in `[post]`, `("operations", 2, "depth")`
+    `("post", "spinup")` for one in `[post]`, `("top_camera", "crops",
+    "spot")` for one in `[top_camera.crops]`, `("operations", 2, "depth")`
     for one in the third `[[operations]]` table. A key that is not there is
     added at the end of its table; `None` takes a key out. A table that is
     not there is refused, as is a value that does not read back.
@@ -1220,11 +1223,16 @@ def set_value(text: str, path: tuple, value: Any) -> str:
     if not path or not isinstance(path[-1], str) or not re.match(r"^[A-Za-z0-9_-]+$", path[-1]):
         raise CamError("the path must end in a key")
     table = tuple(path[:-1])
-    if len(table) == 2 and (not isinstance(table[0], str) or not isinstance(table[1], int) or table[1] < 0):
+    if table and all(isinstance(step, str) for step in table):
+        # A plain table, a table in a table by its dotted name.
+        if not all(re.match(r"^[A-Za-z0-9_-]+$", step) for step in table):
+            raise CamError("a table is named by its name")
+        table = (".".join(table),)
+    elif len(table) == 2 and (not isinstance(table[0], str) or not isinstance(table[1], int) or table[1] < 0):
         raise CamError("a table in an array is named by its name and its index")
-    if len(table) == 1 and not isinstance(table[0], str):
+    elif len(table) == 1 and not isinstance(table[0], str):
         raise CamError("a table is named by its name")
-    if len(table) > 2:
+    elif len(table) > 2:
         raise CamError("the path goes no deeper than a table and a key")
     key = path[-1]
     lines = text.split("\n")

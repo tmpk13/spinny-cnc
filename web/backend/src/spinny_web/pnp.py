@@ -37,6 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from spinny_laser import machines as machine_files
 
 from .cameras import apply_kept, check_controls
+from .crops import NO_CROPS, Crop, clip_radius, picture_size
 from .findings import Findings, FindingsLog, Target
 from .camera import CAPTURE_KEYS, DONE, ERROR, RUNNING, STOPPED, MachineAccess, Spot, look_dict, picture_to_machine, spot_of, wait_settled
 from .kinematics import FOCUS_DECIMALS, coord
@@ -624,6 +625,9 @@ class RoutineProgress:
     step: str = ""
     error: str | None = None
     spot: Spot | None = None
+    # The crop its looks keep to: the task and its box (None for the whole
+    # picture), so the page draws it while the routine runs.
+    crop: dict | None = None
     started: float = field(default_factory=time.monotonic, repr=False)
 
     def to_dict(self) -> dict:
@@ -636,6 +640,7 @@ class RoutineProgress:
             "total": len(self.steps) - 1,
             "error": self.error,
             "spot": self.spot.to_dict() if self.spot is not None else None,
+            "crop": self.crop,
             "seconds": round(time.monotonic() - self.started, 1),
         }
 
@@ -811,6 +816,12 @@ class PickCamera:
     clearable: tuple[str, ...] = ()
     # What a routine of each kind is called when it fails.
     routines: dict[str, str] = {}
+    # The task (crops.py) each kind of routine's looks keep to, the task a
+    # look by hand keeps to, and the task pcbv's board look keeps to (sent
+    # at every start; None for a camera that looks for no board).
+    crop_tasks: dict[str, str] = {}
+    look_task: str | None = None
+    board_task: str | None = None
 
     def __init__(self, store: Callable[[], dict], save: Callable[[], None], publish: Callable[[], None], message: Callable[[str, str], None]) -> None:
         self._store = store
@@ -832,6 +843,64 @@ class PickCamera:
         self._thread: threading.Thread | None = None
         self._abort = threading.Event()
         self._lock = threading.Lock()
+        # The crops by task of the machine the camera works on (crops.py);
+        # the backend gives the machine file's. None of them by default.
+        self.crops: Callable[[], dict] = lambda: {}
+        # Whether this start's pcbv was found to take no crops and said so.
+        self._said_no_crops = False
+
+    # --- crops ------------------------------------------------------------------
+
+    def crop(self, task: str | None) -> Crop | None:
+        """The crop of a task, None for the whole picture."""
+        if task is None:
+            return None
+        try:
+            box = self.crops().get(task)
+        except Exception as exc:  # a machine file that does not read keeps the whole picture
+            log.warning("%s: no crops: %s", self.label, exc)
+            return None
+        return tuple(float(v) for v in box) if box is not None else None
+
+    def crop_state(self, task: str | None) -> dict | None:
+        """A task and its crop, as a routine's progress shows them."""
+        if task is None:
+            return None
+        box = self.crop(task)
+        return {"task": task, "box": list(box) if box is not None else None}
+
+    def _no_crops(self) -> None:
+        """Says once a start that its pcbv takes no crops."""
+        if not self._said_no_crops:
+            self._said_no_crops = True
+            self._message("warning", f"the {self.label}: {NO_CROPS}")
+
+    def send_board_crop(self) -> None:
+        """pcbv's board look told the board task's crop (none: the whole
+        picture); a pcbv that takes no crops says so when there is one."""
+        if self.board_task is None or not self.client.running:
+            return
+        crop = self.crop(self.board_task)
+        # A stand-in for pcbv that says nothing of crops takes none.
+        if not getattr(self.client, "can_crop", False):
+            if crop is not None:
+                self._no_crops()
+            return
+        try:
+            self.client.set_crop(crop)
+        except VisionError as exc:
+            self._message("error", f"the {self.label}'s board crop was not taken: {exc}")
+
+    def _crop_fields(self, task: str | None, fields: dict) -> dict:
+        """A spot request's fields with the task's crop, its radius clipped
+        to what the crop reaches (crops.clip_radius)."""
+        crop = self.crop(task)
+        if crop is None:
+            return fields
+        size = picture_size(getattr(self.settings(), "size", ""))
+        if size is not None:
+            fields["radius"] = clip_radius(fields.get("radius"), crop, *size)
+        return {**fields, "crop": crop}
 
     # --- settings -------------------------------------------------------------
 
@@ -897,6 +966,7 @@ class PickCamera:
             raise PnpError(f"the {self.label} is already running")
         settings = self.settings()
         self.client.start(settings.device, settings.size, settings.fps, settings.pcbv)
+        self._said_no_crops = False
         log.info("%s started on %s", self.label, settings.device)
         refused = apply_kept(settings.device, settings.controls)
         if refused:
@@ -907,6 +977,7 @@ class PickCamera:
                 self.client.lens(lens)
             except VisionError as exc:
                 self._message("error", f"the {self.label}'s lens correction was not taken: {exc}")
+        self.send_board_crop()
 
     def set_lens(self, lens: dict | None):
         """Keeps a lens correction (None: none) and gives it to a running
@@ -957,29 +1028,39 @@ class PickCamera:
             "applied": self.findings.newest(),
         }
 
-    def look_once(self, polarity: str, radius: float | None = None) -> dict:
+    def look_once(self, polarity: str, radius: float | None = None, task: str | None = None) -> dict:
         """The spot of `polarity` the finder takes in the picture now, found
         once with no move, kept for the page to draw: a wrong polarity or a
-        size the finder refuses shows before a routine trusts it."""
+        size the finder refuses shows before a routine trusts it. It keeps
+        to the crop of `task` (the camera's look task by default), which the
+        look keeps as `crop` when there is one."""
         if polarity not in SHADES:
             raise ValueError("the spot is dark or bright")
         if not self.client.running:
             raise PnpError(f"the {self.label} is not running: start it first")
         color = getattr(self.settings(), "colors", {}).get("spots")
-        reply = self.client.spot(radius=radius, polarity=polarity, **({"color": color} if color is not None else {}))
+        task = task or self.look_task
+        fields = self._crop_fields(task, {"radius": radius, "polarity": polarity, **({"color": color} if color is not None else {})})
+        reply = self.client.spot(**fields)
+        if reply.get("uncropped"):
+            self._no_crops()
         self._log_look("a look by hand", "look", reply, polarity)
-        self.look = look_dict(reply, polarity, radius)
+        crop = fields.get("crop")
+        self.look = {**look_dict(reply, polarity, fields.get("radius")), **({"crop": {"task": task, "box": list(crop)}} if crop is not None else {})}
         self._publish()
         return self.look
 
-    def _find_spot(self, **fields) -> dict:
+    def _find_spot(self, task: str | None = None, **fields) -> dict:
         """pcbv's spot in a picture taken once the head came to rest after
-        the move before it."""
+        the move before it, inside the task's crop."""
         wait_settled(self.client)
         color = getattr(self.settings(), "colors", {}).get("spots")
         if color is not None and "color" not in fields:
             fields["color"] = color
-        return self.client.spot(**fields)
+        reply = self.client.spot(**self._crop_fields(task, fields))
+        if reply.get("uncropped"):
+            self._no_crops()
+        return reply
 
     def shutdown(self) -> None:
         self._abort.set()
@@ -1004,7 +1085,7 @@ class PickCamera:
                 raise PnpError(f"an {self.label} routine is already under way" if self.label[0] in "aeiou" else f"a {self.label} routine is already under way")
             self._abort.clear()
             self._looks = 0
-            self.progress = RoutineProgress(kind=kind, steps=steps, step=steps[0], target=mover.name)
+            self.progress = RoutineProgress(kind=kind, steps=steps, step=steps[0], target=mover.name, crop=self.crop_state(self.crop_tasks.get(kind)))
             progress = self.progress
             self._thread = threading.Thread(target=self._run, args=(mover, progress, body), name=f"{self.log_name}-{kind}", daemon=True)
             self._thread.start()
@@ -1060,6 +1141,8 @@ class UpCamera(PickCamera):
     places = ("position",)
     clearable = ("position", "height")
     routines = {"nozzle": "centering the nozzle", "runout": "measuring the runout", "part": "looking at the part"}
+    crop_tasks = {"nozzle": "nozzle", "runout": "nozzle", "part": "part"}
+    look_task = "nozzle"
 
     def __init__(self, config: dict, save: Callable[[], None], publish: Callable[[], None], message: Callable[[str, str], None]) -> None:
         super().__init__(lambda: config, save, publish, message)
@@ -1208,7 +1291,8 @@ class UpCamera(PickCamera):
             limits = {"min_area": area * 0.25, "max_area": area * 4.0}
         if crop is not None and place.mm_per_px > 0.0:
             limits["radius"] = crop / place.mm_per_px
-        reply = self._find_spot(polarity=settings.part_spot, **limits)
+        # The part's crop box (crops.py) cuts the circle further.
+        reply = self._find_spot("part", polarity=settings.part_spot, **limits)
         self._log_look("looking at the part" if progress is not None else "placing: looking at the part", "looking", reply, settings.part_spot)
         if not reply.get("found"):
             raise NoSpot("no part in the picture: is one on the nozzle, and is the part spot the right polarity?")
@@ -1308,7 +1392,7 @@ class UpCamera(PickCamera):
     def _spot(self, mover: Mover, progress: RoutineProgress, polarity: str, place: CameraPlace, missing: str) -> Spot:
         if mover.stopped():
             raise PnpError("stopped")
-        reply = self._find_spot(polarity=polarity)
+        reply = self._find_spot(self.crop_tasks.get(progress.kind), polarity=polarity)
         routine = {"nozzle": "centering the nozzle", "runout": "measuring the runout"}.get(progress.kind, "looking at the part")
         self._log_look(routine, progress.step, reply, polarity)
         if not reply.get("found"):

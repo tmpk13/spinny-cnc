@@ -145,6 +145,30 @@ class PlacingPart:
             everything[machine_id] = kept
         return kept
 
+    def _top_crops(self) -> dict:
+        """The top camera's crops by task, from the placing machine's file
+        ([top_camera.crops]); none without one."""
+        machine_id = self._placing_id()
+        if machine_id is None:
+            return {}
+        machine = self.machine_store.gcode(machine_id)
+        return dict(machine.top.crops) if machine.top is not None else {}
+
+    def _up_crops(self) -> dict:
+        """The bottom camera's crops by task, from the connected G-code
+        machine's file ([up_camera.crops]); none while the camera works on
+        a machine of this project's firmware."""
+        if not self.gcode.connected or self._gcode_id is None:
+            return {}
+        return dict(self.machine_store.gcode(self._gcode_id).camera_crops)
+
+    def machine_written(self, machine_id: str) -> None:
+        """A machine file was written: the placing machine's board crop is
+        told to the top camera's pcbv, so a crop drawn on the page holds at
+        once."""
+        if machine_id == self._placing_id() and self.top.client.running:
+            self.top.send_board_crop()
+
     def placing_machine(self) -> GcodeMachine:
         """The placing machine's file, read; 409 when there is no G-code machine to place with."""
         machine_id = self._placing_id()
@@ -415,6 +439,9 @@ class PlacingPart:
             raise ValueError("the job was not imported from a KiCad board file kept here: the camera has nothing to look for")
         self.top_look.stop()
         board = self._top_board_settings(job_id)
+        # pcbv keeps the board crop through loads; sent again so a crop
+        # changed in the file since the start holds for this look.
+        self.top.send_board_crop()
         self.top.client.board(str(path), **board)
         middle, _ = self._board_size(job)
         # A place the head is seen at that changed is a move at about half
@@ -474,6 +501,8 @@ class PlacingPart:
             "offset": offset, "roll": self._top_roll(machine), "mirror": settings.mirror,
             "mm_per_px": settings.mm_per_px, "device": settings.device, "pcbv": settings.pcbv, "lens": settings.lens,
             "machine": machine.name,
+            # The crops its looks kept to, by task (crops.py).
+            "crops": {task: list(box) for task, box in (machine.top.crops if machine.top is not None else {}).items()},
         }
 
     def _top_look_place(self, captured: float) -> PictureFrame | str:
@@ -754,7 +783,9 @@ class PlacingPart:
         here = self._here(machine)
         offset = self._top_offset(machine)
         frame = PictureFrame((float(here["x"]) + offset[0], float(here["y"]) + offset[1]), self._top_roll(machine), settings.mirror)
-        corner, rotation, marks = self._edge_corner(self.top.client, "top", self.top_look, body.corner, frame, settings)
+        corner, rotation, marks = self._edge_corner(
+            self.top.client, "top", self.top_look, body.corner, frame, settings, crop=self.top.crop("edges"), uncropped=self.top._no_crops,
+        )
         middle, _ = self._board_size(job)
         words = f"{body.corner} corner found by its edges at {corner[0]:.3f}, {corner[1]:.3f} mm, the board turned {rotation:+.3f} degrees"
         # Taken at once and logged: the look's corners come back by an undo

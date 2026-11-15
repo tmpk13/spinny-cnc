@@ -71,6 +71,7 @@ from .camera import CORNER_MM, LOOK_THRESHOLD, picture_to_machine
 from .kinematics import FOCUS_DECIMALS, coord
 from .link import idle_status, settle
 from .log import log
+from .crops import cut
 from .pictures import BOARD_BUSY, BUSY_WIDTH, EMPTY_BUSY, busy_share, fresh_gray
 from .vision import VisionClient, VisionError
 
@@ -975,10 +976,14 @@ class BoardLook:
         paused: Callable[[], bool],
         tuning: Callable[[], tuple[float, float]] | None = None,
         options: Callable[[], dict] | None = None,
+        crop: Callable[[], tuple | None] | None = None,
     ) -> None:
         self._client = client
         self._publish = publish
         self._paused = paused
+        # The part of the picture the busy test measures (crops.py), as the
+        # camera's file has it now; None for the whole picture.
+        self.crop: Callable[[], tuple | None] = crop or (lambda: None)
         # The camera's threshold and corners' tolerance, as they are now.
         self.tuning: Callable[[], tuple[float, float]] = tuning or (lambda: (THRESHOLD, CORNER_MM))
         # How the camera's look calls a board found (`method`: vote or
@@ -1358,7 +1363,7 @@ class BoardLook:
             return None
         age = reply.get("age_ms")
         captured = asked - float(age) / 1000.0 if _number(age) else asked
-        return busy_share(gray), reply, captured
+        return busy_share(cut(gray, self.crop())), reply, captured
 
     def see_empty(self, frame: PictureFrame, share: float, reply: dict, captured: float, size: tuple[float, float] | None) -> None:
         """A picture the busy test called empty: one look that found no
