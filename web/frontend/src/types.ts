@@ -1444,6 +1444,27 @@ export interface GcodeTopCamera {
     settings?: Partial<Pick<TopSettings, "device" | "size" | "fps" | "pcbv" | "mark_spot">>;
 }
 
+/** What the Machine view draws besides the machine file: a picture of the machine, or a 3D model of it (an STL). */
+export type MachineViewKind = "picture" | "model";
+
+/** A picture or model added to the Machine view: its name as added, media type, size, a version that grows with every change, and the box on the machine it is drawn stretched over (null: a picture over the travel, a model at its own coordinates). */
+export interface MachineViewFile {
+    name: string;
+    type: string;
+    bytes: number;
+    version: number;
+    box: [number, number, number, number] | null;
+    /** A model's triangles. */
+    triangles?: number;
+}
+
+/** The Machine view's picture and model of one machine file, each null when none is added. */
+export interface MachineViewState {
+    machine: string;
+    picture: MachineViewFile | null;
+    model: MachineViewFile | null;
+}
+
 /** A G-code machine's own tables as its file reads: port, dialect, heights, cameras, feeders. */
 export interface GcodeDocument {
     id: string;

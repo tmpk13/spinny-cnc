@@ -48,6 +48,8 @@ import type {
     MachineFromBoard,
     MachineResponse,
     MachinesResponse,
+    MachineViewKind,
+    MachineViewState,
     MachineUpdates,
     Marker,
     MarkersResponse,
@@ -186,6 +188,17 @@ export interface Api {
     deleteMachineFile(id: string): Promise<void>;
     /** One value of a machine file changed in its text, comments and all; a plain table not there yet is added. */
     patchMachineFile(id: string, path: CamPath, value: CamValue): Promise<MachineResponse>;
+    /** The Machine view's picture and model of a machine file, as kept beside the config. */
+    machineView(id: string): Promise<MachineViewState>;
+    /** Keeps a picture (PNG, JPEG, WebP, GIF) or a model (STL) for the Machine view in place of the one before, its box kept. */
+    putMachineView(id: string, kind: MachineViewKind, file: File): Promise<MachineViewState>;
+    /** The box on the machine a picture or model is drawn stretched over; null for its default. */
+    placeMachineView(id: string, kind: MachineViewKind, box: [number, number, number, number] | null): Promise<MachineViewState>;
+    removeMachineView(id: string, kind: MachineViewKind): Promise<MachineViewState>;
+    /** The address of a kept picture or model at a version, for an image to show or the page to read. */
+    machineViewUrl(id: string, kind: MachineViewKind, version: number): string;
+    /** A kept model's bytes, read by the page to draw it. */
+    machineViewBytes(id: string, kind: MachineViewKind, version: number): Promise<Uint8Array>;
     /** The CAM profiles in cam/, and the files that could not be read. */
     camProfiles(): Promise<CamProfilesResponse>;
     camProfile(id: string): Promise<CamProfileResponse>;
@@ -682,6 +695,49 @@ export class HttpApi implements Api {
 
     patchMachineFile(id: string, path: CamPath, value: CamValue): Promise<MachineResponse> {
         return this.request<MachineResponse>("PATCH", `/api/machines/${encodeURIComponent(id)}`, { path, value });
+    }
+
+    machineView(id: string): Promise<MachineViewState> {
+        return this.request<MachineViewState>("GET", `/api/machines/${encodeURIComponent(id)}/view`);
+    }
+
+    putMachineView(id: string, kind: MachineViewKind, file: File): Promise<MachineViewState> {
+        const form = new FormData();
+        form.append("file", file, file.name);
+        return this.request<MachineViewState>("PUT", `/api/machines/${encodeURIComponent(id)}/view/${kind}`, form);
+    }
+
+    placeMachineView(id: string, kind: MachineViewKind, box: [number, number, number, number] | null): Promise<MachineViewState> {
+        return this.request<MachineViewState>("PUT", `/api/machines/${encodeURIComponent(id)}/view/${kind}/box`, { box });
+    }
+
+    removeMachineView(id: string, kind: MachineViewKind): Promise<MachineViewState> {
+        return this.request<MachineViewState>("DELETE", `/api/machines/${encodeURIComponent(id)}/view/${kind}`);
+    }
+
+    machineViewUrl(id: string, kind: MachineViewKind, version: number): string {
+        // The version in the address: a new file is a new address, so a kept answer is never stale.
+        return `${this.base}/api/machines/${encodeURIComponent(id)}/view/${kind}?v=${version}`;
+    }
+
+    async machineViewBytes(id: string, kind: MachineViewKind, version: number): Promise<Uint8Array> {
+        let response: Response;
+        try {
+            response = await this.fetchFn(this.machineViewUrl(id, kind, version), { method: "GET" });
+        } catch (error) {
+            throw new ApiError(0, `backend unreachable: ${errorText(error)}`);
+        }
+        if (!response.ok) {
+            const text = await response.text();
+            let data: unknown = text;
+            try {
+                data = JSON.parse(text);
+            } catch {
+                // Not JSON: the text itself.
+            }
+            throw new ApiError(response.status, errorMessage(data, response.status, response.statusText));
+        }
+        return new Uint8Array(await response.arrayBuffer());
     }
 
     camProfiles(): Promise<CamProfilesResponse> {

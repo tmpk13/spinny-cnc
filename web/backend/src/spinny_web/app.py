@@ -144,7 +144,7 @@ from .jobs import (
 )
 from . import markers as marker_list
 from . import mill
-from . import thumbs
+from . import machineview, thumbs
 from . import plugins
 from . import reports
 from . import todo
@@ -5078,6 +5078,13 @@ def create_app(
     plugins.add_routes(app, plugins.PluginStore(
         backend.config_path.parent / "plugins",
         publish=lambda listed: backend.broadcast.publish_threadsafe({"type": "plugins", "plugins": listed}),
+    ))
+
+    # The pictures and models the PNP tab's Machine view draws, per machine
+    # file, kept beside the config.
+    machineview.add_routes(app, machineview.MachineViewStore(
+        backend.config_path.parent / "machine-views",
+        exists=lambda machine_id: backend.machine_store.path(machine_id).is_file(),
     ))
 
     @app.delete("/api/jobs/{job_id}")

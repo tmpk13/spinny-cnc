@@ -118,6 +118,7 @@ import { MockAuto } from "./auto.ts";
 import { MockTodo } from "./todo.ts";
 import { MockReports } from "./reports.ts";
 import { MockPlugins } from "./plugins.ts";
+import { MockMachineViews } from "./machineview.ts";
 import type { PluginInfo, PluginWithSource } from "../plugins.ts";
 import type { BugReport, ReportAnswer, ReportSettings } from "../reports.ts";
 import type { TodoItem, TodoList } from "../todo.ts";
@@ -239,6 +240,8 @@ import type {
     MachineProblem,
     MachineResponse,
     MachinesResponse,
+    MachineViewKind,
+    MachineViewState,
     MachineUpdates,
     MachineState,
     MapMode,
@@ -2268,6 +2271,8 @@ export class MockBackend implements Api, EventFeed {
     /** The CAM profiles, by id, as their files read; the shipped ones to start with. */
     private camTexts = new Map<string, string>(SHIPPED_PROFILES.map((profile) => [profile.id, profile.text]));
     private machineTexts = new Map<string, string>(MOCK_MACHINE_TEXTS.map((machine) => [machine.id, machine.text]));
+    // The Machine view's pictures and models, by machine file.
+    private machineViews = new MockMachineViews((id) => this.machineTexts.has(id));
     private order: string[] = [];
     private nextId = 1;
     private session: RunSession | null = null;
@@ -9709,6 +9714,30 @@ export class MockBackend implements Api, EventFeed {
         this.placing().boards = 0;
         this.emitPlacing();
         return this.placingStateOf();
+    }
+
+    async machineView(id: string): Promise<MachineViewState> {
+        return this.machineViews.state(id);
+    }
+
+    async putMachineView(id: string, kind: MachineViewKind, file: File): Promise<MachineViewState> {
+        return this.machineViews.put(id, kind, file);
+    }
+
+    async placeMachineView(id: string, kind: MachineViewKind, box: [number, number, number, number] | null): Promise<MachineViewState> {
+        return this.machineViews.place(id, kind, box);
+    }
+
+    async removeMachineView(id: string, kind: MachineViewKind): Promise<MachineViewState> {
+        return this.machineViews.remove(id, kind);
+    }
+
+    machineViewUrl(id: string, kind: MachineViewKind, _version: number): string {
+        return this.machineViews.url(id, kind);
+    }
+
+    async machineViewBytes(id: string, kind: MachineViewKind, _version: number): Promise<Uint8Array> {
+        return this.machineViews.bytes(id, kind);
     }
 
     /** One value of a machine file changed in its text, comments and all; a plain table not there yet is added at its end. */

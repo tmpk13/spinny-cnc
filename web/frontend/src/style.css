@@ -5774,6 +5774,162 @@ table.find-guesses tr.elsewhere td {
     transform-origin: top right;
 }
 
+/* The Machine view: the bed from above, in the machine's frame. Its lines
+   keep one width on the screen whatever the drawing's scale. */
+.machine-view-frame {
+    width: 100%;
+    max-height: 70vh;
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+    background: var(--pv-bg);
+    overflow: hidden;
+}
+
+.machine-view-svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: crosshair;
+    touch-action: none;
+}
+
+.machine-view-frame.dragging .machine-view-svg {
+    cursor: grabbing;
+}
+
+.machine-view-svg :is(rect, circle, polygon, polyline) {
+    vector-effect: non-scaling-stroke;
+    stroke-width: 1.5;
+}
+
+.machine-view-picture {
+    opacity: 0.85;
+}
+
+.machine-view-svg .mv-travel {
+    fill: color-mix(in oklab, var(--base1) 12%, transparent);
+    stroke: var(--pv-outline);
+}
+
+.machine-view-svg .mv-travel.mv-guessed {
+    stroke-dasharray: 2 4;
+}
+
+.machine-view-svg .mv-bed {
+    fill: none;
+    stroke: var(--cyan);
+    stroke-dasharray: 6 3;
+}
+
+.machine-view-svg .mv-area {
+    fill: color-mix(in oklab, var(--green) 18%, transparent);
+    stroke: var(--green);
+    stroke-dasharray: 5 3;
+    stroke-width: 2;
+}
+
+.machine-view-svg .mv-area.mv-only {
+    stroke-dasharray: none;
+}
+
+.machine-view-svg .mv-pending {
+    fill: color-mix(in oklab, var(--orange) 12%, transparent);
+    stroke: var(--orange);
+    stroke-dasharray: 3 2;
+    stroke-width: 2;
+}
+
+.machine-view-svg .mv-place {
+    fill: var(--violet);
+    stroke: none;
+}
+
+.machine-view-svg .mv-stop {
+    fill: var(--yellow);
+    stroke: none;
+}
+
+.machine-view-svg .mv-board {
+    fill: none;
+    stroke: var(--magenta);
+    stroke-width: 2;
+}
+
+.machine-view-svg .mv-board.mv-unsure {
+    stroke-dasharray: 4 3;
+}
+
+.machine-view-svg circle.mv-board {
+    fill: color-mix(in oklab, var(--magenta) 30%, transparent);
+}
+
+.machine-view-svg .mv-view {
+    fill: color-mix(in oklab, var(--blue) 10%, transparent);
+    stroke: var(--blue);
+    stroke-width: 1;
+}
+
+.machine-view-svg .mv-camera {
+    fill: none;
+    stroke: var(--blue);
+}
+
+.machine-view-svg .mv-head {
+    fill: none;
+    stroke: var(--blue);
+    stroke-width: 2;
+}
+
+.machine-view-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--flow-tight) var(--flow);
+}
+
+.machine-view-key {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3em;
+}
+
+.machine-view-swatch {
+    display: inline-block;
+    width: 1.1em;
+    height: 0.7em;
+    border: 0.15em solid var(--pv-outline);
+    border-radius: 0.15em;
+}
+
+.machine-view-swatch.bed {
+    border-color: var(--cyan);
+    border-style: dashed;
+}
+
+.machine-view-swatch.area {
+    border-color: var(--green);
+    background: color-mix(in oklab, var(--green) 18%, transparent);
+}
+
+.machine-view-swatch.head {
+    border-color: var(--blue);
+}
+
+.machine-view-swatch.board {
+    border-color: var(--magenta);
+}
+
+.machine-view-swatch.stop {
+    border-color: var(--yellow);
+    background: var(--yellow);
+    width: 0.6em;
+    border-radius: 50%;
+}
+
+.machine-view-swatch.pending {
+    border-color: var(--orange);
+    border-style: dashed;
+}
+
 /* Flow: the space between blocks stacked in a box belongs to the box, not
    to the blocks. A block in one of these boxes has no vertical margin of
    its own; each one after a shown sibling gets a --flow space over it. A

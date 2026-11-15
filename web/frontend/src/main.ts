@@ -356,6 +356,7 @@ function main(): void {
         top: panel("pnp-top"),
         refs: panel("pnp-refs"),
         feeders: panel("pnp-feeders"),
+        machineView: panel("pnp-machine-view"),
         run: panel("pnp-run"),
         find: panel("pnp-find"),
         cameraFolds: { controls: panel("pnp-camera-controls"), sight: panel("pnp-camera-sight") },

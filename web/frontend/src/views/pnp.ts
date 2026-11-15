@@ -4,8 +4,9 @@
 // jog of the machine connected; the cameras' pictures; the up camera's
 // settings with where it sits on the machine; and when the machine is a
 // G-code one (its file says controller = "gcode") its panels for placing:
-// the head, the top camera, the board's place on it, the feeders, and the
-// run. Its own setup steps lead through all of it.
+// the head, the top camera, the board's place on it, the feeders, the
+// machine's bed from above (the Machine view), and the run. Its own setup
+// steps lead through all of it.
 
 import { activePage, button, el, labeled, lockFor, numberField, readStored, replace, resizableBox, setLocked, Tracked, writeStored } from "../dom.ts";
 import { formatFixed, formatPercent, parseNumber } from "../format.ts";
@@ -23,6 +24,7 @@ import { mountFindBoard, shownGuesses } from "./findboard.ts";
 import { PLACING_SETUP, gcodePlacing, mountHead, upCameraText } from "./placing.ts";
 import { keptOut, mountPartsFilter, pickedToPlace, readShowKeptOut, setPickedToPlace, shownParts, writeShowKeptOut } from "./partsfilter.ts";
 import { mountBoardSearch } from "./partsearch.ts";
+import { mountMachineView } from "./machineview.ts";
 import { mountPnpFeeders } from "./pnpfeeders.ts";
 import { mountPnpRefs } from "./pnprefs.ts";
 import { mountPnpRun } from "./pnprun.ts";
@@ -560,6 +562,8 @@ export interface PnpRoots {
     refs: HTMLElement;
     /** A G-code machine's feeders, and its feeder bus. */
     feeders: HTMLElement;
+    /** A G-code machine's bed from above, where boards are placed on it, and a picture or model of it. */
+    machineView?: HTMLElement;
     /** Placing with a G-code machine. */
     run: HTMLElement;
     /** The look for the board with a camera picked. */
@@ -591,6 +595,9 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     // The top camera's picture is drawn again when the part's shape is turned on or off.
     mountPnpRefs(roots.refs, ctx, () => views.top.render(ctx.store.get()));
     mountPnpFeeders(roots.feeders, ctx);
+    if (roots.machineView) {
+        mountMachineView(roots.machineView, ctx);
+    }
     mountPnpRun(roots.run, ctx);
     const views = mountCameraViews({ bottom: roots.view, top: roots.topView }, ctx);
     mountTopCamera(roots.top, ctx, () => visible() && gcodePlacing(ctx.store.get()), roots.topFolds);
@@ -1474,7 +1481,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         shownGcode = onDevice;
         // The up camera serves either machine; the nozzle panel is this project's machine's.
         roots.nozzle.classList.toggle("hidden", onDevice);
-        for (const root of [roots.head, roots.refs, roots.feeders, roots.run, roots.top, roots.topFolds?.controls, roots.topFolds?.sight]) {
+        for (const root of [roots.head, roots.refs, roots.feeders, roots.machineView, roots.run, roots.top, roots.topFolds?.controls, roots.topFolds?.sight]) {
             if (!root) {
                 continue;
             }
