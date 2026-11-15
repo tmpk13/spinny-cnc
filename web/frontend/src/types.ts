@@ -1053,7 +1053,19 @@ export type WsEvent =
     | { type: "searchlog"; data: SearchLogState }
     | { type: "findings"; data: FindingsLog }
     | { type: "auto"; data: AutoEvent }
-    | { type: "plugins"; data: { plugins: PluginInfo[] } };
+    | { type: "plugins"; data: { plugins: PluginInfo[] } }
+    | { type: "changed"; data: ChangedNotice };
+
+/**
+ * Something a page may show was written, by this page or another one (a
+ * second tab, another computer, the MCP tools): the controller's settings
+ * or the host's values (`settings`), a machine file or the one in use
+ * (`machines`), or a CAM profile (`cam`), and the file's id.
+ */
+export interface ChangedNotice {
+    what: "settings" | "machines" | "cam";
+    id: string | null;
+}
 
 // --- The Auto tab ----------------------------------------------------------------
 

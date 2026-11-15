@@ -53,6 +53,7 @@ export interface EventSocketOptions {
 const EVENT_TYPES = new Set<string>([
     "state", "console", "progress", "heightmap", "message", "camera", "align", "pnp", "placing", "markers", "camlog", "searchlog", "findings", "auto",
     "plugins",
+    "changed",
 ] satisfies WsEvent["type"][]);
 
 /** Reads an event frame; `data`, `payload` or the flattened fields carry the payload. */

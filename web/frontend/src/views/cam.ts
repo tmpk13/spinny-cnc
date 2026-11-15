@@ -628,6 +628,17 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
         jobPick.value = want ?? state.jobs[0]?.id ?? "";
     }
     ctx.store.subscribe(renderJobs, ["jobs", "job"]);
+    // A profile written elsewhere (another tab, the MCP tools): the list
+    // again, and the one shown read again unless it holds edits here.
+    ctx.store.subscribe((state) => {
+        if (state.changed?.what !== "cam") {
+            return;
+        }
+        void refreshList();
+        if (picked !== null && state.changed.id === picked && !dirty) {
+            void load(picked);
+        }
+    }, ["changed"]);
     renderJobs(ctx.store.get());
 
     async function exportGcode(): Promise<void> {

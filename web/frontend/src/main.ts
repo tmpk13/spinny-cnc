@@ -251,6 +251,24 @@ export function applyEvent(ctx: Ctx, event: WsEvent): void {
         case "plugins":
             store.set({ plugins: event.data.plugins });
             break;
+        case "changed": {
+            // Written by this page or by another (a second tab, another
+            // computer, the MCP tools): the part named is read again, so a
+            // tab open on the Use side shows what the Setup side saved.
+            const notice = event.data;
+            const state = store.get();
+            store.set({ changed: { ...notice, count: (state.changed?.count ?? 0) + 1 } });
+            if (notice.what === "machines") {
+                void ctx.refreshMachines();
+            }
+            // The settings carry the controls of the file they are, or were
+            // drawn from; with no machine connected there are none to read.
+            const ownFile = notice.what === "machines" && notice.id !== null && (notice.id === state.settings?.machine || notice.id === state.settings?.controls_from);
+            if ((notice.what === "settings" || ownFile) && state.snapshot.connected) {
+                void ctx.refreshSettings();
+            }
+            break;
+        }
         case "align":
             store.set({ align: event.data });
             // An alignment applied has moved the job: the selected copy is stale.

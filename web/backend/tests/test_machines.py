@@ -188,6 +188,31 @@ def test_a_file_is_checked_saved_and_removed_through_the_api(client):
     assert client.get("/api/machines/new-one").status_code == 404
 
 
+def changed_events(queue, count: int) -> list[dict]:
+    """The `changed` events published, waiting up to a second for `count` of them."""
+    events: list[dict] = []
+    for _ in range(100):
+        while not queue.empty():
+            event = queue.get_nowait()
+            if event.get("type") == "changed":
+                events.append(event)
+        if len(events) >= count:
+            break
+        time.sleep(0.01)
+    return events
+
+
+def test_every_page_hears_a_machine_file_written_and_nothing_of_one_refused(client):
+    queue = client.backend.broadcast.subscribe()
+    assert client.put("/api/machines/broken", json={"text": "[rail]\nmax_rate = 0\n"}).status_code == 400
+    assert client.post("/api/machines/bare/check", json={"text": "name = \"Checked\"\n"}).status_code == 200
+    assert client.put("/api/machines/bare", json={"text": "name = \"Saved\"\n"}).status_code == 200
+    assert client.delete("/api/machines/broken").status_code == 200
+    events = changed_events(queue, 2)
+    # A refused save and a check write nothing, so they are not news.
+    assert [(event["what"], event["id"]) for event in events] == [("machines", "bare"), ("machines", "broken")]
+
+
 def test_two_saves_of_one_file_at_once_both_succeed(client):
     store = client.backend.machine_store
     failures: list[Exception] = []

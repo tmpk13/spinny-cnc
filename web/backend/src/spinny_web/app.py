@@ -4841,13 +4841,24 @@ def create_app(
 
     # --- settings ---
 
+    def changed(what: str, ident: str | None = None) -> None:
+        """Tells every page that something it may show was written: `what` is
+        `settings` (the controller's settings or the host's values),
+        `machines` (a machine file, or the one in use) or `cam` (a CAM
+        profile), `id` the file. A page open in another tab, or on another
+        computer, reads that part again instead of showing what it read
+        before; the page that wrote it has read it already."""
+        backend.broadcast.publish_threadsafe({"type": "changed", "what": what, "id": ident})
+
     @app.get("/api/settings")
     def settings():
         return guarded(backend.read_settings)
 
     @app.put("/api/settings")
     def put_settings(body: SettingsBody):
-        return guarded(lambda: backend.write_settings(body.values, body.host))
+        result = guarded(lambda: backend.write_settings(body.values, body.host))
+        changed("settings")
+        return result
 
     @app.get("/api/machines")
     def machines():
@@ -4861,6 +4872,7 @@ def create_app(
     def machine_save(machine_id: str, body: MachineTextBody):
         result = guarded(lambda: backend.machine_store.save(machine_id, body.text))
         backend.machine_written(machine_id)
+        changed("machines", machine_id)
         return result
 
     @app.post("/api/machines/{machine_id}/check")
@@ -4879,6 +4891,7 @@ def create_app(
             backend.machine_store.remove(machine_id)
 
         guarded(remove)
+        changed("machines", machine_id)
         return {"deleted": machine_id}
 
     @app.patch("/api/machines/{machine_id}")
@@ -4886,19 +4899,27 @@ def create_app(
         result = guarded(lambda: backend.machine_store.patch(machine_id, body.path, body.value))
         backend.machine_written(machine_id)
         backend.publish_placing()
+        changed("machines", machine_id)
         return result
 
     @app.post("/api/machines/{machine_id}/apply")
     def apply_machine(machine_id: str, body: ApplyMachineBody | None = None):
-        return guarded(lambda: backend.apply_machine(machine_id, bool(body and body.save)))
+        result = guarded(lambda: backend.apply_machine(machine_id, bool(body and body.save)))
+        changed("settings")
+        changed("machines", machine_id)
+        return result
 
     @app.post("/api/machines/{machine_id}/use")
     def use_machine(machine_id: str):
-        return guarded(lambda: backend.use_machine(machine_id))
+        result = guarded(lambda: backend.use_machine(machine_id))
+        changed("machines", machine_id)
+        return result
 
     @app.post("/api/settings/save")
     def save_settings():
-        return guarded(backend.save_settings)
+        result = guarded(backend.save_settings)
+        changed("settings")
+        return result
 
     # --- CAM profiles ---
 
@@ -4912,15 +4933,20 @@ def create_app(
 
     @app.put("/api/cam/{profile_id}")
     def cam_save(profile_id: str, body: CamTextBody):
-        return guarded(lambda: backend.cam.save(profile_id, body.text))
+        result = guarded(lambda: backend.cam.save(profile_id, body.text))
+        changed("cam", profile_id)
+        return result
 
     @app.patch("/api/cam/{profile_id}")
     def cam_patch(profile_id: str, body: CamPatchBody):
-        return guarded(lambda: backend.cam.patch(profile_id, body.path, body.value))
+        result = guarded(lambda: backend.cam.patch(profile_id, body.path, body.value))
+        changed("cam", profile_id)
+        return result
 
     @app.delete("/api/cam/{profile_id}")
     def cam_delete(profile_id: str):
         guarded(lambda: backend.cam.remove(profile_id))
+        changed("cam", profile_id)
         return {"deleted": profile_id}
 
     @app.post("/api/cam/{profile_id}/jobs")

@@ -307,6 +307,7 @@ import type {
     UpdateState,
     UploadOptions,
     WsEvent,
+    ChangedNotice,
 } from "../types.ts";
 import type { EventFeed } from "../ws.ts";
 
@@ -2398,6 +2399,11 @@ export class MockBackend implements Api, EventFeed {
         }
     }
 
+    /** Tells the pages a part they show was written, as the backend's `changed` event does. */
+    private emitChanged(what: ChangedNotice["what"], id: string | null): void {
+        this.emit({ type: "changed", data: { what, id } });
+    }
+
     private line(dir: "tx" | "rx", text: string): void {
         this.emit({ type: "console", data: { dir, text } });
     }
@@ -3795,6 +3801,7 @@ export class MockBackend implements Api, EventFeed {
         if (read.document.controller === "gcode") {
             this.emitPlacing();
         }
+        this.emitChanged("machines", id);
         return this.machines();
     }
 
@@ -3851,6 +3858,7 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, read.problems[0] ?? "the text does not read");
         }
         this.machineTexts.set(id, kept);
+        this.emitChanged("machines", id);
         return { ...read, text: kept };
     }
 
@@ -3860,6 +3868,7 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(409, "disconnect the machine before removing its file");
         }
         this.machineTexts.delete(id);
+        this.emitChanged("machines", id);
     }
 
     /** A machine file's every setting, as the backend writes them: all or nothing, then saved to flash when asked. */
@@ -3881,6 +3890,8 @@ export class MockBackend implements Api, EventFeed {
         if (save) {
             await this.saveSettings();
         }
+        this.emitChanged("settings", null);
+        this.emitChanged("machines", id);
         return this.settings();
     }
 
@@ -3964,6 +3975,7 @@ export class MockBackend implements Api, EventFeed {
                 job.stats = computeStats(job.groups, this.limits());
             }
         }
+        this.emitChanged("settings", null);
     }
 
     /** The machine's part of a settings write: refused while a run or probing owns the machine. */
@@ -4035,6 +4047,7 @@ export class MockBackend implements Api, EventFeed {
             this.machine.flash = { ...this.machine.settings };
         });
         this.message("info", "settings written to flash (mock)");
+        this.emitChanged("settings", null);
     }
 
     /** The rates a job is priced at, held to what the step generator pulses as the backend's are. */
@@ -4124,6 +4137,7 @@ export class MockBackend implements Api, EventFeed {
         const kept = text.endsWith("\n") ? text : text + "\n";
         const response = this.camDocument(id, kept);
         this.camTexts.set(id, kept);
+        this.emitChanged("cam", id);
         return response;
     }
 
@@ -4141,6 +4155,7 @@ export class MockBackend implements Api, EventFeed {
     async deleteCamProfile(id: string): Promise<void> {
         this.camText(id);
         this.camTexts.delete(id);
+        this.emitChanged("cam", id);
     }
 
     /** The first design file through the profile; a board's siblings are not read here. */

@@ -13,6 +13,7 @@ import type {
     CamLogState,
     CamerasResponse,
     CameraState,
+    ChangedNotice,
     Compensate,
     ComponentsResponse,
     ConsoleLine,
@@ -153,6 +154,8 @@ export interface AppState {
     mapPick: Compensate | null;
     /** Edits typed and not applied yet, counted by the panel that holds them (`PENDING_PAGES` and `pendingOn` put them on a tab). */
     pending: Record<string, number>;
+    /** The last write the backend told of (a `changed` event), counted, so a view keeping a list of its own (the CAM profiles) reads it again; null before any. */
+    changed: (ChangedNotice & { count: number }) | null;
     console: ConsoleLine[];
     /** Show the link's status polls in the console. */
     showPolls: boolean;
@@ -201,6 +204,7 @@ export function initialState(mock: boolean): AppState {
         mapChoice: "off",
         mapPick: null,
         pending: {},
+        changed: null,
         console: [],
         showPolls: false,
         toasts: [],
