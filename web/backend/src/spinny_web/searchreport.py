@@ -453,6 +453,8 @@ def what_ifs(record: Record, truth: Place | None = None, needs=NEEDS, agrees=AGR
             consensus = Consensus(
                 record.middle, need=int(need), agree_mm=float(agree), agree_deg=settings.get("agree_deg"), history=settings.get("history"),
                 threshold=settings.get("threshold"), corner_mm=settings.get("corner_mm"), corners=corners_from(settings.get("corners")),
+                # A record from before the least match took every lock.
+                min_match=settings.get("min_match", 0.0),
                 # A record from before locks were counted called the board
                 # found from one.
                 sessions=settings.get("sessions") or 1,

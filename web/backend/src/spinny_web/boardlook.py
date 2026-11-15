@@ -91,6 +91,15 @@ RECHECK_SECONDS = 2.0
 # at least this share of its evidence is ambiguous: the picture fits
 # another place about as well.
 AMBIGUOUS = 0.8
+# The vote leaves out a lock that paired less than this share of the
+# features pcbv expected in its picture (match_of). pcbv itself takes a
+# quarter. On a LumenPnP over a populated board 169 pictures with the
+# head's places known locked right at 0.64 to 0.98 and wrong (70 to 100 mm
+# off, a turned cluster, a feeder's tape) at a median of 0.32; two searches
+# started at the board's edge called such a place found and failed every
+# check, and with this share left out of them neither did while ten
+# others found the board as before.
+MIN_MATCH = 0.5
 # A guess whose looks were taken from places at least this far apart, mm,
 # takes the board's turn and place from the head's moves: the job point
 # under each picture's center against where that center was on the
@@ -596,8 +605,10 @@ class Consensus:
         corner_mm: float | None = None,
         corners: list[Corner] | None = None,
         sessions: int | None = None,
+        min_match: float | None = None,
     ) -> None:
         self.middle = middle
+        self.min_match = MIN_MATCH if min_match is None else min_match
         self.need = NEED if need is None else need
         # Never more locks than looks: one look comes from one lock.
         self.sessions = min(max(1, SESSIONS if sessions is None else int(sessions)), max(self.need, 1))
@@ -680,7 +691,11 @@ class Consensus:
 
     def see(self, state: str | None, estimate: Estimate | None, problem: str | None) -> None:
         """One pose read: its state, the estimate it gave (None when it gave
-        none, or could not be used), and why not when it could not."""
+        none, or could not be used), and why not when it could not. A lock
+        that matched under `min_match` is left out (MIN_MATCH says why)."""
+        if estimate is not None and estimate.match < self.min_match:
+            problem = f"the lock paired {estimate.match * 100.0:.0f}% of what its picture should show, under {self.min_match * 100.0:.0f}%"
+            estimate = None
         with self._mutex:
             self.looks += 1
             self.last_state = state
@@ -2012,6 +2027,7 @@ def settings_now(look: BoardLook | None = None, job_id: str | None = None) -> di
         "stretch": bool(options.get("stretch")) and method == "posterior",
         "agree_mm": AGREE_MM,
         "agree_deg": AGREE_DEG,
+        "min_match": MIN_MATCH,
         "need": NEED,
         "sessions": SESSIONS,
         "history": HISTORY,

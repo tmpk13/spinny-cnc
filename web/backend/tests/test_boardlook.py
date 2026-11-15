@@ -192,14 +192,14 @@ def test_the_threshold_is_the_least_share_and_the_matches_weigh_the_looks():
     assert consensus.found and consensus.lead.probability == pytest.approx(0.9)
     consensus.tune(threshold=0.95)
     assert not consensus.found and consensus.agree == 9
-    # Five looks matched poorly against five matched well: the well matched
-    # guess leads, though it has as many looks.
+    # Five looks matched less well against five matched well: the well
+    # matched guess leads, though it has as many looks.
     weighed = Consensus()
     for _ in range(5):
-        weighed.see("locked", estimate(10.0, match=0.3), None)
+        weighed.see("locked", estimate(10.0, match=0.6), None)
         weighed.see("locked", estimate(30.0, match=0.9), None)
     assert weighed.found and weighed.best.center[0] == pytest.approx(30.0)
-    assert weighed.lead.probability == pytest.approx(0.75) and weighed.guesses[1].probability == pytest.approx(0.25)
+    assert weighed.lead.probability == pytest.approx(0.6) and weighed.guesses[1].probability == pytest.approx(0.4)
     # Two guesses with the same share: neither leads, whatever the threshold.
     tied = Consensus(threshold=0.0)
     for _ in range(5):
@@ -504,3 +504,16 @@ def test_looks_from_places_far_apart_turn_the_board_by_the_head_s_moves_whatever
     assert best.center == pytest.approx(machine_middle, abs=1e-6)
     assert best.roll_off == pytest.approx(0.4, abs=1e-6)
     assert far.to_dict()["estimate"]["roll_off"] == pytest.approx(0.4, abs=1e-4)
+
+
+def test_the_vote_leaves_out_a_lock_that_paired_under_half_of_what_it_should_show():
+    consensus = Consensus(MIDDLE, need=1, sessions=1)
+    consensus.see("locked", estimate(10.0, match=0.33), None)
+    assert consensus.guesses == [] and consensus.view is None and not consensus.found
+    assert "paired 33% of what its picture should show, under 50%" in consensus.problem
+    consensus.see("locked", estimate(10.0, match=0.8), None)
+    assert consensus.found and consensus.best.center == (10.0, 0.0) and consensus.problem is None
+    # A replay can take every lock, as a record from before did.
+    every = Consensus(MIDDLE, need=1, sessions=1, min_match=0.0)
+    every.see("locked", estimate(10.0, match=0.33), None)
+    assert every.found
