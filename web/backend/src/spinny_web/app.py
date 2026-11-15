@@ -981,7 +981,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         self.top_look = BoardLook(
             lambda: self.top.client, self.publish_placing, paused=lambda: self.top.routine_active,
             tuning=lambda: _look_tuning(self.top.settings()), options=lambda: _look_options(self.top.settings()),
-            crop=lambda: self.top.crop("measure"),
+            crop=lambda: self.top.crop("measure"), board_crop=self.top.board_crop,
         )
         self._head_rest = RestTracker()
         self._top_rest = RestTracker()
@@ -3302,14 +3302,15 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         x0, y0, x1, y1 = box
         return ((x0 + x1) / 2.0, (y0 + y1) / 2.0), max(math.hypot(x1 - x0, y1 - y0), 1.0)
 
-    def _check_places(self, job, view: tuple[float, float]) -> Callable[[Estimate], list[tuple[float, float]]]:
+    def _check_places(self, job, view: tuple[float, float], box=None) -> Callable[[Estimate], list[tuple[float, float]]]:
         """Where a search checks the job's board once found: its middle, or
-        the part of it with the most pads and holes in a picture `view` mm
-        (boardlook.check_places)."""
+        the part of it with the most pads and holes in a picture `view` mm,
+        or in its crop `box` (crops.crop_box_mm), each over the middle of
+        its pads (boardlook.check_places)."""
         middle, _ = self._board_size(job)
         outline = self._board_box(job)
         features = [(float(p[0]), float(p[1])) for p in job.pads] + [(float(h[0]), float(h[1])) for h in job.holes]
-        return lambda found: check_places(found, middle, outline, features, view)
+        return lambda found: check_places(found, middle, outline, features, view, box=box)
 
     def _corners_box(self, look: BoardLook, job, corner_mm: float) -> tuple[float, float, float, float] | None:
         """The box a search covers by default once corners of the job's

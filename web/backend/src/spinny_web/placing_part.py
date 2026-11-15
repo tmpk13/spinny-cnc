@@ -50,6 +50,7 @@ from .placer import Placement, PlaceSetup, fiducial_fit
 from .pnp import CameraPlace, PnpError
 from .log import log
 from .topcam import APPROACH_MM, Found
+from .crops import crop_box_mm
 from .vision import VisionError, scale_range
 
 if TYPE_CHECKING:
@@ -565,10 +566,12 @@ class PlacingPart:
         box = box or search_box(center, diagonal)
         if not stops:
             stops = search_stops(box, view, known.place.center if known is not None else center, coarse)
+        # The board crop pcbv looks in, where the checks count pads.
+        crop_box = crop_box_mm(self.top.board_crop(), width, height, scale, roll, settings.mirror)
         if known is not None:
             # Where the known place puts the most pads in a picture first:
             # its middle may be bare, its edges lock wrong.
-            stops = self._check_places(job, (width * scale, height * scale))(known.place)[:KNOWN_FIRST] + stops
+            stops = self._check_places(job, (width * scale, height * scale), crop_box)(known.place)[:KNOWN_FIRST] + stops
         # The posterior steers to the stop that tells most for its time,
         # unless a known place already put the board's dense places first:
         # steered past them, a LumenPnP search waited out bare stops.
@@ -595,8 +598,8 @@ class PlacingPart:
             found = search(
                 look, mover, stops, offset, lambda point: PictureFrame(point, roll, settings.mirror),
                 mover.stopped, lambda index, count: self.top._step(progress, f"stop {index + 1}"), PnpError, record,
-                checks=self._check_places(job, (width * scale, height * scale)), known=known, side=settings.side, box=box, prior=prior, steer=steer,
-                picture=(width, height, scale), outline=self._board_box(job),
+                checks=self._check_places(job, (width * scale, height * scale), crop_box), known=known, side=settings.side, box=box, prior=prior,
+                steer=steer, picture=(width, height, scale), outline=self._board_box(job),
                 quick=quick,
             )
             self._learn_from_look("top", look, found)

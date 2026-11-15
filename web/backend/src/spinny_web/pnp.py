@@ -37,7 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from spinny_laser import machines as machine_files
 
 from .cameras import apply_kept, check_controls
-from .crops import NO_CROPS, Crop, clip_radius, picture_size
+from .crops import NO_CROPS, Crop, clip_radius, is_whole, picture_size
 from .findings import Findings, FindingsLog, Target
 from .camera import CAPTURE_KEYS, DONE, ERROR, RUNNING, STOPPED, MachineAccess, Spot, look_dict, picture_to_machine, spot_of, wait_settled
 from .kinematics import FOCUS_DECIMALS, coord
@@ -861,6 +861,14 @@ class PickCamera:
             log.warning("%s: no crops: %s", self.label, exc)
             return None
         return tuple(float(v) for v in box) if box is not None else None
+
+    def board_crop(self) -> Crop | None:
+        """The crop pcbv's board look keeps to: the board task's, when this
+        camera's pcbv takes crops; None for the whole picture."""
+        if self.board_task is None or not getattr(self.client, "can_crop", False):
+            return None
+        crop = self.crop(self.board_task)
+        return None if is_whole(crop) else crop
 
     def crop_state(self, task: str | None) -> dict | None:
         """A task and its crop, as a routine's progress shows them."""

@@ -373,6 +373,23 @@ def test_a_board_found_is_checked_where_the_picture_holds_the_most_pads():
     assert boardlook.check_places(found, MIDDLE, None, [], view) == [pytest.approx((120.0, 65.0))]
 
 
+def test_a_check_is_put_over_the_middle_of_the_pads_it_holds_and_its_crop_over_them():
+    found = Estimate(0.0, (100.0, 50.0), (120.0, 65.0), 0.0)
+    outline = (0.0, 0.0, 40.0, 30.0)
+    view = (25.6, 14.4)
+    # One cluster of pads off any lattice place: the check's picture center
+    # lands on the cluster's middle, so its point is between pads.
+    pads = [(20.0 + 0.5 * i, 16.0 + 0.5 * j) for i in range(9) for j in range(5)]
+    first = boardlook.check_places(found, MIDDLE, outline, pads, view)[0]
+    assert (first[0] - 100.0, first[1] - 50.0) == pytest.approx((22.0, 17.0))
+    # A crop over the picture's right half, 6.4 mm right of its center: the
+    # crop goes over the pads, the picture's center 6.4 mm left of them.
+    box = ((6.4, 0.0), (12.8, 14.4))
+    cropped = boardlook.check_places(found, MIDDLE, outline, pads, view, box=box)[0]
+    assert (cropped[0] - 100.0, cropped[1] - 50.0) == pytest.approx((22.0 - 6.4, 17.0))
+    assert boardlook.held_counts(found, [(22.0, 17.0)], pads, view, box) == [len(pads)]
+
+
 def test_a_measured_scale_keeps_the_board_search_within_three_percent_of_it():
     from spinny_web.vision import board_fields, board_record_fields, scale_range
 

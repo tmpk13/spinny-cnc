@@ -1013,6 +1013,7 @@ class BoardLook:
         tuning: Callable[[], tuple[float, float]] | None = None,
         options: Callable[[], dict] | None = None,
         crop: Callable[[], tuple | None] | None = None,
+        board_crop: Callable[[], tuple | None] | None = None,
     ) -> None:
         self._client = client
         self._publish = publish
@@ -1020,6 +1021,9 @@ class BoardLook:
         # The part of the picture the busy test measures (crops.py), as the
         # camera's file has it now; None for the whole picture.
         self.crop: Callable[[], tuple | None] = crop or (lambda: None)
+        # The crop pcbv's board look keeps to (None: the whole picture), for
+        # where the posterior counts a picture's pads (posterior.View).
+        self.board_crop: Callable[[], tuple | None] = board_crop or (lambda: None)
         # The camera's threshold and corners' tolerance, as they are now.
         self.tuning: Callable[[], tuple[float, float]] = tuning or (lambda: (THRESHOLD, CORNER_MM))
         # How the camera's look calls a board found (`method`: vote or
@@ -1219,11 +1223,13 @@ class BoardLook:
 
             board = Board.of(middle, self._outline, self._features)
             scale = options.get("scale")
-            return Posterior(
+            posterior = Posterior(
                 board, box, prior, threshold=threshold, corner_mm=corner_mm, corners=self.corners_of(job_id),
                 scale=float(scale) if isinstance(scale, (int, float)) else None, stretch=bool(options.get("stretch")),
                 marks=list(options.get("marks") or []), delay=(DELAY_S, DELAY_SIGMA_S) if flying else None,
             )
+            posterior.crop = self.board_crop()
+            return posterior
         return Consensus(middle, threshold=threshold, corner_mm=corner_mm, corners=self.corners_of(job_id))
 
     def corners_of(self, job_id: str | None) -> list[Corner]:
@@ -1360,6 +1366,9 @@ class BoardLook:
             # The candidates are of the frame their search ran on, which
             # may have been taken before the newest, from another place.
             searched_where = place(received - float(age) / 1000.0)
+        if hasattr(self.consensus, "crop"):
+            # A crop changed in the machine file holds from the next picture.
+            self.consensus.crop = self.board_crop()
         self.consensus.take(raw, where, captured, to_job, estimate, problem, estimate.session if estimate is not None else self.resets, searched_where)
         if not self.searching and self.consensus.found and self.consensus.best is not None:
             # A search remembers only a place its check agreed with.
@@ -1719,24 +1728,42 @@ def look_at_stop(
         time.sleep(SAMPLE_SECONDS / 2.0)
 
 
-def held_counts(found: Estimate, places: list[Point], features: list[Point], view: tuple[float, float]) -> list[int]:
+# Rounds of putting a check's picture over the middle of the pads it holds
+# (check_places): the point under the picture's center is then
+# interpolated between pads, not extrapolated past them, so a scale, lens
+# or height error moves it least (OpenPnP's fiducial locator looks again
+# centered on what it found).
+CENTER_ROUNDS = 2
+
+# Where a crop lies about the picture's center: its center's offset and its
+# extent, mm along the machine's axes (crops.crop_box_mm).
+CropBox = tuple[Point, tuple[float, float]]
+
+
+def _held(found: Estimate, place: Point, machine: np.ndarray, view: tuple[float, float], box: CropBox | None) -> np.ndarray:
+    """Which features (`machine`, their places on the machine) a look
+    whose sight is centered where `found` puts the job point `place` holds:
+    nine tenths of its picture `view` (width, height mm), or of its crop
+    (`box`'s extent), about that point, the sides along the machine's axes."""
+    mx, my = found.apply(place)
+    w, h = box[1] if box is not None else view
+    return (np.abs(machine[:, 0] - mx) <= 0.45 * w) & (np.abs(machine[:, 1] - my) <= 0.45 * h)
+
+
+def held_counts(found: Estimate, places: list[Point], features: list[Point], view: tuple[float, float], box: CropBox | None = None) -> list[int]:
     """How many of the job's pads and holes (`features`) a picture `view`
-    (width, height mm, nine tenths of it) holds about each place (job
-    frame) where `found` puts the board: the picture's sides along the
-    machine's axes."""
+    (width, height mm, nine tenths of it, or of its crop `box`) holds with
+    its sight (the picture, or its crop) centered on each place (job frame)
+    where `found` puts the board: the sides along the machine's axes."""
     if not features or not places:
         return [0 for _ in places]
     machine = np.array([found.apply(f) for f in features])
-    half_w, half_h = 0.45 * view[0], 0.45 * view[1]
-    counts = []
-    for place in places:
-        mx, my = found.apply(place)
-        inside = (np.abs(machine[:, 0] - mx) <= half_w) & (np.abs(machine[:, 1] - my) <= half_h)
-        counts.append(int(inside.sum()))
-    return counts
+    return [int(_held(found, place, machine, view, box).sum()) for place in places]
 
 
-def dense_places(found: Estimate, middle: Point, outline: Box | None, features: list[Point], view: tuple[float, float]) -> list[tuple[Point, int]]:
+def dense_places(
+    found: Estimate, middle: Point, outline: Box | None, features: list[Point], view: tuple[float, float], box: CropBox | None = None,
+) -> list[tuple[Point, int]]:
     """Places on the board for the picture's center (job frame) with the
     pads and holes a picture there holds, the most first (ties: nearer the
     middle): a grid half a picture apart over the board's outline less
@@ -1748,15 +1775,39 @@ def dense_places(found: Estimate, middle: Point, outline: Box | None, features: 
         return [(middle, 0)]
     x0, y0, x1, y1 = outline
     margin = min(EDGE_MM, 0.2 * min(x1 - x0, y1 - y0))
-    spacing = max(min(view) / 2.0, 0.5)
+    sight = box[1] if box is not None else view
+    spacing = max(min(sight) / 2.0, 0.5)
     places = [middle] + _lattice(x0 + margin, y0 + margin, x1 - margin, y1 - margin, spacing, spacing)
-    counts = held_counts(found, places, features, view)
+    counts = held_counts(found, places, features, view, box)
     order = sorted(range(len(places)), key=lambda i: (-counts[i], math.dist(places[i], middle)))
     return [(places[i], counts[i]) for i in order]
 
 
+def centered(
+    found: Estimate, place: Point, features: list[Point], view: tuple[float, float], box: CropBox | None = None, within: Box | None = None,
+) -> Point:
+    """A check's place (job frame) moved over the middle of the pads and
+    holes its picture holds there, CENTER_ROUNDS times, kept `within` a
+    box (job frame: the outline less its edge margin) when given; as it is
+    when it holds none."""
+    if not features:
+        return place
+    jobs = np.asarray(features, dtype=float)
+    machine = np.array([found.apply(f) for f in features])
+    for _ in range(CENTER_ROUNDS):
+        inside = _held(found, place, machine, view, box)
+        if not inside.any():
+            break
+        middle = jobs[inside].mean(axis=0)
+        place = (float(middle[0]), float(middle[1]))
+        if within is not None:
+            place = (min(max(place[0], within[0]), within[2]), min(max(place[1], within[1]), within[3]))
+    return place
+
+
 def check_places(
     found: Estimate, middle: Point, outline: Box | None, features: list[Point], view: tuple[float, float], count: int = MAX_CHECKS,
+    box: CropBox | None = None,
 ) -> list[Point]:
     """Where to check a board found (`found` puts the job's frame on the
     machine), machine points for the picture's center, the best first:
@@ -1764,8 +1815,13 @@ def check_places(
     then among those holding at least half as many each time the one
     farthest from the places taken: checks far apart give the board's
     turn from the head's places (places_fit) over a long baseline; `count`
-    at most. A board without features is checked at its middle."""
-    dense = dense_places(found, middle, outline, features, view)
+    at most. Each is then moved over the middle of the pads its picture
+    holds (centered), inside the outline's edge margin; two that come to
+    the same pads are one. With a crop (`box`) the places are where the
+    crop's center goes, its pads counted, and the picture's center is
+    offset from it by the crop's offset. A board without features is
+    checked at its middle."""
+    dense = dense_places(found, middle, outline, features, view, box)
     ranked = [place for place, held in dense if held * 2 >= dense[0][1]] or [dense[0][0]]
     places: list[Point] = [ranked[0]]
     while len(places) < count:
@@ -1773,7 +1829,20 @@ def check_places(
         if not left:
             break
         places.append(max(left, key=lambda place: min(math.dist(place, kept) for kept in places)))
-    return [found.apply(point) for point in places]
+    (ox, oy) = box[0] if box is not None else (0.0, 0.0)
+    within = None
+    if outline is not None:
+        x0, y0, x1, y1 = outline
+        margin = min(EDGE_MM, 0.2 * min(x1 - x0, y1 - y0))
+        within = (x0 + margin, y0 + margin, x1 - margin, y1 - margin)
+    # Two checks centered onto the same pads are one: the other is dropped.
+    apart = 0.25 * min(box[1] if box is not None else view)
+    kept: list[Point] = []
+    for place in places:
+        moved = centered(found, place, features, view, box, within)
+        if all(math.dist(moved, other) > apart for other in kept):
+            kept.append(moved)
+    return [(found.apply(place)[0] - ox, found.apply(place)[1] - oy) for place in kept]
 
 
 def search(

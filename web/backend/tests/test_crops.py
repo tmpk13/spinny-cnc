@@ -19,7 +19,7 @@ from spinny_laser.cam import set_value
 from spinny_laser.machines import MachineError
 from spinny_web.app import create_app
 from spinny_web.boardlook import BoardLook
-from spinny_web.crops import NO_CROPS, check_crop, check_tasks, clip_radius, crop_rows, cut, reach
+from spinny_web.crops import NO_CROPS, check_crop, check_tasks, clip_radius, crop_box_mm, crop_rows, cut, reach
 from spinny_web.openpnp import parse
 from spinny_web.vision import VisionClient, VisionError
 
@@ -81,6 +81,38 @@ def test_a_picture_is_cut_to_its_crop_and_a_radius_to_its_reach():
 
 
 # --- the machine file --------------------------------------------------------------
+
+
+def test_a_crop_lies_about_the_pictures_center_where_the_roll_and_mirror_put_it():
+    assert crop_box_mm(None, 1280, 720, 0.02, 0.0) is None and crop_box_mm((0.0, 0.0, 1.0, 1.0), 1280, 720, 0.02, 0.0) is None
+    # The picture's right half: its center a quarter picture to the right.
+    (ox, oy), (w, h) = crop_box_mm((0.5, 0.0, 1.0, 1.0), 1280, 720, 0.02, 0.0)
+    assert (ox, oy) == pytest.approx((6.4, 0.0)) and (w, h) == pytest.approx((12.8, 14.4))
+    # Turned half round, as a LumenPnP's top camera: to the machine's left.
+    (ox, oy), _ = crop_box_mm((0.5, 0.0, 1.0, 1.0), 1280, 720, 0.02, 180.0)
+    assert (ox, oy) == pytest.approx((-6.4, 0.0), abs=1e-9)
+    # Mirrored, the picture's right is the machine's left; its top half is up.
+    (ox, oy), _ = crop_box_mm((0.5, 0.0, 1.0, 0.5), 1280, 720, 0.02, 0.0, mirror=True)
+    assert (ox, oy) == pytest.approx((-6.4, 3.6))
+
+
+def test_the_posterior_counts_only_the_pads_its_crop_holds():
+    from spinny_web.boardlook import PictureFrame
+    from spinny_web.posterior import Board, Posterior, View
+
+    pads = [(float(x), float(y)) for x in range(-10, 11) for y in range(-5, 6)]
+    posterior = Posterior(Board.of((0.0, 0.0), (-12.0, -7.0, 12.0, 7.0), pads), (-20.0, -20.0, 20.0, 20.0))
+    state = np.array([0.0, 0.0, 0.0])
+    whole = View(0, PictureFrame((0.0, 0.0), 0.0, False), 1280, 720, 0.02)
+    right = View(1, PictureFrame((0.0, 0.0), 0.0, False), 1280, 720, 0.02, crop=(0.5, 0.0, 1.0, 1.0))
+    left = View(2, PictureFrame((0.0, 0.0), 0.0, True), 1280, 720, 0.02, crop=(0.5, 0.0, 1.0, 1.0))
+    all_in, half = float(posterior.features_in(state, whole)[0]), float(posterior.features_in(state, right)[0])
+    assert 0.0 < half < 0.6 * all_in
+    # Mirrored, the picture's right half lies on the machine's left: as many.
+    assert float(posterior.features_in(state, left)[0]) == pytest.approx(half)
+    # A board whose pads all lie left of the picture's center: none in the crop.
+    posterior = Posterior(Board.of((0.0, 0.0), (-12.0, -7.0, 0.0, 7.0), [p for p in pads if p[0] < -1.0]), (-20.0, -20.0, 20.0, 20.0))
+    assert float(posterior.features_in(state, right)[0]) == 0.0 and float(posterior.features_in(state, whole)[0]) > 0.0
 
 
 def test_the_files_crops_read_by_task_and_reach_the_page():

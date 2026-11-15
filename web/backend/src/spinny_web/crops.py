@@ -115,3 +115,23 @@ def picture_size(size: str) -> tuple[float, float] | None:
     except ValueError:
         return None
     return (width, height) if width > 0.0 and height > 0.0 else None
+
+
+def crop_box_mm(crop: Crop | None, width: float, height: float, mm_per_px: float, roll: float, mirror: bool = False):
+    """Where a crop of a `width` by `height` px picture lies about the point
+    seen at the picture's center, in the frame the camera's roll is
+    measured against: the offset of its center and its extent along that
+    frame's axes (the crop's corners' bounding box), mm; None for no crop
+    or the whole picture."""
+    from .camera import picture_to_machine
+
+    if is_whole(crop) or not (width > 0.0 and height > 0.0 and mm_per_px > 0.0):
+        return None
+    assert crop is not None
+    corners = [
+        picture_to_machine((x - 0.5) * width, (y - 0.5) * height, mm_per_px, roll, mirror)
+        for x, y in ((crop[0], crop[1]), (crop[2], crop[1]), (crop[2], crop[3]), (crop[0], crop[3]))
+    ]
+    xs, ys = [c[0] for c in corners], [c[1] for c in corners]
+    return ((min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0), (max(xs) - min(xs), max(ys) - min(ys))
+

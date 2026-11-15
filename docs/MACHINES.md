@@ -591,7 +591,9 @@ picture, and an unknown task is refused with the known ones named. A spot
 is taken only when its center lies inside, an edge when its middle does,
 the board look keeps to the pads and holes pcbv sees inside (pcbv is told
 the `board` box at every camera start and board load, and when the file
-is written), and Measure camera and the empty picture test compare only
+is written; the posterior counts a picture's pads in the box, and a
+search's checks put the box over the pads they look at), and Measure
+camera and the empty picture test compare only
 the pixels inside. A spot look's circle is clipped to the farthest corner
 of the box. A pcbv built before crops takes none: the camera says so once
 and looks at the whole picture. Each camera picture's View menu draws a

@@ -323,6 +323,9 @@ class View:
     pool: list[Candidate] = field(default_factory=list)
     miss: np.ndarray | None = None
     captured: float = 0.0
+    # The part of the picture pcbv's board look kept to, shares of its width
+    # and height from the top left (crops.py); None for the whole picture.
+    crop: tuple | None = None
 
     @property
     def placed(self) -> bool:
@@ -390,6 +393,9 @@ class Posterior(Consensus):
         self.delay_prior = delay or (DELAY_S, DELAY_SIGMA_S)
         self.scale = float(scale) if scale and scale > 0.0 else 0.0
         self._scale_given = self.scale > 0.0
+        # The board crop the look keeps to (BoardLook sets it), given to
+        # each view as it is made.
+        self.crop: tuple | None = None
         self.known = known
         self._box_given = box
         self._diffuse_count = int(diffuse)
@@ -555,9 +561,22 @@ class Posterior(Consensus):
         cr, sr = math.cos(roll), math.sin(roll)
         u = (ox * cr + oy * sr) / view.scale
         v = (-ox * sr + oy * cr) / view.scale
-        hw = view.width / 2.0 * (1.0 - 2.0 * EDGE_SHARE)
-        hh = view.height / 2.0 * (1.0 - 2.0 * EDGE_SHARE)
-        inside = (np.abs(u) <= hw) & (np.abs(v) <= hh)
+        if view.crop is None:
+            hw = view.width / 2.0 * (1.0 - 2.0 * EDGE_SHARE)
+            hh = view.height / 2.0 * (1.0 - 2.0 * EDGE_SHARE)
+            inside = (np.abs(u) <= hw) & (np.abs(v) <= hh)
+        else:
+            # Only the crop is looked in: its box in px from the picture's
+            # center, right and down (camera.machine_to_picture), the edge
+            # share kept off each of its sides.
+            x0, y0, x1, y1 = view.crop
+            dx = -u if view.frame.mirror else u
+            dy = -v
+            mx_, my_ = EDGE_SHARE * view.width, EDGE_SHARE * view.height
+            inside = (
+                (dx >= (x0 - 0.5) * view.width + mx_) & (dx <= (x1 - 0.5) * view.width - mx_)
+                & (dy >= (y0 - 0.5) * view.height + my_) & (dy <= (y1 - 0.5) * view.height - my_)
+            )
         return inside.sum(axis=1) * self.board.weight
 
     def _seen_counts(self, hypothesis: Hypothesis) -> dict[int, float]:
@@ -1246,7 +1265,7 @@ class Posterior(Consensus):
         key = self._view_key(frame)
         index = self._view_keys.get(key) if key is not None else None
         if index is None:
-            view = View(len(self.views), frame, captured=captured)
+            view = View(len(self.views), frame, captured=captured, crop=self.crop)
             self.views.append(view)
             if key is not None:
                 self._view_keys[key] = view.index
@@ -1330,7 +1349,7 @@ class Posterior(Consensus):
         narrow the probability, nats: what it tells of which hypothesis (or
         none) is right, by whether it will give a candidate, plus how much a
         candidate there narrows the most likely hypothesis' fit."""
-        view = View(-1, PictureFrame(center, roll, mirror), width, height, scale)
+        view = View(-1, PictureFrame(center, roll, mirror), width, height, scale, crop=self.crop)
         view.searches.add(("plan", 0))
         weights, chances = [], []
         if self._diffuse is not None and self._miss_total is not None and self._diffuse_log is not None:
