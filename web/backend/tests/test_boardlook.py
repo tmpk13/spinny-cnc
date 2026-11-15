@@ -588,3 +588,24 @@ def test_a_weak_lock_is_refused_before_the_vote_and_kept_in_the_record():
     assert look.consensus.guesses == [] and "paired 33%" in look.consensus.problem
     pose = record.events[-1]
     assert pose["seen"] == "locked" and pose["estimate"]["match"] == pytest.approx(9 / 27, abs=1e-4) and "under 50%" in pose["problem"]
+
+
+def test_a_place_found_is_fitted_to_the_points_its_looks_saw_where_they_were():
+    board = seen(1.0)
+    truth = Estimate(1.0, board.shift, (0.0, 0.0), 0.0)
+    consensus = Consensus(MIDDLE)
+    for center in (truth.apply((6.0, 6.0)), truth.apply((34.0, 24.0))):
+        for _ in range(3):
+            raw = board.pose(center, 0.0, False, 0.02, 1280, 720, 1)
+            estimate, _ = pose_estimate(raw, PictureFrame(center, 0.0, False), DESIGN.board_to_job, MIDDLE)
+            consensus.see("locked", estimate, None)
+    # A place found 0.3 mm and 0.3 degrees off: the looks' points put it right.
+    off = Estimate(1.3, (board.shift[0] + 0.3, board.shift[1]), (0.0, 0.0), 0.0)
+    off.center = off.apply(MIDDLE)
+    placed = boardlook.placed_estimate(consensus, off)
+    assert placed.center == pytest.approx(truth.apply(MIDDLE), abs=1e-6) and placed.rotation == pytest.approx(1.0, abs=1e-6)
+    # Looks from one place only: the place found as it was.
+    near = Consensus(MIDDLE)
+    raw = board.pose(truth.apply((6.0, 6.0)), 0.0, False, 0.02, 1280, 720, 1)
+    near.see("locked", pose_estimate(raw, PictureFrame(truth.apply((6.0, 6.0)), 0.0, False), DESIGN.board_to_job, MIDDLE)[0], None)
+    assert boardlook.placed_estimate(near, off) is off

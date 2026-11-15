@@ -600,6 +600,33 @@ def places_fit(group: list[Estimate]):
     return fit_rigid([(e.seen, e.place) for e in located])  # type: ignore[misc]
 
 
+def placed_estimate(consensus: Consensus, found: Estimate) -> Estimate:
+    """Where the looks that agree with a place found put the board, fitted
+    to the head's places (places_fit) when they were taken PLACES_MM apart
+    or more: each lock's board point under the picture's center against
+    where that center was, no pose's corners or angle. The place found as
+    it is otherwise. The posterior pools a place's looks into its best
+    candidate; on a LumenPnP its places with the place known came out 0.08
+    to 0.09 mm off, the looks' fit 0.03 to 0.05."""
+    # A look agrees when the place found puts the board point it saw under
+    # the picture's center where that center was: points only, since a
+    # pose's own middle, extrapolated from its corners, is tenths off.
+    group = [
+        e for e in list(consensus.estimates)
+        if e.match >= MIN_MATCH and e.seen is not None and e.place is not None and math.dist(found.apply(e.seen), e.place) <= consensus.agree_mm
+    ]
+    fit = places_fit(group)
+    if fit is None:
+        return found
+    turns = [found.rotation + _wrap(e.rotation - found.rotation) for e in group]
+    placed = Estimate(
+        _wrap(fit.rotation), fit.shift, fit.apply(consensus.middle), fit.rms, found.corners, found.seen, found.captured, found.match,
+        found.session, found.rival,
+    )
+    placed.roll_off = _wrap(fit.rotation - statistics.median(turns))
+    return placed
+
+
 def weak_problem(match: float, least: float) -> str:
     """Why a lock that matched under the least share was left out."""
     return f"the lock paired {match * 100.0:.0f}% of what its picture should show, under {least * 100.0:.0f}%"
@@ -1520,7 +1547,10 @@ def look_at_stop(
     settle time after the stop began are used. With `check` (a place found
     elsewhere) the stop checks it instead: `agreed` once CHECK_LOOKS looks
     here put the board within the agreement of it, `disagreed` once as many
-    put it elsewhere. First the picture's busy share (pictures.py) is
+    put it elsewhere. Without `check`, `likely` once the posterior leads
+    with this stop's lock but cannot call it found from one place
+    (Posterior.worth_checking): the search checks it from another. First
+    the picture's busy share (pictures.py) is
     measured: under EMPTY_BUSY the stop ends `empty` at once, a look that
     found nothing; under `gate` (a quick scan's first pass asks for a
     picture that looks like board, BOARD_BUSY) it ends `sparse`, left for
@@ -1555,10 +1585,19 @@ def look_at_stop(
         look.publish()
         if check is None and look.consensus.found:
             return "found"
+        if check is None and seen == "used" and getattr(look.consensus, "worth_checking", False):
+            # The posterior leads with this stop's lock but one place cannot
+            # settle it: a check from another place can.
+            view, best = look.consensus.view, look.consensus.best
+            if view is not None and best is not None and look.consensus.agrees(view, best):
+                return "likely"
         if seen == "used":
-            locked = True
             view = look.consensus.view
-            if check is not None and view is not None:
+            # A weak lock (under the least match) does not hold the stop
+            # past the lock time: the posterior weighs it, the vote refuses it.
+            if view is None or view.match >= MIN_MATCH:
+                locked = True
+            if check is not None and view is not None and view.match >= MIN_MATCH:
                 if look.consensus.agrees(view, check):
                     agreed += 1
                 else:
@@ -1786,7 +1825,10 @@ def search(
             # saw nothing or disagreed leaves the evidence in the consensus:
             # while it still calls the board found, the next place is
             # checked; else the search goes on.
-            while result == "found":
+            while result in ("found", "likely"):
+                if result == "likely" and made >= MAX_CHECKS:
+                    # A lead never found is not refuted: the search goes on.
+                    break
                 if made >= MAX_CHECKS:
                     refuted = True
                     raise error(
@@ -1807,14 +1849,14 @@ def search(
                 if record is not None:
                     record.event("check", result=outcome, estimate=best.to_dict(), place=_rounded(place))
                 if outcome == "agreed":
-                    final = look.consensus.best or best
+                    final = placed_estimate(look.consensus, look.consensus.best or best)
                     if picture is not None:
                         look.mosaic.finish(final.to_dict())
                     look.remember_found(final)
                     look.publish(force=True)
                     look.end_record("found", only=record, estimate=final.to_dict(), visited=visited, found_at=index, checks=made)
                     return final
-                result = "found" if look.consensus.found else outcome
+                result = "found" if look.consensus.found else "likely" if result == "likely" and getattr(look.consensus, "worth_checking", False) else outcome
         look.publish(force=True)
         covered = True
         raise error(

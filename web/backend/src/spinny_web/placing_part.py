@@ -540,9 +540,12 @@ class PlacingPart:
             # Where the known place puts the most pads in a picture first:
             # its middle may be bare, its edges lock wrong.
             stops = self._check_places(job, (width * scale, height * scale))(known.place)[:KNOWN_FIRST] + stops
+        # The posterior steers to the stop that tells most for its time,
+        # unless a known place already put the board's dense places first:
+        # steered past them, a LumenPnP search waited out bare stops.
         steer = (
             {"width": width, "height": height, "scale": scale, "speed": max(machine.feed_xy / 60.0, 1.0), "start": center}
-            if settings.look_method == "posterior" else None
+            if settings.look_method == "posterior" and known is None else None
         )
         z = machine.top.z if machine.top is not None else None
         mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)

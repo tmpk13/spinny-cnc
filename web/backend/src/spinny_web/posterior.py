@@ -78,6 +78,9 @@ FEATURES_HALF = 6.0
 # features list says little (pcbv's model holds islands the list does not):
 # its chance is never taken under this.
 P_FLOOR = 0.05
+# A search checks the most likely hypothesis from another place once it
+# holds this share of the probability and leads (worth_checking).
+LIKELY = 0.25
 # False candidates a view gives, on average, spread over the board's points
 # and every turn.
 CLUTTER = 2.0
@@ -1001,6 +1004,22 @@ class Posterior(Consensus):
             return False
         second = self.guesses[1].probability if len(self.guesses) > 1 else 0.0
         return lead.probability > max(second, self.elsewhere) + 1e-9
+
+    @property
+    def worth_checking(self) -> bool:
+        """The most likely hypothesis leads, holding LIKELY or more and more
+        than any other, without being found: pictures from one place pool
+        into one view, so a look from another place is what can raise it
+        past the threshold. On a LumenPnP a look at rest held the right
+        place at 0.49, wrong locks at the board's corner 0.22 and where
+        nothing looked 0.20 until the head moved; on a scan of the whole bed
+        a lock that matched fully held 0.37 against 0.62 where nothing had
+        looked yet, which a check a second away settles."""
+        lead = self.lead
+        if lead is None or self.found or lead.probability < LIKELY:
+            return False
+        second = self.guesses[1].probability if len(self.guesses) > 1 else 0.0
+        return lead.probability > second + 1e-9
 
     @property
     def stretch(self) -> dict | None:
