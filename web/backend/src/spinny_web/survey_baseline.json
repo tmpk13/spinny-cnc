@@ -6,13 +6,21 @@
  "truth": {
   "about": "head = R(turn_deg) (x, -y) + shift for a KiCad board point (x, y), the head's place over it in the LumenPnP's X and Y, mm: the robust fit of the scale case's 52 right locks",
   "turn_deg": 0.17115740123761572,
-  "shift": [-20.524775321249706, 375.01771899463074]
+  "shift": [
+   -20.524775321249706,
+   375.01771899463074
+  ]
  },
  "rms_slack_mm": 0.005,
  "cases": {
   "scale": {
    "about": "pcbv told the scale within a fifth either way of the camera's 0.0161 mm a pixel",
-   "options": ["--finish", "masked", "--scale", "0.0129:0.0194"],
+   "options": [
+    "--finish",
+    "masked",
+    "--scale",
+    "0.0129:0.0194"
+   ],
    "pictures": 169,
    "locked": 106,
    "right": 52,
@@ -23,7 +31,10 @@
   },
   "noscale": {
    "about": "no scale given: pcbv tries its whole range, then its scale windows",
-   "options": ["--finish", "masked"],
+   "options": [
+    "--finish",
+    "masked"
+   ],
    "pictures": 169,
    "locked": 116,
    "right": 48,
@@ -31,6 +42,24 @@
    "right_rms_mm": 0.07,
    "pcbv": "pcb-vision bf6c52b (the session's build gave the same)",
    "measured": "2026-11-14"
+  },
+  "measured": {
+   "about": "the backend's default since 2026-11-15: pcbv told the camera's measured scale 3% either way (vision.SCALE_SPREAD) and the lens Measure camera finds, so its auto model fits a similarity with the scale held to the window",
+   "options": [
+    "--finish",
+    "masked",
+    "--scale",
+    "0.015617:0.016583",
+    "--lens",
+    "0.026,0,1280x720"
+   ],
+   "pictures": 169,
+   "locked": 86,
+   "right": 58,
+   "wrong": 28,
+   "right_rms_mm": 0.0478,
+   "pcbv": "pcb-vision 3d3faad",
+   "measured": "2026-11-15"
   }
  }
 }
