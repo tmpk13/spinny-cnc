@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="380" viewBox="0 0 960 380" role="img" aria-label="A confirm dialog for an undoable action today, the proposed Undo, and the confirm kept for a hazard">
+<title>A confirm dialog for an undoable action today, the proposed Undo, and the confirm kept for a hazard</title>
+<rect width="960" height="380" rx="14" fill="#f7f2e2"/>
+<text x="30" y="34" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#586e75" letter-spacing="1.5">NOW</text>
+<rect x="30" y="40" width="33.4" height="2.5" rx="1" fill="#93a1a1"/>
+<text x="340" y="34" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#073642" letter-spacing="1.5">PROPOSED</text>
+<rect x="340" y="40" width="83" height="2.5" rx="1" fill="#073642"/>
+<text x="650" y="34" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#073642" letter-spacing="1.5">KEPT: A HAZARD</text>
+<rect x="650" y="40" width="129.7" height="2.5" rx="1" fill="#073642"/>
+<rect x="30" y="56" width="280" height="230" rx="10" fill="#d8d1bb"/>
+<rect x="50" y="96" width="240" height="140" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="66" y="126" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#073642">Clear the guesses?</text>
+<text x="66" y="148" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">This forgets every guess and its</text>
+<text x="66" y="165" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">share.</text>
+<rect x="128" y="190" width="63" height="28" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="159.5" y="208.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="middle">Cancel</text>
+<rect x="198" y="190" width="58" height="28" rx="6" fill="#268bd2"/>
+<text x="227" y="208.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#ffffff" text-anchor="middle">Clear</text>
+<text x="30" y="316" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">Asked every time, answered without reading</text>
+<text x="30" y="333.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">by the third.</text>
+<rect x="340" y="56" width="280" height="230" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="356" y="80" width="200" height="5" rx="2" fill="#d8d1bb"/>
+<rect x="356" y="94" width="186" height="5" rx="2" fill="#d8d1bb"/>
+<rect x="356" y="108" width="172" height="5" rx="2" fill="#d8d1bb"/>
+<rect x="356" y="122" width="110" height="5" rx="2" fill="#d8d1bb"/>
+<rect x="356" y="214" width="248" height="46" rx="8" fill="#073642"/>
+<text x="372" y="242" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#fdf6e3">Guesses cleared.</text>
+<text x="560" y="242" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#fdf6e3" text-decoration="underline">Undo</text>
+<text x="340" y="316" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">It happens at once; Undo stays for a while and</text>
+<text x="340" y="333.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">in the log.</text>
+<rect x="650" y="56" width="280" height="230" rx="10" fill="#d8d1bb"/>
+<rect x="666" y="86" width="248" height="170" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<circle cx="690" cy="118" r="11" fill="#dc322f"/>
+<path d="M686.6,114.6 L693.4,121.4 M693.4,114.6 L686.6,121.4" fill="none" stroke="#ffffff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="708" y="123" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#073642">Fire the beam?</text>
+<text x="682" y="148" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">S 1000 for 1000 ms at the head's</text>
+<text x="682" y="165" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">place. Wear the glasses.</text>
+<rect x="722" y="208" width="63" height="28" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="753.5" y="226.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="middle">Cancel</text>
+<rect x="792" y="208" width="112" height="28" rx="6" fill="#dc322f"/>
+<text x="848" y="226.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#ffffff" text-anchor="middle">Fire the beam</text>
+<text x="650" y="316" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">Only for what cannot be undone and can hurt;</text>
+<text x="650" y="333.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">the button says what it does.</text>
+</svg>

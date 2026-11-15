@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="664" viewBox="0 0 960 664" role="img" aria-label="The Find board panel with its camera off, today and proposed, and the proposed panel once the board is found">
+<title>The Find board panel with its camera off, today and proposed, and the proposed panel once the board is found</title>
+<rect width="960" height="664" rx="14" fill="#f7f2e2"/>
+<text x="30" y="34" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#586e75" letter-spacing="1.5">NOW</text>
+<rect x="30" y="40" width="33.4" height="2.5" rx="1" fill="#93a1a1"/>
+<text x="520" y="34" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#073642" letter-spacing="1.5">PROPOSED</text>
+<rect x="520" y="40" width="83" height="2.5" rx="1" fill="#073642"/>
+<rect x="30" y="54" width="420" height="546" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<path d="M39,55.5 H441" fill="none" stroke="#6c71c4" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M44.4,72.2 L48.0,75.8 L51.6,72.2" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="59" y="78" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#073642" letter-spacing="1.1">FIND BOARD</text>
+<rect x="358" y="66" width="76.1" height="22" rx="11" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<circle cx="370" cy="77" r="3.6" fill="#93a1a1"/>
+<text x="379" y="81.1" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" font-weight="600" fill="#073642">stopped</text>
+<text x="44" y="123" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">Camera</text>
+<rect x="94" y="106" width="280" height="26" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="103" y="123" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#073642">Head camera (/dev/video0), stopped</text>
+<path d="M356.0,117.0 L360.0,121.0 L364.0,117.0" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="44" y="150" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#073642">The head camera is not running: start it in its panel.</text>
+<rect x="44" y="162" width="103" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="95.5" y="178" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#93a1a1" text-anchor="middle">Look for board</text>
+<rect x="154" y="162" width="61" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="184.5" y="178" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#93a1a1" text-anchor="middle">Search</text>
+<rect x="222" y="162" width="70" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="257" y="178" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#93a1a1" text-anchor="middle">Full scan</text>
+<rect x="44" y="192" width="121" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="104.5" y="208" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#93a1a1" text-anchor="middle">Use as board place</text>
+<rect x="172" y="192" width="97" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="220.5" y="208" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#93a1a1" text-anchor="middle">Clear guesses</text>
+<rect x="276" y="192" width="58" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="305" y="208" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#93a1a1" text-anchor="middle">Unload</text>
+<text x="44" y="237" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">Scan</text>
+<rect x="78" y="222" width="110" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="87" y="238" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#073642">At rest</text>
+<path d="M170.0,232.0 L174.0,236.0 L178.0,232.0" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="44" y="262" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#073642" text-decoration="underline">No board loaded: pick a board job and press Look for board.</text>
+<text x="44" y="286" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#073642" text-decoration="underline">Guesses</text>
+<rect x="44" y="296" width="392" height="64" rx="6" fill="#fbf7ea" stroke="#dcd5bf" stroke-width="1"/>
+<line x1="70" y1="328" x2="410" y2="328" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<text x="404" y="322" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10" fill="#586e75" text-anchor="end">threshold 50%</text>
+<text x="240" y="348" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10" fill="#93a1a1" text-anchor="middle">no guesses yet</text>
+<text x="44" y="386" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75" text-decoration="underline">Threshold</text>
+<rect x="110" y="380" width="140" height="4" rx="2" fill="#d8d1bb"/>
+<circle cx="180" cy="382" r="6" fill="#268bd2"/>
+<text x="260" y="386" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#073642">50%</text>
+<text x="44" y="415" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75" text-decoration="underline">Method</text>
+<rect x="94" y="400" width="150" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="103" y="416" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#073642">Vote among guesses</text>
+<path d="M226.0,410.0 L230.0,414.0 L234.0,410.0" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="254" y="405" width="14" height="14" rx="3.5" fill="#fdf6e3" stroke="#93a1a1" stroke-width="1"/>
+<text x="275" y="416.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#93a1a1">Board stretch</text>
+<text x="44" y="440" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#073642">Rough place by corners</text>
+<text x="44" y="463" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">Corner</text>
+<rect x="90" y="448" width="100" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="99" y="464" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#073642">bottom left</text>
+<path d="M172.0,458.0 L176.0,462.0 L180.0,458.0" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="198" y="448" width="85" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="240.5" y="463.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#93a1a1" text-anchor="middle">Corner here</text>
+<rect x="288" y="448" width="105" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="340.5" y="463.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#93a1a1" text-anchor="middle">Corner by edges</text>
+<rect x="44" y="478" width="94" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="91" y="493.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#93a1a1" text-anchor="middle">Clear corners</text>
+<text x="150" y="494" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">Within mm</text>
+<rect x="214" y="478" width="44" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="223" y="494" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#073642">2</text>
+<rect x="44" y="514" width="386" height="3.5" rx="2" fill="#d8d1bb"/>
+<rect x="44" y="522" width="359" height="3.5" rx="2" fill="#d8d1bb"/>
+<rect x="44" y="530" width="332" height="3.5" rx="2" fill="#d8d1bb"/>
+<rect x="44" y="538" width="386" height="3.5" rx="2" fill="#d8d1bb"/>
+<rect x="44" y="546" width="359" height="3.5" rx="2" fill="#d8d1bb"/>
+<rect x="44" y="554" width="332" height="3.5" rx="2" fill="#d8d1bb"/>
+<rect x="44" y="562" width="212.3" height="3.5" rx="2" fill="#d8d1bb"/>
+<path d="M45.0,570.0 L49.0,574.0 L45.0,578.0" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="57" y="578" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">What the words mean</text>
+<text x="30" y="626" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">Nine locked buttons, a chart with nothing in it and a paragraph; the one</text>
+<text x="30" y="643.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">thing to do is in another panel.</text>
+<text x="520" y="74" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#586e75">The camera is off</text>
+<rect x="520" y="84" width="410" height="150" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="534" y="108" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#073642" letter-spacing="1.1">FIND BOARD</text>
+<rect x="540.5" y="148.5" width="27" height="18" rx="2.5" fill="none" stroke="#586e75" stroke-width="1.7"/>
+<circle cx="554" cy="157.5" r="5.2" fill="none" stroke="#586e75" stroke-width="1.7"/>
+<path d="M548.75,148.5 L551.75,144.0 H556.25 L559.25,148.5" fill="none" stroke="#586e75" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="582" y="154" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#073642">The camera is off.</text>
+<text x="582" y="174" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">Then the page looks for the board by itself.</text>
+<rect x="536" y="188" width="378" height="34" rx="6" fill="#073642"/>
+<text x="725" y="209.9" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="600" fill="#ffffff" text-anchor="middle">Start the camera</text>
+<circle cx="912" cy="205" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="912" y="209.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">1</text>
+<text x="520" y="284" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#586e75">A moment later: the board is found</text>
+<rect x="520" y="294" width="410" height="196" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="534" y="318" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#073642" letter-spacing="1.1">FIND BOARD</text>
+<circle cx="548" cy="360" r="11" fill="#859900"/>
+<path d="M544,360.4 L546.8,363.3 L552.2,356.8" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="568" y="366" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#073642">Board found</text>
+<text x="568" y="386" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">94% sure: two places agree, 0.04 mm apart</text>
+<rect x="536" y="402" width="270" height="34" rx="6" fill="#073642"/>
+<text x="671" y="423.9" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="600" fill="#ffffff" text-anchor="middle">Use this place</text>
+<rect x="814" y="402" width="100" height="34" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="864" y="423.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="middle">Look again</text>
+<line x1="536" y1="450" x2="914" y2="450" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<path d="M537.0,466.0 L541.0,470.0 L537.0,474.0" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="549" y="474" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">More: method, threshold, full scan, corners by hand</text>
+<circle cx="912" cy="364" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="912" y="368.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">2</text>
+<circle cx="912" cy="470" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="912" y="474.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+<text x="520" y="528" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">The step shows the action that unlocks it, then its result and the</text>
+<text x="520" y="545.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">action the result allows. Nothing locked is shown.</text>
+</svg>

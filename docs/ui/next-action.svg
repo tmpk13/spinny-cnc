@@ -1,0 +1,166 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="724" viewBox="0 0 960 724" role="img" aria-label="The Height map panel today next to the proposed Height map step, folded and with More opened">
+<title>The Height map panel today next to the proposed Height map step, folded and with More opened</title>
+<rect width="960" height="724" rx="14" fill="#f7f2e2"/>
+<text x="30" y="34" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#586e75" letter-spacing="1.5">NOW</text>
+<rect x="30" y="40" width="33.4" height="2.5" rx="1" fill="#93a1a1"/>
+<text x="520" y="34" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#073642" letter-spacing="1.5">PROPOSED</text>
+<rect x="520" y="40" width="83" height="2.5" rx="1" fill="#073642"/>
+<rect x="30" y="54" width="410" height="600" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<path d="M39,55.5 H431" fill="none" stroke="#cb4b16" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M44.4,72.2 L48.0,75.8 L51.6,72.2" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="59" y="78" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#073642" letter-spacing="1.1">HEIGHT MAP</text>
+<rect x="358" y="66" width="70" height="22" rx="11" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<circle cx="370" cy="77" r="3.6" fill="#93a1a1"/>
+<text x="379" y="81.1" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" font-weight="600" fill="#073642">no map</text>
+<text x="44" y="108" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75">X from mm</text>
+<rect x="44" y="114" width="186" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="53" y="130" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#073642">-20</text>
+<text x="240" y="108" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75">X to mm</text>
+<rect x="240" y="114" width="186" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="249" y="130" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#073642">20</text>
+<text x="44" y="152" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75">Y from mm</text>
+<rect x="44" y="158" width="186" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="53" y="174" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#073642">-20</text>
+<text x="240" y="152" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75">Y to mm</text>
+<rect x="240" y="158" width="186" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="249" y="174" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#073642">20</text>
+<text x="44" y="196" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75">Points X</text>
+<rect x="44" y="202" width="186" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="53" y="218" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#073642">5</text>
+<text x="240" y="196" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75">Points Y</text>
+<rect x="240" y="202" width="186" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="249" y="218" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#073642">5</text>
+<path d="M45.0,232.0 L49.0,236.0 L45.0,240.0" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="57" y="240" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">Probe</text>
+<rect x="44" y="250" width="382" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="53" y="266" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#073642">the whole grid</text>
+<path d="M408.0,260.0 L412.0,264.0 L416.0,260.0" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="44" y="282" width="76" height="24" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="82" y="298" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#073642" text-anchor="middle">Fit to job</text>
+<text x="130" y="298" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">25 points, about 0:06</text>
+<rect x="44" y="314" width="57" height="24" rx="6" fill="#268bd2"/>
+<text x="72.5" y="330" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="600" fill="#ffffff" text-anchor="middle">Probe</text>
+<rect x="108" y="314" width="51" height="24" rx="6" fill="#eba49b"/>
+<text x="133.5" y="330" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="600" fill="#ffffff" text-anchor="middle">Stop</text>
+<rect x="44" y="346" width="370" height="3.5" rx="2" fill="#d8d1bb"/>
+<rect x="44" y="354" width="203.5" height="3.5" rx="2" fill="#d8d1bb"/>
+<text x="44" y="380" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">Pads</text>
+<text x="82" y="380" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75">Min area mm^2</text>
+<rect x="170" y="368" width="50" height="22" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="179" y="382.8" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#073642">0.5</text>
+<text x="44" y="410" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75">Max points</text>
+<rect x="110" y="398" width="50" height="22" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="119" y="412.8" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#073642">100</text>
+<rect x="168" y="398" width="45" height="22" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="190.5" y="412.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#93a1a1" text-anchor="middle">Plan</text>
+<rect x="44" y="428" width="85" height="24" rx="6" fill="#9cc3e0"/>
+<text x="86.5" y="444" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="600" fill="#ffffff" text-anchor="middle">Probe pads</text>
+<rect x="44" y="460" width="370" height="3.5" rx="2" fill="#d8d1bb"/>
+<rect x="44" y="468" width="344.1" height="3.5" rx="2" fill="#d8d1bb"/>
+<rect x="44" y="476" width="203.5" height="3.5" rx="2" fill="#d8d1bb"/>
+<rect x="44" y="490" width="122" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="105" y="505.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#93a1a1" text-anchor="middle">Probe here: tie map</text>
+<rect x="173" y="490" width="139" height="24" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="242.5" y="505.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#93a1a1" text-anchor="middle">Probe nearest: tie map</text>
+<rect x="44" y="520" width="121" height="24" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="104.5" y="535.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#073642" text-anchor="middle">Probe here: set H 0</text>
+<rect x="44" y="552" width="370" height="3.5" rx="2" fill="#d8d1bb"/>
+<rect x="44" y="560" width="344.1" height="3.5" rx="2" fill="#d8d1bb"/>
+<rect x="44" y="568" width="203.5" height="3.5" rx="2" fill="#d8d1bb"/>
+<text x="44" y="594" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75">Focus offset mm</text>
+<rect x="140" y="582" width="56" height="22" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="149" y="596.8" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#073642"></text>
+<rect x="202" y="582" width="42" height="22" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="223" y="596.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#93a1a1" text-anchor="middle">Set</text>
+<rect x="244" y="582" width="79" height="22" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="283.5" y="596.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#93a1a1" text-anchor="middle">Focus here</text>
+<text x="44" y="624" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75">Rayleigh mm</text>
+<rect x="120" y="612" width="50" height="22" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="129" y="626.8" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="10.5" fill="#073642">0.5</text>
+<rect x="178" y="612" width="71" height="22" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="213.5" y="626.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#93a1a1" text-anchor="middle">Save map</text>
+<rect x="254" y="612" width="71" height="22" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="289.5" y="626.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#073642" text-anchor="middle">Load map</text>
+<rect x="330" y="612" width="51" height="22" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="355.5" y="626.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#93a1a1" text-anchor="middle">Clear</text>
+<text x="30" y="682" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">12 buttons and 9 fields of the same weight; the order to use them in,</text>
+<text x="30" y="699.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">and what Probe will do, are left to you.</text>
+<text x="520" y="406" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#586e75">More, opened</text>
+<rect x="520" y="418" width="410" height="236" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<path d="M535.0,438.0 L539.0,442.0 L543.0,438.0" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="550" y="444" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">More</text>
+<text x="536" y="470" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#073642">Probe the pads instead of a grid</text>
+<rect x="884" y="457" width="30" height="17" rx="8.5" fill="#d8d1bb"/>
+<circle cx="892.5" cy="465.5" r="6.2" fill="#ffffff"/>
+<text x="536" y="488" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">pads over 0.5 mm^2, at most 100 points</text>
+<text x="536" y="514" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#073642">Tie the map after a restart</text>
+<rect x="536" y="522" width="87" height="26" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="579.5" y="539.3" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">Probe here</text>
+<rect x="630" y="522" width="107" height="26" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="683.5" y="539.3" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">Probe nearest</text>
+<text x="536" y="572" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#073642">Focus offset</text>
+<rect x="780" y="555" width="84" height="26" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="789" y="572.3" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="12" fill="#073642">0.00</text>
+<text x="856" y="572" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75" text-anchor="end">mm</text>
+<rect x="872" y="555" width="42" height="26" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="893" y="572.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="middle">Set</text>
+<text x="536" y="608" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#073642">The map</text>
+<rect x="536" y="616" width="51" height="26" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="561.5" y="633.3" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">Save</text>
+<rect x="594" y="616" width="51" height="26" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="619.5" y="633.3" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">Load</text>
+<rect x="652" y="616" width="55" height="26" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="679.5" y="633.3" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">Clear</text>
+<circle cx="916" cy="422" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="916" y="426.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">5</text>
+<rect x="520" y="54" width="410" height="330" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="534" y="78" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#073642" letter-spacing="1.1">HEIGHT MAP</text>
+<text x="916" y="78" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75" text-anchor="end">step 4 of 6</text>
+<text x="536" y="122" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="17" font-weight="700" fill="#073642">25 points over the job</text>
+<text x="536" y="144" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">about 0:06; the probe touches each point once</text>
+<rect x="536" y="162" width="150" height="96" rx="8" fill="#fbf7ea" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="552" y="176" width="118" height="68" rx="4" fill="none" stroke="#586e75" stroke-width="1.2" stroke-dasharray="4 3"/>
+<circle cx="558" cy="182" r="2.6" fill="#073642"/>
+<circle cx="558" cy="196" r="2.6" fill="#073642"/>
+<circle cx="558" cy="210" r="2.6" fill="#073642"/>
+<circle cx="558" cy="224" r="2.6" fill="#073642"/>
+<circle cx="558" cy="238" r="2.6" fill="#073642"/>
+<circle cx="584.5" cy="182" r="2.6" fill="#073642"/>
+<circle cx="584.5" cy="196" r="2.6" fill="#073642"/>
+<circle cx="584.5" cy="210" r="2.6" fill="#073642"/>
+<circle cx="584.5" cy="224" r="2.6" fill="#073642"/>
+<circle cx="584.5" cy="238" r="2.6" fill="#073642"/>
+<circle cx="611" cy="182" r="2.6" fill="#073642"/>
+<circle cx="611" cy="196" r="2.6" fill="#073642"/>
+<circle cx="611" cy="210" r="2.6" fill="#073642"/>
+<circle cx="611" cy="224" r="2.6" fill="#073642"/>
+<circle cx="611" cy="238" r="2.6" fill="#073642"/>
+<circle cx="637.5" cy="182" r="2.6" fill="#073642"/>
+<circle cx="637.5" cy="196" r="2.6" fill="#073642"/>
+<circle cx="637.5" cy="210" r="2.6" fill="#073642"/>
+<circle cx="637.5" cy="224" r="2.6" fill="#073642"/>
+<circle cx="637.5" cy="238" r="2.6" fill="#073642"/>
+<circle cx="664" cy="182" r="2.6" fill="#073642"/>
+<circle cx="664" cy="196" r="2.6" fill="#073642"/>
+<circle cx="664" cy="210" r="2.6" fill="#073642"/>
+<circle cx="664" cy="224" r="2.6" fill="#073642"/>
+<circle cx="664" cy="238" r="2.6" fill="#073642"/>
+<text x="700" y="192" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">Area</text>
+<text x="700" y="210" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642">fits the job, 2 mm out</text>
+<text x="729" y="238.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="middle" text-decoration="underline">Change</text>
+<rect x="536" y="276" width="378" height="38" rx="6" fill="#073642"/>
+<text x="725" y="300" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#ffffff" text-anchor="middle">Probe 25 points</text>
+<line x1="536" y1="332" x2="914" y2="332" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<path d="M537.0,352.0 L541.0,356.0 L537.0,360.0" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="549" y="360" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">More: pads only, tie the map, focus offset, save and load</text>
+<text x="520" y="682" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">What will happen, how long it takes, and the one action; the rest one</text>
+<text x="520" y="699.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">press away in the same place, grouped and named.</text>
+<circle cx="910" cy="128" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="910" y="132.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">1</text>
+<circle cx="682" cy="168" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="682" y="172.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">2</text>
+<circle cx="910" cy="295" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="910" y="299.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+<circle cx="910" cy="356" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="910" y="360.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">4</text>
+</svg>

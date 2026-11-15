@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="650" viewBox="0 0 960 650" role="img" aria-label="Six step choosers in the jog panel today, and one step level for every axis in the proposed dock">
+<title>Six step choosers in the jog panel today, and one step level for every axis in the proposed dock</title>
+<rect width="960" height="650" rx="14" fill="#f7f2e2"/>
+<text x="30" y="34" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#586e75" letter-spacing="1.5">NOW</text>
+<rect x="30" y="40" width="33.4" height="2.5" rx="1" fill="#93a1a1"/>
+<text x="380" y="34" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#073642" letter-spacing="1.5">PROPOSED</text>
+<rect x="380" y="40" width="83" height="2.5" rx="1" fill="#073642"/>
+<rect x="30" y="54" width="300" height="524" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<path d="M39,55.5 H321" fill="none" stroke="#cb4b16" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M44.4,72.2 L48.0,75.8 L51.6,72.2" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="59" y="78" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#073642" letter-spacing="1.1">JOG</text>
+<rect x="42" y="94" width="45" height="22" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="64.5" y="108.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#073642" text-anchor="middle">Fine</text>
+<rect x="92" y="94" width="88" height="22" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="136" y="108.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#073642" text-anchor="middle">Hold to move</text>
+<rect x="185" y="94" width="59" height="22" rx="6" fill="#eba49b"/>
+<text x="214.5" y="108.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" font-weight="600" fill="#ffffff" text-anchor="middle">Cancel</text>
+<rect x="42" y="124" width="52" height="26" rx="5" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="42" y="154" width="52" height="26" rx="5" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="42" y="184" width="52" height="26" rx="5" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="98" y="124" width="52" height="26" rx="5" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="98" y="154" width="52" height="26" rx="5" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="98" y="184" width="52" height="26" rx="5" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="154" y="124" width="52" height="26" rx="5" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="154" y="154" width="52" height="26" rx="5" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="154" y="184" width="52" height="26" rx="5" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="124" y="170" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10" fill="#586e75" text-anchor="middle">x  y</text>
+<text x="42" y="231" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" font-weight="700" fill="#073642" letter-spacing="0.8">BOARD X</text>
+<rect x="42" y="236" width="150" height="20" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="67" y="249.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#073642" text-anchor="middle">0.1 mm</text>
+<rect x="94" y="238" width="46" height="16" rx="4.5" fill="#586e75"/>
+<text x="117" y="249.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" font-weight="600" fill="#ffffff" text-anchor="middle">1 mm</text>
+<text x="167" y="249.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#073642" text-anchor="middle">10 mm</text>
+<rect x="196" y="236" width="38" height="20" rx="4" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="42" y="273" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" font-weight="700" fill="#073642" letter-spacing="0.8">BOARD Y</text>
+<rect x="42" y="278" width="150" height="20" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="67" y="291.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#073642" text-anchor="middle">0.1 mm</text>
+<rect x="94" y="280" width="46" height="16" rx="4.5" fill="#586e75"/>
+<text x="117" y="291.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" font-weight="600" fill="#ffffff" text-anchor="middle">1 mm</text>
+<text x="167" y="291.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#073642" text-anchor="middle">10 mm</text>
+<rect x="196" y="278" width="38" height="20" rx="4" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="42" y="315" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" font-weight="700" fill="#073642" letter-spacing="0.8">RADIUS</text>
+<rect x="42" y="320" width="150" height="20" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="67" y="333.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#073642" text-anchor="middle">0.1 mm</text>
+<rect x="94" y="322" width="46" height="16" rx="4.5" fill="#586e75"/>
+<text x="117" y="333.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" font-weight="600" fill="#ffffff" text-anchor="middle">1 mm</text>
+<text x="167" y="333.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#073642" text-anchor="middle">10 mm</text>
+<rect x="196" y="320" width="38" height="20" rx="4" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="240" y="320" width="30" height="20" rx="4" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="274" y="320" width="30" height="20" rx="4" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="42" y="357" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" font-weight="700" fill="#073642" letter-spacing="0.8">TABLE</text>
+<rect x="42" y="362" width="150" height="20" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="67" y="375.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#073642" text-anchor="middle">1 deg</text>
+<rect x="94" y="364" width="46" height="16" rx="4.5" fill="#586e75"/>
+<text x="117" y="375.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" font-weight="600" fill="#ffffff" text-anchor="middle">10 deg</text>
+<text x="167" y="375.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#073642" text-anchor="middle">90 deg</text>
+<rect x="196" y="362" width="38" height="20" rx="4" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="240" y="362" width="30" height="20" rx="4" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="274" y="362" width="30" height="20" rx="4" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="42" y="399" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" font-weight="700" fill="#073642" letter-spacing="0.8">CROSS SLIDE</text>
+<rect x="42" y="404" width="150" height="20" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="67" y="417.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#073642" text-anchor="middle">0.05 mm</text>
+<rect x="94" y="406" width="46" height="16" rx="4.5" fill="#586e75"/>
+<text x="117" y="417.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" font-weight="600" fill="#ffffff" text-anchor="middle">0.1 mm</text>
+<text x="167" y="417.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#073642" text-anchor="middle">0.5 mm</text>
+<rect x="196" y="404" width="38" height="20" rx="4" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="240" y="404" width="30" height="20" rx="4" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="274" y="404" width="30" height="20" rx="4" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="42" y="441" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" font-weight="700" fill="#073642" letter-spacing="0.8">FOCUS AXIS</text>
+<rect x="42" y="446" width="150" height="20" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="67" y="459.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#073642" text-anchor="middle">0.05 mm</text>
+<rect x="94" y="448" width="46" height="16" rx="4.5" fill="#586e75"/>
+<text x="117" y="459.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" font-weight="600" fill="#ffffff" text-anchor="middle">0.1 mm</text>
+<text x="167" y="459.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#073642" text-anchor="middle">1 mm</text>
+<rect x="196" y="446" width="38" height="20" rx="4" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="240" y="446" width="30" height="20" rx="4" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="274" y="446" width="30" height="20" rx="4" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="42" y="484" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#586e75">Feed  Board go  Joint go  Center</text>
+<rect x="42" y="490" width="151.8" height="6" rx="2" fill="#d8d1bb"/>
+<text x="42" y="514" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#586e75">Here is R A Z H  Set position</text>
+<rect x="42" y="520" width="151.8" height="6" rx="2" fill="#d8d1bb"/>
+<text x="42" y="544" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#586e75">Travel H  Motors on  Unlock</text>
+<rect x="42" y="550" width="151.8" height="6" rx="2" fill="#d8d1bb"/>
+<text x="30" y="604" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">Six step choosers, one per axis, and 15 more</text>
+<text x="30" y="621.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">buttons; the same panel again on the Plot and PNP</text>
+<text x="30" y="639.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">pages.</text>
+<text x="380" y="70" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#586e75">The dock, opened by Jog or a held arrow key</text>
+<rect x="380" y="84" width="550" height="330" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="398" y="120" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#586e75">X</text>
+<text x="414" y="120" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="17" fill="#073642">12.300</text>
+<text x="501.2" y="120" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#586e75">Y</text>
+<text x="517.2" y="120" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="17" fill="#073642">45.000</text>
+<text x="604.4" y="120" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#586e75">H</text>
+<text x="620.4" y="120" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="17" fill="#073642">2.100</text>
+<text x="697.4" y="120" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#586e75">A</text>
+<text x="713.4" y="120" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="17" fill="#073642">90.00</text>
+<line x1="396" y1="138" x2="914" y2="138" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<text x="398" y="168" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">Step</text>
+<rect x="440" y="150" width="258" height="30" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="483" y="169.7" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#073642" text-anchor="middle">Fine</text>
+<rect x="528" y="152" width="82" height="26" rx="4.5" fill="#586e75"/>
+<text x="569" y="169.7" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">Normal</text>
+<text x="655" y="169.7" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#073642" text-anchor="middle">Coarse</text>
+<text x="732" y="164" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">Normal: X Y 1 mm, A 10 deg,</text>
+<text x="732" y="180" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">H 0.1 mm (from the machine file)</text>
+<rect x="398" y="202" width="56" height="38" rx="7" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="460" y="202" width="56" height="38" rx="7" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="488" y="226" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#073642" text-anchor="middle">Y+</text>
+<rect x="522" y="202" width="56" height="38" rx="7" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="398" y="246" width="56" height="38" rx="7" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="426" y="270" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#073642" text-anchor="middle">X-</text>
+<rect x="460" y="246" width="56" height="38" rx="7" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="522" y="246" width="56" height="38" rx="7" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="550" y="270" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#073642" text-anchor="middle">X+</text>
+<rect x="398" y="290" width="56" height="38" rx="7" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="460" y="290" width="56" height="38" rx="7" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="488" y="314" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#073642" text-anchor="middle">Y-</text>
+<rect x="522" y="290" width="56" height="38" rx="7" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<circle cx="488" cy="265" r="5" fill="#93a1a1"/>
+<text x="608" y="214" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">Focus H</text>
+<rect x="608" y="222" width="70" height="38" rx="7" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="643" y="246" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#073642" text-anchor="middle">Up</text>
+<rect x="608" y="266" width="70" height="38" rx="7" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="643" y="290" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#073642" text-anchor="middle">Down</text>
+<text x="698" y="214" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">Table A</text>
+<rect x="698" y="222" width="76" height="38" rx="7" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="736" y="246" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#073642" text-anchor="middle">Turn +</text>
+<rect x="698" y="266" width="76" height="38" rx="7" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="736" y="290" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#073642" text-anchor="middle">Turn -</text>
+<text x="398" y="362" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">Arrows move X Y, PageUp and PageDown move H, Shift moves one Fine step.</text>
+<line x1="396" y1="376" x2="914" y2="376" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<path d="M399.0,392.0 L403.0,396.0 L399.0,400.0" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="411" y="400" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">More: go to a place or marker, set position, motors, unlock</text>
+<circle cx="912" cy="114" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="912" y="118.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">1</text>
+<circle cx="715" cy="165" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="715" y="169.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">2</text>
+<circle cx="912" cy="234" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="912" y="238.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+<circle cx="912" cy="396" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="912" y="400.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">4</text>
+<text x="380" y="452" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#586e75">Folded, on every screen of the Run area</text>
+<rect x="380" y="464" width="550" height="50" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="396" y="495" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#586e75">X</text>
+<text x="411" y="495" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="14" fill="#073642">12.300</text>
+<text x="483.4" y="495" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#586e75">Y</text>
+<text x="498.4" y="495" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="14" fill="#073642">45.000</text>
+<text x="570.8" y="495" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#586e75">H</text>
+<text x="585.8" y="495" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="14" fill="#073642">2.100</text>
+<rect x="649.8" y="475" width="72" height="28" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="665.8" y="493.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642">Jog</text>
+<path d="M701.2,490.8 L704.8,487.2 L708.4,490.8" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="760" y="494" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75" text-anchor="end">Quick</text>
+<rect x="770" y="475" width="56" height="28" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="798" y="493.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="middle">Home</text>
+<rect x="833" y="475" width="83" height="28" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="874.5" y="493.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="middle">Laser off</text>
+<text x="380" y="550" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">One step level for every axis, mapped per axis by the machine file; the same dock on every</text>
+<text x="380" y="567.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">screen and every machine.</text>
+</svg>

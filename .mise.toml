@@ -128,6 +128,10 @@ run = "cd web/frontend && bun layout/check.ts"
 description = "Screenshots of the page over its mock in Chromium from a JSON list of shots (page, size, dark, a script before, a drag, one element; layout/shot.ts says how): mise run shots -- shots.json out/"
 run = "cd web/frontend && bun layout/shot.ts"
 
+[tasks.ui-figures]
+description = "Draw the figures of docs/UI_PRINCIPLES.md and docs/UI_REDESIGN.md: docs/ui/figures.py rewrites docs/ui/*.svg"
+run = "python docs/ui/figures.py"
+
 [tasks.test-render]
 description = "Preview pictures in Chromium: WebGL, in the page and in the drawing worker, against the 2D painter scene by scene, and the page's previews drawn in a worker"
 run = "cd web/frontend && bun layout/render.ts --no-drag"

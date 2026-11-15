@@ -1,0 +1,243 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1020" height="640" viewBox="0 0 1020 640" role="img" aria-label="Proposed Home: where you left off, the machine, what needs you, recent jobs">
+<title>Proposed Home: where you left off, the machine, what needs you, recent jobs</title>
+<rect width="1020" height="640" rx="14" fill="#f7f2e2"/>
+<rect x="10" y="10" width="1000" height="620" rx="12" fill="#eee8d5"/>
+<path d="M10,22 A12,12 0 0 1 22,10 H998 A12,12 0 0 1 1010,22 V58 H10 Z" fill="#fdf6e3" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="122" y="20" width="172.9" height="28" rx="14" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<circle cx="135" cy="34" r="4" fill="#93a1a1"/>
+<text x="146" y="38.6" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#073642">Polar laser</text>
+<line x1="229.6" y1="27" x2="229.6" y2="41" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<text x="240.6" y="38.6" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#586e75">Idle</text>
+<path d="M277.3,32.2 L280.9,35.8 L284.5,32.2" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="312.9" y="38.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">Ready: demo coupon, step 3 of 6</text>
+<rect x="906" y="18" width="92" height="32" rx="6" fill="#dc322f"/>
+<text x="952" y="39" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#ffffff" text-anchor="middle">STOP</text>
+<line x1="10" y1="58" x2="1010" y2="58" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="34" cy="34" r="8.5" fill="none" stroke="#586e75" stroke-width="1.6"/>
+<circle cx="34" cy="34" r="3" fill="#dc322f"/>
+<text x="50" y="39" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14.5" font-weight="700" fill="#073642">Spinny</text>
+<path d="M10,58 H88 V630 H22 A12,12 0 0 1 10,618 Z" fill="#fdf6e3" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="88" y1="58" x2="88" y2="630" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<rect x="18" y="66" width="62" height="52" rx="8" fill="#e8e1ca"/>
+<rect x="12" y="78" width="3.5" height="28" rx="1.5" fill="#073642"/>
+<path d="M41.0,83.5 L49,76.0 L57.0,83.5 M43.0,81.5 V91.5 H55.0 V81.5" fill="none" stroke="#073642" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="49" y="109" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#073642" text-anchor="middle">Home</text>
+<rect x="40.5" y="137.5" width="17" height="13" rx="2.5" fill="none" stroke="#586e75" stroke-width="1.7"/>
+<path d="M44.0,146.5 L48.0,146.5 L50.5,142.0 L54.0,142.0" fill="none" stroke="#586e75" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="49" y="169" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75" text-anchor="middle">Job</text>
+<circle cx="49" cy="204" r="8.5" fill="none" stroke="#586e75" stroke-width="1.7"/>
+<path d="M46.5,200.0 L53.5,204 L46.5,208.0 Z" fill="#586e75" stroke="#586e75" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="49" y="229" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75" text-anchor="middle">Run</text>
+<line x1="40.5" y1="258" x2="57.5" y2="258" stroke="#586e75" stroke-width="1.7" stroke-linecap="round"/>
+<circle cx="44.1" cy="258" r="2.2" fill="#fdf6e3" stroke="#586e75" stroke-width="1.7"/>
+<line x1="40.5" y1="264" x2="57.5" y2="264" stroke="#586e75" stroke-width="1.7" stroke-linecap="round"/>
+<circle cx="53.9" cy="264" r="2.2" fill="#fdf6e3" stroke="#586e75" stroke-width="1.7"/>
+<line x1="40.5" y1="270" x2="57.5" y2="270" stroke="#586e75" stroke-width="1.7" stroke-linecap="round"/>
+<circle cx="48.3" cy="270" r="2.2" fill="#fdf6e3" stroke="#586e75" stroke-width="1.7"/>
+<text x="49" y="289" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75" text-anchor="middle">Machines</text>
+<circle cx="47.7" cy="441.7" r="4.2" fill="none" stroke="#586e75" stroke-width="1.7"/>
+<line x1="50.9" y1="444.9" x2="55" y2="448.9" stroke="#586e75" stroke-width="2.1" stroke-linecap="round"/>
+<text x="49" y="465" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#586e75" text-anchor="middle">Search</text>
+<path d="M42.2,485.9 H55.8 V493.975 H47.725 L44.325,497.375 V493.975 H42.2 Z" fill="none" stroke="#586e75" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="49" y="513" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#586e75" text-anchor="middle">Assistant</text>
+<line x1="46.9" y1="535.2" x2="55.8" y2="535.2" stroke="#586e75" stroke-width="1.7" stroke-linecap="round"/>
+<circle cx="43.5" cy="535.2" r="1.4" fill="#586e75"/>
+<line x1="46.9" y1="539.4" x2="55.8" y2="539.4" stroke="#586e75" stroke-width="1.7" stroke-linecap="round"/>
+<circle cx="43.5" cy="539.4" r="1.4" fill="#586e75"/>
+<line x1="46.9" y1="543.7" x2="55.8" y2="543.7" stroke="#586e75" stroke-width="1.7" stroke-linecap="round"/>
+<circle cx="43.5" cy="543.7" r="1.4" fill="#586e75"/>
+<text x="49" y="561" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#586e75" text-anchor="middle">To-do</text>
+<circle cx="49" cy="587" r="5.3" fill="none" stroke="#586e75" stroke-width="3.6" stroke-dasharray="2.2 2.4"/>
+<circle cx="49" cy="587" r="3.8" fill="#fdf6e3" stroke="#586e75" stroke-width="1.7"/>
+<text x="49" y="609" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#586e75" text-anchor="middle">Settings</text>
+<rect x="102" y="72" width="894" height="170" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="120" y="90" width="190" height="134" rx="8" fill="#fbf7ea" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="136" y="104" width="158" height="106" rx="8" fill="none" stroke="#586e75" stroke-width="1.4"/>
+<path d="M147.1,123.1 L183.4,123.1 L196.0,135.8 L234.0,135.8" fill="none" stroke="#2aa198" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M147.1,123.1 L183.4,123.1 L196.0,135.8 L234.0,135.8" fill="none" stroke="#fbf7ea" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="147.1" cy="123.1" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<circle cx="234" cy="135.8" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<path d="M147.1,148.5 L167.6,148.5 L180.2,161.2 L218.2,161.2 L230.8,152.8 L282.9,152.8" fill="none" stroke="#2aa198" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M147.1,148.5 L167.6,148.5 L180.2,161.2 L218.2,161.2 L230.8,152.8 L282.9,152.8" fill="none" stroke="#fbf7ea" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="147.1" cy="148.5" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<circle cx="282.9" cy="152.8" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<path d="M147.1,188.8 L196.0,188.8 L208.7,178.2 L252.9,178.2" fill="none" stroke="#2aa198" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M147.1,188.8 L196.0,188.8 L208.7,178.2 L252.9,178.2" fill="none" stroke="#fbf7ea" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="147.1" cy="188.8" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<circle cx="252.9" cy="178.2" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<path d="M234.0,118.8 L271.9,118.8 L282.9,129.4 L282.9,140.0" fill="none" stroke="#2aa198" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M234.0,118.8 L271.9,118.8 L282.9,129.4 L282.9,140.0" fill="none" stroke="#fbf7ea" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="234" cy="118.8" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<circle cx="282.9" cy="140" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<path d="M246.6,195.2 L282.9,195.2" fill="none" stroke="#2aa198" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M246.6,195.2 L282.9,195.2" fill="none" stroke="#fbf7ea" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="246.6" cy="195.2" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<circle cx="282.9" cy="195.2" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<path d="M208.7,112.5 L208.7,127.3" fill="none" stroke="#2aa198" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M208.7,112.5 L208.7,127.3" fill="none" stroke="#fbf7ea" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="208.7" cy="112.5" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<circle cx="208.7" cy="127.3" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<path d="M262.4,163.4 L262.4,174.0 L271.9,182.4" fill="none" stroke="#2aa198" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M262.4,163.4 L262.4,174.0 L271.9,182.4" fill="none" stroke="#fbf7ea" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="262.4" cy="163.4" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<circle cx="271.9" cy="182.4" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<circle cx="156.5" cy="169.7" r="4.2" fill="none" stroke="#6c71c4" stroke-width="1.8"/>
+<circle cx="275" cy="167.6" r="4.2" fill="none" stroke="#6c71c4" stroke-width="1.8"/>
+<circle cx="183.4" cy="174" r="4.2" fill="none" stroke="#6c71c4" stroke-width="1.8"/>
+<circle cx="234" cy="195.2" r="4.2" fill="none" stroke="#6c71c4" stroke-width="1.8"/>
+<text x="334" y="116" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#586e75" letter-spacing="1.2">CONTINUE</text>
+<text x="334" y="146" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="21" font-weight="700" fill="#073642">demo coupon on the Polar laser</text>
+<text x="334" y="170" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" fill="#586e75">Set up 2 of 6 steps. Next: find the board with the camera.</text>
+<circle cx="344" cy="194" r="8.5" fill="#859900"/>
+<path d="M340,194.4 L342.8,197.3 L348.2,190.8" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="374" cy="194" r="8.5" fill="#859900"/>
+<path d="M370,194.4 L372.8,197.3 L378.2,190.8" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="404" cy="194" r="7.9" fill="#fdf6e3" stroke="#073642" stroke-width="2.4"/>
+<circle cx="404" cy="194" r="3.3" fill="#073642"/>
+<circle cx="434" cy="194" r="7.7" fill="#fdf6e3" stroke="#93a1a1" stroke-width="1.6"/>
+<circle cx="464" cy="194" r="7.7" fill="#fdf6e3" stroke="#93a1a1" stroke-width="1.6"/>
+<circle cx="494" cy="194" r="7.7" fill="#fdf6e3" stroke="#93a1a1" stroke-width="1.6"/>
+<rect x="774" y="178" width="200" height="40" rx="6" fill="#073642"/>
+<text x="874" y="203" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#ffffff" text-anchor="middle">Continue: Find board</text>
+<circle cx="982" cy="90" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="982" y="94.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">1</text>
+<rect x="102" y="256" width="288.7" height="344" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="120" y="286" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#586e75" letter-spacing="1.2">MACHINE</text>
+<text x="120" y="316" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="17" font-weight="700" fill="#073642">Polar laser</text>
+<rect x="120" y="330" width="117.3" height="22" rx="11" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<circle cx="132" cy="341" r="3.6" fill="#93a1a1"/>
+<text x="141" y="345.1" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" font-weight="600" fill="#073642">Connected, idle</text>
+<text x="120" y="380" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">Others</text>
+<text x="120" y="404" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#073642">Cartesian mill</text>
+<text x="372.7" y="404" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="end" text-decoration="underline">Switch</text>
+<text x="120" y="430" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#073642">K40</text>
+<text x="372.7" y="430" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="end" text-decoration="underline">Switch</text>
+<text x="120" y="456" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#073642">LumenPnP</text>
+<text x="372.7" y="456" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="end" text-decoration="underline">Switch</text>
+<circle cx="376.7" cy="274" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="376.7" y="278.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">2</text>
+<rect x="404.7" y="256" width="288.7" height="344" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="422.7" y="286" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#586e75" letter-spacing="1.2">NEEDS YOU</text>
+<circle cx="432.7" cy="318" r="9.5" fill="#b58900"/>
+<line x1="432.7" y1="313.4" x2="432.7" y2="319" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round"/>
+<circle cx="432.7" cy="322.2" r="1.4" fill="#ffffff"/>
+<text x="450.7" y="322" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#073642">Camera offset not measured</text>
+<text x="450.7" y="340" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75" text-decoration="underline">Machines</text>
+<circle cx="432.7" cy="374" r="9.5" fill="#b58900"/>
+<line x1="432.7" y1="369.4" x2="432.7" y2="375" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round"/>
+<circle cx="432.7" cy="378.2" r="1.4" fill="#ffffff"/>
+<text x="450.7" y="378" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#073642">1 edit not saved</text>
+<text x="450.7" y="396" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75" text-decoration="underline">polar-laser.toml</text>
+<circle cx="432.7" cy="430" r="8.7" fill="#fdf6e3" stroke="#586e75" stroke-width="1.4"/>
+<circle cx="432.7" cy="426.3" r="1.2" fill="#586e75"/>
+<line x1="432.7" y1="429.2" x2="432.7" y2="434.3" stroke="#586e75" stroke-width="1.8" stroke-linecap="round"/>
+<text x="450.7" y="434" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#073642">Update 0.2.0 ready</text>
+<text x="450.7" y="452" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75" text-decoration="underline">Settings</text>
+<circle cx="679.3" cy="274" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="679.3" y="278.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+<rect x="707.3" y="256" width="288.7" height="344" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="725.3" y="286" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#586e75" letter-spacing="1.2">RECENT JOBS</text>
+<rect x="725.3" y="306" width="64" height="48" rx="6" fill="#fbf7ea" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="731.3" y="312" width="52" height="36" rx="3" fill="none" stroke="#586e75" stroke-width="1"/>
+<path d="M735.0,318.5 L746.9,318.5 L751.1,322.8 L763.6,322.8" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="735" cy="318.5" r="1.7" fill="#2aa198"/>
+<circle cx="763.6" cy="322.8" r="1.7" fill="#2aa198"/>
+<path d="M735.0,327.1 L741.7,327.1 L745.9,331.4 L758.4,331.4 L762.5,328.6 L779.7,328.6" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="735" cy="327.1" r="1.7" fill="#2aa198"/>
+<circle cx="779.7" cy="328.6" r="1.7" fill="#2aa198"/>
+<path d="M735.0,340.8 L751.1,340.8 L755.3,337.2 L769.8,337.2" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="735" cy="340.8" r="1.7" fill="#2aa198"/>
+<circle cx="769.8" cy="337.2" r="1.7" fill="#2aa198"/>
+<path d="M763.6,317.0 L776.1,317.0 L779.7,320.6 L779.7,324.2" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="763.6" cy="317" r="1.7" fill="#2aa198"/>
+<circle cx="779.7" cy="324.2" r="1.7" fill="#2aa198"/>
+<path d="M767.7,343.0 L779.7,343.0" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="767.7" cy="343" r="1.7" fill="#2aa198"/>
+<circle cx="779.7" cy="343" r="1.7" fill="#2aa198"/>
+<path d="M755.3,314.9 L755.3,319.9" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="755.3" cy="314.9" r="1.7" fill="#2aa198"/>
+<circle cx="755.3" cy="319.9" r="1.7" fill="#2aa198"/>
+<path d="M772.9,332.2 L772.9,335.8 L776.1,338.6" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="772.9" cy="332.2" r="1.7" fill="#2aa198"/>
+<circle cx="776.1" cy="338.6" r="1.7" fill="#2aa198"/>
+<text x="801.3" y="326" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#073642">demo coupon</text>
+<text x="801.3" y="344" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">Gerber, 2:33</text>
+<rect x="725.3" y="372" width="64" height="48" rx="6" fill="#fbf7ea" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="731.3" y="378" width="52" height="36" rx="3" fill="none" stroke="#586e75" stroke-width="1"/>
+<path d="M735.0,384.5 L746.9,384.5 L751.1,388.8 L763.6,388.8" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="735" cy="384.5" r="1.7" fill="#2aa198"/>
+<circle cx="763.6" cy="388.8" r="1.7" fill="#2aa198"/>
+<path d="M735.0,393.1 L741.7,393.1 L745.9,397.4 L758.4,397.4 L762.5,394.6 L779.7,394.6" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="735" cy="393.1" r="1.7" fill="#2aa198"/>
+<circle cx="779.7" cy="394.6" r="1.7" fill="#2aa198"/>
+<path d="M735.0,406.8 L751.1,406.8 L755.3,403.2 L769.8,403.2" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="735" cy="406.8" r="1.7" fill="#2aa198"/>
+<circle cx="769.8" cy="403.2" r="1.7" fill="#2aa198"/>
+<path d="M763.6,383.0 L776.1,383.0 L779.7,386.6 L779.7,390.2" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="763.6" cy="383" r="1.7" fill="#2aa198"/>
+<circle cx="779.7" cy="390.2" r="1.7" fill="#2aa198"/>
+<path d="M767.7,409.0 L779.7,409.0" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="767.7" cy="409" r="1.7" fill="#2aa198"/>
+<circle cx="779.7" cy="409" r="1.7" fill="#2aa198"/>
+<path d="M755.3,380.9 L755.3,385.9" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="755.3" cy="380.9" r="1.7" fill="#2aa198"/>
+<circle cx="755.3" cy="385.9" r="1.7" fill="#2aa198"/>
+<path d="M772.9,398.2 L772.9,401.8 L776.1,404.6" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="772.9" cy="398.2" r="1.7" fill="#2aa198"/>
+<circle cx="776.1" cy="404.6" r="1.7" fill="#2aa198"/>
+<text x="801.3" y="392" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#073642">battery card</text>
+<text x="801.3" y="410" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">KiCad, 6:10</text>
+<rect x="725.3" y="438" width="64" height="48" rx="6" fill="#fbf7ea" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="731.3" y="444" width="52" height="36" rx="3" fill="none" stroke="#586e75" stroke-width="1"/>
+<path d="M735.0,450.5 L746.9,450.5 L751.1,454.8 L763.6,454.8" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="735" cy="450.5" r="1.7" fill="#2aa198"/>
+<circle cx="763.6" cy="454.8" r="1.7" fill="#2aa198"/>
+<path d="M735.0,459.1 L741.7,459.1 L745.9,463.4 L758.4,463.4 L762.5,460.6 L779.7,460.6" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="735" cy="459.1" r="1.7" fill="#2aa198"/>
+<circle cx="779.7" cy="460.6" r="1.7" fill="#2aa198"/>
+<path d="M735.0,472.8 L751.1,472.8 L755.3,469.2 L769.8,469.2" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="735" cy="472.8" r="1.7" fill="#2aa198"/>
+<circle cx="769.8" cy="469.2" r="1.7" fill="#2aa198"/>
+<path d="M763.6,449.0 L776.1,449.0 L779.7,452.6 L779.7,456.2" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="763.6" cy="449" r="1.7" fill="#2aa198"/>
+<circle cx="779.7" cy="456.2" r="1.7" fill="#2aa198"/>
+<path d="M767.7,475.0 L779.7,475.0" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="767.7" cy="475" r="1.7" fill="#2aa198"/>
+<circle cx="779.7" cy="475" r="1.7" fill="#2aa198"/>
+<path d="M755.3,446.9 L755.3,451.9" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="755.3" cy="446.9" r="1.7" fill="#2aa198"/>
+<circle cx="755.3" cy="451.9" r="1.7" fill="#2aa198"/>
+<path d="M772.9,464.2 L772.9,467.8 L776.1,470.6" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="772.9" cy="464.2" r="1.7" fill="#2aa198"/>
+<circle cx="776.1" cy="470.6" r="1.7" fill="#2aa198"/>
+<text x="801.3" y="458" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#073642">logo test</text>
+<text x="801.3" y="476" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">SVG, 0:48</text>
+<rect x="725.3" y="504" width="64" height="48" rx="6" fill="#fbf7ea" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="731.3" y="510" width="52" height="36" rx="3" fill="none" stroke="#586e75" stroke-width="1"/>
+<path d="M735.0,516.5 L746.9,516.5 L751.1,520.8 L763.6,520.8" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="735" cy="516.5" r="1.7" fill="#2aa198"/>
+<circle cx="763.6" cy="520.8" r="1.7" fill="#2aa198"/>
+<path d="M735.0,525.1 L741.7,525.1 L745.9,529.4 L758.4,529.4 L762.5,526.6 L779.7,526.6" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="735" cy="525.1" r="1.7" fill="#2aa198"/>
+<circle cx="779.7" cy="526.6" r="1.7" fill="#2aa198"/>
+<path d="M735.0,538.8 L751.1,538.8 L755.3,535.2 L769.8,535.2" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="735" cy="538.8" r="1.7" fill="#2aa198"/>
+<circle cx="769.8" cy="535.2" r="1.7" fill="#2aa198"/>
+<path d="M763.6,515.0 L776.1,515.0 L779.7,518.6 L779.7,522.2" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="763.6" cy="515" r="1.7" fill="#2aa198"/>
+<circle cx="779.7" cy="522.2" r="1.7" fill="#2aa198"/>
+<path d="M767.7,541.0 L779.7,541.0" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="767.7" cy="541" r="1.7" fill="#2aa198"/>
+<circle cx="779.7" cy="541" r="1.7" fill="#2aa198"/>
+<path d="M755.3,512.9 L755.3,517.9" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="755.3" cy="512.9" r="1.7" fill="#2aa198"/>
+<circle cx="755.3" cy="517.9" r="1.7" fill="#2aa198"/>
+<path d="M772.9,530.2 L772.9,533.8 L776.1,536.6" fill="none" stroke="#2aa198" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="772.9" cy="530.2" r="1.7" fill="#2aa198"/>
+<circle cx="776.1" cy="536.6" r="1.7" fill="#2aa198"/>
+<text x="801.3" y="524" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#073642">paste stencil</text>
+<text x="801.3" y="542" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">KiCad, 3:05</text>
+<circle cx="982" cy="274" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="982" y="278.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">4</text>
+<rect x="10" y="10" width="1000" height="620" rx="12" fill="none" stroke="#dcd5bf" stroke-width="1.2"/>
+</svg>

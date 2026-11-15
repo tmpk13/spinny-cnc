@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="470" viewBox="0 0 960 470" role="img" aria-label="Instructions written into a panel today, and the proposed one line of state with the meaning on hover">
+<title>Instructions written into a panel today, and the proposed one line of state with the meaning on hover</title>
+<rect width="960" height="470" rx="14" fill="#f7f2e2"/>
+<text x="30" y="34" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#586e75" letter-spacing="1.5">NOW</text>
+<rect x="30" y="40" width="33.4" height="2.5" rx="1" fill="#93a1a1"/>
+<text x="500" y="34" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#073642" letter-spacing="1.5">PROPOSED</text>
+<rect x="500" y="40" width="83" height="2.5" rx="1" fill="#073642"/>
+<rect x="30" y="54" width="420" height="320" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<path d="M39,55.5 H441" fill="none" stroke="#6c71c4" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M44.4,72.2 L48.0,75.8 L51.6,72.2" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="59" y="78" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#073642" letter-spacing="1.1">FIND BOARD</text>
+<text x="44" y="104" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.2" fill="#586e75">Each column is a place the look puts the board, as tall as its share of the</text>
+<text x="44" y="119.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.2" fill="#586e75">evidence (looks weighed by how well they matched); the most likely is</text>
+<text x="44" y="134.9" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.2" fill="#586e75">found once it has enough looks and reaches the threshold line. Put the</text>
+<text x="44" y="150.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.2" fill="#586e75">picture's center on a corner of the board (jog, or double-click it in the</text>
+<text x="44" y="165.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.2" fill="#586e75">camera's picture), pick which corner it is and press Corner here: two</text>
+<text x="44" y="181.3" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.2" fill="#586e75">give the board's place and turn, Search keeps to it, and a guess putting a</text>
+<text x="44" y="196.7" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.2" fill="#586e75">corner further than Within is ruled out. With the top camera a corner is</text>
+<text x="44" y="212.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.2" fill="#586e75">also one of the board's references, so Go to part and Find fiducials work</text>
+<text x="44" y="227.6" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.2" fill="#586e75">from it at once; Use as board place takes a place found instead. With</text>
+<text x="44" y="243.1" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.2" fill="#586e75">Probability over the pose each column is a place's probability, the last (?)</text>
+<text x="44" y="258.6" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.2" fill="#586e75">what no place holds yet, where nothing has looked; Full scan, once a rough</text>
+<text x="44" y="274" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.2" fill="#586e75">place is known, covers the whole board and lays its pictures out below.</text>
+<path d="M45.0,344.0 L49.0,348.0 L45.0,352.0" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="57" y="352" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">What the words mean</text>
+<text x="30" y="404" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">About 150 words in one panel, read once if at all; the same words</text>
+<text x="30" y="421.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">greet you on every run after.</text>
+<rect x="500" y="54" width="430" height="320" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="514" y="78" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#073642" letter-spacing="1.1">FIND BOARD</text>
+<text x="516" y="120" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#073642">Board found</text>
+<text x="516" y="142" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642"><tspan fill="#586e75">94% sure: its </tspan><tspan text-decoration="underline">share</tspan><tspan fill="#586e75"> of the looks; two places agree</tspan></text>
+<rect x="516" y="162" width="398" height="100" rx="8" fill="#fbf7ea" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="806" y="188" width="24" height="62" rx="3" fill="#586e75"/>
+<rect x="840" y="247.4" width="24" height="2.6" rx="3" fill="#93a1a1"/>
+<rect x="874" y="248.7" width="24" height="1.3" rx="3" fill="#93a1a1"/>
+<text x="818" y="182" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#073642" text-anchor="middle">94%</text>
+<path d="M588,156 L596,148 L604,156 Z" fill="#073642" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="526" y="156" width="258" height="76" rx="8" fill="#073642"/>
+<text x="538" y="177" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#fdf6e3">Share: how much of what the camera saw</text>
+<text x="538" y="193.3" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#fdf6e3">points to this place. The board counts as</text>
+<text x="538" y="209.7" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#fdf6e3">found past the threshold, 50%.</text>
+<text x="516" y="292" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">Threshold 50%  |  Method: vote</text>
+<rect x="516" y="308" width="112" height="32" rx="6" fill="#073642"/>
+<text x="572" y="328.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#ffffff" text-anchor="middle">Use this place</text>
+<rect x="650" y="308" width="87" height="32" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="693.5" y="328.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="middle">Look again</text>
+<circle cx="900" cy="324" r="12" fill="none" stroke="#586e75" stroke-width="1.4"/>
+<text x="900" y="328.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#586e75" text-anchor="middle">?</text>
+<circle cx="910" cy="118" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="910" y="122.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">1</text>
+<circle cx="784" cy="160" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="784" y="164.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">2</text>
+<circle cx="876" cy="306" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="876" y="310.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+<text x="500" y="404" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">One line of state in the panel; a word's meaning on hover; the how-to</text>
+<text x="500" y="421.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">behind the question mark, which opens the guide at its section.</text>
+</svg>

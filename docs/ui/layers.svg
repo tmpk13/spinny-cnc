@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="502" viewBox="0 0 960 502" role="img" aria-label="Three layers of controls, sorted by how often they are used, all reachable by search">
+<title>Three layers of controls, sorted by how often they are used, all reachable by search</title>
+<rect width="960" height="502" rx="14" fill="#f7f2e2"/>
+<rect x="96" y="40" width="640" height="128" rx="12" fill="#fdf6e3" stroke="#073642" stroke-width="2"/>
+<text x="116" y="70" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="15" font-weight="700" fill="#073642">Layer 1: in view</text>
+<text x="116" y="89" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">used on every run</text>
+<rect x="116" y="106" width="49.5" height="24" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="140.7" y="122.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">Stop</text>
+<rect x="173.5" y="106" width="145.8" height="24" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="246.4" y="122.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">machine and its state</text>
+<rect x="327.3" y="106" width="132.6" height="24" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="393.6" y="122.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">the step you are on</text>
+<rect x="468" y="106" width="129.3" height="24" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="532.6" y="122.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">its one next action</text>
+<rect x="605.2" y="106" width="67.4" height="24" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="638.9" y="122.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">position</text>
+<rect x="116" y="136" width="46.2" height="24" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="139.1" y="152.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">Hold</text>
+<rect x="170.2" y="136" width="74.3" height="24" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="207.4" y="152.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">time left</text>
+<rect x="96" y="190" width="640" height="128" rx="12" fill="#fdf6e3" stroke="#586e75" stroke-width="1.2"/>
+<text x="116" y="220" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="15" font-weight="700" fill="#073642">Layer 2: one press, in place</text>
+<text x="116" y="239" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">used on some runs</text>
+<rect x="116" y="256" width="103.2" height="24" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="167.6" y="272.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">jog step sizes</text>
+<rect x="227.2" y="256" width="110.1" height="24" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="282.3" y="272.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">height map grid</text>
+<rect x="345.3" y="256" width="178.5" height="24" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="434.6" y="272.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">how the board is looked for</text>
+<rect x="531.8" y="256" width="93.8" height="24" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="578.7" y="272.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">view options</text>
+<rect x="633.6" y="256" width="64.1" height="24" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="665.6" y="272.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">console</text>
+<rect x="116" y="286" width="71" height="24" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="151.5" y="302.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">markers</text>
+<rect x="195" y="286" width="145.4" height="24" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="267.6" y="302.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">an operation's details</text>
+<rect x="96" y="340" width="640" height="128" rx="12" fill="#f3edd9" stroke="#93a1a1" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text x="116" y="370" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="15" font-weight="700" fill="#586e75">Layer 3: Machines and Settings</text>
+<text x="116" y="389" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">set once, checked now and then</text>
+<rect x="116" y="406" width="158.8" height="24" rx="12" fill="#faf4e2" stroke="#dcd5bf" stroke-width="1"/>
+<text x="195.4" y="422.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75" text-anchor="middle">camera device, size, fps</text>
+<rect x="282.8" y="406" width="106.5" height="24" rx="12" fill="#faf4e2" stroke="#dcd5bf" stroke-width="1"/>
+<text x="336" y="422.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75" text-anchor="middle">lens and colors</text>
+<rect x="397.3" y="406" width="106.7" height="24" rx="12" fill="#faf4e2" stroke="#dcd5bf" stroke-width="1"/>
+<text x="450.6" y="422.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75" text-anchor="middle">camera offset</text>
+<rect x="512" y="406" width="99.9" height="24" rx="12" fill="#faf4e2" stroke="#dcd5bf" stroke-width="1"/>
+<text x="561.9" y="422.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75" text-anchor="middle">nozzle runout</text>
+<rect x="116" y="436" width="129.8" height="24" rx="12" fill="#faf4e2" stroke="#dcd5bf" stroke-width="1"/>
+<text x="180.9" y="452.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75" text-anchor="middle">firmware settings</text>
+<rect x="253.8" y="436" width="90.5" height="24" rx="12" fill="#faf4e2" stroke="#dcd5bf" stroke-width="1"/>
+<text x="299" y="452.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75" text-anchor="middle">machine file</text>
+<rect x="352.3" y="436" width="96.9" height="24" rx="12" fill="#faf4e2" stroke="#dcd5bf" stroke-width="1"/>
+<text x="400.7" y="452.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75" text-anchor="middle">CAM profiles</text>
+<rect x="457.2" y="436" width="60.9" height="24" rx="12" fill="#faf4e2" stroke="#dcd5bf" stroke-width="1"/>
+<text x="487.6" y="452.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75" text-anchor="middle">plugins</text>
+<rect x="526" y="436" width="96.6" height="24" rx="12" fill="#faf4e2" stroke="#dcd5bf" stroke-width="1"/>
+<text x="574.4" y="452.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75" text-anchor="middle">panel layouts</text>
+<line x1="62" y1="52" x2="62" y2="452" stroke="#586e75" stroke-width="2" stroke-linecap="round"/>
+<path d="M56,444 L62,456 L68,444" fill="none" stroke="#586e75" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="44" y="252" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75" text-anchor="middle" transform="rotate(-90 44 252)">less and less often</text>
+<rect x="764" y="40" width="170" height="428" rx="12" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<circle cx="846.8" cy="77.8" r="7.5" fill="none" stroke="#073642" stroke-width="1.7"/>
+<line x1="852.3" y1="83.3" x2="859.5" y2="90.5" stroke="#073642" stroke-width="2.1" stroke-linecap="round"/>
+<text x="849" y="124" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="15" font-weight="700" fill="#073642" text-anchor="middle">Search</text>
+<text x="849" y="142" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="12" fill="#586e75" text-anchor="middle">Ctrl+K or /</text>
+<text x="780" y="176" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642">finds any control in any</text>
+<text x="780" y="193.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642">layer by a few letters,</text>
+<text x="780" y="211.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642">opens what holds it and</text>
+<text x="780" y="229.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642">puts the focus on it</text>
+<path d="M738,104 H760" fill="none" stroke="#93a1a1" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="3 3"/>
+<path d="M738,254 H760" fill="none" stroke="#93a1a1" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="3 3"/>
+<path d="M738,404 H760" fill="none" stroke="#93a1a1" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="3 3"/>
+</svg>

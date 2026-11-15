@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="486" viewBox="0 0 960 486" role="img" aria-label="The proposed screen's six regions, each with one job">
+<title>The proposed screen's six regions, each with one job</title>
+<rect width="960" height="486" rx="14" fill="#f7f2e2"/>
+<rect x="24" y="24" width="600" height="440" rx="12" fill="#eee8d5"/>
+<path d="M24,36 A12,12 0 0 1 36,24 H612 A12,12 0 0 1 624,36 V68 H24 Z" fill="#fdf6e3" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="24" y1="68" x2="624" y2="68" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="44" cy="46" r="7" fill="none" stroke="#586e75" stroke-width="1.5"/>
+<circle cx="44" cy="46" r="2.6" fill="#dc322f"/>
+<rect x="114" y="33" width="170" height="26" rx="13" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<circle cx="126" cy="46" r="3.6" fill="#93a1a1"/>
+<rect x="136" y="42" width="120" height="8" rx="4" fill="#d8d1bb"/>
+<rect x="538" y="32" width="74" height="28" rx="6" fill="#dc322f"/>
+<text x="575" y="51" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">STOP</text>
+<path d="M24,68 H88 V464 H36 A12,12 0 0 1 24,452 Z" fill="#fdf6e3" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="88" y1="68" x2="88" y2="464" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<rect x="42" y="86" width="28" height="28" rx="7" fill="#eee8d5"/>
+<rect x="42" y="132" width="28" height="28" rx="7" fill="#eee8d5"/>
+<rect x="42" y="178" width="28" height="28" rx="7" fill="#e8e1ca"/>
+<rect x="42" y="224" width="28" height="28" rx="7" fill="#eee8d5"/>
+<circle cx="56" cy="354" r="9" fill="#eee8d5"/>
+<circle cx="56" cy="388" r="9" fill="#eee8d5"/>
+<circle cx="56" cy="422" r="9" fill="#eee8d5"/>
+<rect x="100" y="80" width="512" height="38" rx="9" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<circle cx="124" cy="99" r="8" fill="#859900"/>
+<path d="M120,99.4 L122.8,102.3 L128.2,95.8" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="137" y="96" width="44" height="6" rx="3" fill="#d8d1bb"/>
+<circle cx="208" cy="99" r="8" fill="#859900"/>
+<path d="M204,99.4 L206.8,102.3 L212.2,95.8" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="221" y="96" width="44" height="6" rx="3" fill="#d8d1bb"/>
+<circle cx="292" cy="99" r="7.4" fill="#fdf6e3" stroke="#073642" stroke-width="2.4"/>
+<circle cx="292" cy="99" r="3.3" fill="#073642"/>
+<rect x="305" y="96" width="44" height="6" rx="3" fill="#d8d1bb"/>
+<circle cx="376" cy="99" r="7.2" fill="#fdf6e3" stroke="#93a1a1" stroke-width="1.6"/>
+<rect x="389" y="96" width="44" height="6" rx="3" fill="#d8d1bb"/>
+<circle cx="460" cy="99" r="7.2" fill="#fdf6e3" stroke="#93a1a1" stroke-width="1.6"/>
+<rect x="473" y="96" width="44" height="6" rx="3" fill="#d8d1bb"/>
+<circle cx="544" cy="99" r="7.2" fill="#fdf6e3" stroke="#93a1a1" stroke-width="1.6"/>
+<rect x="557" y="96" width="44" height="6" rx="3" fill="#d8d1bb"/>
+<rect x="100" y="130" width="320" height="266" rx="10" fill="#fbf7ea" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="134" y="164" width="250" height="190" rx="8" fill="none" stroke="#586e75" stroke-width="1.4"/>
+<path d="M151.5,198.2 L209.0,198.2 L229.0,221.0 L289.0,221.0" fill="none" stroke="#2aa198" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M151.5,198.2 L209.0,198.2 L229.0,221.0 L289.0,221.0" fill="none" stroke="#fbf7ea" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="151.5" cy="198.2" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<circle cx="289" cy="221" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<path d="M151.5,243.8 L184.0,243.8 L204.0,266.6 L264.0,266.6 L284.0,251.4 L366.5,251.4" fill="none" stroke="#2aa198" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M151.5,243.8 L184.0,243.8 L204.0,266.6 L264.0,266.6 L284.0,251.4 L366.5,251.4" fill="none" stroke="#fbf7ea" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="151.5" cy="243.8" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<circle cx="366.5" cy="251.4" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<path d="M151.5,316.0 L229.0,316.0 L249.0,297.0 L319.0,297.0" fill="none" stroke="#2aa198" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M151.5,316.0 L229.0,316.0 L249.0,297.0 L319.0,297.0" fill="none" stroke="#fbf7ea" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="151.5" cy="316" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<circle cx="319" cy="297" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<path d="M289.0,190.6 L349.0,190.6 L366.5,209.6 L366.5,228.6" fill="none" stroke="#2aa198" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M289.0,190.6 L349.0,190.6 L366.5,209.6 L366.5,228.6" fill="none" stroke="#fbf7ea" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="289" cy="190.6" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<circle cx="366.5" cy="228.6" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<path d="M309.0,327.4 L366.5,327.4" fill="none" stroke="#2aa198" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M309.0,327.4 L366.5,327.4" fill="none" stroke="#fbf7ea" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="309" cy="327.4" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<circle cx="366.5" cy="327.4" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<path d="M249.0,179.2 L249.0,205.8" fill="none" stroke="#2aa198" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M249.0,179.2 L249.0,205.8" fill="none" stroke="#fbf7ea" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="249" cy="179.2" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<circle cx="249" cy="205.8" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<path d="M334.0,270.4 L334.0,289.4 L349.0,304.6" fill="none" stroke="#2aa198" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M334.0,270.4 L334.0,289.4 L349.0,304.6" fill="none" stroke="#fbf7ea" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="334" cy="270.4" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<circle cx="349" cy="304.6" r="6.5" fill="#fbf7ea" stroke="#2aa198" stroke-width="1.7"/>
+<rect x="432" y="130" width="180" height="266" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="448" y="148" width="90" height="8" rx="4" fill="#93a1a1"/>
+<rect x="448" y="172" width="140" height="12" rx="4" fill="#586e75"/>
+<rect x="448" y="196" width="130" height="4" rx="2" fill="#d8d1bb"/>
+<rect x="448" y="205" width="71.5" height="4" rx="2" fill="#d8d1bb"/>
+<rect x="448" y="228" width="148" height="32" rx="6" fill="#073642"/>
+<rect x="448" y="270" width="80" height="26" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<path d="M449.0,316.0 L453.0,320.0 L449.0,324.0" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="461" y="324" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">More</text>
+<rect x="100" y="408" width="512" height="42" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="116" y="424" width="62" height="10" rx="4" fill="#93a1a1"/>
+<rect x="196" y="424" width="62" height="10" rx="4" fill="#93a1a1"/>
+<rect x="276" y="424" width="62" height="10" rx="4" fill="#93a1a1"/>
+<rect x="554" y="418" width="50" height="22" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="496" y="418" width="50" height="22" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="438" y="418" width="50" height="22" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="380" y="418" width="50" height="22" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="24" y="24" width="600" height="440" rx="12" fill="none" stroke="#dcd5bf" stroke-width="1.2"/>
+<circle cx="324" cy="46" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="324" y="50.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">1</text>
+<circle cx="56" cy="314" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="56" y="318.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">2</text>
+<circle cx="602" cy="82" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="602" y="86.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+<circle cx="116" cy="146" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="116" y="150.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">4</text>
+<circle cx="584" cy="148" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="584" y="152.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">5</text>
+<circle cx="354" cy="429" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="354" y="433.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">6</text>
+<circle cx="660" cy="46" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="660" y="50.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">1</text>
+<text x="680" y="51" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="700" fill="#073642">Machine and Stop</text>
+<text x="680" y="70" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">Which machine, what it is doing, and Stop:</text>
+<text x="680" y="87" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">the same on every screen.</text>
+<circle cx="660" cy="116.1" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="660" y="120.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">2</text>
+<text x="680" y="121.1" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="700" fill="#073642">Areas</text>
+<text x="680" y="140.1" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">Home, Job, Run, Machines: where you are,</text>
+<text x="680" y="157.1" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">and nothing else.</text>
+<circle cx="660" cy="186.2" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="660" y="190.6" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+<text x="680" y="191.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="700" fill="#073642">Steps</text>
+<text x="680" y="210.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">The steps of this machine's work, from its</text>
+<text x="680" y="227.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">machine file: done, now, next.</text>
+<circle cx="660" cy="256.2" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="660" y="260.6" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">4</text>
+<text x="680" y="261.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="700" fill="#073642">The work</text>
+<text x="680" y="280.2" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">The preview or the camera's picture, as</text>
+<text x="680" y="297.3" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">large as the screen allows.</text>
+<circle cx="660" cy="326.3" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="660" y="330.7" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">5</text>
+<text x="680" y="331.3" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="700" fill="#073642">This step</text>
+<text x="680" y="350.3" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">The step's few controls and its one next</text>
+<text x="680" y="367.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">action; More holds the rest.</text>
+<circle cx="660" cy="396.4" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="660" y="400.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">6</text>
+<text x="680" y="401.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="700" fill="#073642">Dock</text>
+<text x="680" y="420.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">Position, jog and the quick bar: one set of</text>
+<text x="680" y="437.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">machine controls everywhere.</text>
+</svg>

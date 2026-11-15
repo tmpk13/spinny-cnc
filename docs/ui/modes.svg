@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560" role="img" aria-label="The settings that change what a run does, scattered over five panels today and gathered in one Ready card">
+<title>The settings that change what a run does, scattered over five panels today and gathered in one Ready card</title>
+<rect width="960" height="560" rx="14" fill="#f7f2e2"/>
+<text x="30" y="34" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#586e75" letter-spacing="1.5">NOW</text>
+<rect x="30" y="40" width="33.4" height="2.5" rx="1" fill="#93a1a1"/>
+<text x="500" y="34" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#073642" letter-spacing="1.5">PROPOSED</text>
+<rect x="500" y="40" width="83" height="2.5" rx="1" fill="#073642"/>
+<rect x="30" y="56" width="200" height="92" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<path d="M39,57.5 H221" fill="none" stroke="#cb4b16" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M44.4,74.2 L48.0,77.8 L51.6,74.2" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="59" y="80" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#073642" letter-spacing="1.1">JOG</text>
+<text x="44" y="123.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">Travel H</text>
+<rect x="134" y="106" width="80" height="26" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="174" y="123.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">off</text>
+<rect x="129" y="101" width="90" height="36" rx="9" fill="none" stroke="#d33682" stroke-width="2" stroke-dasharray="5 3"/>
+<rect x="240" y="56" width="200" height="92" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<path d="M249,57.5 H431" fill="none" stroke="#cb4b16" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M254.4,74.2 L258.0,77.8 L261.6,74.2" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="269" y="80" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#073642" letter-spacing="1.1">LASER</text>
+<text x="254" y="123.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#586e75">Mode</text>
+<rect x="344" y="106" width="80" height="26" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="384" y="123.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">dyn</text>
+<rect x="339" y="101" width="90" height="36" rx="9" fill="none" stroke="#d33682" stroke-width="2" stroke-dasharray="5 3"/>
+<rect x="30" y="160" width="200" height="92" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<path d="M39,161.5 H221" fill="none" stroke="#cb4b16" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M44.4,178.2 L48.0,181.8 L51.6,178.2" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="59" y="184" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#073642" letter-spacing="1.1">HEIGHT MAP</text>
+<rect x="44" y="210" width="70" height="4" rx="2" fill="#d8d1bb"/>
+<rect x="44" y="220" width="65.1" height="4" rx="2" fill="#d8d1bb"/>
+<rect x="44" y="230" width="38.5" height="4" rx="2" fill="#d8d1bb"/>
+<rect x="134" y="210" width="80" height="26" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="174" y="227.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">no map</text>
+<rect x="129" y="205" width="90" height="36" rx="9" fill="none" stroke="#d33682" stroke-width="2" stroke-dasharray="5 3"/>
+<rect x="240" y="160" width="200" height="92" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<path d="M249,161.5 H431" fill="none" stroke="#cb4b16" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M254.4,178.2 L258.0,181.8 L261.6,178.2" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="269" y="184" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#073642" letter-spacing="1.1">RUN</text>
+<rect x="254" y="210" width="70" height="4" rx="2" fill="#d8d1bb"/>
+<rect x="254" y="220" width="65.1" height="4" rx="2" fill="#d8d1bb"/>
+<rect x="254" y="230" width="38.5" height="4" rx="2" fill="#d8d1bb"/>
+<rect x="344" y="210" width="80" height="26" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="384" y="227.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">map off</text>
+<rect x="339" y="205" width="90" height="36" rx="9" fill="none" stroke="#d33682" stroke-width="2" stroke-dasharray="5 3"/>
+<rect x="30" y="264" width="410" height="92" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<path d="M39,265.5 H431" fill="none" stroke="#cb4b16" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M44.4,282.2 L48.0,285.8 L51.6,282.2" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="59" y="288" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#073642" letter-spacing="1.1">SETUP</text>
+<rect x="44" y="314" width="280" height="4" rx="2" fill="#d8d1bb"/>
+<rect x="44" y="324" width="260.4" height="4" rx="2" fill="#d8d1bb"/>
+<rect x="44" y="334" width="154" height="4" rx="2" fill="#d8d1bb"/>
+<rect x="344" y="314" width="80" height="26" rx="6" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<text x="384" y="331.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">Focus</text>
+<rect x="339" y="309" width="90" height="36" rx="9" fill="none" stroke="#d33682" stroke-width="2" stroke-dasharray="5 3"/>
+<text x="30" y="390" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">Five places to check before every run, two of them</text>
+<text x="30" y="408" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">in panels that may be folded or scrolled away.</text>
+<rect x="500" y="56" width="430" height="436" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="514" y="80" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#073642" letter-spacing="1.1">READY TO RUN</text>
+<text x="916" y="80" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75" text-anchor="end">about 6 min</text>
+<circle cx="528" cy="120" r="10" fill="#859900"/>
+<path d="M524,120.4 L526.8,123.3 L532.2,116.8" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="548" y="125" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="700" fill="#073642">Job</text>
+<text x="650" y="125" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">demo coupon, F.Cu: isolate and drill</text>
+<line x1="516" y1="142" x2="914" y2="142" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="528" cy="162" r="10" fill="#859900"/>
+<path d="M524,162.4 L526.8,165.3 L532.2,158.8" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="548" y="167" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="700" fill="#073642">Board</text>
+<text x="650" y="167" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">found and lined up by 2 marks</text>
+<line x1="516" y1="184" x2="914" y2="184" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="528" cy="204" r="10" fill="#859900"/>
+<path d="M524,204.4 L526.8,207.3 L532.2,200.8" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="548" y="209" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="700" fill="#073642">Height map</text>
+<text x="650" y="209" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">on: 25 points, probed 3 min ago</text>
+<line x1="516" y1="226" x2="914" y2="226" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="528" cy="246" r="10" fill="#b58900"/>
+<line x1="528" y1="241.4" x2="528" y2="247" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round"/>
+<circle cx="528" cy="250.2" r="1.4" fill="#ffffff"/>
+<text x="548" y="251" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="700" fill="#073642">Focus</text>
+<text x="650" y="251" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">not taken since the map</text>
+<rect x="650" y="262" width="87" height="26" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="693.5" y="279.3" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642" text-anchor="middle">Focus here</text>
+<line x1="516" y1="298" x2="914" y2="298" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="528" cy="318" r="10" fill="#859900"/>
+<path d="M524,318.4 L526.8,321.3 L532.2,314.8" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="548" y="323" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="700" fill="#073642">Travel height</text>
+<text x="650" y="323" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">5 mm over the board</text>
+<line x1="516" y1="340" x2="914" y2="340" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="528" cy="360" r="9.2" fill="#fdf6e3" stroke="#586e75" stroke-width="1.4"/>
+<circle cx="528" cy="356.3" r="1.2" fill="#586e75"/>
+<line x1="528" y1="359.2" x2="528" y2="364.3" stroke="#586e75" stroke-width="1.8" stroke-linecap="round"/>
+<text x="548" y="365" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="700" fill="#073642">Laser</text>
+<text x="650" y="365" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">dynamic power, S 600 at 600 mm/min</text>
+<line x1="516" y1="382" x2="914" y2="382" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<rect x="516" y="428" width="398" height="44" rx="6" fill="#073642"/>
+<text x="715" y="455.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="16" font-weight="600" fill="#ffffff" text-anchor="middle">Run</text>
+<text x="715" y="418" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75" text-anchor="middle">Each line opens the step that sets it</text>
+<circle cx="910" cy="120" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="910" y="124.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">1</text>
+<circle cx="910" cy="246" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="910" y="250.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">2</text>
+<circle cx="910" cy="450" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="910" y="454.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+<text x="500" y="520" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">Every mode the run depends on, in one card, in words, with the one that</text>
+<text x="500" y="537.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">needs you marked and its fix beside it.</text>
+</svg>

@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1020" height="640" viewBox="0 0 1020 640" role="img" aria-label="Proposed Machines area: the machines on the left, the chosen machine's setup as a checklist with dates, its cameras, file and firmware a tab away">
+<title>Proposed Machines area: the machines on the left, the chosen machine's setup as a checklist with dates, its cameras, file and firmware a tab away</title>
+<rect width="1020" height="640" rx="14" fill="#f7f2e2"/>
+<rect x="10" y="10" width="1000" height="620" rx="12" fill="#eee8d5"/>
+<path d="M10,22 A12,12 0 0 1 22,10 H998 A12,12 0 0 1 1010,22 V58 H10 Z" fill="#fdf6e3" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="122" y="20" width="172.9" height="28" rx="14" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<circle cx="135" cy="34" r="4" fill="#93a1a1"/>
+<text x="146" y="38.6" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#073642">Polar laser</text>
+<line x1="229.6" y1="27" x2="229.6" y2="41" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<text x="240.6" y="38.6" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#586e75">Idle</text>
+<path d="M277.3,32.2 L280.9,35.8 L284.5,32.2" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="906" y="18" width="92" height="32" rx="6" fill="#dc322f"/>
+<text x="952" y="39" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#ffffff" text-anchor="middle">STOP</text>
+<line x1="10" y1="58" x2="1010" y2="58" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="34" cy="34" r="8.5" fill="none" stroke="#586e75" stroke-width="1.6"/>
+<circle cx="34" cy="34" r="3" fill="#dc322f"/>
+<text x="50" y="39" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14.5" font-weight="700" fill="#073642">Spinny</text>
+<path d="M10,58 H88 V630 H22 A12,12 0 0 1 10,618 Z" fill="#fdf6e3" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="88" y1="58" x2="88" y2="630" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<path d="M41.0,83.5 L49,76.0 L57.0,83.5 M43.0,81.5 V91.5 H55.0 V81.5" fill="none" stroke="#586e75" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="49" y="109" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75" text-anchor="middle">Home</text>
+<rect x="40.5" y="137.5" width="17" height="13" rx="2.5" fill="none" stroke="#586e75" stroke-width="1.7"/>
+<path d="M44.0,146.5 L48.0,146.5 L50.5,142.0 L54.0,142.0" fill="none" stroke="#586e75" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="49" y="169" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75" text-anchor="middle">Job</text>
+<circle cx="49" cy="204" r="8.5" fill="none" stroke="#586e75" stroke-width="1.7"/>
+<path d="M46.5,200.0 L53.5,204 L46.5,208.0 Z" fill="#586e75" stroke="#586e75" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="49" y="229" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75" text-anchor="middle">Run</text>
+<rect x="18" y="246" width="62" height="52" rx="8" fill="#e8e1ca"/>
+<rect x="12" y="258" width="3.5" height="28" rx="1.5" fill="#073642"/>
+<line x1="40.5" y1="258" x2="57.5" y2="258" stroke="#073642" stroke-width="1.7" stroke-linecap="round"/>
+<circle cx="44.1" cy="258" r="2.2" fill="#fdf6e3" stroke="#073642" stroke-width="1.7"/>
+<line x1="40.5" y1="264" x2="57.5" y2="264" stroke="#073642" stroke-width="1.7" stroke-linecap="round"/>
+<circle cx="53.9" cy="264" r="2.2" fill="#fdf6e3" stroke="#073642" stroke-width="1.7"/>
+<line x1="40.5" y1="270" x2="57.5" y2="270" stroke="#073642" stroke-width="1.7" stroke-linecap="round"/>
+<circle cx="48.3" cy="270" r="2.2" fill="#fdf6e3" stroke="#073642" stroke-width="1.7"/>
+<text x="49" y="289" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#073642" text-anchor="middle">Machines</text>
+<circle cx="47.7" cy="441.7" r="4.2" fill="none" stroke="#586e75" stroke-width="1.7"/>
+<line x1="50.9" y1="444.9" x2="55" y2="448.9" stroke="#586e75" stroke-width="2.1" stroke-linecap="round"/>
+<text x="49" y="465" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#586e75" text-anchor="middle">Search</text>
+<path d="M42.2,485.9 H55.8 V493.975 H47.725 L44.325,497.375 V493.975 H42.2 Z" fill="none" stroke="#586e75" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="49" y="513" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#586e75" text-anchor="middle">Assistant</text>
+<line x1="46.9" y1="535.2" x2="55.8" y2="535.2" stroke="#586e75" stroke-width="1.7" stroke-linecap="round"/>
+<circle cx="43.5" cy="535.2" r="1.4" fill="#586e75"/>
+<line x1="46.9" y1="539.4" x2="55.8" y2="539.4" stroke="#586e75" stroke-width="1.7" stroke-linecap="round"/>
+<circle cx="43.5" cy="539.4" r="1.4" fill="#586e75"/>
+<line x1="46.9" y1="543.7" x2="55.8" y2="543.7" stroke="#586e75" stroke-width="1.7" stroke-linecap="round"/>
+<circle cx="43.5" cy="543.7" r="1.4" fill="#586e75"/>
+<text x="49" y="561" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#586e75" text-anchor="middle">To-do</text>
+<circle cx="49" cy="587" r="5.3" fill="none" stroke="#586e75" stroke-width="3.6" stroke-dasharray="2.2 2.4"/>
+<circle cx="49" cy="587" r="3.8" fill="#fdf6e3" stroke="#586e75" stroke-width="1.7"/>
+<text x="49" y="609" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="9.5" fill="#586e75" text-anchor="middle">Settings</text>
+<rect x="102" y="72" width="220" height="544" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="116" y="98" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#073642" letter-spacing="1.2">MACHINES</text>
+<rect x="108" y="114" width="208" height="48" rx="8" fill="#e8e1ca"/>
+<circle cx="124" cy="131" r="4.5" fill="#859900"/>
+<text x="138" y="135" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#073642">Polar laser</text>
+<text x="138" y="152" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">connected, idle</text>
+<circle cx="124" cy="185" r="4.5" fill="#d8d1bb"/>
+<text x="138" y="189" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#073642">Cartesian mill</text>
+<text x="138" y="206" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">file only</text>
+<circle cx="124" cy="239" r="4.5" fill="#d8d1bb"/>
+<text x="138" y="243" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#073642">K40</text>
+<text x="138" y="260" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">file only</text>
+<circle cx="124" cy="293" r="4.5" fill="#d8d1bb"/>
+<text x="138" y="297" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#073642">LumenPnP Rev05</text>
+<text x="138" y="314" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">file only</text>
+<rect x="116" y="346" width="192" height="28" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="212" y="364.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="middle">Add a machine</text>
+<text x="116" y="396" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">new, a copy, or from OpenPnP</text>
+<circle cx="308" cy="88" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="308" y="92.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">1</text>
+<rect x="334" y="72" width="662" height="544" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="352" y="108" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#073642">Polar laser</text>
+<rect x="474" y="92" width="179.4" height="22" rx="11" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<circle cx="486" cy="103" r="3.6" fill="#93a1a1"/>
+<text x="495" y="107.1" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" font-weight="600" fill="#073642">Connected: /dev/ttyACM0</text>
+<rect x="876" y="90" width="104" height="28" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="928" y="108.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="middle">Disconnect</text>
+<rect x="352" y="128" width="315" height="30" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="354" y="130" width="55" height="26" rx="4.5" fill="#586e75"/>
+<text x="381.5" y="147.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#ffffff" text-anchor="middle">Setup</text>
+<text x="449.5" y="147.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="middle">Cameras</text>
+<line x1="488" y1="134" x2="488" y2="152" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<text x="535.5" y="147.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="middle">Machine file</text>
+<line x1="583" y1="134" x2="583" y2="152" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<text x="625" y="147.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="middle">Firmware</text>
+<circle cx="685" cy="143" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="685" y="147.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">4</text>
+<circle cx="366" cy="198" r="10" fill="#859900"/>
+<path d="M362,198.4 L364.8,201.3 L370.2,194.8" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="388" y="203" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" fill="#073642">Directions and endstops</text>
+<text x="664" y="203" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">checked 11-02</text>
+<rect x="876" y="186" width="104" height="28" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="928" y="204.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="middle">Check again</text>
+<line x1="352" y1="226" x2="978" y2="226" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="366" cy="248" r="10" fill="#859900"/>
+<path d="M362,248.4 L364.8,251.3 L370.2,244.8" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="388" y="253" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" fill="#073642">Centering: the rail over the axis</text>
+<text x="664" y="253" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">0.02 mm, 11-02</text>
+<rect x="876" y="236" width="104" height="28" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="928" y="254.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="middle">Redo</text>
+<line x1="352" y1="276" x2="978" y2="276" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="366" cy="298" r="10" fill="#b58900"/>
+<line x1="366" y1="293.4" x2="366" y2="299" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round"/>
+<circle cx="366" cy="302.2" r="1.4" fill="#ffffff"/>
+<text x="388" y="303" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="700" fill="#073642">Camera offset</text>
+<text x="664" y="303" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">not measured</text>
+<rect x="876" y="286" width="104" height="28" rx="6" fill="#073642"/>
+<text x="928" y="304.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#ffffff" text-anchor="middle">Measure</text>
+<line x1="352" y1="326" x2="978" y2="326" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="366" cy="348" r="10" fill="#859900"/>
+<path d="M362,348.4 L364.8,351.3 L370.2,344.8" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="388" y="353" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" fill="#073642">Focus and the probe</text>
+<text x="664" y="353" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">2.10 mm, 11-12</text>
+<rect x="876" y="336" width="104" height="28" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="928" y="354.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="middle">Redo</text>
+<line x1="352" y1="376" x2="978" y2="376" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="366" cy="398" r="10" fill="#859900"/>
+<path d="M362,398.4 L364.8,401.3 L370.2,394.8" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="388" y="403" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" fill="#073642">Firmware matches the file</text>
+<text x="664" y="403" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">160 of 160 keys</text>
+<rect x="876" y="386" width="104" height="28" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="928" y="404.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="middle">Review</text>
+<line x1="352" y1="426" x2="978" y2="426" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="366" cy="448" r="10" fill="#b58900"/>
+<line x1="366" y1="443.4" x2="366" y2="449" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round"/>
+<circle cx="366" cy="452.2" r="1.4" fill="#ffffff"/>
+<text x="388" y="453" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13.5" font-weight="700" fill="#073642">Edits not saved</text>
+<text x="664" y="453" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">1 in polar-laser.toml</text>
+<rect x="876" y="436" width="104" height="28" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="928" y="454.5" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#073642" text-anchor="middle">Review</text>
+<line x1="352" y1="476" x2="978" y2="476" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="634" cy="198" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="634" y="202.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">2</text>
+<text x="352" y="506" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">Each routine opens step by step in this place, with the camera or the jog it needs, and writes its</text>
+<text x="352" y="523.8" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" fill="#586e75">result and date here.</text>
+<circle cx="982" cy="500" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="982" y="504.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+<rect x="10" y="10" width="1000" height="620" rx="12" fill="none" stroke="#dcd5bf" stroke-width="1.2"/>
+</svg>
