@@ -204,8 +204,10 @@ def board_point(record: Record, job: Point) -> Point | None:
     return ((e * x - b * y) / det, (-d * x + a * y) / det)
 
 
-def _estimate(data) -> Estimate | None:
-    """An estimate as a record keeps it, back as one the consensus takes."""
+def _estimate(data, place=None) -> Estimate | None:
+    """An estimate as a record keeps it, back as one the consensus takes;
+    `place` is its pose event's place, whose center the picture's lay at
+    (a guess from places far apart takes its turn from them)."""
     if not isinstance(data, dict):
         return None
     center, shift, rotation = _point(data.get("center")), _point(data.get("shift")), data.get("rotation")
@@ -215,6 +217,7 @@ def _estimate(data) -> Estimate | None:
     return Estimate(
         float(rotation), shift, center, float(rms) if _number(rms) else 0.0, [], _point(data.get("seen")), 0.0,
         float(match) if _number(match) else 1.0, int(session) if _number(session) else 0, float(rival) if _number(rival) else 0.0,
+        place=_point(place.get("center")) if isinstance(place, dict) else None,
     )
 
 
@@ -467,7 +470,7 @@ def what_ifs(record: Record, truth: Place | None = None, needs=NEEDS, agrees=AGR
                 if event.get("event") != "pose":
                     continue
                 count += 1
-                consensus.see(event.get("state"), _estimate(event.get("estimate")), event.get("refused") or event.get("problem"))
+                consensus.see(event.get("state"), _estimate(event.get("estimate"), event.get("place")), event.get("refused") or event.get("problem"))
                 if consensus.found and consensus.best is not None:
                     best = consensus.best
                     row.update(found=True, t=event.get("t"), stop=event.get("stop"), poses=count, center=[round(best.center[0], 4), round(best.center[1], 4)], rotation=round(best.rotation, 4))

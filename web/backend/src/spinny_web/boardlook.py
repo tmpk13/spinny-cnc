@@ -91,6 +91,17 @@ RECHECK_SECONDS = 2.0
 # at least this share of its evidence is ambiguous: the picture fits
 # another place about as well.
 AMBIGUOUS = 0.8
+# A guess whose looks were taken from places at least this far apart, mm,
+# takes the board's turn and place from the head's moves: the job point
+# under each picture's center against where that center was on the
+# machine, which no error in the camera's roll touches. A single picture's
+# turn is the roll less pcbv's angle: on a LumenPnP whose file says roll
+# 180 and whose camera sits at 180.4, every found board came out 0.4
+# degrees turned (0.2 mm at its middle, 0.35 at its edges); a sweep's
+# picture centers fitted that way agreed to 0.07 mm rms. Closer places
+# leave the turn to the roll: pcbv's centers (a few hundredths of a mm)
+# over 20 mm still give it within 0.2 degrees.
+PLACES_MM = 20.0
 # The most guesses told to the page, the most likely first.
 GUESSES = 8
 # The least share of the evidence the most likely guess must hold, and how
@@ -173,6 +184,13 @@ class Estimate:
     # it), and its rival's share of its evidence (0 with none).
     session: int = 0
     rival: float = 0.0
+    # The machine point under the picture's center when the frame was
+    # taken (`seen` is the job's point there); None when not known.
+    place: Point | None = None
+    # A guess's turn from the head's places less its looks' turn from the
+    # camera's roll, degrees: how far the roll in use is off; None for a
+    # look, or a guess whose looks came from one place.
+    roll_off: float | None = None
 
     def apply(self, point: Point) -> Point:
         x, y = turn(point, self.rotation)
@@ -191,6 +209,7 @@ class Estimate:
             "match": round(self.match, 4),
             "session": self.session,
             "rival": round(self.rival, 4),
+            "roll_off": round(self.roll_off, 4) if self.roll_off is not None else None,
         }
 
 
@@ -527,7 +546,7 @@ def pose_estimate(raw: dict, frame: PictureFrame, to_job: Callable[[Point], Poin
         if _area(jobs) * _area(machines) < 0.0:
             return None, "the picture is mirrored against the board: check the camera's side (front or back) and its mirror"
         fit = fit_rigid(pairs)
-        estimate = Estimate(fit.rotation, fit.shift, fit.apply(middle), fit.rms, jobs, seen, captured, match_of(raw))
+        estimate = Estimate(fit.rotation, fit.shift, fit.apply(middle), fit.rms, jobs, seen, captured, match_of(raw), place=frame.center)
         return estimate, None
     angle = raw.get("angle_deg")
     if not _number(angle):
@@ -537,9 +556,23 @@ def pose_estimate(raw: dict, frame: PictureFrame, to_job: Callable[[Point], Poin
     rotation = _wrap(frame.roll - float(angle))
     tx, ty = turn(seen, rotation)
     shift = (frame.center[0] - tx, frame.center[1] - ty)
-    estimate = Estimate(rotation, shift, (0.0, 0.0), 0.0, [], seen, captured, match_of(raw))
+    estimate = Estimate(rotation, shift, (0.0, 0.0), 0.0, [], seen, captured, match_of(raw), place=frame.center)
     estimate.center = estimate.apply(middle)
     return estimate, None
+
+
+def places_fit(group: list[Estimate]):
+    """The turn and shift that take the job points under the pictures'
+    centers onto where those centers were on the machine, for looks whose
+    places lie PLACES_MM apart or more; None for looks from closer places
+    or without them."""
+    located = [e for e in group if e.seen is not None and e.place is not None]
+    if len(located) < 2:
+        return None
+    span = max(math.dist(a.place, b.place) for a in located for b in located)  # type: ignore[arg-type]
+    if span < PLACES_MM:
+        return None
+    return fit_rigid([(e.seen, e.place) for e in located])  # type: ignore[misc]
 
 
 class Consensus:
@@ -711,7 +744,9 @@ class Consensus:
 
     def _guess(self, items: list[Estimate], seed: int, members: list[int]) -> Guess:
         """The guess of `members` (indices into `items`, oldest first): their
-        median place and turn, the turns taken about the seed's across the wrap."""
+        median place and turn, the turns taken about the seed's across the
+        wrap; or, from looks taken PLACES_MM apart or more, the turn and
+        place the head's places give (PLACES_MM says why)."""
         group = [items[j] for j in members]
         pivot = items[seed].rotation
         turns = [pivot + _wrap(e.rotation - pivot) for e in group]
@@ -725,6 +760,13 @@ class Consensus:
             _wrap(rotation), (cx - tx, cy - ty), (cx, cy), statistics.median(e.rms for e in group),
             newest.corners, newest.seen, newest.captured, weight / len(group), newest.session, newest.rival,
         )
+        placed = places_fit(group)
+        if placed is not None:
+            estimate.rotation = _wrap(placed.rotation)
+            estimate.shift = placed.shift
+            estimate.center = placed.apply(self.middle)
+            estimate.rms = placed.rms
+            estimate.roll_off = _wrap(placed.rotation - rotation)
         return Guess(
             estimate, len(group), weight,
             max(math.dist(e.center, (cx, cy)) for e in group),
@@ -937,6 +979,12 @@ class BoardLook:
     @property
     def client(self) -> VisionClient:
         return self._client()
+
+    @property
+    def scale_seen(self) -> float | None:
+        """The newest scale pcbv reported while locked, mm per full size
+        px; kept through Clear guesses, a search and an unloaded board."""
+        return self._scale
 
     def start(
         self, job_id: str, to_job: Callable[[Point], Point], middle: Point, place: PlaceOf, record=None,

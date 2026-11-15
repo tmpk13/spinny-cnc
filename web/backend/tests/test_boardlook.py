@@ -450,3 +450,57 @@ def test_a_round_mark_is_told_from_a_ring_a_bar_and_a_square():
     assert "fills 54%" in round_problem({**disc, "fill": 0.54})
     assert "as wide" in round_problem({**disc, "minor": 8.0})
     assert "square" in round_problem({**disc, "area": 395.0})
+
+
+def test_a_look_keeps_the_newest_locked_scale_through_clear_guesses_and_lost_poses():
+    board = seen()
+    poses = [board.pose((170.0, 95.0), 0.0, False, 0.0161, 1280, 720, 1), board.pose((900.0, 900.0), 0.0, False, 0.0161, 1280, 720, 2)]
+
+    class Client:
+        running = True
+
+        def pose(self):
+            return poses[0]
+
+    stand_in = Client()
+    look = BoardLook(lambda: stand_in, lambda: None, paused=lambda: True)
+    assert look.scale_seen is None
+    look.job = "j1"
+    look._to_job = DESIGN.board_to_job
+    look._place = lambda captured: PictureFrame((170.0, 95.0), 0.0, False)
+    assert look.sample() == "used" and look.scale_seen == pytest.approx(0.0161)
+    # Clear guesses and a pose that is not locked leave it: a search
+    # started off the board still knows how far its picture reaches.
+    look.forget()
+    poses.pop(0)
+    assert look.sample() == "none" and look.scale_seen == pytest.approx(0.0161)
+
+
+def test_looks_from_places_far_apart_turn_the_board_by_the_head_s_moves_whatever_the_roll():
+    rotation = 0.17
+    board = seen(rotation)
+    machine_middle = Estimate(rotation, board.shift, (0.0, 0.0), 0.0).apply(MIDDLE)
+
+    def look(center, frame=1):
+        # The camera sits at 180.4 degrees; the machine file says 180.
+        raw = board.pose(center, 180.4, False, 0.016, 1280, 720, frame)
+        estimate, problem = pose_estimate(raw, PictureFrame(center, 180.0, False), DESIGN.board_to_job, MIDDLE)
+        assert problem is None and estimate is not None and estimate.place == center
+        return estimate
+
+    # From one place the turn is the roll's: 0.4 degrees off.
+    near = Consensus(MIDDLE, need=2, sessions=1)
+    for i, center in enumerate([(160.0, 90.0), (160.5, 90.0)]):
+        near.see("locked", look(center, i), None)
+    assert near.best.rotation == pytest.approx(rotation - 0.4, abs=1e-6) and near.best.roll_off is None
+    # From places 25 mm apart the head's moves give it, and say how far
+    # the roll is off.
+    far = Consensus(MIDDLE, need=4, sessions=1)
+    for i, center in enumerate([(160.0, 90.0), (161.0, 91.0), (183.0, 100.0), (184.0, 101.0)]):
+        far.see("locked", look(center, i), None)
+    assert len(far.guesses) == 1 and far.found
+    best = far.best
+    assert best.rotation == pytest.approx(rotation, abs=1e-6)
+    assert best.center == pytest.approx(machine_middle, abs=1e-6)
+    assert best.roll_off == pytest.approx(0.4, abs=1e-6)
+    assert far.to_dict()["estimate"]["roll_off"] == pytest.approx(0.4, abs=1e-4)
