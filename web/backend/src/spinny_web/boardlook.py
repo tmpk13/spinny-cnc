@@ -589,6 +589,11 @@ def places_fit(group: list[Estimate]):
     return fit_rigid([(e.seen, e.place) for e in located])  # type: ignore[misc]
 
 
+def weak_problem(match: float, least: float) -> str:
+    """Why a lock that matched under the least share was left out."""
+    return f"the lock paired {match * 100.0:.0f}% of what its picture should show, under {least * 100.0:.0f}%"
+
+
 class Consensus:
     """The newest estimates sorted into guesses, and whether the most
     likely one is likely enough to call the board found. The settings are
@@ -699,7 +704,7 @@ class Consensus:
         none, or could not be used), and why not when it could not. A lock
         that matched under `min_match` is left out (MIN_MATCH says why)."""
         if estimate is not None and estimate.match < self.min_match:
-            problem = f"the lock paired {estimate.match * 100.0:.0f}% of what its picture should show, under {self.min_match * 100.0:.0f}%"
+            problem = weak_problem(estimate.match, self.min_match)
             estimate = None
         with self._mutex:
             self.looks += 1
@@ -1246,6 +1251,14 @@ class BoardLook:
             acquisition = raw.get("acquisition")
             estimate.session = int(acquisition) if _number(acquisition) else self.resets
             estimate.rival = rival_of(raw)
+        # A lock the vote leaves out (MIN_MATCH) is refused here, so a stop
+        # seeing only such locks ends as one with none (a feeder's tape
+        # held each quick scan stop its whole time); the record keeps its
+        # estimate for replays with another least match.
+        weak = None
+        if estimate is not None and self.consensus.method == "vote" and estimate.match < self.consensus.min_match:
+            weak, estimate = estimate, None
+            problem = weak_problem(weak.match, self.consensus.min_match)
         width, height = raw.get("width"), raw.get("height")
         if isinstance(where, PictureFrame) and self._scale is not None and _number(width) and _number(height) and width > 0 and height > 0:
             self.consensus.picture = (where, float(width), float(height), self._scale)
@@ -1265,7 +1278,7 @@ class BoardLook:
             # The place of every pose is kept: a picture that locked on
             # nothing says where the board is not, for the posterior's replay.
             kept = where
-            record.event("pose", **pose_fields(record, raw, received, captured, kept, estimate, problem, seen, self.consensus))
+            record.event("pose", **pose_fields(record, raw, received, captured, kept, estimate or weak, problem, seen, self.consensus))
             if record.kind == "look":
                 self._look_record(record)
         if self.consensus.wants_another_lock:
@@ -1364,13 +1377,28 @@ def _nearest_first(stops: list[Point], start: Point) -> list[Point]:
     return sorted(stops, key=lambda p: (round(math.dist(p, start), 6), math.atan2(p[1] - start[1], p[0] - start[0])))
 
 
+def _path(stops: list[Point], start: Point) -> list[Point]:
+    """The stops in the order a head going each time to the nearest one left
+    takes them, from `start`: a quick scan's lattice taken nearest the start
+    first jumped from side to side (1 to 2 s a move on a LumenPnP's bed)."""
+    left = list(stops)
+    order = []
+    here = start
+    while left:
+        index = min(range(len(left)), key=lambda i: (round(math.dist(left[i], here), 6), i))
+        here = left.pop(index)
+        order.append(here)
+    return order
+
+
 def search_stops(box: Box, view: tuple[float, float], start: Point, coarse: float | None = None) -> list[Point]:
     """The places for the picture's center that cover a box with pictures
     `view` (width, height mm) apart less OVERLAP: a grid centered in the
     box, a stop at least, nearest `start` first. With `coarse` (mm) a quick
     scan of a box much larger than the board instead: a lattice that far
     apart (never closer than the grid), then the lattice halfway between
-    it, each nearest `start` first; spaced at QUICK_SHARE of the board's
+    it, each in one path from `start` going to the nearest stop left each
+    time; spaced at QUICK_SHARE of the board's
     shorter side, the first lattice has a stop well inside the board
     wherever it lies, where its looks lock right (its edges' looks lock
     wrong most often). A ValueError for a box that would take more than
@@ -1384,7 +1412,8 @@ def search_stops(box: Box, view: tuple[float, float], start: Point, coarse: floa
         then = _lattice(x0, y0, x1, y1, step_x, step_y, between=True)
         if len(first) + len(then) > MAX_STOPS:
             raise ValueError(f"the box needs {len(first) + len(then)} stops of the camera's picture, more than {MAX_STOPS}: draw a smaller box")
-        return _nearest_first(first, start) + _nearest_first(then, start)
+        ordered = _path(first, start)
+        return ordered + _path(then, ordered[-1])
     nx = max(1, math.ceil((x1 - x0) / step_x - 1e-9))
     ny = max(1, math.ceil((y1 - y0) / step_y - 1e-9))
     if nx * ny > MAX_STOPS:

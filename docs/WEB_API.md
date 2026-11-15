@@ -134,7 +134,11 @@ goes to the file's safe height first, from either side of it, the turn
 with the move across, and the height last and only when it changes; it is
 answered once its moves have run (the file's wait command) and the place
 read again. A position declaration is `G92` with the axes named; a home is
-the file's home line (`G28`), with the axes named when some are; `motors`
+the file's home line (`G28`), with the axes named when some are, the
+nozzles first put at the safe height once this connection has homed the
+machine (a LumenPnP's G28 moves X and Y where Z stands; before a home the
+controller's Z is only what it was powered on as, so nothing is moved);
+`motors`
 sends the file's `motors_on` or `motors_off` (400 when it gives none).
 `realtime` `reset` and `cancel` send the file's stop (`M410`) ahead of
 anything in flight and stop a placing run or a camera routine, `status`
@@ -843,10 +847,16 @@ under the picture's center and corners against the machine points the
 camera's offset, roll, mirror and pcbv's scale put them at (a pose with
 no corners: its center and angle), and how well pcbv matched it
 (`match`: the features it paired of those it expected, an unsure one
-counted half among those expected; 1 when pcbv does not say). The newest
+counted half among those expected; 1 when pcbv does not say). A lock
+that matched under half is left out (`problem` says so; the vote only,
+the posterior weighs every lock). The newest
 40 estimates are sorted into guesses: those whose middles lie within
 0.5 mm of one another and whose turns within 1 degree make one, its
-place and turn their medians. A guess's `probability` is its share of
+place and turn their medians; a guess whose looks were taken from
+places 20 mm apart or more takes its turn and place from the job points
+under the pictures' centers against where those centers were on the
+machine, which the camera's roll does not touch, and its estimate's
+`roll_off` says how far the roll in use is off (null otherwise). A guess's `probability` is its share of
 the evidence (its looks' matches summed, over every guess's). The board
 is `found` once the most likely guess has 5 looks or more from 2
 independent locks or more (`sessions`; pcbv numbers its locks by the
@@ -1183,7 +1193,7 @@ reference, the angle, a count) needs a G-code machine to keep it for.
 | `POST /api/pnp/top/look` | the `mark_spot` spot nearest the picture's center found once, no move, kept as `top.look` (as the bottom camera's) |
 | `POST /api/pnp/top/scan`, `GET /api/pnp/top/scan`, `GET /api/pnp/top/scan/{index}.jpg` | the top camera's full scan and its mosaic, as the head camera's (`/api/camera/scan`), the rough place from corners, a place found or the references, its pictures placed in the machine's X and Y; a G-code machine's scan always stops for each picture. On the top camera's routine thread (`top.routine.kind` `scan`, a step per picture) |
 | `POST /api/pnp/top/board` | `{"job": "a1b2"}`: pcbv looks for the job's board (front, masked) and the backend reads its poses into `top.board_look` (Board look, under Camera) until unloaded, the camera stopped or started again; `{"job": null}` unloads it. 400 with the camera stopped or a job without its board file |
-| `POST /api/pnp/top/search` | `{"box": [x0, y0, x1, y1]}`, machine X and Y for the picture's center, or `{}` for a square the board's diagonal on a side about where it is now: the head rises to the safe height, goes to `[top_camera] z`, and visits the box in camera-sized steps nearest first; pcbv is told to `reset` at each stop, and a stop is left when no lock comes within 2.5 s or after 5 s; ends `done` once enough looks agree (the picture's center put over the board's middle), `error` once every stop was looked at. Kind `search`, steps `lifting`, `stop 1` ... `stop N`. 400 as for the head camera's search |
+| `POST /api/pnp/top/search` | `{"box": [x0, y0, x1, y1]}`, machine X and Y for the picture's center, or `{}`: the box the corners taken give, else, with no place known (no references or place found before either) and a `[top_camera] bed` in the file, a quick scan of the bed (stops on a lattice 0.6 of the board's shorter side apart, then halfway between), else a square the board's diagonal on a side about where it is now; the stops' spacing comes from the camera's scale measured, else pcbv's lock now, else the look's newest lock, else the file's `[top_camera] mm_per_px` (which pcbv's board search also keeps within 1.5 times of until a scale is measured): the head rises to the safe height, goes to `[top_camera] z`, and visits the box in camera-sized steps nearest first; pcbv is told to `reset` at each stop, and a stop is left when no lock comes within 2.5 s or after 5 s; ends `done` once enough looks agree (the picture's center put over the board's middle), `error` once every stop was looked at, or once 3 checks disagreed (the guess is then forgotten, not kept as a place found). Found from places far apart, the roll that turn implies and pcbv's scale wait as a finding of kind `picture` to keep (`POST /api/cameras/finding`) when the roll is 0.05 degrees or more off the one in use, or no scale was measured. Kind `search`, steps `lifting`, `stop 1` ... `stop N`. 400 as for the head camera's search |
 | `POST /api/pnp/top/place` | `{"job": "a1b2"}`: the place the look found (else the rough place the corners taken of the board give) becomes the job's references: the two parts furthest apart (fiducials when there are two) where it puts them, `by: "look"` (or `"corners"`), replacing earlier ones by look, by corners and the corners taken (`"corner"`); 400 until the look has found this job's board or a corner of it is taken |
 | `POST /api/pnp/top/corner` | `{"job": "a1b2", "corner": "top right"}`: as the head camera's corner, the head's place plus the top camera's offset kept for it, and kept as one of the job's references (`by: "corner"`, in place of one of that corner taken before); 400 without the offset measured, 409 while the machine is busy |
 | `POST /api/pnp/top/edge-corner` | as `POST /api/camera/edge-corner`, with the top camera's picture (its roll and mirror) about the head's place plus its offset, kept as a reference with the board's turn its edges show; the placing state |

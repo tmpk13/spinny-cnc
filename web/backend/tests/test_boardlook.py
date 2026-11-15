@@ -544,3 +544,36 @@ def test_a_quick_scan_of_a_bed_puts_a_stop_well_inside_the_board_wherever_it_lie
     # Without the coarse spacing the bed would take far more stops.
     with pytest.raises(ValueError, match="more than"):
         search_stops(bed, (20.6, 11.6), (60.0, 175.0))
+
+
+def test_a_weak_lock_is_refused_before_the_vote_and_kept_in_the_record():
+    board = seen()
+    raw = {**board.pose((170.0, 95.0), 0.0, False, 0.02, 1280, 720, 1), "inliers": 9, "expected": 27, "unsure": 0}
+
+    class Client:
+        running = True
+
+        def pose(self):
+            return raw
+
+    class Record:
+        kind = "search"
+        events: list[dict] = []
+
+        def since(self, moment):
+            return 0.0
+
+        def event(self, name, **fields):
+            self.events.append({"event": name, **fields})
+
+    look = BoardLook(lambda: Client(), lambda: None, paused=lambda: True)
+    look.job = "j1"
+    look._to_job = DESIGN.board_to_job
+    look._place = lambda captured: PictureFrame((170.0, 95.0), 0.0, False)
+    record = Record()
+    look.record = record
+    # Locked, but refused: a stop seeing only such locks ends as one with none.
+    assert look.sample() == "locked"
+    assert look.consensus.guesses == [] and "paired 33%" in look.consensus.problem
+    pose = record.events[-1]
+    assert pose["seen"] == "locked" and pose["estimate"]["match"] == pytest.approx(9 / 27, abs=1e-4) and "under 50%" in pose["problem"]
