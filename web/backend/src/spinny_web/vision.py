@@ -48,8 +48,13 @@ PCBV_SIBLING = Path(__file__).resolve().parents[5] / "pcb-vision" / "target"
 
 # A camera whose scale is measured has pcbv's search keep within this
 # share of it either way: the board's height differs from the mark's a
-# little, a wrong lock at another scale is ruled out.
-SCALE_SPREAD = 0.2
+# little, a wrong lock at another scale is ruled out. On a LumenPnP's
+# survey of a populated board (169 pictures) right locks read the scale
+# within 0.6% of the camera's (median, 1.5% for nine in ten) and parts'
+# tops 0.8% finer than the board's surface; +-3% kept every right lock of
+# +-20% (54 against 52), passed 44 wrong ones against 54, and searched a
+# picture several times faster (fewer scales to try).
+SCALE_SPREAD = 0.03
 
 
 def scale_range(mm_per_px: float) -> tuple[float, float] | None:

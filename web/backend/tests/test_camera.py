@@ -738,8 +738,8 @@ def test_the_head_camera_searches_for_the_board_and_a_capture_takes_the_agreed_p
     response = client.post("/api/camera/board", json={"job": job.id})
     assert response.status_code == 200, response.text
     assert response.json()["board_look"]["job"] == job.id
-    # The search keeps within a fifth of the scale measured.
-    assert stand_in.board_fields["scale"] == pytest.approx((0.016, 0.024)) and stand_in.board_fields["side"] == "front"
+    # The search keeps within 3% of the scale measured.
+    assert stand_in.board_fields["scale"] == pytest.approx((0.0194, 0.0206)) and stand_in.board_fields["side"] == "front"
     response = client.post("/api/camera/search", json={"box": [45.0, 35.0, 75.0, 60.0]})
     assert response.status_code == 200, response.text
     state = wait_routine(client)

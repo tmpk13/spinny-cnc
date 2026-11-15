@@ -780,11 +780,11 @@ def test_the_top_camera_searches_a_box_for_the_board_and_keeps_its_place(client,
     response = client.post("/api/pnp/top/board", json={"job": job_id})
     assert response.status_code == 200, response.text
     assert camera.loaded is not None and response.json()["top"]["board_look"]["job"] == job_id
-    # Loaded with the camera's side and finish, its search kept within a
-    # fifth of the scale measured, no paste and no part on the board.
+    # Loaded with the camera's side and finish, its search kept within 3%
+    # of the scale measured, no paste and no part on the board.
     fields = camera.board_fields
     assert (fields["side"], fields["finish"], fields["paste"], fields["placed"]) == ("front", "masked", False, [])
-    assert fields["scale"] == pytest.approx((0.016, 0.024))
+    assert fields["scale"] == pytest.approx((0.0194, 0.0206))
     # The head far from the board: a box drawn over where it lies.
     response = client.post("/api/pnp/top/search", json={"box": [140.0, 70.0, 200.0, 125.0]})
     assert response.status_code == 200, response.text

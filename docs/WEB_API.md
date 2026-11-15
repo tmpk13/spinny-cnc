@@ -878,7 +878,7 @@ A search's look over the board's middle is a check: after a reset there,
 3 looks must agree with the place found (or 3 disagree, and the search
 goes on), at most 3 checks; it goes where the picture holds the most
 pads and holes when the middle holds under half of the best place's.
-Looks send the camera's scale a fifth either way, so pcbv's search keeps
+Looks send the camera's scale 3% either way, so pcbv's search keeps
 to it. Corners taken by hand
 (`POST /api/camera/corner`, `/api/pnp/top/corner`) rule out a guess that
 puts one further than the camera's `corner_mm` (0.1 to 50, 2 unless set)

@@ -373,10 +373,10 @@ def test_a_board_found_is_checked_where_the_picture_holds_the_most_pads():
     assert boardlook.check_places(found, MIDDLE, None, [], view) == [pytest.approx((120.0, 65.0))]
 
 
-def test_a_measured_scale_keeps_the_board_search_within_a_fifth_of_it():
+def test_a_measured_scale_keeps_the_board_search_within_three_percent_of_it():
     from spinny_web.vision import board_fields, board_record_fields, scale_range
 
-    assert scale_range(0.0) is None and scale_range(0.02) == pytest.approx((0.016, 0.024))
+    assert scale_range(0.0) is None and scale_range(0.02) == pytest.approx((0.0194, 0.0206))
     fields = board_fields("b.kicad_pcb", "back", "bare", (0.016, 0.024), True, ["R1", "C2"])
     assert fields == {"path": "b.kicad_pcb", "side": "back", "finish": "bare", "scale": "0.016:0.024", "paste": True, "placed": ["R1", "C2"]}
     assert board_record_fields({"side": "front", "finish": "masked", "scale": None}) == {"side": "front", "finish": "masked"}
