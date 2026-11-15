@@ -5791,6 +5791,7 @@ table.find-guesses tr.elsewhere td {
     height: 100%;
     cursor: crosshair;
     touch-action: none;
+    user-select: none;
 }
 
 .machine-view-frame.dragging .machine-view-svg {
@@ -5830,6 +5831,10 @@ table.find-guesses tr.elsewhere td {
 
 .machine-view-svg .mv-area.mv-only {
     stroke-dasharray: none;
+}
+
+.machine-view-svg .mv-area.mv-unsaved {
+    stroke: var(--orange);
 }
 
 .machine-view-svg .mv-pending {

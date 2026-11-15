@@ -566,7 +566,7 @@ export function mountMachineView(root: HTMLElement, ctx: Ctx): MachineView {
             shapes.push(rect(bed, "mv-bed", `the bed boards lie on, [top_camera] bed: ${boxText(bed)}`));
         }
         if (area !== null) {
-            shapes.push(rect(area, only ? "mv-area mv-only" : "mv-area", `${pending?.target === "area" ? "the board area to save" : "the board area"}: ${boxText(area)}, ${only ? "boards only within it" : "boards near it"}`));
+            shapes.push(rect(area, `${only ? "mv-area mv-only" : "mv-area"}${pending?.target === "area" ? " mv-unsaved" : ""}`, `${pending?.target === "area" ? "the board area to save" : "the board area"}: ${boxText(area)}, ${only ? "boards only within it" : "boards near it"}`));
         }
         const named: [readonly number[] | null | undefined, string][] = [
             [doc?.park, "park: where the head waits"],
