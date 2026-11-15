@@ -110,12 +110,18 @@ const LIGHT = (() => {
     return [x / length, y / length, z / length] as const;
 })();
 
+/** What the lowest surface keeps of its brightness against the highest. */
+export const HEIGHT_FLOOR = 0.55;
+
 /**
  * The model seen from above as `width` by `height` pixels covering its own
  * x and y box (row 0 at the box's top, its highest y): per pixel, the
- * brightness 0 to 1 of the highest triangle over it (how squarely its
- * normal faces the light), or -1 where nothing is. Triangles seen edge on
- * from above draw nothing.
+ * brightness 0 to 1 of the highest triangle over it, or -1 where nothing
+ * is. The brightness is how squarely its normal faces the light, dimmed by
+ * how low the surface lies in the model (the lowest at HEIGHT_FLOOR of
+ * the highest's), since the flat tops of a machine's parts all face the
+ * light alike and would otherwise show as one shade. Triangles seen edge
+ * on from above draw nothing.
  */
 export function topShades(mesh: Mesh, width: number, height: number): Float32Array {
     const shades = new Float32Array(width * height).fill(-1);
@@ -183,6 +189,15 @@ export function topShades(mesh: Mesh, width: number, height: number): Float32Arr
                     depth[index] = z;
                     shades[index] = shade;
                 }
+            }
+        }
+    }
+    const [, , z0, , , z1] = mesh.box;
+    const span = z1 - z0;
+    if (span > 0) {
+        for (let index = 0; index < shades.length; index += 1) {
+            if (shades[index]! >= 0) {
+                shades[index] = shades[index]! * (HEIGHT_FLOOR + (1 - HEIGHT_FLOOR) * ((depth[index]! - z0) / span));
             }
         }
     }

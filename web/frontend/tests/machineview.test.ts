@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { checkedBox, MockMachineViews, pictureType } from "../src/mock/machineview.ts";
-import { parseStl, shadePixels, stlTriangleCount, topShades, topSize } from "../src/stl.ts";
+import { HEIGHT_FLOOR, parseStl, shadePixels, stlTriangleCount, topShades, topSize } from "../src/stl.ts";
 import { areaText, boxOf, clampBox, clientToMachine, machineBox, mountMachineView, placesBox, roundBox, viewExtent } from "../src/views/machineview.ts";
 import type { GcodeDocument } from "../src/types.ts";
 import { connectGcode } from "./gcoderig.ts";
@@ -91,12 +91,15 @@ describe("STL models", () => {
         const mesh = parseStl(binaryStl([...square(0, 0, 4, 4, 0), ...square(0, 0, 2, 4, 3), [2, 0, 0, 2, 4, 0, 2, 4, 3]]));
         expect(topSize(mesh, 8)).toEqual([8, 8]);
         const flat = topShades(mesh, 4, 4);
-        // Every pixel is covered by a flat face: the same shade everywhere, the high one on the left.
-        expect(Array.from(flat).every((shade) => Math.abs(shade - flat[0]!) < 1e-6)).toBe(true);
-        expect(flat[0]!).toBeGreaterThan(0.25);
-        // A face sloping away from the light is darker than a flat one.
-        const slope = parseStl(binaryStl([[0, 0, 4, 4, 0, 0, 4, 4, 0], [0, 0, 4, 4, 4, 0, 0, 4, 4]]));
-        expect(topShades(slope, 4, 4)[5]!).toBeLessThan(flat[0]!);
+        // Every pixel is covered by a flat face: the high one on the left at full shade, the low one dimmed by its height.
+        const left = flat[0]!;
+        const right = flat[3]!;
+        expect(Array.from(flat).every((shade, index) => Math.abs(shade - (index % 4 < 2 ? left : right)) < 1e-6)).toBe(true);
+        expect(right).toBeCloseTo(left * HEIGHT_FLOOR, 6);
+        // A face sloping away from the light is darker than a flat one at the same height.
+        const slope = parseStl(binaryStl([[0, 0, 4, 4, 0, 0, 4, 4, 0], [0, 0, 4, 4, 4, 0, 0, 4, 4], ...square(0, 0, 4, 4, 4).map((corners) => corners.map((v, k) => (k % 3 === 0 ? v + 10 : v)))]));
+        const sloped = topShades(slope, 8, 4);
+        expect(sloped[0]!).toBeLessThan(sloped[7]!);
         // Nothing over a pixel: clear.
         const half = parseStl(binaryStl([[0, 0, 0, 4, 0, 0, 0, 4, 0]]));
         const shades = topShades(half, 4, 4);
