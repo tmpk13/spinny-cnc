@@ -829,6 +829,10 @@ class TopMeasureBody(Finite):
     # The grid's step, mm, for Measure camera: 0 lets a first small move
     # choose one that shifts the picture by a share of its height.
     step: float = 0.0
+    # Each place reached from this far below it along X and Y, mm (left
+    # out: topcam.APPROACH_MM), and pictured this much later, s.
+    approach: float | None = None
+    settle: float = 0.0
 
 
 class TopHomeBody(BaseModel):
@@ -5551,7 +5555,8 @@ def create_app(
 
     @app.post("/api/pnp/top/measure")
     def top_measure(body: TopMeasureBody | None = None):
-        return guarded(lambda: backend.top_measure((body or TopMeasureBody()).step))
+        measure = body or TopMeasureBody()
+        return guarded(lambda: backend.top_measure(measure.step, measure.approach, measure.settle))
 
     @app.post("/api/pnp/top/look")
     def top_look():

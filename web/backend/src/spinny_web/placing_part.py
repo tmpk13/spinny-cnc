@@ -47,7 +47,7 @@ from .openpnp import GcodeMachine, Plan, board_fit, goto_lines, needs_lift, plan
 from .placer import Placement, PlaceSetup, fiducial_fit
 from .pnp import CameraPlace, PnpError
 from .log import log
-from .topcam import Found
+from .topcam import APPROACH_MM, Found
 from .vision import VisionError, scale_range
 
 if TYPE_CHECKING:
@@ -700,7 +700,7 @@ class PlacingPart:
         self.top.measure_offset(mover, step, profile.z if profile is not None else None, profile.offset if profile is not None else None, confirm)
         return self.placing_state()
 
-    def top_measure(self, step: float = 0.0) -> dict:
+    def top_measure(self, step: float = 0.0, approach: float | None = None, settle: float = 0.0) -> dict:
         """Measure camera: the top camera's scale, roll and mirror from the
         head's moves over whatever lies under it (topcam.measure_picture),
         on its routine thread; the roll measured is written the way nearest
@@ -708,7 +708,10 @@ class PlacingPart:
         machine = self._placing_idle()
         mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
         profile = machine.top
-        self.top.measure_picture(mover, step, profile.z if profile is not None else None, near_roll=self._top_roll(machine))
+        self.top.measure_picture(
+            mover, step, profile.z if profile is not None else None, near_roll=self._top_roll(machine),
+            approach=APPROACH_MM if approach is None else approach, settle=settle,
+        )
         return self.placing_state()
 
     def top_home(self, home: bool = True) -> dict:

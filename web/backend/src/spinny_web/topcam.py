@@ -65,6 +65,13 @@ GRID_PASSES = 2
 MEASURE_WIDTH = 640
 MIN_PEAK = 0.05
 FIT_RMS_PX = 3.0
+# Every grid place is reached from this far below it along X and Y, mm.
+APPROACH_MM = 0.3
+# A picture is taken once two in a row lie within this of each other
+# (full size px), at most this long after the settle time: on a LumenPnP
+# a fixed 0.25 s left 1.1 px rms over the grid, 0.75 s 0.59 px.
+STILL_PX = 0.3
+STILL_SECONDS = 1.5
 
 
 def nearest_turn(degrees: float, near: float) -> float:
@@ -317,6 +324,7 @@ class TopCamera(PickCamera):
 
     def measure_picture(
         self, mover: Mover, step: float, z: float | None, keep: Callable[[CameraMap, dict], str] | None = None, near_roll: float | None = None,
+        approach: float = APPROACH_MM, settle: float = 0.0,
     ) -> None:
         """Starts Measure camera on its own thread: the picture's scale,
         roll and mirror from the head's moves over whatever lies under the
@@ -327,14 +335,18 @@ class TopCamera(PickCamera):
         map and the run's numbers and keeps them, answering the words to
         say (by default the settings take the scale, roll and mirror).
         The roll is written the way nearest `near_roll` (the roll in use),
-        else the settings' roll."""
+        else the settings' roll. Every place is reached from `approach` mm
+        below it along X and Y, and pictured `settle` s later than a look
+        after a move would be."""
         if not (math.isfinite(step) and 0.0 <= step <= GRID_MM[1]):
             raise ValueError(f"the step must be 0 to {GRID_MM[1]:g} mm")
-        self._begin("picture", PICTURE_STEPS, mover, lambda progress: self._picture(mover, progress, step, z, keep, near_roll))
+        if not (math.isfinite(approach) and 0.0 <= approach <= GRID_MM[1] and math.isfinite(settle) and 0.0 <= settle <= 5.0):
+            raise ValueError(f"the approach must be 0 to {GRID_MM[1]:g} mm and the settle 0 to 5 s")
+        self._begin("picture", PICTURE_STEPS, mover, lambda progress: self._picture(mover, progress, step, z, keep, near_roll, approach, settle))
 
     def _picture(
         self, mover: Mover, progress: RoutineProgress, step: float, z: float | None, keep: Callable[[CameraMap, dict], str] | None,
-        near_roll: float | None,
+        near_roll: float | None, approach: float = 0.0, settle: float = 0.0,
     ) -> None:
         settings = self.settings()
         mover.begin()
@@ -345,11 +357,28 @@ class TopCamera(PickCamera):
         start = mover.here()
 
         def picture():
-            gray, reply = fresh_gray(self.client, time.monotonic() + SETTLE_SECONDS, MEASURE_WIDTH, mover.stopped)
+            # The head still rings after a move: pictures are taken until
+            # two in a row agree within STILL_PX, for at most STILL_SECONDS.
+            gray, reply = fresh_gray(self.client, time.monotonic() + SETTLE_SECONDS + settle, MEASURE_WIDTH, mover.stopped)
+            factor = _full_width(settings.size, reply) / float(reply["width"])
+            until = time.monotonic() + STILL_SECONDS
+            while time.monotonic() < until:
+                later, reply = fresh_gray(self.client, time.monotonic(), MEASURE_WIDTH, mover.stopped)
+                dx, dy, _ = phase_shift(gray, later)
+                gray = later
+                if math.hypot(dx, dy) * factor <= STILL_PX:
+                    break
             return gray, reply
 
-        def shift_to(point: Point, first) -> tuple[float, float, float]:
+        def reach(point: Point) -> None:
+            # Every place from the same side, so the axes' backlash is
+            # taken up the same way at each picture.
+            if approach > 0.0:
+                mover.go((point[0] - approach, point[1] - approach))
             mover.go(point)
+
+        def shift_to(point: Point, first) -> tuple[float, float, float]:
+            reach(point)
             gray, _ = picture()
             dx, dy, peak = phase_shift(first, gray)
             if peak < MIN_PEAK:
@@ -359,6 +388,7 @@ class TopCamera(PickCamera):
                 )
             return dx, dy, peak
 
+        reach(start)
         first, reply = picture()
         full_width = _full_width(settings.size, reply)
         factor = full_width / float(reply["width"])
@@ -375,6 +405,7 @@ class TopCamera(PickCamera):
         moves: list[Point] = []
         shifts: list[Point] = []
         peaks: list[float] = []
+        rows: list[list[float]] = []
         order = [(i, j) for j in (-1, 0, 1) for i in ((-1, 0, 1) if j != 0 else (1, 0, -1))]
         for _ in range(GRID_PASSES):
             for i, j in order:
@@ -382,6 +413,7 @@ class TopCamera(PickCamera):
                 moves.append((i * step, j * step))
                 shifts.append((dx, dy))
                 peaks.append(peak)
+                rows.append([round(i * step, 4), round(j * step, 4), round(dx * factor, 3), round(dy * factor, 3), round(peak, 4)])
         # Back where it began: how far the picture lies from the first is
         # the backlash and drift the moves hold.
         back = shift_to(start, first)
@@ -401,6 +433,9 @@ class TopCamera(PickCamera):
             "mm_per_px_y": round(fit.mm_per_px_y / factor, 7), "roll": round(roll, 4), "rms_px": round(rms_px, 3),
             "worst_px": round(worst_px, 3), "step": step, "pictures": len(moves) + 1, "returned_um": round(returned_um, 1),
             "least_peak": round(min(peaks), 4), "head": [round(start[0], 4), round(start[1], 4)],
+            "approach": approach, "settle": settle, "returned_px": [round(back[0] * factor, 3), round(back[1] * factor, 3)],
+            # Each grid picture: the head's move (mm), the shift seen (full size px), the correlation's peak.
+            "rows": rows,
         }
         words = (
             f"the top camera's picture measured by the head's moves: {mm_per_px * 1000.0:.2f} um a pixel"
