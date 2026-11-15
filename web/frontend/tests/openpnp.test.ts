@@ -43,7 +43,7 @@ const MACHINE = `<?xml version="1.0" encoding="UTF-8"?>
                <actuator class="org.openpnp.machine.reference.ReferenceActuator" id="ACTV1" name="VAC1" value-type="Boolean"/>
             </actuators>
             <cameras>
-               <camera class="org.openpnp.machine.reference.camera.OpenPnpCaptureCamera" id="CT" name="Top" looking="Down" light-actuator-id="ACTL">
+               <camera class="org.openpnp.machine.reference.camera.OpenPnpCaptureCamera" id="CT" name="Top" looking="Down" light-actuator-id="ACTL" rotation="0.0" flip-x="true" flip-y="true">
                   <units-per-pixel units="Millimeters" x="0.013" y="0.013" z="0.0" rotation="0.0"/>
                   <head-offsets units="Millimeters" x="0.0" y="0.0" z="0.0" rotation="0.0"/>
                </camera>
@@ -172,7 +172,8 @@ describe("reading an OpenPnP setup", () => {
         expect(value("safe_z")).toBe("31.5");
         expect(value("vacuum")).toBe("M106 P1 S180 | M106  /  M107 P1 | M107");
         expect(value("up_camera")).toBe("X 61.92 Y 219.82, sharp at Z 4");
-        expect(value("top_camera")).toBe("X 23.544 Y 65.188 from N1");
+        // Flipped in X and in Y by OpenPnP: upside down as mounted.
+        expect(value("top_camera")).toBe("X 23.544 Y 65.188 from N1, upside down as mounted (roll 180)");
         expect(value("park")).toBe("X 42.328 Y 411.916");
         // Where the top camera looks for it, less N1's offset: the nozzle's place over it.
         expect(value("home_fiducial")).toBe("X 60.91 Y 175.23");
@@ -197,6 +198,7 @@ describe("reading an OpenPnP setup", () => {
         expect(device.vacuum?.part_on).toBeNull();
         expect(device.camera_position).toEqual([61.92, 219.82]);
         expect(device.top?.offset).toEqual([23.544, 65.188]);
+        expect(device.top?.roll).toBe(180);
         expect(device.top?.home_fiducial).toEqual([60.91, 175.23]);
         expect(device.discard).toBeNull();
         // Place Z, never read, stays at the safe height until measured.

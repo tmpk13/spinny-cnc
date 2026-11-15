@@ -258,6 +258,10 @@ interface Camera {
     place: Place;
     mmPerPx: number;
     light: string | null;
+    /** OpenPnP's turn of the picture, degrees, and its flips of it. */
+    rotation: number;
+    flipX: boolean;
+    flipY: boolean;
 }
 
 export interface OpenPnpFeeder {
@@ -340,7 +344,24 @@ function cameraOf(node: XmlNode): Camera {
         place: placeOf(child(node, "head-offsets")) ?? { x: 0, y: 0, z: 0, rotation: 0 },
         mmPerPx: units ? (Math.abs(units.x) + Math.abs(units.y)) / 2 : 0,
         light: node.attrs["light-actuator-id"] ?? null,
+        rotation: number(node.attrs["rotation"]),
+        flipX: node.attrs["flip-x"] === "true",
+        flipY: node.attrs["flip-y"] === "true",
     };
+}
+
+/**
+ * How a down-looking camera's own picture is turned as mounted, degrees,
+ * from the transform OpenPnP puts on it to show it upright: flipping both
+ * ways is a half turn (Opulo's LumenPnP top camera); null when OpenPnP
+ * turns it by some other amount or flips it one way only, which a turn
+ * cannot undo.
+ */
+export function downCameraRoll(camera: { rotation: number; flipX: boolean; flipY: boolean }): number | null {
+    if (camera.flipX !== camera.flipY || camera.rotation !== 0) {
+        return null;
+    }
+    return camera.flipX ? 180 : 0;
 }
 
 function feederOf(node: XmlNode, nozzleOffset: Place): OpenPnpFeeder {
@@ -576,6 +597,8 @@ export interface ProfileData {
     cameraPosition: [number, number] | null;
     cameraZ: number | null;
     topOffset: [number, number] | null;
+    /** The top camera's picture's turn as mounted, degrees; null when not known. */
+    topRoll: number | null;
     /** The bed's homing fiducial as the nozzle's place over it. */
     homeFiducial: [number, number] | null;
     feeders: ProfileFeeder[];
@@ -641,6 +664,7 @@ export function defaultProfile(name: string): ProfileData {
         cameraPosition: null,
         cameraZ: null,
         topOffset: null,
+        topRoll: null,
         homeFiducial: null,
         feeders: [],
         bus: null,
@@ -749,10 +773,13 @@ export function profileText(data: ProfileData): string {
             lines.push(`z = ${fixed(data.cameraZ)}`);
         }
     }
-    if (data.topOffset || data.homeFiducial) {
+    if (data.topOffset || data.homeFiducial || data.topRoll !== null) {
         lines.push("", "[top_camera]");
         if (data.topOffset) {
             lines.push(`offset = ${pair(data.topOffset)}`);
+        }
+        if (data.topRoll !== null) {
+            lines.push(`roll = ${fixed(data.topRoll)}`);
         }
         if (data.homeFiducial) {
             lines.push(`home_fiducial = ${pair(data.homeFiducial)}`);
@@ -957,7 +984,15 @@ export function machineItems(machine: OpenPnpMachine, nozzleName?: string): { it
     }
     if (down && nozzle) {
         const camera: [number, number] = [down.place.x - offset.x, down.place.y - offset.y];
-        push({ id: "top_camera", group: "Cameras", label: `${down.name} (the top camera)`, value: `X ${fixed(camera[0])} Y ${fixed(camera[1])} from ${nozzle.name}`, keep: true, apply: (data) => { data.topOffset = camera; } });
+        const roll = downCameraRoll(down);
+        const turned = roll === null
+            ? `, its picture turned ${fixed(down.rotation)} degrees${down.flipX ? ", flipped in X" : ""}${down.flipY ? ", flipped in Y" : ""} (not taken)`
+            : roll !== 0 ? `, upside down as mounted (roll ${fixed(roll)})` : "";
+        push({
+            id: "top_camera", group: "Cameras", label: `${down.name} (the top camera)`, value: `X ${fixed(camera[0])} Y ${fixed(camera[1])} from ${nozzle.name}${turned}`, keep: true,
+            note: roll === null ? "Measure offset measures the picture's turn" : undefined,
+            apply: (data) => { data.topOffset = camera; data.topRoll = roll; },
+        });
     }
     if (machine.homeFiducial && nozzle) {
         // OpenPnP keeps it where the top camera looks; kept as the nozzle's place over it.

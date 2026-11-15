@@ -148,7 +148,10 @@ offset = [23.544, 65.188]
 fiducial = "bright"
 within = 2.0
 # z = 31.5         # the height the head looks from; left out, the safe height
-# roll = 0         # the picture's turn as mounted, degrees (180: upside down); Measure offset measures it
+# The picture's turn as mounted, degrees: the stock top camera shows the bed
+# upside down (Opulo's OpenPnP flips its picture in X and in Y), measured
+# 180.2 on a LumenPnP; Measure offset measures it again with the scale.
+roll = 180
 # The camera itself, taken by the top camera when the machine connects, as
 # the bottom camera's above.
 # device = "/dev/video4"

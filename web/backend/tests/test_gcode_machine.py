@@ -120,6 +120,8 @@ def test_the_lumenpnp_file_reads_with_its_safe_height_and_pump_and_valve():
     # Opulo's bottom camera seen by N1, and its top camera's offset from N1.
     assert lumen.camera_position == (61.92, 219.82) and lumen.camera_z == 4.0
     assert lumen.top is not None and lumen.top.offset == (23.544, 65.188)
+    # Its top camera shows the bed upside down, as Opulo's OpenPnP has it (flipped in X and Y).
+    assert lumen.top.roll == 180.0
     assert lumen.vacuum is not None and lumen.vacuum.part_on is None
     assert lumen.vacuum.reading(["echo:i2c-reply: from:109 bytes:1 data:233", "ok"]) == 233.0
     # Its port is the one whose USB names say lumen; its bars say the seesaw.
@@ -216,7 +218,12 @@ def test_the_ports_name_the_machine_that_claims_them(client, monkeypatch):
 
     from serial.tools import list_ports
 
+    import spinny_web.app
+
     monkeypatch.setattr(list_ports, "comports", lambda: [Port("/dev/ttyACM0", "spinny laser", 0x2E8A), Port("/dev/ttyACM1", "MARLIN_OPULO_LUMEN_REV5 CDC in FS Mode", 0x0483)])
+    # The host's own /dev/serial/by-id links would rename these fake ports
+    # (a real board plugged in at /dev/ttyACM0 did).
+    monkeypatch.setattr(spinny_web.app, "_by_id_names", lambda: {})
     client.backend.machine_store.patch("rig", ["port", "match"], ["lumen"])
     ports = client.get("/api/ports").json()["ports"]
     by_url = {port["url"]: port for port in ports}
