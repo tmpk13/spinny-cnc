@@ -811,6 +811,35 @@ def test_the_top_camera_searches_a_box_for_the_board_and_keeps_its_place(client,
     assert unloaded == {"job": None, "threshold": boardlook.THRESHOLD, "corner_mm": boardlook.CORNER_MM, "method": "vote", "board_stretch": False, "corners": None}
 
 
+def test_a_search_from_places_far_apart_offers_the_top_camera_s_roll_and_scale_to_keep(client, quick_search, monkeypatch):
+    # The fake board is small: its finding stop and its check lie closer
+    # than a real board's do.
+    monkeypatch.setattr(boardlook, "PLACES_MM", 5.0)
+    rig(client, profile(rest=TOP))
+    job_id = outlined_job(client)
+    board = SeenBoard((0.0, 0.0, 40.0, 30.0), 2.0, (150.0, 80.0), design_shift=(-100.0, -70.0))
+    # The camera sits at 1.9 degrees; the roll in use says 1.5.
+    camera = BoardTopCamera(client.fake, (34.0, -9.0), board, roll=1.9, scale=0.0161)
+    client.backend.top.client = camera
+    client.put("/api/pnp/top", json={"offset": [34.0, -9.0], "mm_per_px": 0.02, "roll": 1.5, "mirror": False})
+    assert client.post("/api/pnp/top/board", json={"job": job_id}).status_code == 200
+    response = client.post("/api/pnp/top/search", json={"box": [140.0, 70.0, 200.0, 125.0]})
+    assert response.status_code == 200, response.text
+    assert routine_done(client, "/api/pnp/placing")["state"] == "done"
+    top = client.get("/api/pnp/placing").json()["top"]
+    look = top["board_look"]
+    # Looks from the stop that found it and the check's place: the turn by
+    # the head's moves, the board's own, and the roll 0.4 degrees off.
+    assert look["found"] is True and look["estimate"]["rotation"] == pytest.approx(2.0, abs=0.01)
+    assert look["estimate"]["roll_off"] == pytest.approx(0.4, abs=0.01)
+    finding = top["finding"]
+    assert finding["kind"] == "picture" and "roll at 1.90 degrees (1.50 in use)" in finding["text"] and "16.10 um a pixel" in finding["text"]
+    response = client.post("/api/cameras/finding", json={"camera": "top", "keep": True})
+    assert response.status_code == 200, response.text
+    settings = client.get("/api/pnp/placing").json()["top"]
+    assert settings["roll"] == pytest.approx(1.9, abs=0.01) and settings["mm_per_px"] == pytest.approx(0.0161) and settings["finding"] is None
+
+
 def test_the_top_camera_searches_with_the_posterior_when_its_look_method_says_so(client, quick_search):
     rig(client, profile(rest=TOP))
     job_id = outlined_job(client)

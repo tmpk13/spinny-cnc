@@ -67,6 +67,11 @@ if TYPE_CHECKING:
         TopSettingsBody,
     )
 
+# A top camera search that found its board from looks far apart offers the
+# roll it measured once that is this far from the roll in use, degrees, or
+# whenever the camera's scale was not measured.
+PICTURE_ROLL_DEG = 0.05
+
 
 class PlacingPart:
     """The PNP tab's work with a G-code machine, mixed into Backend."""
@@ -436,9 +441,35 @@ class PlacingPart:
             )
             self._learn_from_look("top", look, found)
             self.top._message("info", found_text(found, look.consensus))
+            self._offer_top_picture(machine, found, look.scale_seen)
 
         self.top._begin("search", steps, mover, run)
         return self.placing_state()
+
+    def _offer_top_picture(self, machine: GcodeMachine, found, scale: float | None) -> None:
+        """A board found from looks far apart says the top camera's roll
+        (the roll in use plus the guess's `roll_off`) and pcbv its scale:
+        held as a finding to keep under the picture when they differ from
+        the camera's settings (by 0.05 degrees, or a scale not measured), so
+        the picture is measured without a mark. The offset still needs one."""
+        roll_off = getattr(found, "roll_off", None)
+        if found is None or roll_off is None or not scale or scale <= 0.0:
+            return
+        settings = self.top.settings()
+        in_use = self._top_roll(machine)
+        roll = in_use + roll_off
+        if settings.mm_per_px > 0.0 and abs(roll_off) < PICTURE_ROLL_DEG:
+            return
+        words = (
+            f"the board's turn from the head's moves puts the top camera's roll at {roll:.2f} degrees"
+            f" ({in_use:.2f} in use) and pcbv its scale at {scale * 1000.0:.2f} um a pixel"
+        )
+
+        def keep() -> str:
+            self.top.update({"mm_per_px": scale, "roll": roll})
+            return f"the top camera's roll {roll:.2f} degrees and scale {scale * 1000.0:.2f} um a pixel kept"
+
+        self.top.findings.hold(Finding("picture", words, keep))
 
     def top_scan(self, body: BoardScanBody) -> dict:
         """Moves the top camera over the whole board where a rough place
@@ -657,6 +688,7 @@ class PlacingPart:
         x, y = machine.axes[0], machine.axes[1]
 
         def homing() -> None:
+            self._lift_before_home(machine)
             self.gcode.command(machine.home, machine.timeout * HOME_TIMEOUTS)
             self.gcode.homed = True
 
