@@ -275,3 +275,17 @@ Why it matters: "Arrow and Dragging controls get inverted with the camera flip" 
 - C. Leave the arrow keys on the machine's axes everywhere.
 Applied: A, in 026ec94.
 Answer:
+
+## Q39. How much of the LumenPnP's bed should a search with nothing known scan?
+Why it matters: the quick scan from scratch took 400 s over the whole travel (128 stops, 3.7 s each); the board was found at the 105th.
+- A. The whole travel, as shipped (recommended): a board anywhere on the bed is found, at up to about 8 minutes; each machine narrows `[top_camera] bed` to its staging plates in the Config tab.
+- B. Only the staging area of a stock LumenPnP: a minute or two, but a board elsewhere is never found without a box drawn.
+Applied: A, in fbbc33b.
+Answer:
+
+## Q40. Should a search keep the camera's roll and scale it measured without asking?
+Why it matters: a search found from two places says the top camera's roll (180.38 here, the sweep says 180.41) and pcbv its scale; until kept, the roll in use is the file's.
+- A. Offer it under the picture to keep (recommended): a bent board or a wrong guess that passed its check never moves the camera's roll unseen.
+- B. Keep it at once when no scale was measured, offer it after that: one press less on a new machine.
+Applied: A, in ef2daa2.
+Answer:
