@@ -24,6 +24,7 @@ from fastapi import HTTPException
 from spinny_laser.machines import GCODE
 
 from .boardlook import (
+    KNOWN_FIRST,
     QUICK_SHARE,
     KnownPlace,
     PictureFrame,
@@ -31,6 +32,7 @@ from .boardlook import (
     found_text,
     known_place,
     measured_known,
+    quick_first,
     scan,
     scan_text,
     search,
@@ -442,6 +444,10 @@ class PlacingPart:
             coarse = QUICK_SHARE * min(outline[2] - outline[0], outline[3] - outline[1])
         box = box or search_box(center, diagonal)
         stops = search_stops(box, (width * scale, height * scale), known.place.center if known is not None else center, coarse)
+        if known is not None:
+            # Where the known place puts the most pads in a picture first:
+            # its middle may be bare, its edges lock wrong.
+            stops = self._check_places(job, (width * scale, height * scale))(known.place)[:KNOWN_FIRST] + stops
         steer = (
             {"width": width, "height": height, "scale": scale, "speed": max(machine.feed_xy / 60.0, 1.0), "start": center}
             if settings.look_method == "posterior" else None
@@ -467,6 +473,7 @@ class PlacingPart:
                 mover.stopped, lambda index, count: self.top._step(progress, f"stop {index + 1}"), PnpError, record,
                 checks=self._check_places(job, (width * scale, height * scale)), known=known, side=settings.side, box=box, prior=prior, steer=steer,
                 picture=(width, height, scale), outline=self._board_box(job),
+                quick=quick_first(box, (width * scale, height * scale), coarse) if coarse is not None else None,
             )
             self._learn_from_look("top", look, found)
             self.top._message("info", found_text(found, look.consensus))

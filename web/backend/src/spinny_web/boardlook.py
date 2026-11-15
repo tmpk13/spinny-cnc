@@ -62,6 +62,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable
 
+import numpy as np
+
 from spinny_laser.align import fit_rigid, turn
 
 from . import camera as camera_module
@@ -69,6 +71,7 @@ from .camera import CORNER_MM, LOOK_THRESHOLD, picture_to_machine
 from .kinematics import FOCUS_DECIMALS, coord
 from .link import idle_status, settle
 from .log import log
+from .pictures import BOARD_BUSY, BUSY_WIDTH, EMPTY_BUSY, busy_share, fresh_gray
 from .vision import VisionClient, VisionError
 
 Point = tuple[float, float]
@@ -111,6 +114,14 @@ MIN_MATCH = 0.5
 # leave the turn to the roll: pcbv's centers (a few hundredths of a mm)
 # over 20 mm still give it within 0.2 degrees.
 PLACES_MM = 20.0
+# Stops that must lock (a check, the first looks of a search about a
+# known place) keep this far inside the board's outline, mm, or a fifth of
+# its shorter side for a small board: pictures within 15 to 25 mm of a
+# LumenPnP board's edge locked wrong about half the time.
+EDGE_MM = 20.0
+# A search about a known place looks first at this many of the places
+# where that place puts the most pads in a picture (check_places).
+KNOWN_FIRST = 2
 # The most guesses told to the page, the most likely first.
 GUESSES = 8
 # The least share of the evidence the most likely guess must hold, and how
@@ -983,6 +994,15 @@ class BoardLook:
         # locks. And when it was last cleared for another lock.
         self.resets = 0
         self._recheck_at: float | None = None
+        # Whether pcbv can give pictures as luma for the busy test; a pcbv
+        # that cannot is asked once.
+        self.busy_test = True
+        # Why the camera's pcbv can answer no more (its service stopped, or
+        # its process went away): a search ends on it instead of reading
+        # every stop as one without a lock. Cleared as a board is loaded.
+        self.failure: str | None = None
+        # The newest stop's busy share, None when it was not measured.
+        self.last_share: float | None = None
         # The place each job's board was found at by this camera, kept while
         # the backend runs: a known place for the next search.
         self.found_places: dict[str, Estimate] = {}
@@ -1022,6 +1042,8 @@ class BoardLook:
         what the posterior expects pictures to show."""
         self.stop()
         self.begin_record(record)
+        self.failure = None
+        self.busy_test = True
         with self._lock:
             self.job = job_id
             self._features = list(features or [])
@@ -1217,6 +1239,8 @@ class BoardLook:
         try:
             raw = self.client.pose()
         except VisionError as exc:
+            if dead_camera(str(exc)):
+                self.failure = str(exc)
             if "no frame" not in str(exc):
                 log.warning("board look: %s", exc)
             # The same failure again and again is said once.
@@ -1284,6 +1308,50 @@ class BoardLook:
         if self.consensus.wants_another_lock:
             self._recheck(record)
         return seen
+
+    def busy(self, since: float, stopped: Callable[[], bool]) -> tuple[float, dict, float] | None:
+        """How busy the camera's picture taken `since` or later is
+        (pictures.busy_share), its reply and when it was taken; None when
+        pcbv cannot give pictures as luma (asked again after the next
+        board load)."""
+        if not self.busy_test:
+            return None
+        try:
+            asked = time.monotonic()
+            gray, reply = fresh_gray(self.client, since, BUSY_WIDTH, stopped)
+        except (AttributeError, VisionError, ValueError) as exc:
+            if stopped():
+                # The stop's own look says so.
+                return None
+            if dead_camera(str(exc)):
+                self.failure = str(exc)
+                return None
+            log.warning("board look: no busy test: %s", exc)
+            self.busy_test = False
+            return None
+        age = reply.get("age_ms")
+        captured = asked - float(age) / 1000.0 if _number(age) else asked
+        return busy_share(gray), reply, captured
+
+    def see_empty(self, frame: PictureFrame, share: float, reply: dict, captured: float, size: tuple[float, float] | None) -> None:
+        """A picture the busy test called empty: one look that found no
+        lock there, for the vote and the posterior (a view searched once
+        with no candidate, so the board is less likely under it) and for
+        the record, as a lost pose that says `empty` and its share. `size`
+        is the full size picture's width and height, px."""
+        to_job = self._to_job
+        if self.job is None or to_job is None:
+            return
+        raw: dict = {"state": "lost", "searched": True, "empty": True, "busy": round(share, 4), "frame": reply.get("frame"), "age_ms": reply.get("age_ms")}
+        if size is not None:
+            raw["width"], raw["height"] = size
+        received = time.monotonic()
+        problem = f"the picture shows no board: {share * 100.0:.1f}% of it holds edges, under {EMPTY_BUSY * 100.0:.1f}%"
+        self.consensus.take(raw, frame, captured, to_job, None, problem, self.resets, None)
+        self._changed = True
+        record = self.record
+        if record is not None:
+            record.event("pose", **pose_fields(record, raw, received, captured, frame, None, problem, "none", self.consensus))
 
     def _recheck(self, record) -> None:
         """The most likely guess waits for another independent lock: pcbv
@@ -1356,6 +1424,15 @@ class BoardLook:
 # --- the search ----------------------------------------------------------------------
 
 
+# What pcbv or the client says when the camera can answer no more.
+DEAD_WORDS = ("the service has stopped", "the camera is not running", "pcbv went away")
+
+
+def dead_camera(text: str) -> bool:
+    """Whether an error from the camera's pcbv means it can answer no more."""
+    return any(words in text for words in DEAD_WORDS)
+
+
 def search_box(center: Point, size: float) -> Box:
     """A square box `size` mm on a side about a point."""
     half = size / 2.0
@@ -1424,8 +1501,18 @@ def search_stops(box: Box, view: tuple[float, float], start: Point, coarse: floa
     return stops
 
 
+def quick_first(box: Box, view: tuple[float, float], coarse: float) -> tuple[int, float]:
+    """How many of a quick scan's stops (search_stops with `coarse`) make
+    its first lattice, and how far apart they are, mm (the larger step)."""
+    x0, y0, x1, y1 = min(box[0], box[2]), min(box[1], box[3]), max(box[0], box[2]), max(box[1], box[3])
+    step_x = max(max(view[0] * (1.0 - OVERLAP), 0.1), coarse)
+    step_y = max(max(view[1] * (1.0 - OVERLAP), 0.1), coarse)
+    return len(_lattice(x0, y0, x1, y1, step_x, step_y)), max(step_x, step_y)
+
+
 def look_at_stop(
     look: BoardLook, frame: PictureFrame, stopped: Callable[[], bool], error: type[Exception], check: Estimate | None = None,
+    gate: float = EMPTY_BUSY, size: tuple[float, float] | None = None, record=None, index: int | None = None,
 ) -> str:
     """Reads poses with the head at rest at one stop: `found` once the
     board is found; `no lock` when no lock came within LOCK_SECONDS,
@@ -1433,11 +1520,28 @@ def look_at_stop(
     settle time after the stop began are used. With `check` (a place found
     elsewhere) the stop checks it instead: `agreed` once CHECK_LOOKS looks
     here put the board within the agreement of it, `disagreed` once as many
-    put it elsewhere."""
+    put it elsewhere. First the picture's busy share (pictures.py) is
+    measured: under EMPTY_BUSY the stop ends `empty` at once, a look that
+    found nothing; under `gate` (a quick scan's first pass asks for a
+    picture that looks like board, BOARD_BUSY) it ends `sparse`, left for
+    later. `size` is the full size picture's width and height, px; the
+    share goes into `record` with the stop's `index`."""
     began = time.monotonic()
     trusted = began + camera_module.SETTLE_SECONDS
     locked = False
     agreed = disagreed = 0
+    busy = look.busy(trusted, stopped) if gate > 0.0 else None
+    if busy is not None:
+        share, reply, captured = busy
+        look.last_share = share
+        if record is not None:
+            record.event("busy", index=index, share=round(share, 4), seconds=round(time.monotonic() - began, 3))
+        if share < EMPTY_BUSY:
+            look.see_empty(frame, share, reply, captured, size)
+            look.publish()
+            return "empty"
+        if share < gate:
+            return "sparse"
 
     def place(captured: float) -> PictureFrame | str:
         return frame if captured >= trusted else "the head is coming to rest"
@@ -1445,6 +1549,8 @@ def look_at_stop(
     while True:
         if stopped():
             raise error("stopped")
+        if look.failure is not None:
+            raise error(f"the camera's pcbv can answer no more ({look.failure}): stop and start the camera, then search again")
         seen = look.sample(place)
         look.publish()
         if check is None and look.consensus.found:
@@ -1469,39 +1575,59 @@ def look_at_stop(
         time.sleep(SAMPLE_SECONDS / 2.0)
 
 
+def held_counts(found: Estimate, places: list[Point], features: list[Point], view: tuple[float, float]) -> list[int]:
+    """How many of the job's pads and holes (`features`) a picture `view`
+    (width, height mm, nine tenths of it) holds about each place (job
+    frame) where `found` puts the board: the picture's sides along the
+    machine's axes."""
+    if not features or not places:
+        return [0 for _ in places]
+    machine = np.array([found.apply(f) for f in features])
+    half_w, half_h = 0.45 * view[0], 0.45 * view[1]
+    counts = []
+    for place in places:
+        mx, my = found.apply(place)
+        inside = (np.abs(machine[:, 0] - mx) <= half_w) & (np.abs(machine[:, 1] - my) <= half_h)
+        counts.append(int(inside.sum()))
+    return counts
+
+
+def dense_places(found: Estimate, middle: Point, outline: Box | None, features: list[Point], view: tuple[float, float]) -> list[tuple[Point, int]]:
+    """Places on the board for the picture's center (job frame) with the
+    pads and holes a picture there holds, the most first (ties: nearer the
+    middle): a grid half a picture apart over the board's outline less
+    EDGE_MM (or a fifth of its shorter side, for a small board), the
+    middle among them. Over a bare stretch or near an edge pcbv locks
+    wrong; on a LumenPnP an OreSat battery card's bare middle gave only
+    quarter turns 10 to 19 mm off."""
+    if outline is None or not features:
+        return [(middle, 0)]
+    x0, y0, x1, y1 = outline
+    margin = min(EDGE_MM, 0.2 * min(x1 - x0, y1 - y0))
+    spacing = max(min(view) / 2.0, 0.5)
+    places = [middle] + _lattice(x0 + margin, y0 + margin, x1 - margin, y1 - margin, spacing, spacing)
+    counts = held_counts(found, places, features, view)
+    order = sorted(range(len(places)), key=lambda i: (-counts[i], math.dist(places[i], middle)))
+    return [(places[i], counts[i]) for i in order]
+
+
 def check_places(
     found: Estimate, middle: Point, outline: Box | None, features: list[Point], view: tuple[float, float], count: int = MAX_CHECKS,
 ) -> list[Point]:
     """Where to check a board found (`found` puts the job's frame on the
-    machine), machine points for the picture's center, the best first: the
-    board's middle when the picture there holds at least half the pads and
-    holes (`features`, the job's frame) the best place does, else the
-    places over the board (its middle and the middles of a 3 by 3 grid over
-    its outline box, `outline`) whose picture (`view`, mm) holds the most,
-    the nearer the middle first among equals; `count` of them at most. A
-    board without features is checked at its middle."""
-    candidates = [middle]
-    if outline is not None:
-        x0, y0, x1, y1 = outline
-        candidates += [(x0 + (x1 - x0) * (i + 0.5) / 3.0, y0 + (y1 - y0) * (j + 0.5) / 3.0) for j in range(3) for i in range(3)]
-    reach = 0.45 * min(view)
-
-    def held(point: Point) -> int:
-        return sum(1 for f in features if math.dist(f, point) <= reach)
-
-    counts = [held(point) for point in candidates]
-    best = max(counts) if counts else 0
-    order = sorted(range(len(candidates)), key=lambda i: (-counts[i], math.dist(candidates[i], middle)))
-    if counts[0] * 2 >= best:
-        order = [0] + [i for i in order if i != 0]
+    machine), machine points for the picture's center, the best first:
+    the places whose picture holds the most pads and holes (dense_places),
+    each at least a picture's height from the ones before while the board
+    has room; `count` at most. A board without features is checked at its middle."""
+    ranked = [place for place, _ in dense_places(found, middle, outline, features, view)]
     places: list[Point] = []
-    for index in order:
-        point = candidates[index]
-        if any(math.dist(point, kept) < 1e-6 for kept in places):
-            continue
-        places.append(point)
-        if len(places) >= count:
-            break
+    # Apart first; on a board too small for that, the densest left.
+    for apart in (min(view), 1e-6):
+        for place in ranked:
+            if len(places) >= count:
+                break
+            if all(math.dist(place, kept) >= apart for kept in places):
+                places.append(place)
     return [found.apply(point) for point in places]
 
 
@@ -1523,6 +1649,7 @@ def search(
     steer: dict | None = None,
     picture: tuple[float, float, float] | None = None,
     outline: Box | None = None,
+    quick: tuple[int, float] | None = None,
 ) -> Estimate:
     """Moves the head (`mover`, already begun and at its looking height) so
     the picture's center visits each stop (the head at the stop less the
@@ -1543,7 +1670,14 @@ def search(
     the nearest. With `picture` (the full size picture's width, height px
     and scale mm per px) each stop's picture goes into the look's mosaic,
     a map of where the search looked, with the board's `outline` drawn
-    where it was found."""
+    where it was found. Each stop's picture is first measured for how busy
+    it is (look_at_stop): an empty one ends the stop at once. `quick`, for
+    a quick scan of a bed (search_stops' coarse lattice, its first `quick[0]`
+    stops spaced `quick[1]` mm apart), asks pcbv only at stops whose
+    pictures look like board (BOARD_BUSY) on the first lattice, then at
+    the stops of the lattice between that lie next to one of those, then
+    the rest of it alike, and last at the pictures left as sparse, the
+    busiest first; the posterior's steering waits for it."""
     # The look's own record ends with the consensus it had, then the
     # search starts one afresh.
     look.begin_record(record)
@@ -1558,7 +1692,7 @@ def search(
     made = 0
     places_of = checks or (lambda found: [found.center])
 
-    def visit(index: int, target: Point, middle: bool = False, check: Estimate | None = None) -> str:
+    def visit(index: int, target: Point, middle: bool = False, check: Estimate | None = None, gate: float = EMPTY_BUSY) -> str:
         """The picture's center to `target`, the stop looked at: its result.
         pcbv is told the known place at a stop, and nothing at a check: a
         check agrees with the place found only by what pcbv sees there."""
@@ -1578,7 +1712,8 @@ def search(
         if record is not None:
             record.event("arrived", index=index, **({"near": near, "took": took} if near is not None else {}))
         began = time.monotonic()
-        result = look_at_stop(look, frame, stopped, error, check)
+        size = (picture[0], picture[1]) if picture is not None else None
+        result = look_at_stop(look, frame, stopped, error, check, gate, size, record, index)
         if record is not None:
             record.event("stop_end", index=index, result=result, seconds=round(time.monotonic() - began, 3))
             record.picture(look.client, f"stop-{index:03d}", index=index)
@@ -1588,10 +1723,42 @@ def search(
 
     remaining = list(range(len(stops)))
     here = steer.get("start") if steer is not None else None
+    # A quick scan's order (see above): the stops yet to go with the busy
+    # share each needs before pcbv is asked, and what each stop showed.
+    shares: dict[int, float] = {}
+    sparse: list[int] = []
+    planned: list[tuple[int, float]] = []
+    rested = False
+    if quick is not None:
+        planned = [(index, BOARD_BUSY) for index in range(min(quick[0], len(stops)))]
+        remaining = []
+
+    def plan_rest(at: Point) -> None:
+        """The quick scan's first lattice is done: the lattice between,
+        next to busy stops first, then the rest, then the sparse ones."""
+        between = list(range(min(quick[0], len(stops)), len(stops)))
+        busy_places = [stops[i] for i, share in shares.items() if share >= BOARD_BUSY]
+        reach = 0.75 * quick[1]
+        near = [i for i in between if any(math.dist(stops[i], place) <= reach for place in busy_places)]
+        rest = [i for i in between if i not in near]
+        order = _path([stops[i] for i in near], at)
+        near_sorted = sorted(near, key=lambda i: order.index(stops[i]))
+        planned.extend((i, EMPTY_BUSY) for i in near_sorted)
+        planned.extend((i, BOARD_BUSY) for i in rest)
+        planned.append((-1, 0.0))
+
     try:
-        while remaining:
+        while remaining or planned:
             consensus = look.consensus
-            if steer is not None and here is not None and hasattr(consensus, "next_stop") and len(remaining) > 1:
+            gate = EMPTY_BUSY
+            if planned:
+                index, gate = planned.pop(0)
+                if index == -1:
+                    # The sparse pictures, the busiest first, looked at by pcbv whatever they show.
+                    planned.extend((i, 0.0) for i in sorted(sparse, key=lambda i: -shares.get(i, 0.0)))
+                    sparse.clear()
+                    continue
+            elif steer is not None and here is not None and hasattr(consensus, "next_stop") and len(remaining) > 1:
                 frame = frame_at(tuple(here))
                 pick = consensus.next_stop(
                     [stops[i] for i in remaining], tuple(here), frame.roll, frame.mirror, float(steer["width"]), float(steer["height"]),
@@ -1601,10 +1768,18 @@ def search(
             else:
                 index = remaining.pop(0)
             stop = stops[index]
-            on_stop(visited, len(stops))
+            on_stop(min(visited, len(stops) - 1), len(stops))
             visited += 1
             here = stop
-            result = visit(index, stop)
+            look.last_share = None
+            result = visit(index, stop, gate=gate)
+            if look.last_share is not None:
+                shares[index] = look.last_share
+            if result == "sparse":
+                sparse.append(index)
+            if quick is not None and index == min(quick[0], len(stops)) - 1 and gate == BOARD_BUSY and not rested:
+                rested = True
+                plan_rest(stop)
             # Found: checked from elsewhere on the board, the place found
             # kept only once the looks there agree with it. A check that
             # saw nothing or disagreed leaves the evidence in the consensus:
@@ -1620,6 +1795,9 @@ def search(
                 best = look.consensus.best
                 assert best is not None
                 places = places_of(best) or [best.center]
+                # A check PLACES_MM or more from where the board was found
+                # gives the turn from the head's places (places_fit).
+                places = sorted(places, key=lambda point: math.dist(point, stop) < PLACES_MM)
                 place = places[min(made, len(places) - 1)]
                 made += 1
                 outcome = visit(len(stops) + made - 1, place, middle=True, check=best)
@@ -1712,6 +1890,8 @@ def look_scan_stop(look: BoardLook, frame: PictureFrame, stopped: Callable[[], b
     while True:
         if stopped():
             raise error("stopped")
+        if look.failure is not None:
+            raise error(f"the camera's pcbv can answer no more ({look.failure}): stop and start the camera, then scan again")
         if look.sample(place) == "used":
             used += 1
         look.publish()
@@ -2185,6 +2365,8 @@ def _reset(look: BoardLook, near: dict | None = None) -> bool:
     try:
         reply = look.client.request("reset", **({"near": near} if near is not None else {}))
     except VisionError as exc:
+        if dead_camera(str(exc)):
+            look.failure = str(exc)
         log.warning("board look: reset: %s", exc)
         return False
     except AttributeError:

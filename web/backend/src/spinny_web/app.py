@@ -44,6 +44,7 @@ from .align import Alignment
 from .auto import Agent, AutoBusy, AutoMessageBody, AutoSettingsBody
 from .cam import NotFound, ProfileStore, build_job, gcode_of
 from .boardlook import (
+    KNOWN_FIRST,
     CORNERS,
     BoardLook,
     CLEAR_MM,
@@ -3673,6 +3674,9 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             known = self._head_known(job, settings.corner_mm)
             prior = self._head_known(job, settings.corner_mm, corners=False)
             stops = search_stops(box, (width * scale, height * scale), known.place.center if known is not None else here)
+            if known is not None:
+                # Where the known place puts the most pads in a picture first.
+                stops = self._check_places(job, (width * scale, height * scale))(known.place)[:KNOWN_FIRST] + stops
             steer = {"width": width, "height": height, "scale": scale, "speed": SLOW_MM_S, "start": here} if settings.look_method == "posterior" else None
             mover = BoardMover(access, self.camera.aborting, CameraError, lambda: self.camera._halt(link))
             look = self.head_look

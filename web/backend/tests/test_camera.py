@@ -814,11 +814,13 @@ def test_a_search_starts_where_the_board_is_known_and_tells_pcbv_but_not_at_the_
     assert look["found"] is True and look["estimate"]["center"] == pytest.approx(list(middle), abs=0.01)
     known = look["known"]
     assert known["source"] == "corners" and known["center"] == pytest.approx(list(middle), abs=1e-3)
-    # The first stop is the one nearest the board's known middle, not the
-    # one nearest where the camera stood.
-    stops = search_stops(tuple(box), (1280 * 0.02, 720 * 0.02), tuple(middle))
+    # The first stop is where the known place puts the most pads in a
+    # picture (a board without pads: its middle), not the one nearest where
+    # the camera stood; the grid's stops follow, nearest that middle first.
     first_center, first = stand_in.resets[0]
-    assert first_center == pytest.approx(stops[0], abs=1e-6)
+    assert first_center == pytest.approx(middle, abs=1e-3)
+    stops = search_stops(tuple(box), (1280 * 0.02, 720 * 0.02), tuple(middle))
+    assert len(stand_in.resets) < len(stops)
     # pcbv was told the KiCad point and turn the known place puts there.
     raw = seen.pose(first_center, 0.0, False, 0.02, 1280, 720, 1)
     assert first["near"]["center"] == pytest.approx(raw["center"], abs=1e-3)
