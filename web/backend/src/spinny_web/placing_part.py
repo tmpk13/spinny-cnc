@@ -81,6 +81,14 @@ PICTURE_ROLL_DEG = 0.05
 # pictures at half the true scale with a high share of their pads paired;
 # the design keeps those out while a camera somewhat off it still locks.
 DESIGN_SCALE_SPREAD = 1.5
+# Whether the top camera's pcbv is told the parts placed on the board, for a
+# model with their bodies over their pads. Off: on a LumenPnP survey of a
+# populated board (169 pictures), telling pcbv every part placed took right
+# locks from 56 to 14 and wrong ones from 16 to 69 (the scale within 1%),
+# and no other handling of placed parts graded as well as telling none (the
+# bodies hide the pads the camera still sees at their ends; pcb-vision
+# notes/fits.md). The parts placed are still kept for the run.
+TELL_PLACED = False
 
 
 def take_corner(look, job_id: str, name: str, job_point: tuple[float, float], machine: tuple[float, float], middle: tuple[float, float], angle: float | None, by: str = "edges") -> Callable[[], None]:
@@ -466,7 +474,7 @@ class PlacingPart:
             scale = (design / DESIGN_SCALE_SPREAD, design * DESIGN_SCALE_SPREAD)
         return {
             "side": settings.side, "finish": settings.finish, "scale": scale,
-            "paste": settings.paste, "placed": list(self._board_placed.get(job_id, [])), "color": settings.colors.get("board"),
+            "paste": settings.paste, "placed": list(self._board_placed.get(job_id, [])) if TELL_PLACED else [], "color": settings.colors.get("board"),
         }
 
     def _design_top_scale(self) -> float | None:
@@ -480,13 +488,14 @@ class PlacingPart:
 
     def _tell_assembly(self, job_id: str) -> None:
         """The top camera's pcbv, looking for the job's board, told the
-        paste and parts on it now, so its model shows the placed parts'
-        bodies and goes on tracking. A failure is logged: the look goes on
-        with the model it has."""
+        paste and (with TELL_PLACED) the parts on it now, so its model shows
+        the placed parts' bodies and goes on tracking. A failure is logged:
+        the look goes on with the model it has."""
         if self.top_look.job != job_id or not self.top.client.running:
             return
         try:
-            self.top.client.assembly(paste=self.top.settings().paste, placed=list(self._board_placed.get(job_id, [])))
+            placed = list(self._board_placed.get(job_id, [])) if TELL_PLACED else []
+            self.top.client.assembly(paste=self.top.settings().paste, placed=placed)
         except Exception as exc:  # never stops a run
             log.warning("top camera: the parts placed were not told to pcbv: %s", exc)
 

@@ -354,7 +354,7 @@ def test_the_files_bottom_camera_roll_and_mirror_stand_until_centering_measures_
         parse(profile(rest=CAMERA + 'mirror = "yes"\n'), "rig")
 
 
-def test_the_parts_a_run_places_are_told_to_the_top_cameras_look_for_that_board(client):
+def test_the_parts_a_run_places_are_kept_and_the_top_cameras_look_told_none(client, monkeypatch):
     job_id = rig(client, profile(rest=VACUUM))
     client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
     client.fake.readings = [80.0, 5.0]
@@ -366,9 +366,17 @@ def test_the_parts_a_run_places_are_told_to_the_top_cameras_look_for_that_board(
     backend._board_placed[job_id] = ["R9"]
     state = run(client, {"job": job_id, "refs": ["R1"]})
     assert state["progress"]["placed"] == ["R1"]
-    # The run's board starts bare, then has each part placed.
-    assert told.assemblies == [{"paste": False, "placed": []}, {"paste": False, "placed": ["R1"]}]
+    # The run's board starts bare, then has each part placed; pcbv is told
+    # none of them (TELL_PLACED: its model of placed parts locked wrong).
+    assert told.assemblies == [{"paste": False, "placed": []}, {"paste": False, "placed": []}]
     assert backend._board_placed[job_id] == ["R1"]
+    # Told when the switch is on.
+    from spinny_web import placing_part
+
+    monkeypatch.setattr(placing_part, "TELL_PLACED", True)
+    told.assemblies.clear()
+    backend._tell_assembly(job_id)
+    assert told.assemblies == [{"paste": False, "placed": ["R1"]}]
     backend.top_look.job = None
 
 
