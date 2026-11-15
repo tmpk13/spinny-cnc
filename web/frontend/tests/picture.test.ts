@@ -265,15 +265,21 @@ describe("the picture view", () => {
         stage.dispatchEvent(event);
     }
 
-    test("the wheel zooms about the point under the pointer, which stays under it; a middle drag pans; Reset view takes both back", () => {
+    test("Ctrl and the wheel zoom about the point under the pointer, which stays under it; the plain wheel is the page's; a middle drag pans; Reset view takes both back", () => {
         const { view, stage } = mounted();
         const box = view.root.querySelector(".picture-box") as HTMLElement;
         const marks = view.root.querySelector(".picture-marks") as SVGElement;
         const viewBox = (): number[] => (marks.getAttribute("viewBox") ?? "").split(" ").map(Number);
-        // In the middle: a plain wheel zooms about it, the view box centered.
+        // The plain wheel scrolls the page, over the picture too: nothing zooms.
         const plain = Object.assign(new MouseEvent("wheel", { clientX: 250, clientY: 125, bubbles: true, cancelable: true }), { deltaY: -100 });
         box.dispatchEvent(plain);
-        expect(plain.defaultPrevented).toBe(true);
+        expect(plain.defaultPrevented).toBe(false);
+        expect(view.zoom()).toBe(1);
+        // In the middle: Ctrl and the wheel zoom about it, the view box centered.
+        // The test DOM's WheelEvent keeps no modifier keys: a wheel event made as a mouse event with the wheel's delta.
+        const middle = Object.assign(new MouseEvent("wheel", { clientX: 250, clientY: 125, ctrlKey: true, bubbles: true, cancelable: true }), { deltaY: -100 });
+        box.dispatchEvent(middle);
+        expect(middle.defaultPrevented).toBe(true);
         expect(view.zoom()).toBe(1.5);
         let [x, , width] = viewBox();
         expect(width).toBeCloseTo(1000 / 1.5, 2);
@@ -359,8 +365,8 @@ describe("the picture view", () => {
         // picture reaches past what the camera sees: the stage's corner is
         // half a picture beyond the picture's own corner.
         const box = view.root.querySelector(".picture-box") as HTMLElement;
-        box.dispatchEvent(Object.assign(new MouseEvent("wheel", { clientX: 250, clientY: 125, bubbles: true, cancelable: true }), { deltaY: 100 }));
-        box.dispatchEvent(Object.assign(new MouseEvent("wheel", { clientX: 250, clientY: 125, bubbles: true, cancelable: true }), { deltaY: 100 }));
+        box.dispatchEvent(Object.assign(new MouseEvent("wheel", { clientX: 250, clientY: 125, ctrlKey: true, bubbles: true, cancelable: true }), { deltaY: 100 }));
+        box.dispatchEvent(Object.assign(new MouseEvent("wheel", { clientX: 250, clientY: 125, ctrlKey: true, bubbles: true, cancelable: true }), { deltaY: 100 }));
         expect(view.zoom()).toBe(0.5);
         pointer(stage, "pointerdown", 0, 0, true);
         pointer(stage, "pointermove", 250, 125, true);

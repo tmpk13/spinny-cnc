@@ -533,9 +533,9 @@ on the board the picture is and how well it is locked (below).
 Every camera picture (the head camera's, and the PNP page's bottom and top
 cameras') works the same way. It is asked for at the size it is shown, so
 it stays sharp when zoomed: *+* and *-* under it zoom on its middle by
-steps, and the wheel over the picture (or a pinch on a touchpad) zooms
-about the point under the pointer, which stays under it (the page
-scrolls by the wheel anywhere else); *-* and *+* are the ends of the
+steps, and Ctrl and the wheel over the picture (or a pinch on a
+touchpad) zoom about the point under the pointer, which stays under it
+(the plain wheel scrolls the page, over the picture too); *-* and *+* are the ends of the
 zoom's own box, and the number between them is a field, so any zoom from
 0.25 to 8 can be typed in and taken with Enter. Under 1 the picture shows
 smaller than its box, and the marks beyond its edges (known points, a

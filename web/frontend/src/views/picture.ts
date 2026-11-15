@@ -7,10 +7,12 @@
 // search covers, the board where the looks put it, the points whose place
 // is known), so their lines stay thin and sharp at any zoom. Each frame
 // shown is handed to whoever watches the picture's key (a camera's live
-// numbers). Ctrl and the wheel zoom on the picture's center (the plain
-// wheel scrolls the page), as do the buttons under it and a zoom typed in
-// between them, out to a quarter of the picture's size with room around
-// it; Reset view brings the whole picture back. A drag moves the head so
+// numbers). Ctrl and the wheel (a pinch on a touchpad) zoom about the
+// point under the pointer, which stays under it; the plain wheel scrolls
+// the page, over the picture too. The buttons under it zoom on the
+// picture's center, as does a zoom typed in between them, out to a quarter
+// of the picture's size with room around it; a middle (or Alt) drag pans;
+// Reset view brings the whole picture back. A drag moves the head so
 // what the camera sees follows the pointer, a line showing the move; a
 // double-click brings a point to the crosshair; Shift and a drag draw the
 // box a search keeps to, in the machine's frame. Upright (on unless
@@ -1029,7 +1031,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
 
     // The pan: how far the middle of what is shown lies from the picture's
     // own middle, full size px; a drag with the middle button (or Alt) moves
-    // it, the wheel zooms about the pointer, Reset view takes it back.
+    // it, Ctrl and the wheel zoom about the pointer, Reset view takes it back.
     let pan: [number, number] = [0, 0];
 
     /** The picture zoomed about its middle and moved by the pan (in its own CSS px, before the zoom). */
@@ -1078,10 +1080,13 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         }
     });
 
-    // The wheel over the picture (or Ctrl and the wheel, a pinch on a
-    // touchpad) zooms it about the point under the pointer, which stays
-    // under it; the page scrolls by the wheel anywhere else.
+    // Ctrl and the wheel over the picture (a pinch on a touchpad) zooms it
+    // about the point under the pointer, which stays under it; the plain
+    // wheel is left to the page, which scrolls by it over the picture too.
     box.addEventListener("wheel", (event) => {
+        if (!event.ctrlKey) {
+            return;
+        }
         event.preventDefault();
         const [width, height] = fullSize(ctx.store.get());
         const [fx, fy] = shareAt(event.clientX, event.clientY);
