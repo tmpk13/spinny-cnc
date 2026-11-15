@@ -439,6 +439,15 @@ export class MockBoardLook {
         this.corners = null;
     }
 
+    /** The corners taken as they are now, as text, to compare and to put back with `restoreCorners` (an undo of the log of changes). */
+    cornersSnapshot(): string {
+        return JSON.stringify(this.corners);
+    }
+
+    restoreCorners(snapshot: string): void {
+        this.corners = JSON.parse(snapshot) as typeof this.corners;
+    }
+
     /** The job whose board the corners taken are of; null with none. */
     cornersJob(): string | null {
         return this.corners?.job ?? null;

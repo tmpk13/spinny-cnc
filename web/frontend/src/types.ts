@@ -1050,6 +1050,7 @@ export type WsEvent =
     | { type: "markers"; data: MarkersResponse }
     | { type: "camlog"; data: CamLogState }
     | { type: "searchlog"; data: SearchLogState }
+    | { type: "findings"; data: FindingsLog }
     | { type: "auto"; data: AutoEvent }
     | { type: "plugins"; data: { plugins: PluginInfo[] } };
 
@@ -1291,8 +1292,8 @@ export interface PnpState extends PnpSettings {
     /** The last Look once; null before any. */
     look?: SpotLook | null;
     controls?: Record<string, number>;
-    /** What a routine found and holds to be kept or discarded; null with none. */
-    finding?: CameraFinding | null;
+    /** The newest result its routines applied (spinny_web.findings); null with none. */
+    applied?: FindingEntry | null;
 }
 
 /** A part of a board job: its footprint's place and angle in the job's frame. */
@@ -1629,8 +1630,8 @@ export interface TopState extends TopSettings {
     /** The look for the board loaded. */
     board_look?: BoardLook;
     controls?: Record<string, number>;
-    /** What a routine found and holds to be kept or discarded; null with none. */
-    finding?: CameraFinding | null;
+    /** The newest result its routines applied (spinny_web.findings); null with none. */
+    applied?: FindingEntry | null;
 }
 
 /**
@@ -2014,20 +2015,65 @@ export interface CameraEdge {
 }
 
 /**
- * What a routine found and holds for the operator to keep or discard
- * (spinny_web.findings): what kind and what it says, and its marks: the
- * spot it centered (px from the picture's center), straight edges and the
- * corner they made (full size px of a picture `size` big), and points on
- * the machine with a label.
+ * The marks of what a routine applied (spinny_web.findings), drawn over the
+ * picture while its Undo row shows: the spot it centered (px from the
+ * picture's center), straight edges and the corner they made (full size px
+ * of a picture `size` big), and points on the machine with a label.
  */
-export interface CameraFinding {
-    kind: "offset" | "fiducials" | "corner" | "features" | string;
-    text: string;
+export interface FindingMarks {
     spot?: RoutineSpot | null;
     lines?: CameraEdge[];
     corner?: [number, number] | null;
     size?: [number, number];
     points?: { at: [number, number]; label: string }[];
+}
+
+/** A parameter a result changed: where it lives (`head`, `up`, `top`, `up place`, `references`), its name and how it is called, its value before and after. */
+export interface FindingChange {
+    target: string;
+    name: string;
+    label: string;
+    before: unknown;
+    after: unknown;
+}
+
+/**
+ * An entry of the log of what the cameras' routines applied (GET
+ * /api/findings): when, which camera, what kind (`offset`, `picture`,
+ * `fiducials`, `corner`, `features`, `nozzle`, `runout`, or `undo`), its
+ * words, every parameter it changed, its marks, the G-code machine whose
+ * settings it changed, and whether it can be undone now (`why` not).
+ */
+export interface FindingEntry {
+    id: number;
+    /** Local time, ISO to the second. */
+    time: string;
+    camera: ControlledCamera;
+    kind: string;
+    text: string;
+    changes: FindingChange[];
+    marks: FindingMarks;
+    machine: string | null;
+    /** How it can be undone: by its values (`data`), with what this backend run holds (`held`), or not (`none`). */
+    undo: "data" | "held" | "none";
+    /** The entry an undo undid, and the entry that undid this one. */
+    undoes: number | null;
+    undone_by: number | null;
+    undoable: boolean;
+    why: string | null;
+}
+
+/** The log as GET /api/findings and its `findings` events give it: entries newest first, and how many it holds. */
+export interface FindingsLog {
+    entries: FindingEntry[];
+    count: number;
+}
+
+/** What POST /api/findings/{id}/undo answers: the undo's entry, its camera and that camera's state. */
+export interface FindingUndo {
+    entry: FindingEntry | null;
+    camera: ControlledCamera;
+    state: unknown;
 }
 
 /** The straight edges in a camera's newest picture, strongest first, and the picture's full size. */
@@ -2078,8 +2124,8 @@ export interface CameraState extends CameraSettings {
     board_look?: BoardLook;
     /** V4L2 control values set at each start. */
     controls?: Record<string, number>;
-    /** What a routine found and holds to be kept or discarded; null with none. */
-    finding?: CameraFinding | null;
+    /** The newest result its routines applied (spinny_web.findings); null with none. */
+    applied?: FindingEntry | null;
 }
 
 /** Make a mark with the tool where it stands (a spindle machine), or only record the tool's point as the mark. */

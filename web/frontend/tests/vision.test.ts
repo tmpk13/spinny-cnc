@@ -145,16 +145,20 @@ describe("the mock camera", () => {
         expect(head.x + done.offset[0]).toBeCloseTo(10, 2);
         expect(head.y + done.offset[1]).toBeCloseTo(14, 2);
         expect(backend.machine.h).toBeCloseTo(2, 9);
-        // Asked to confirm, the offset measured waits: kept only on Keep.
+        // The offset measured is kept at once and logged; Undo puts back the one before.
         await backend.cameraSettings({ offset: [CAMERA_TRUTH.offset[0] + 0.3, CAMERA_TRUTH.offset[1]] });
-        await backend.cameraFind(0, true);
+        await backend.cameraFind(0);
         await finished(backend);
-        const held = await backend.camera();
-        expect(held.finding?.kind).toBe("offset");
-        expect(held.offset[0]).toBeCloseTo(CAMERA_TRUTH.offset[0] + 0.3, 6);
-        const kept = (await backend.cameraFinding("head", true)).state as typeof held;
-        expect(kept.finding).toBeNull();
+        const kept = await backend.camera();
+        expect(kept.applied?.kind).toBe("offset");
         expect(kept.offset[0]).toBeCloseTo(CAMERA_TRUTH.offset[0], 2);
+        const undone = (await backend.undoFinding(kept.applied!.id)).state as typeof kept;
+        expect(undone.applied?.kind).toBe("undo");
+        expect(undone.offset[0]).toBeCloseTo(CAMERA_TRUTH.offset[0] + 0.3, 6);
+        // Changed by hand since, the undo's own undo is refused.
+        await backend.cameraSettings({ offset: [1, 1] });
+        await expect(backend.undoFinding(undone.applied!.id)).rejects.toMatchObject({ status: 409 });
+        expect(undone.applied?.undoable).toBe(true);
         // An abort ends a routine as stopped; none running is 409.
         await backend.cameraFind(0);
         const aborted = await backend.cameraAbort();

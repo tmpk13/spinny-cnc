@@ -31,24 +31,27 @@
 // marks, moving with the machine so it stays over what it marked (or, the
 // View menu's Marks follow the machine off, where it was drawn). Edges
 // (kept per camera) draws the straight edges pcbv finds, asked once a
-// second while on and shown. What a routine found and holds for the
-// operator (spinny_web.findings) is drawn dashed in magenta with a row of
-// its words, Keep and Discard; the View menu says whether the camera's
-// routines ask first.
+// second while on and shown. What a routine applied (spinny_web.findings:
+// kept at once, in the log of changes) shows for a few seconds in a row of
+// its words and Undo under the picture, its marks drawn dashed in magenta
+// while the row shows.
 
 import { button, el, numberField, readStored, setLocked, stepperBox, writeStored } from "../dom.ts";
 import { errorText } from "../api.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import { openMenu } from "../menu.ts";
+import { appliedText, changeText } from "./changes.ts";
 import { knownMarks } from "./known.ts";
 import type { AppState } from "../state.ts";
-import type { CameraEdges, CameraFinding } from "../types.ts";
+import type { CameraEdges, FindingEntry, FindingMarks } from "../types.ts";
 import type { Ctx } from "./context.ts";
 
 /** How often a picture is asked for while it shows, ms. */
 export const FRAME_INTERVAL_MS = 250;
 /** How often the edge view asks for the straight edges in the picture while it is on and the picture shows, ms. */
 export const EDGES_INTERVAL_MS = 1000;
+/** How long the row of a result just applied, with its Undo, shows under the picture, ms; tests set it shorter. */
+export const undoShown = { ms: 10000 };
 /**
  * The zooms the buttons and the wheel step through; a zoom typed in may lie
  * anywhere from the first to the last. Under 1 the picture shows smaller
@@ -427,12 +430,12 @@ export function edgeMarks(edges: CameraEdges, size: [number, number]): Mark[] {
 }
 
 /**
- * The marks of what a routine found and holds, in a picture `size` px: the
- * spot it centered (with how it was looked for), the straight edges and
- * the corner they made (scaled from the size of the picture they were
- * found in). Its points on the machine are drawn as known points are.
+ * The marks of what a routine applied, in a picture `size` px: the spot it
+ * centered (with how it was looked for), the straight edges and the corner
+ * they made (scaled from the size of the picture they were found in). Its
+ * points on the machine are drawn as known points are.
  */
-export function findingMarks(finding: CameraFinding, size: [number, number]): Mark[] {
+export function findingMarks(finding: FindingMarks, size: [number, number]): Mark[] {
     const marks: Mark[] = [];
     if (finding.spot) {
         marks.push(...spotMarks(finding.spot, size, "finding"));
@@ -452,11 +455,6 @@ export function findingMarks(finding: CameraFinding, size: [number, number]): Ma
         marks.push({ kind: "line", points: [[x, y - arm], [x, y + arm]], tone: "finding" });
     }
     return marks;
-}
-
-/** Whether routines started from a camera's panels hold what they find for the operator to keep (the View menu's setting, on unless switched off, kept per camera). */
-export function confirmFindings(key: string): boolean {
-    return readStored(`spinny.picture.${key}.confirm`) !== "0";
 }
 
 /** A mark moved by `dx`, `dy` px of the picture. */
@@ -643,13 +641,16 @@ export interface PictureOptions {
     /** The straight edges pcbv finds in the camera's newest picture; given, an Edges switch draws them over the picture while it is on. */
     edges?(): Promise<CameraEdges>;
     /**
-     * What a routine of the camera found and holds for the operator, null
-     * with none; given with `answer`, the picture draws it and offers Keep
-     * and Discard, and the View menu whether routines ask first.
+     * The newest result the camera's routines applied (the log's newest
+     * entry of the camera), null with none, undefined while the camera's
+     * state is not known; given with `undo`, an entry that appears after the
+     * picture first knew the state shows a row of its words and Undo for
+     * `undoShown` ms, its marks drawn while the row shows (its points are on
+     * the machine, ringed about `center`).
      */
-    finding?(state: AppState): CameraFinding | null;
-    /** Keeps (true) or discards what was found; its points are on the machine, ringed about `center`. */
-    answer?(keep: boolean): Promise<void>;
+    applied?(state: AppState): FindingEntry | null | undefined;
+    /** Takes back what the entry applied. */
+    undo?(id: number): Promise<void>;
     /** Moves the head by a step on the machine, mm. */
     move(mm: [number, number]): Promise<void>;
     /** Said when a drag or a double-click needs the scale and there is none. */
@@ -711,7 +712,6 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     const crosshairKey = `spinny.picture.${options.key}.crosshair`;
     const crosshairSizeKey = `spinny.picture.${options.key}.crosshair.size`;
     const followKey = `spinny.picture.${options.key}.follow`;
-    const confirmKey = `spinny.picture.${options.key}.confirm`;
     const edgesKey = `spinny.picture.${options.key}.edges`;
     const arrowsKey = `spinny.picture.${options.key}.arrows`;
     let zoom = 1;
@@ -808,13 +808,18 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     const cancelPick = button("Cancel", () => disarmPick(options.key), "btn btn-quiet btn-small");
     cancelPick.title = "pick nothing";
     const pickRow = el("div", { class: "button-row picture-pick-row hidden" }, pickLine, cancelPick);
-    // What a routine found and holds: its words, Keep and Discard.
-    const findingLine = el("span", { class: "picture-finding-text" });
-    const keepFinding = button("Keep", () => answerFinding(true), "btn btn-primary btn-small", "keep what was found, as the routine would have without asking");
-    const discardFinding = button("Discard", () => answerFinding(false), "btn btn-quiet btn-small", "drop what was found: nothing is kept");
-    const findingRow = el("div", { class: "button-row picture-finding hidden" }, findingLine, keepFinding, discardFinding);
-    // Where the finding shown first showed, by its words and marks, for its marks to follow the machine.
-    let findingSeen: { key: string; at: [number, number] | null } | null = null;
+    // What a routine just applied: its words and Undo, for a few seconds.
+    const appliedLine = el("span", { class: "picture-applied-text" });
+    const undoApplied = button("Undo", () => void undoShownEntry(), "btn btn-small");
+    const appliedRow = el("div", { class: "button-row picture-applied hidden" }, appliedLine, undoApplied);
+    // The newest entry's id once the camera's state is first known (an
+    // entry there then is old news, in the log), the entry the row shows
+    // with the place that carried the picture when it appeared, and the
+    // timer that hides it.
+    let appliedPrimed = false;
+    let appliedSeen: number | null = null;
+    let appliedShown: { entry: FindingEntry; at: [number, number] | null } | null = null;
+    let appliedTimer: ReturnType<typeof setTimeout> | null = null;
     const caption = el("div", { class: "button-row picture-caption" }, zoomLine, reset, turnButton);
     if (options.orientation) {
         caption.append(upright);
@@ -836,7 +841,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     if (options.boxes) {
         caption.append(growView, clearBox, boxLine);
     }
-    const root = el("figure", { class: "picture-view" }, box, grip, pickRow, findingRow, caption);
+    const root = el("figure", { class: "picture-view" }, box, grip, pickRow, appliedRow, caption);
 
     // --- sizing ------------------------------------------------------------------
 
@@ -912,17 +917,16 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
             },
             "-",
             ...ARROW_WAYS.map((entry) => ({ label: entry.label, run: pickArrows(entry.value), checked: arrows === entry.value })),
-            ...(options.finding ? [{
-                label: "Ask before keeping what routines find",
-                run: () => writeStored(confirmKey, confirmFindings(options.key) ? "0" : "1"),
-                checked: confirmFindings(options.key),
-            }] : []),
         ], view, `${options.label} view`);
     }
 
-    /** Keeps or discards what was found, then draws what is left. */
-    async function answerFinding(keep: boolean): Promise<void> {
-        await options.answer?.(keep);
+    /** Takes back what the row shows, then draws what the state says now. */
+    async function undoShownEntry(): Promise<void> {
+        const shown = appliedShown;
+        if (shown === null || !options.undo) {
+            return;
+        }
+        await options.undo(shown.entry.id);
         draw(ctx.store.get());
     }
 
@@ -931,33 +935,80 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         return options.follow ? options.follow(state) : options.center(state);
     }
 
-    /** The row offering Keep and Discard for what a routine found, with its words, shown while it waits; the place that carries the picture kept from when it first showed. */
-    function showFinding(state: AppState): void {
-        const finding = options.finding?.(state) ?? null;
-        findingRow.classList.toggle("hidden", finding === null);
-        if (finding === null) {
-            findingSeen = null;
-            return;
+    /** Hides the row of what was applied, and its marks. */
+    function hideApplied(): void {
+        if (appliedTimer !== null) {
+            clearTimeout(appliedTimer);
+            appliedTimer = null;
         }
-        findingLine.textContent = `Found: ${finding.text}. Keep it?`;
-        const key = JSON.stringify(finding);
-        if (findingSeen === null || findingSeen.key !== key) {
-            findingSeen = { key, at: followPlace(state) };
-        }
+        appliedShown = null;
     }
 
-    /** The marks of what a routine found and holds, moved with the machine as the spots kept are, its points ringed where they are on it. */
-    function shownFinding(state: AppState, shown: PictureShown, now: [number, number] | null, calibration: Calibration | null): Mark[] {
-        const finding = options.finding?.(state) ?? null;
-        if (finding === null || findingSeen === null) {
+    /**
+     * Takes in the camera's newest entry: one that appears after the state
+     * was first known shows its row for `undoShown` ms (a newer one starts
+     * the time again); the same entry again only brings its row up to date
+     * (whether it can still be undone).
+     */
+    function takeApplied(state: AppState): void {
+        if (!options.applied || !options.undo) {
+            return;
+        }
+        const entry = options.applied(state);
+        if (entry === undefined) {
+            return;
+        }
+        const id = entry?.id ?? null;
+        if (!appliedPrimed) {
+            appliedPrimed = true;
+            appliedSeen = id;
+            return;
+        }
+        if (id === appliedSeen) {
+            if (appliedShown !== null && entry !== null) {
+                appliedShown = { ...appliedShown, entry };
+            }
+            return;
+        }
+        appliedSeen = id;
+        hideApplied();
+        if (entry === null) {
+            return;
+        }
+        appliedShown = { entry, at: followPlace(state) };
+        appliedTimer = setTimeout(() => {
+            appliedTimer = null;
+            appliedShown = null;
+            draw(ctx.store.get());
+        }, undoShown.ms);
+    }
+
+    /** The row of what was applied: its words, what it changed in a tooltip, and Undo (Redo for an undo) while it can be. */
+    function showApplied(): void {
+        appliedRow.classList.toggle("hidden", appliedShown === null);
+        if (appliedShown === null) {
+            return;
+        }
+        const entry = appliedShown.entry;
+        appliedLine.textContent = appliedText(entry);
+        appliedLine.title = entry.changes.map(changeText).join("\n") || "no setting changed";
+        undoApplied.textContent = entry.kind === "undo" ? "Redo" : "Undo";
+        undoApplied.title = entry.kind === "undo" ? "apply again what was just undone" : "take back what the routine applied: each setting it changed goes back to its value before";
+        setLocked(undoApplied, !entry.undoable, entry.why ?? "it cannot be undone");
+    }
+
+    /** The marks of what was applied while its row shows, moved with the machine as the spots kept are, its points ringed where they are on it. */
+    function shownApplied(state: AppState, shown: PictureShown, now: [number, number] | null, calibration: Calibration | null): Mark[] {
+        if (appliedShown === null) {
             return [];
         }
-        let marks = findingMarks(finding, shown.size);
-        if (followOn && findingSeen.at !== null && now !== null && calibration !== null) {
-            const [dx, dy] = followShift(options.rides, findingSeen.at, now, calibration);
+        const { entry, at } = appliedShown;
+        let marks = findingMarks(entry.marks, shown.size);
+        if (followOn && at !== null && now !== null && calibration !== null) {
+            const [dx, dy] = followShift(options.rides, at, now, calibration);
             marks = marks.map((mark) => shiftMark(mark, dx, dy));
         }
-        const points = (finding.points ?? []).map((point) => ({ at: point.at, label: point.label, title: `${point.label}, as found: Keep takes it` }));
+        const points = (entry.marks.points ?? []).map((point) => ({ at: point.at, label: point.label, title: `${point.label}, as found and applied` }));
         return [...marks, ...knownMarks(points, options.center(state), calibration, shown, "finding")];
     }
 
@@ -1373,7 +1424,8 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
 
     function draw(state: AppState): void {
         takeShown(state);
-        showFinding(state);
+        takeApplied(state);
+        showApplied();
         const [width, height] = fullSize(state);
         // The view box is the part of the picture the zoom shows, so a mark
         // lands where the zoomed picture shows its point.
@@ -1398,7 +1450,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
             const now = followPlace(state);
             const calibrated = options.calibration(state);
             marks.push(...keptMarks(kept, [width, height], options.rides, followOn && now !== null && calibrated !== null ? { now, calibration: calibrated } : null));
-            marks.push(...shownFinding(state, shown, now, calibrated));
+            marks.push(...shownApplied(state, shown, now, calibrated));
         }
         setLocked(clearMarks, kept.length === 0, "no spots found are kept over the picture");
         if (edgesOn && edgesSeen !== null && options.running(state)) {
@@ -1502,6 +1554,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         setZoom,
         stop() {
             clearInterval(timer);
+            hideApplied();
             observer?.disconnect();
             pickWatchers.delete(showPick);
             globalThis.removeEventListener?.("keydown", arrowKey, true);

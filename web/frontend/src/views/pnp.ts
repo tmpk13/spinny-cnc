@@ -15,6 +15,7 @@ import { setPending, type AppState } from "../state.ts";
 import type { BoardLook, Component, Job, JobSummary, PnpSettings, PnpState, SpotPolarity } from "../types.ts";
 import { explain } from "../terms.ts";
 import { mountCameraControls, placeFolds, type CameraFolds } from "./cameracontrols.ts";
+import { mountChanges } from "./changes.ts";
 import { mountCameraSight } from "./camerasight.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
@@ -727,6 +728,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     const lookLine = el("p", { class: "muted pnp-look-line" });
     const upControls = mountCameraControls(ctx, "up", "the bottom camera");
     const upSight = mountCameraSight(ctx, { camera: "up", label: "the bottom camera", settings: (state) => state.pnp ?? null, running: (state) => state.pnp?.running === true });
+    const upChanges = mountChanges(ctx, "up", "the bottom camera");
     // The pictures the nozzle and part routines looked at, and photos by hand.
     const upLog = el("div", { class: "camlog-box" });
     mountCameraLog(upLog, ctx, "up");
@@ -776,7 +778,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
             el("div", { class: "button-row" }, cameraApply, cameraChip),
             el("div", { class: "button-row" }, explain(labeled("Look for", lookSpot, "labeled inline"), "spot"), lookOnce),
             lookLine,
-            ...placeFolds(roots.cameraFolds, "up", upControls.root, upSight.root),
+            ...placeFolds(roots.cameraFolds, "up", upControls.root, upSight.root, upChanges.root),
             el("p", { class: "muted hint" }, "A fixed camera looking up at the nozzle. Set Nozzle spot and Part spot to how the bore and a held part look against their background."),
             deviceCalibration,
             upLog,
@@ -1348,6 +1350,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
 
     function renderCamera(state: AppState): void {
         upSight.render(state);
+        upChanges.render(state);
         const pnp = state.pnp;
         const running = pnp?.running === true;
         const busy = pnp?.routine?.state === "running";
@@ -1481,7 +1484,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         shownGcode = onDevice;
         // The up camera serves either machine; the nozzle panel is this project's machine's.
         roots.nozzle.classList.toggle("hidden", onDevice);
-        for (const root of [roots.head, roots.refs, roots.feeders, roots.machineView, roots.run, roots.top, roots.topFolds?.controls, roots.topFolds?.sight]) {
+        for (const root of [roots.head, roots.refs, roots.feeders, roots.machineView, roots.run, roots.top, roots.topFolds?.controls, roots.topFolds?.sight, roots.topFolds?.changes]) {
             if (!root) {
                 continue;
             }

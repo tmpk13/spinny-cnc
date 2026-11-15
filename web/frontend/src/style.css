@@ -3795,16 +3795,51 @@ table.pnp-parts tr.dnp td {
 .picture-marks .mark-nozzle { stroke: var(--orange); stroke-dasharray: 4 3; stroke-width: 2; }
 .picture-marks .mark-finding { stroke: var(--magenta); stroke-dasharray: 5 3; stroke-width: 2.5; }
 
-/* What a routine found and holds under its picture, with Keep and Discard. */
-.picture-finding {
+/* What a routine just applied, under its picture for a few seconds, with Undo. */
+.picture-applied {
     padding: 0.4rem 0.6rem;
     border: thin solid var(--magenta);
     border-radius: var(--radius);
     background: var(--panel-2);
 }
 
-.picture-finding-text {
+.picture-applied-text {
     flex: 1 1 14rem;
+}
+
+/* A camera's log of changes: each entry's time, words and Undo, then what it changed. */
+.changes-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.changes-entry {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    padding: 0.3rem 0.5rem;
+    border-left: 0.2rem solid var(--magenta);
+    background: var(--panel-2);
+    border-radius: var(--radius);
+}
+
+.changes-entry.undone {
+    border-left-color: var(--border);
+    opacity: 0.75;
+}
+
+.changes-text {
+    flex: 1 1 12rem;
+}
+
+.changes-values {
+    margin: 0;
+    padding-left: 1.2rem;
+    font-size: 0.85em;
 }
 
 /* The grip under a picture: drag it to make the picture's box taller or

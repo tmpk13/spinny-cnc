@@ -20,24 +20,31 @@ export function controlLabel(name: string): string {
     return name.replace(/_/g, " ");
 }
 
-/** The panels a camera's two folds go into: its picture controls, and its lens and colors. */
+/** The panels a camera's folds go into: its picture controls, its lens and colors, and its log of changes. */
 export interface CameraFolds {
     controls: HTMLElement;
     sight: HTMLElement;
+    /** Without it, the log of changes folds inside the camera's own panel. */
+    changes?: HTMLElement;
 }
 
 /**
- * Puts a camera's two folds where they go: each into its panel of its own,
- * open or folded as last left there (per camera); with no panels given,
- * back as the nodes the camera's own panel holds.
+ * Puts a camera's folds where they go: each into its panel of its own,
+ * open or folded as last left there (per camera); those with no panel
+ * given back as the nodes the camera's own panel holds.
  */
-export function placeFolds(folds: CameraFolds | undefined, camera: ControlledCamera, controls: HTMLDetailsElement, sight: HTMLDetailsElement): HTMLElement[] {
+export function placeFolds(folds: CameraFolds | undefined, camera: ControlledCamera, controls: HTMLDetailsElement, sight: HTMLDetailsElement, changes?: HTMLDetailsElement): HTMLElement[] {
+    const log = changes ? [changes] : [];
     if (!folds) {
-        return [controls, sight];
+        return [controls, sight, ...log];
     }
     foldAsPanel(folds.controls, controls, `spinny.camera-controls.${camera}.open`);
     foldAsPanel(folds.sight, sight, `spinny.camera-sight.${camera}.open`);
-    return [];
+    if (changes && folds.changes) {
+        foldAsPanel(folds.changes, changes, `spinny.camera-changes.${camera}.open`);
+        return [];
+    }
+    return log;
 }
 
 /** Whether a node shows now (not under anything display: none); a browser that cannot tell counts it as shown. */

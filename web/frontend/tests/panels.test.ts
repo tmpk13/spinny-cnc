@@ -541,7 +541,7 @@ describe("the page's own markup", () => {
         expect(folders("pnp")).toEqual({ "pnp-view": "Bottom camera", "pnp-top-view": "Top camera", "pnp-head": "Machine" });
         const jobs = markupDefaults(Array.from(doc.querySelectorAll<HTMLElement>("#page-jobs > .column")));
         expect(jobs.stuck).toEqual({ camera: "camera-view", find: "camera-view" });
-        expect(jobs.stacked).toEqual({ "camera-controls": "camera", "camera-sight": "camera", tests: "align" });
+        expect(jobs.stacked).toEqual({ "camera-controls": "camera", "camera-sight": "camera", "camera-changes": "camera", tests: "align" });
     });
 
     test("every panel's menu turns edit mode on and off", () => {

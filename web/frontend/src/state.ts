@@ -28,6 +28,7 @@ import type {
     Port,
     Progress,
     SearchLogState,
+    FindingsLog,
     SettingsResponse,
     Snapshot,
 } from "./types.ts";
@@ -126,6 +127,8 @@ export interface AppState {
     camlog: CamLogState | null;
     /** The newest search records of the cameras' looks for a board; null until read. */
     searchlog: SearchLogState | null;
+    /** The log of what the cameras' routines applied, newest first; null until read. */
+    findings: FindingsLog | null;
     /** The parts of the selected job's board; null until read. */
     components: ComponentsResponse | null;
     /** The part picked on the PNP page, by its reference. */
@@ -185,6 +188,7 @@ export function initialState(mock: boolean): AppState {
         pnp: null,
         camlog: null,
         searchlog: null,
+        findings: null,
         components: null,
         pnpPart: null,
         placing: null,

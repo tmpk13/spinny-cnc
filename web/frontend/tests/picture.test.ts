@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
 import { boardMarks, boxShares, frameSize, nozzleBoxMarks, reachMark, shownSpots } from "../src/views/camview.ts";
-import { addTurn, armBox, armedPick, ARROWS, arrowMove, arrowStep, armPick, clampZoom, confirmFindings, crosshairMarks, disarmPick, dragMove, followShift, frameRequestWidth, growBox, keptMarks, levelText, machineToPicture, MAX_KEPT_SPOTS, mountPicture, pictureToMachine, readArrowWay, readCrosshair, readQuarters, shiftMark, type ShownSpot, spotMarks, stepZoom, takeSpots, turnTransform, UNTURNED, unturnOffset, uprightTurn, zoomText } from "../src/views/picture.ts";
-import type { CameraFinding } from "../src/types.ts";
+import { addTurn, armBox, armedPick, ARROWS, arrowMove, arrowStep, armPick, clampZoom, crosshairMarks, disarmPick, dragMove, followShift, frameRequestWidth, growBox, keptMarks, levelText, machineToPicture, MAX_KEPT_SPOTS, mountPicture, pictureToMachine, readArrowWay, readCrosshair, readQuarters, shiftMark, type ShownSpot, spotMarks, stepZoom, takeSpots, turnTransform, UNTURNED, unturnOffset, uprightTurn, zoomText, undoShown } from "../src/views/picture.ts";
+import type { FindingEntry } from "../src/types.ts";
 import { click, setup, settle } from "./harness.ts";
 
 /** A CSS or SVG transform list applied to a point: rotate (degrees, clockwise on a y-down screen), scaleX, scale and translate; the last one listed acts first. */
@@ -693,12 +693,20 @@ describe("the picture view", () => {
         view.stop();
     });
 
-    test("what a routine found waits under the picture, drawn with its edges, corner and points, until Keep or Discard", async () => {
+    test("what a routine applied shows under the picture with Undo for a while, drawn with its edges, corner and points", async () => {
         const { ctx } = setup();
-        let finding: CameraFinding | null = null;
-        const answers: boolean[] = [];
+        const entry = (id: number, kind = "corner"): FindingEntry => ({
+            id, time: "2026-11-14T20:15:02", camera: "head", kind, text: kind === "undo" ? "undone: bottom left corner found by its edges" : "bottom left corner found by its edges",
+            changes: [{ target: "head", name: "roll", label: "roll, degrees", before: 180, after: 180.38 }],
+            marks: kind === "undo" ? {} : { lines: [{ x0: 250, y0: 125, x1: 400, y1: 125 }], corner: [250, 125], size: [500, 250], points: [{ at: [51, 20], label: "bottom left" }] },
+            machine: null, undo: "data", undoes: null, undone_by: null, undoable: true, why: null,
+        });
+        // Not known yet, then known with an entry from before: old news, no row.
+        let applied: FindingEntry | null | undefined = undefined;
+        const undone: number[] = [];
+        const before = undoShown.ms;
         const view = mountPicture({
-            key: "test-finding",
+            key: "test-applied",
             label: "Test camera",
             rides: true,
             running: () => true,
@@ -708,31 +716,29 @@ describe("the picture view", () => {
             calibration: () => ({ mmPerPx: 0.1, roll: 0, mirror: false }),
             center: () => [50, 20],
             marks: () => [],
-            finding: () => finding,
-            answer: async (keep) => {
-                answers.push(keep);
-                finding = null;
+            applied: () => applied,
+            undo: async (id) => {
+                undone.push(id);
+                applied = entry(id + 1, "undo");
             },
             move: async () => undefined,
             noScale: "no scale",
             visible: () => true,
         }, ctx);
         document.body.append(view.root);
-        view.render(ctx.store.get());
-        const row = view.root.querySelector(".picture-finding") as HTMLElement;
+        const row = view.root.querySelector(".picture-applied") as HTMLElement;
         const layer = view.root.querySelector(".picture-marks") as SVGElement;
+        view.render(ctx.store.get());
+        applied = entry(1);
+        view.render(ctx.store.get());
         expect(row.classList.contains("hidden")).toBe(true);
-        finding = {
-            kind: "corner",
-            text: "bottom left corner found by its edges",
-            lines: [{ x0: 250, y0: 125, x1: 400, y1: 125 }],
-            corner: [250, 125],
-            size: [500, 250],
-            points: [{ at: [51, 20], label: "bottom left" }],
-        };
+        expect(layer.querySelector(".mark-finding")).toBeNull();
+        // A new one shows its words, what it changed and Undo, its marks drawn.
+        applied = entry(2);
         view.render(ctx.store.get());
         expect(row.classList.contains("hidden")).toBe(false);
-        expect(row.textContent).toContain("Found: bottom left corner found by its edges. Keep it?");
+        expect(row.textContent).toContain("Applied: bottom left corner found by its edges.");
+        expect((row.querySelector(".picture-applied-text") as HTMLElement).title).toBe("roll, degrees: 180 -> 180.38");
         // The edge and the corner scaled from the picture they were found in; the point ringed 10 px right of the center.
         const lines = [...layer.querySelectorAll("polyline.mark-finding")].map((node) => node.getAttribute("points"));
         expect(lines).toContain("500.00,250.00 800.00,250.00");
@@ -740,17 +746,26 @@ describe("the picture view", () => {
         const rings = [...layer.querySelectorAll("circle.mark-finding")].map((node) => Number(node.getAttribute("cx")));
         expect(rings).toContain(510);
         expect([...layer.querySelectorAll("text.mark-label-finding")].map((node) => node.textContent)).toEqual(["bottom left"]);
-        click(view.root, "Keep");
+        // Undo: the undo's entry takes the row, offering Redo, with no marks.
+        undoShown.ms = 30;
+        click(view.root, "Undo");
         await settle();
-        expect(answers).toEqual([true]);
+        view.render(ctx.store.get());
+        expect(undone).toEqual([2]);
+        expect(row.textContent).toContain("Undone: bottom left corner found by its edges.");
+        expect([...row.querySelectorAll("button")].map((node) => node.textContent)).toEqual(["Redo"]);
+        expect(layer.querySelector(".mark-finding")).toBeNull();
+        // One that cannot be undone says why on its locked button.
+        applied = { ...entry(3), undoable: false, why: "roll, degrees is 1 now, not 180.38: it changed since" };
+        view.render(ctx.store.get());
+        const undo = [...row.querySelectorAll("button")].find((node) => node.textContent === "Undo")!;
+        expect(undo.disabled).toBe(true);
+        expect(undo.dataset["reason"]).toContain("it changed since");
+        // A while later the row and its marks are gone.
+        await new Promise((resolve) => setTimeout(resolve, 60));
         expect(row.classList.contains("hidden")).toBe(true);
         expect(layer.querySelector(".mark-finding")).toBeNull();
-        // Routines started from this camera's panels ask first unless the View menu says not to.
-        expect(confirmFindings("test-finding")).toBe(true);
-        click(view.root, "View");
-        [...document.querySelectorAll<HTMLButtonElement>(".menu-item")].find((node) => node.textContent === "Ask before keeping what routines find")!.click();
-        expect(confirmFindings("test-finding")).toBe(false);
-        localStorage.removeItem("spinny.picture.test-finding.confirm");
+        undoShown.ms = before;
         view.stop();
     });
 

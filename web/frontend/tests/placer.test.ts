@@ -157,19 +157,22 @@ describe("the cameras and the vacuum on the mock's G-code machine", () => {
         await backend.topStart();
         await backend.command("G0 X120 Y80");
         expect((await backend.topMark()).top?.mark_at).toEqual([120, 80]);
-        // Asked to confirm, what it measured waits: nothing kept until Keep.
-        await backend.topOffset(2, true);
+        // What it measured is kept at once and logged; Undo takes it back, Redo keeps it again.
+        await backend.topOffset(2);
         await routines(backend);
-        const held = (await backend.placingState()).top!;
-        expect(held.offset).toBeNull();
-        expect(held.finding?.kind).toBe("offset");
-        expect(held.finding?.text).toContain("the top camera looks from X +35.000");
-        const kept = await backend.cameraFinding("top", true);
-        expect(kept.kept).toBe(true);
-        await expect(backend.cameraFinding("top", true)).rejects.toMatchObject({ status: 400 });
+        const kept = (await backend.placingState()).top!;
+        expect(kept.offset).toEqual(TOP_TRUTH.offset);
+        expect(kept.applied?.kind).toBe("offset");
+        expect(kept.applied?.text).toContain("the top camera looks from X +35.000");
+        expect(kept.applied?.changes.find((change) => change.name === "offset")?.before).toBeNull();
+        const undone = await backend.undoFinding(kept.applied!.id);
+        expect((undone.state as PlacingState).top?.offset).toBeNull();
+        await expect(backend.undoFinding(kept.applied!.id)).rejects.toMatchObject({ status: 409 });
+        await backend.undoFinding(undone.entry!.id);
         const top = (await backend.placingState()).top!;
-        expect(top.finding).toBeNull();
+        expect(top.applied?.kind).toBe("undo");
         expect(top.offset).toEqual(TOP_TRUTH.offset);
+        expect((await backend.findings("top")).entries.map((entry) => entry.kind)).toEqual(["undo", "undo", "offset"]);
         expect(topCameraText(top)).toContain("Top camera looks from X 35.000 Y -10.000");
         // Home by fiducial needs the file's fiducial; with one, it homes and declares the place.
         await expect(backend.topHome()).rejects.toMatchObject({ status: 400 });

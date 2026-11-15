@@ -13,6 +13,7 @@ import { parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { CameraFinish, CameraSide, SpotPolarity, TopSettings } from "../types.ts";
 import { mountCameraControls, placeFolds, type CameraFolds } from "./cameracontrols.ts";
+import { mountChanges } from "./changes.ts";
 import { mountCameraSight } from "./camerasight.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
@@ -20,7 +21,6 @@ import { into, type Ctx } from "./context.ts";
 import { topCameraText, topRoutineText } from "./placing.ts";
 import { explain, termsFold } from "../terms.ts";
 import { infoTip } from "./infotip.ts";
-import { confirmFindings } from "./picture.ts";
 import { lookOnceText, polaritySelect } from "./pnp.ts";
 
 export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boolean, folds?: CameraFolds): void {
@@ -56,6 +56,7 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
     const lookLine = el("p", { class: "muted pnp-look-line" });
     const controls = mountCameraControls(ctx, "top", "the top camera");
     const sight = mountCameraSight(ctx, { camera: "top", label: "the top camera", settings: (state) => state.placing?.top ?? null, running: (state) => state.placing?.top?.running === true });
+    const changes = mountChanges(ctx, "top", "the top camera");
     const offsetLine = el("p", { class: "muted" });
     const markHere = button("Nozzle on mark", () => into(ctx, "placing", ctx.api.topMark()), "btn");
     markHere.title = "the nozzle's tip is on a mark: keep its place for Measure offset";
@@ -91,7 +92,7 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
             ),
             el("div", { class: "button-row" }, apply, lookOnce),
             lookLine,
-            ...placeFolds(folds, "top", controls.root, sight.root),
+            ...placeFolds(folds, "top", controls.root, sight.root, changes.root),
             el("div", { class: "button-row" }, offsetLine, infoTip("offset")),
             el("div", { class: "button-row" }, markHere, labeled("Step mm", step, "labeled inline"), measure, abort),
             el("div", { class: "button-row" }, homeFiducial, findFiducial, fiducialLine),
@@ -158,11 +159,12 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
             ctx.toast("error", "step: 0 to 20 mm");
             return;
         }
-        await into(ctx, "placing", ctx.api.topOffset(value, confirmFindings("top")));
+        await into(ctx, "placing", ctx.api.topOffset(value));
     }
 
     function render(state: AppState): void {
         sight.render(state);
+        changes.render(state);
         const top = state.placing?.top ?? null;
         const connected = state.placing?.connected === true;
         const running = state.placing?.running === true;

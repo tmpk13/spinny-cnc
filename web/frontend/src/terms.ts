@@ -34,7 +34,7 @@ export const TERMS = {
     stretch: ["board stretch", "how much the board's X and Y scale and shear differ from its design, within a fab's tolerance, fitted from pictures far apart"],
     corner: ["corner", "a corner of the board's outline box, taken where the picture's center was put on it, or where its edges meet"],
     features: ["features", "fiducials, holes or pads far apart on the board, centered one by one to give its turn over a long baseline"],
-    finding: ["finding", "what a routine found, shown over the picture to be kept or discarded before anything takes it"],
+    finding: ["finding", "what a routine found and applied at once: shown under the picture with Undo for a while, and listed in the camera's Changes"],
 } as const satisfies Record<string, readonly [string, string]>;
 
 export type Term = keyof typeof TERMS;

@@ -17,6 +17,7 @@ import { isMilling } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
 import type { BoardLook, CameraFinish, CameraSettings, CameraSide, CameraState } from "../types.ts";
 import { mountCameraControls, placeFolds, type CameraFolds } from "./cameracontrols.ts";
+import { mountChanges, undoEntry } from "./changes.ts";
 import { mountCameraSight } from "./camerasight.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
@@ -24,7 +25,7 @@ import { boardMarks, frameSize, roughOf, shownSpots } from "./camview.ts";
 import { into, type Ctx } from "./context.ts";
 import { explain, termsFold } from "../terms.ts";
 import { headKnown, knownMarks } from "./known.ts";
-import { type Calibration, confirmFindings, mountPicture, type PictureView } from "./picture.ts";
+import { type Calibration, mountPicture, type PictureView } from "./picture.ts";
 
 export { FRAME_INTERVAL_MS } from "./picture.ts";
 /** How often this panel asks for the camera's state while it shows, ms. */
@@ -177,13 +178,8 @@ export function mountVisionView(root: HTMLElement, ctx: Ctx, visible: () => bool
         },
         spots: (state) => (state.camera ? shownSpots(state.camera.routine, null) : null),
         edges: () => ctx.api.cameraEdges("head"),
-        finding: (state) => state.camera?.finding ?? null,
-        answer: async (keep) => {
-            const reply = await ctx.call(ctx.api.cameraFinding("head", keep));
-            if (reply) {
-                ctx.store.set({ camera: reply.state as CameraState });
-            }
-        },
+        applied: (state) => (state.camera ? state.camera.applied ?? null : undefined),
+        undo: (id) => undoEntry(ctx, id),
         move: async (mm) => {
             if (Math.hypot(mm[0], mm[1]) >= 0.001) {
                 await ctx.call(ctx.api.jog({ kind: "board", dx: Number(mm[0].toFixed(4)), dy: Number(mm[1].toFixed(4)) }));
@@ -275,6 +271,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
 
     const controls = mountCameraControls(ctx, "head", "the head camera");
     const sight = mountCameraSight(ctx, { camera: "head", label: "the head camera", settings: (state) => state.camera ?? null, running: (state) => state.camera?.running === true });
+    const changes = mountChanges(ctx, "head", "the head camera");
 
     // The camera offset routine: a mark made with the tool, found in the
     // picture, and the picture's center put on it.
@@ -308,7 +305,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
             explain(labeled("Finish", finish), "finish"),
         ),
         el("div", { class: "button-row" }, applySettings, pendingChips[0]),
-        ...placeFolds(folds, "head", controls.root, sight.root),
+        ...placeFolds(folds, "head", controls.root, sight.root, changes.root),
         el("div", { class: "field-grid" },
             explain(labeled("Offset x mm", offsetX), "offset"),
             explain(labeled("Offset y mm", offsetY), "offset"),
@@ -438,7 +435,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
             ctx.toast("error", "step: 0 mm or more");
             return;
         }
-        await into(ctx, "camera", ctx.api.cameraFind(s, confirmFindings("head")));
+        await into(ctx, "camera", ctx.api.cameraFind(s));
     }
 
     /** The panel is in view: the Jobs page is up, the fold open and the tab shown. */
@@ -472,6 +469,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
 
     function render(state: AppState): void {
         sight.render(state);
+        changes.render(state);
         const camera = state.camera;
         const connected = state.snapshot.connected;
         const running = camera?.running ?? false;
