@@ -190,3 +190,7 @@ def test_measure_camera_finds_the_scale_roll_and_mirror_from_the_heads_moves(mon
     assert head.heights == ["safe", 31.5] and head.place == (7.0, 7.0)
     assert {(round(p[0] - 7.0, 3), round(p[1] - 7.0, 3)) for p in head.places} >= {(numbers["step"], 0.0), (0.0, -numbers["step"])}
     assert said and said[-1][0] == "info" and "um a pixel" in said[-1][1]
+    # Kept at once and logged with its values before, for Undo.
+    entry = camera.findings.newest()
+    assert entry is not None and entry["kind"] == "camera"
+    assert {change["name"] for change in entry["changes"]} >= {"mm_per_px", "roll"}

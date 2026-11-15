@@ -2256,7 +2256,7 @@ export class MockBackend implements Api, EventFeed {
     private topConfig: TopSettings = { ...TOP_DEFAULTS };
     private topRunning = false;
     private topRoutine: TopRoutine | null = null;
-    private topSession: { kind: "offset" | "fiducials" | "search" | "home"; steps: string[]; elapsed: number; device: MockDevice; job: string | null; progress: TopRoutine } | null = null;
+    private topSession: { kind: "offset" | "fiducials" | "search" | "home" | "picture"; steps: string[]; elapsed: number; device: MockDevice; job: string | null; progress: TopRoutine } | null = null;
     /** What the cameras' routines applied, each undoable (spinny_web.findings): the cameras' settings are its targets. */
     private findingsLog: MockFindings = new MockFindings(
         {
@@ -7914,7 +7914,7 @@ export class MockBackend implements Api, EventFeed {
         return this.placingStateOf();
     }
 
-    private beginTop(kind: "offset" | "fiducials" | "search" | "home", steps: string[], device: MockDevice, job: string | null): void {
+    private beginTop(kind: "offset" | "fiducials" | "search" | "home" | "picture", steps: string[], device: MockDevice, job: string | null): void {
         if (!this.deviceLink.connected) {
             throw new ApiError(400, "no G-code machine is connected: connect one from the top bar");
         }
@@ -7928,6 +7928,13 @@ export class MockBackend implements Api, EventFeed {
         this.topRoutine = progress;
         this.topSession = { kind, steps, elapsed: 0, device, job, progress };
         this.emitPlacing();
+    }
+
+    /** Measure camera, as the backend's top_measure: the picture's scale, roll and mirror from head moves. */
+    async topMeasure(): Promise<PlacingState> {
+        const device = this.gcodeIdle();
+        this.beginTop("picture", ["lifting", "probing", "grid", "fitting", "done"], device, null);
+        return this.placingStateOf();
     }
 
     async topOffset(step: number): Promise<PlacingState> {
@@ -8997,6 +9004,9 @@ export class MockBackend implements Api, EventFeed {
                 const signed = (value: number): string => `${value >= 0 ? "+" : ""}${value.toFixed(3)}`;
                 const against = this.topHomeFirst ? "the switches' home" : "where its numbers said";
                 this.message("info", `homed by the fiducial: the head was ${signed(-ex)}, ${signed(-ey)} mm off ${against} (mock)`);
+            } else if (session.kind === "picture") {
+                const words = `the top camera's picture measured by the head's moves: ${(TOP_TRUTH.mmPerPx * 1000).toFixed(2)} um a pixel, roll ${TOP_TRUTH.roll.toFixed(2)} degrees (mock)`;
+                this.message("info", this.findingsLog.keep("top", "camera", words, { mm_per_px: TOP_TRUTH.mmPerPx, roll: TOP_TRUTH.roll, mirror: TOP_TRUTH.mirror }));
             } else if (session.kind === "offset") {
                 const mark = this.topConfig.mark_at ?? [0, 0];
                 const [ox, oy] = TOP_TRUTH.offset;

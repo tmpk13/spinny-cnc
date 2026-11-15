@@ -104,6 +104,11 @@ def take_corner(look, job_id: str, name: str, job_point: tuple[float, float], ma
     return undo
 
 
+def _inside(box: tuple[float, float, float, float], point: tuple[float, float]) -> bool:
+    """Whether a point lies in a box (x0, y0, x1, y1, either way round)."""
+    return min(box[0], box[2]) <= point[0] <= max(box[0], box[2]) and min(box[1], box[3]) <= point[1] <= max(box[1], box[3])
+
+
 class PlacingPart:
     """The PNP tab's work with a G-code machine, mixed into Backend."""
 
@@ -509,15 +514,28 @@ class PlacingPart:
         prior = self._top_known(job, settings.corner_mm, corners=False)
         box = body.box if body.box is not None else self._corners_box(self.top_look, job, settings.corner_mm)
         coarse = None
+        quick = None
+        view = (width * scale, height * scale)
         bed = machine.top.bed if machine.top is not None else None
+        area = machine.top.board_area if machine.top is not None else None
+        only = bool(machine.top.board_area_only) if machine.top is not None else False
         outline = self._board_box(job)
-        if box is None and known is None and bed is not None and outline is not None:
-            # Nothing says where the board is: a quick scan of the bed, its
-            # stops spaced by the board's size so one falls well inside it.
-            box = bed
+        stops: list[tuple[float, float]] = []
+        if box is None and known is None and (bed is not None or area is not None) and outline is not None:
+            # Nothing says where the board is: a quick scan of where boards
+            # lie, its stops spaced by the board's size so one falls well
+            # inside it. A board area in the file is scanned first; the rest
+            # of the bed after it, unless boards only ever lie within it.
             coarse = QUICK_SHARE * min(outline[2] - outline[0], outline[3] - outline[1])
+            first = area if area is not None else bed
+            stops = search_stops(first, view, center, coarse)
+            quick = quick_first(first, view, coarse)
+            if area is not None and bed is not None and not only:
+                stops += [point for point in search_stops(bed, view, stops[-1], coarse) if not _inside(area, point)]
+            box = first if only or bed is None else bed
         box = box or search_box(center, diagonal)
-        stops = search_stops(box, (width * scale, height * scale), known.place.center if known is not None else center, coarse)
+        if not stops:
+            stops = search_stops(box, view, known.place.center if known is not None else center, coarse)
         if known is not None:
             # Where the known place puts the most pads in a picture first:
             # its middle may be bare, its edges lock wrong.
@@ -547,7 +565,7 @@ class PlacingPart:
                 mover.stopped, lambda index, count: self.top._step(progress, f"stop {index + 1}"), PnpError, record,
                 checks=self._check_places(job, (width * scale, height * scale)), known=known, side=settings.side, box=box, prior=prior, steer=steer,
                 picture=(width, height, scale), outline=self._board_box(job),
-                quick=quick_first(box, (width * scale, height * scale), coarse) if coarse is not None else None,
+                quick=quick,
             )
             self._learn_from_look("top", look, found)
             self.top._message("info", found_text(found, look.consensus))

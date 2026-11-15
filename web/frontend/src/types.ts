@@ -1608,7 +1608,7 @@ export type TopStep = "lifting" | "moving" | "lowering" | "scale" | "centering" 
 
 /** The top camera's routine: its offset measured, or the board's fiducials found (a step per fiducial). */
 export interface TopRoutine {
-    kind: "offset" | "fiducials" | "search" | "scan" | "home";
+    kind: "offset" | "fiducials" | "search" | "scan" | "home" | "picture";
     target?: "machine" | "gcode";
     state: RoutineState;
     step: TopStep;

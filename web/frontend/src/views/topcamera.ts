@@ -64,6 +64,8 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
     step.setAttribute("aria-label", "Top camera step mm");
     const measure = button("Measure offset", () => measureOffset(), "btn");
     measure.title = "move the top camera over the mark to measure its offset from the nozzle";
+    const measureCamera = button("Measure camera", () => into(ctx, "placing", ctx.api.topMeasure()), "btn",
+        "move the head a few mm about where it stands, over anything with texture (a board), and measure the picture's scale, roll and mirror from how it shifts: no mark needed");
     const homeFiducial = button("Home by fiducial", () => into(ctx, "placing", ctx.api.topHome()), "btn",
         "home, then find the bed's homing fiducial and correct where the head is from it");
     const findFiducial = button("Find home fiducial", () => into(ctx, "placing", ctx.api.topHome(false)), "btn btn-quiet",
@@ -94,6 +96,7 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
             lookLine,
             ...placeFolds(folds, "top", controls.root, sight.root, changes.root),
             el("div", { class: "button-row" }, offsetLine, infoTip("offset")),
+            el("div", { class: "button-row" }, measureCamera),
             el("div", { class: "button-row" }, markHere, labeled("Step mm", step, "labeled inline"), measure, abort),
             el("div", { class: "button-row" }, homeFiducial, findFiducial, fiducialLine),
             routineLine,
@@ -182,6 +185,7 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
         lockFor(stop, [top?.running !== true, "the top camera is not running"], [busy, "a routine is under way: abort it first"]);
         setLocked(apply, busy, "a routine is under way");
         lockFor(markHere, [!connected, "connect the machine first"], [running || moving || busy, "the machine is busy"]);
+        lockFor(measureCamera, [!connected, "connect the machine first"], [running || moving || busy, "the machine is busy"], [top?.running !== true, "start the top camera first"]);
         lockFor(measure, [!connected, "connect the machine first"], [running || moving || busy, "the machine is busy"], [top?.running !== true, "start the top camera first"], [!top?.mark_at, "put the nozzle on a mark and press Nozzle on mark first"]);
         const home = state.placing?.document?.top?.home_fiducial ?? null;
         for (const control of [homeFiducial, findFiducial]) {

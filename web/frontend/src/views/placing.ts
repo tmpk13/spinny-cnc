@@ -144,7 +144,7 @@ export function topRoutineText(top: TopState | null | undefined): string {
         return "";
     }
     const whats: Record<string, string> = {
-        offset: "Measuring the offset", fiducials: "Finding the fiducials", search: "Looking for the board", scan: "Scanning the board", home: "Homing by the fiducial",
+        offset: "Measuring the offset", picture: "Measuring the picture", fiducials: "Finding the fiducials", search: "Looking for the board", scan: "Scanning the board", home: "Homing by the fiducial",
     };
     const what = whats[routine.kind] ?? "The routine";
     switch (routine.state) {

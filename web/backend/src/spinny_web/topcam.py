@@ -445,8 +445,8 @@ class TopCamera(PickCamera):
         if keep is not None:
             self._message("info", keep(fit, numbers))
             return
-        self.update({"mm_per_px": round(mm_per_px, 7), "roll": round(roll, 4), "mirror": fit.mirror})
-        self._message("info", words)
+        # Kept at once and logged with Undo, as every routine's result.
+        self._message("info", self.findings.keep("camera", words, {"mm_per_px": round(mm_per_px, 7), "roll": round(roll, 4), "mirror": fit.mirror}))
 
     def find_fiducials(
         self,
