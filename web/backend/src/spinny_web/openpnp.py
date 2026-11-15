@@ -26,7 +26,11 @@ A nozzle whose tip runs out of true as it turns is placed where its tip
 is at that angle.
 
 Every place on the machine is a place of the nozzle's tip turned to 0:
-the head's X and Y with the tip over that point. The program here is the
+the head's X and Y with the tip over that point. On axes out of square
+([motion] skew) the places stay square ones: the link sends them as the
+controller's numbers (move_xy, move_line, declare_line) and reads the
+controller's back (head_place), unless the firmware takes the skew out
+itself, told so by the file's skew line. The program here is the
 plan as it stands before the run; the run (`placer.py`) changes it where
 a camera or the vacuum sensor says otherwise.
 """
@@ -62,6 +66,18 @@ JAVA_GROUP = re.compile(r"\(\?<(?![=!])")
 # pcbv program, and the shades the camera's routines look for.
 TOP_CAMERA_SETTINGS = ("device", "size", "fps", "pcbv", "mark_spot")
 UP_CAMERA_SETTINGS = ("device", "size", "fps", "pcbv", "nozzle_spot", "part_spot")
+# Who takes the axes' skew out ([motion] skew_by): this backend's link,
+# on every move it sends and every place it reads, or the firmware, told
+# the factor by the file's [gcode] skew line (Marlin's M852 with
+# SKEW_CORRECTION built in).
+SKEW_BY = ("link", "firmware")
+# The skew a file may give, mm of X per mm of Y: 0.02 is 1.15 degrees out
+# of square, far past a machine worth correcting, and refuses an angle in
+# degrees typed for the factor (0.13 degrees is 0.0023).
+SKEW_LIMIT = 0.02
+# Decimals the skew goes out to the firmware with: a micrometer over a
+# meter of Y.
+SKEW_DECIMALS = 6
 
 
 class PlanError(ValueError):
@@ -287,6 +303,19 @@ class GcodeMachine:
     # across come to safe_z from either side, which is safe for a seesaw
     # nobody marked, and jogs go where they are sent.
     seesaw: bool | None = None
+    # How far the head's travel along Y leans toward +X: mm of X per mm of
+    # Y, the tangent of how far the angle from +X to +Y falls short of 90
+    # degrees (Marlin's M852 I factor, and the Y factor of the X axis
+    # OpenPnP transforms for non-squareness). A controller that does not
+    # take it out puts a head sent to X Y at X + skew * Y; 0 is square.
+    skew: float = 0.0
+    # Who takes the skew out (SKEW_BY): "link", the backend, sending X less
+    # skew * Y and reading X plus skew * Y; or "firmware", the controller,
+    # told the factor by skew_line, its numbers then square ones.
+    skew_by: str = "link"
+    # The line that tells the firmware the skew, {skew} where the factor
+    # goes; empty for a firmware built with the factor in it (none is sent).
+    skew_line: str = "M852 I{skew}"
     # Where a part that failed a check is let go, X Y Z; None puts it back
     # in the pocket it came from.
     discard: tuple[float, float, float] | None = None
@@ -393,6 +422,31 @@ class GcodeMachine:
         clockwise."""
         return f"{self.axes[3]}{num(-degrees if self.rotation_cw else degrees)}"
 
+    @property
+    def link_skew(self) -> float:
+        """The skew the backend takes out itself: the file's when its link
+        does it, 0 when the firmware does (its numbers are square ones)."""
+        return self.skew if self.skew_by == "link" else 0.0
+
+    def to_controller(self, x: float, y: float) -> tuple[float, float]:
+        """A place of the nozzle, in square X and Y, as the controller's
+        numbers: X less the link's skew times Y."""
+        return (x - self.link_skew * y, y)
+
+    def from_controller(self, x: float, y: float) -> tuple[float, float]:
+        """The controller's numbers as a place of the nozzle: to_controller undone."""
+        return (x + self.link_skew * y, y)
+
+    @property
+    def firmware_skew(self) -> float:
+        """The skew the firmware is to hold: the file's when the firmware
+        takes it out, else none."""
+        return self.skew if self.skew_by == "firmware" else 0.0
+
+    def skew_command(self, factor: float) -> str:
+        """The file's skew line with `factor` in it; empty when the file has none."""
+        return self.skew_line.replace("{skew}", num(factor, SKEW_DECIMALS)) if self.skew_line else ""
+
     def document(self) -> dict:
         vacuum = self.vacuum
         top = self.top
@@ -404,6 +458,8 @@ class GcodeMachine:
             "axes": list(self.axes),
             "rotation_cw": self.rotation_cw,
             "seesaw": self.seesaw,
+            "skew": self.skew,
+            "skew_by": self.skew_by,
             "feed_xy": self.feed_xy,
             "feed_z": self.feed_z,
             "safe_z": self.safe_z,
@@ -695,12 +751,15 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
     motors_on = read.text(gcode, "motors_on", "gcode", "M17")
     motors_off = read.text(gcode, "motors_off", "gcode", "M18")
     rotation_cw = read.flag(gcode, "rotation_cw", "gcode", False)
+    skew_line = read.text(gcode, "skew", "gcode", "M852 I{skew}")
+    if skew_line and "{skew}" not in skew_line:
+        raise read.fail("gcode", "skew", "must hold {skew} for the factor, or be empty for a firmware built with it")
     read.done(
         gcode,
         "gcode",
         {
             "init", "end", "move", "x", "y", "z", "rotation", "rotation_cw", "wait", "pick", "place", "dwell", "home", "position", "stop",
-            "motors_on", "motors_off", "light_on", "light_off",
+            "motors_on", "motors_off", "light_on", "light_off", "skew",
         },
     )
 
@@ -717,8 +776,18 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
     # Left out, the file does not say which: GcodeMachine.seesaw.
     seesaw = read.flag(motion, "seesaw", "motion", False) if "seesaw" in motion else None
     travel = read.box(motion, "travel", "motion")
+    skew = motion.get("skew", 0.0)
+    if isinstance(skew, bool) or not isinstance(skew, (int, float)) or not math.isfinite(skew) or abs(skew) > SKEW_LIMIT:
+        raise read.fail(
+            "motion", "skew", f"must be a number from {-SKEW_LIMIT:g} to {SKEW_LIMIT:g}: mm of X per mm of Y, the tangent of the angle (0.13 degrees is 0.0023)"
+        )
+    skew_by = motion.get("skew_by", "link")
+    if skew_by not in SKEW_BY:
+        raise read.fail("motion", "skew_by", 'must be "link" (this backend takes the skew out) or "firmware" (the controller does)')
     read.done(
-        motion, "motion", {"feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms", "discard", "pick_tries", "park", "seesaw", "travel"}
+        motion,
+        "motion",
+        {"feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms", "discard", "pick_tries", "park", "seesaw", "travel", "skew", "skew_by"},
     )
 
     vacuum = None
@@ -972,6 +1041,9 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
         camera_z=camera_z,
         rotation_cw=rotation_cw,
         seesaw=seesaw,
+        skew=float(skew),
+        skew_by=skew_by,
+        skew_line=skew_line,
         discard=discard,
         pick_tries=pick_tries,
         vacuum=vacuum,
@@ -1120,11 +1192,13 @@ def move_z(machine: GcodeMachine, z: float) -> str:
 
 
 def move_xy(machine: GcodeMachine, point: tuple[float, float] | None, degrees: float | None = None) -> str:
-    """A move at the X/Y feed: the head over `point` when given, the nozzle
-    turned to `degrees` (counterclockwise from above) when given."""
+    """A move at the X/Y feed: the head over `point` when given (as the
+    controller's numbers, the link's skew taken out), the nozzle turned to
+    `degrees` (counterclockwise from above) when given."""
     words = [machine.move]
     if point is not None:
-        words += [f"{machine.axes[0]}{num(point[0])}", f"{machine.axes[1]}{num(point[1])}"]
+        x, y = machine.to_controller(float(point[0]), float(point[1]))
+        words += [f"{machine.axes[0]}{num(x)}", f"{machine.axes[1]}{num(y)}"]
     if degrees is not None:
         words.append(machine.angle_word(degrees))
     words.append(f"F{num(machine.feed_xy, 0)}")
@@ -1186,11 +1260,28 @@ def lifts_leaving(machine: GcodeMachine, here: dict[str, float], target: dict[st
 AXIS_NAMES = ("x", "y", "z", "rotation")
 
 
-def move_line(machine: GcodeMachine, target: dict[str, float], feed: float | None = None) -> str:
-    """One move to the controller's own values in `target` (x, y, z, and the
-    rotation as the controller counts it, not turned for rotation_cw), at
-    `feed`, else at the Z feed for a height alone and the X/Y feed for
-    anything else."""
+def controller_target(machine: GcodeMachine, target: dict[str, float], here: dict[str, float] | None = None) -> dict[str, float]:
+    """`target` (x and y places of the nozzle, z, the rotation) with X and Y
+    as the controller's numbers: on a machine whose link takes a skew out,
+    X carries Y too, so a move naming either names both, the one left out
+    staying where `here` has it. A ValueError when `here` lacks it."""
+    if not machine.link_skew or ("x" not in target and "y" not in target):
+        return dict(target)
+    whole = {name: here[name] for name in ("x", "y") if here is not None and name in here}
+    whole.update({name: target[name] for name in ("x", "y") if name in target})
+    if "x" not in whole or "y" not in whole:
+        raise ValueError("the axes are skewed: a move across needs the head's X and Y, so read its place first")
+    x, y = machine.to_controller(whole["x"], whole["y"])
+    return {**target, "x": x, "y": y}
+
+
+def move_line(machine: GcodeMachine, target: dict[str, float], feed: float | None = None, here: dict[str, float] | None = None) -> str:
+    """One move to `target` (x, y and z, and the rotation as the controller
+    counts it, not turned for rotation_cw), X and Y as the controller's
+    numbers (controller_target, the head's place `here` filling in the one
+    left out), at `feed`, else at the Z feed for a height alone and the X/Y
+    feed for anything else."""
+    target = controller_target(machine, target, here)
     words = [machine.move]
     for name, letter in zip(AXIS_NAMES, machine.axes):
         if name in target:
@@ -1220,7 +1311,7 @@ def goto_lines(machine: GcodeMachine, here: dict[str, float], want: dict[str, fl
         flat = dict(across)
         if "rotation" in want:
             flat["rotation"] = want["rotation"]
-        lines.append(move_line(machine, flat, feed))
+        lines.append(move_line(machine, flat, feed, here))
     elif "rotation" in want:
         lines.append(move_line(machine, {"rotation": want["rotation"]}, feed))
     if "z" in want and (z is None or abs(want["z"] - z) > 1e-6):
@@ -1398,7 +1489,7 @@ def plan(
                 crop=machine.crop_of(feeder, str(part.get("value", "")), str(part.get("footprint", ""))),
             )
         )
-    head = [f"; {title or 'placement'} on {machine.name}: {len(blocks)} parts", *machine.init]
+    head = [f"; {title or 'placement'} on {machine.name}: {len(blocks)} parts", *machine.init, *skew_lines(machine)]
     tail = [*([machine.wait] if machine.wait else []), *machine.end]
     return Plan(head=head, blocks=blocks, tail=tail, skipped=skipped, fit=fit)
 
@@ -1411,15 +1502,62 @@ def board_goto(machine: GcodeMachine, fit: Fit, part: dict) -> list[str]:
 POSITION = re.compile(r"\b([A-Z]):\s*(-?\d+(?:\.\d+)?)")
 
 
-def read_position(lines: list[str], axes: tuple[str, str, str, str]) -> dict:
+def read_position(lines: list[str], axes: tuple[str, str, str, str], skew: float = 0.0) -> dict:
     """The position a reply reports (Marlin's and RepRapFirmware's `X:1.00
     Y:2.00 ... Count ...`, Smoothie's `ok C: X:1.0 ...`, Grbl's `MPos:`
     excepted), named x, y, z and rotation by the profile's letters; the
-    figures after `Count` are steps, not millimeters."""
+    figures after `Count` are steps, not millimeters. With a `skew` the
+    link takes out, X is the nozzle's place, X plus skew times Y: an X
+    reported without a Y is left out, being no place."""
     found: dict[str, float] = {}
     for line in lines:
         head = line.split("Count", 1)[0]
         for letter, value in POSITION.findall(head):
             found.setdefault(letter, float(value))
     names = dict(zip(axes, ("x", "y", "z", "rotation")))
-    return {names[letter]: value for letter, value in found.items() if letter in names}
+    position = {names[letter]: value for letter, value in found.items() if letter in names}
+    if skew and "x" in position:
+        if "y" in position:
+            position["x"] = position["x"] + skew * position["y"]
+        else:
+            del position["x"]
+    return position
+
+
+def head_place(machine: GcodeMachine, lines: list[str]) -> dict:
+    """The head's place a reply to the file's position command reports, X
+    and Y places of the nozzle (read_position with the link's skew)."""
+    return read_position(lines, machine.axes, machine.link_skew)
+
+
+def declare_line(machine: GcodeMachine, given: dict[str, float]) -> str:
+    """The G92 that declares the head at `given` (x and y places of the
+    nozzle, z, the rotation as the controller counts it), X and Y as the
+    controller's numbers. On a machine whose link takes a skew out the
+    controller's X holds Y too: X and Y are declared together, a
+    ValueError when one is left out."""
+    values = dict(given)
+    if machine.link_skew and ("x" in values or "y" in values):
+        if "x" not in values or "y" not in values:
+            raise ValueError("the axes are skewed: declare X and Y together")
+        values["x"], values["y"] = machine.to_controller(values["x"], values["y"])
+    words = [f"{letter}{num(values[name])}" for name, letter in zip(AXIS_NAMES, machine.axes) if name in values]
+    return "G92 " + " ".join(words)
+
+
+def skew_lines(machine: GcodeMachine) -> list[str]:
+    """The line that tells the firmware the file's skew, when the firmware
+    takes it out and the file gives one: sent at the connect, and at the
+    head of a placement so its program says it too."""
+    line = machine.skew_command(machine.skew) if machine.skew_by == "firmware" else ""
+    return [line] if line else []
+
+
+# What Marlin answers a command its build left out (`echo:Unknown command:
+# "M852 I0.0023"`, then `ok`): the line went nowhere.
+UNKNOWN_COMMAND = re.compile(r"unknown command", re.IGNORECASE)
+
+
+def unknown_in(reply: list[str]) -> str | None:
+    """The line of a reply saying its command is unknown to the firmware; None when none does."""
+    return next((line for line in reply if UNKNOWN_COMMAND.search(line)), None)

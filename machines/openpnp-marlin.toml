@@ -45,6 +45,8 @@ pick_dwell_ms = 200
 place_dwell_ms = 150
 pick_tries = 3           # pockets tried for one part before it is left out
 # discard = [10.0, 10.0, -15.0]  # where a part that failed a check is let go; left out, back in its pocket
+# skew = 0.0023          # the head's Y travel leans this many mm toward +X a mm (tan of the axes' angle off square; Measure camera says it); changing it moves every place kept in machine numbers
+# skew_by = "firmware"   # Marlin built with SKEW_CORRECTION_GCODE takes it out, told by [gcode] skew (M852 I{skew}) at the connect; left out, this backend does
 
 # A vacuum sensor: read after each pick (a part held, else the pick failed
 # and the next pocket is tried) and after each place (the nozzle empty,

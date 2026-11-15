@@ -28,6 +28,12 @@ const CAPTURE_SIZE = /^[1-9][0-9]{1,4}x[1-9][0-9]{1,4}$/;
 /** A camera's own settings a G-code machine's file may name in its [top_camera] or [up_camera], as openpnp.TOP_CAMERA_SETTINGS and UP_CAMERA_SETTINGS. */
 export const TOP_CAMERA_SETTINGS = ["device", "size", "fps", "pcbv", "mark_spot"] as const;
 export const UP_CAMERA_SETTINGS = ["device", "size", "fps", "pcbv", "nozzle_spot", "part_spot"] as const;
+/** Who takes the axes' skew out ([motion] skew_by), as openpnp.SKEW_BY: the backend's link, or the firmware told it by [gcode] skew. */
+export const SKEW_BY = ["link", "firmware"] as const;
+/** The largest skew a file may give, mm of X per mm of Y (openpnp.SKEW_LIMIT): an angle in degrees typed for it is refused. */
+const SKEW_LIMIT = 0.02;
+/** Decimals the skew goes out to the firmware with. */
+const SKEW_DECIMALS = 6;
 /** The camera settings a file names, by key. */
 export type CameraTake = Record<string, string | number>;
 
@@ -168,6 +174,12 @@ export interface MockDevice {
     rotation_cw: boolean;
     /** One Z motor drives two nozzles, both up only at the safe height (true): moves across come to it from either side, Z jogs stop at it; a plain Z (false); not said (null): moves across from either side, jogs go where sent. */
     seesaw: boolean | null;
+    /** How far the head's travel along Y leans toward +X, mm of X per mm of Y: a controller that does not take it out puts a head sent to X Y at X + skew * Y. */
+    skew: number;
+    /** Who takes the skew out: the link (X less skew * Y out, plus it in) or the firmware, told by skew_line. */
+    skew_by: (typeof SKEW_BY)[number];
+    /** The line that tells the firmware the skew, {skew} for the factor; empty for a firmware built with it. */
+    skew_line: string;
     discard: [number, number, number] | null;
     pick_tries: number;
     vacuum: MockVacuum | null;
@@ -444,9 +456,13 @@ export function parseGcodeTables(top: TomlTable, id: string, name: string, descr
     device.motors_on = read.text(gcode, "motors_on", "gcode", "M17");
     device.motors_off = read.text(gcode, "motors_off", "gcode", "M18");
     device.rotation_cw = read.flag(gcode, "rotation_cw", "gcode", false);
+    device.skew_line = read.text(gcode, "skew", "gcode", "M852 I{skew}");
+    if (device.skew_line && !device.skew_line.includes("{skew}")) {
+        throw read.fail("gcode", "skew", "must hold {skew} for the factor, or be empty for a firmware built with it");
+    }
     read.done(gcode, "gcode", [
         "init", "end", "move", "x", "y", "z", "rotation", "rotation_cw", "wait", "pick", "place", "dwell", "home", "position", "stop",
-        "motors_on", "motors_off", "light_on", "light_off",
+        "motors_on", "motors_off", "light_on", "light_off", "skew",
     ]);
     const motion = read.table(top, "motion");
     device.feed_xy = read.number(motion, "feed_xy", "motion", 6000, 1, FEED_LIMIT);
@@ -460,7 +476,19 @@ export function parseGcodeTables(top: TomlTable, id: string, name: string, descr
     device.park = "park" in motion ? (read.point(motion, "park", "motion", 2, null) as [number, number]) : null;
     device.seesaw = "seesaw" in motion ? read.flag(motion, "seesaw", "motion", false) : null;
     device.travel = read.box(motion, "travel", "motion");
-    read.done(motion, "motion", ["feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms", "discard", "pick_tries", "park", "seesaw", "travel"]);
+    const skew = motion["skew"] ?? 0;
+    if (typeof skew !== "number" || !Number.isFinite(skew) || Math.abs(skew) > SKEW_LIMIT) {
+        throw read.fail("motion", "skew", `must be a number from ${-SKEW_LIMIT} to ${SKEW_LIMIT}: mm of X per mm of Y, the tangent of the angle (0.13 degrees is 0.0023)`);
+    }
+    device.skew = skew;
+    const skewBy = motion["skew_by"] ?? "link";
+    if (!(SKEW_BY as readonly unknown[]).includes(skewBy)) {
+        throw read.fail("motion", "skew_by", 'must be "link" (this backend takes the skew out) or "firmware" (the controller does)');
+    }
+    device.skew_by = skewBy as MockDevice["skew_by"];
+    read.done(motion, "motion", [
+        "feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms", "discard", "pick_tries", "park", "seesaw", "travel", "skew", "skew_by",
+    ]);
     device.vacuum = null;
     const sensor = read.table(top, "vacuum");
     if (Object.keys(sensor).length > 0) {
@@ -753,6 +781,8 @@ export function deviceDocument(device: MockDevice): GcodeDocument {
         axes: [...device.axes],
         rotation_cw: device.rotation_cw,
         seesaw: device.seesaw,
+        skew: device.skew,
+        skew_by: device.skew_by,
         feed_xy: device.feed_xy,
         feed_z: device.feed_z,
         safe_z: device.safe_z,
@@ -952,10 +982,42 @@ export function zLine(device: MockDevice, z: number): string {
     return `${device.move} ${device.axes[2]}${gnum(z)} F${gnum(device.feed_z, 0)}`;
 }
 
-/** The head moved across to `x`, `y`, the nozzle turned to `turn` on the way when one is given, at the feed across. */
+/** The skew the backend takes out itself: the file's when its link does it, 0 when the firmware does. The backend's GcodeMachine.link_skew. */
+export function linkSkew(device: MockDevice): number {
+    return device.skew_by === "link" ? device.skew : 0;
+}
+
+/** A place of the nozzle as the controller's numbers: X less the link's skew times Y. */
+export function toController(device: MockDevice, x: number, y: number): [number, number] {
+    return [x - linkSkew(device) * y, y];
+}
+
+/** The controller's numbers as a place of the nozzle: toController undone. */
+export function fromController(device: MockDevice, x: number, y: number): [number, number] {
+    return [x + linkSkew(device) * y, y];
+}
+
+/** The file's skew line with `factor` in it; empty when the file has none. */
+export function skewCommand(device: MockDevice, factor: number): string {
+    return device.skew_line ? device.skew_line.replace("{skew}", gnum(factor, SKEW_DECIMALS)) : "";
+}
+
+/** The line that tells the firmware the file's skew, when the firmware takes it out and the file gives one: openpnp.skew_lines. */
+export function skewLines(device: MockDevice): string[] {
+    const line = device.skew_by === "firmware" ? skewCommand(device, device.skew) : "";
+    return line ? [line] : [];
+}
+
+/** The line of a reply saying its command is unknown to the firmware (Marlin's `echo:Unknown command`); null when none does. */
+export function unknownIn(reply: string[]): string | null {
+    return reply.find((line) => /unknown command/i.test(line)) ?? null;
+}
+
+/** The head moved across to `x`, `y` (the controller's numbers, the link's skew taken out), the nozzle turned to `turn` on the way when one is given, at the feed across. */
 export function xyLine(device: MockDevice, x: number, y: number, turn?: number): string {
     const angle = turn === undefined ? "" : ` ${angleWord(device, turn)}`;
-    return `${device.move} ${device.axes[0]}${gnum(x)} ${device.axes[1]}${gnum(y)}${angle} F${gnum(device.feed_xy, 0)}`;
+    const [cx, cy] = toController(device, x, y);
+    return `${device.move} ${device.axes[0]}${gnum(cx)} ${device.axes[1]}${gnum(cy)}${angle} F${gnum(device.feed_xy, 0)}`;
 }
 
 /** The nozzle up to the safe height. */
@@ -1017,12 +1079,33 @@ export type AxisName = "x" | "y" | "z" | "rotation";
 const AXIS_NAMES: AxisName[] = ["x", "y", "z", "rotation"];
 
 /**
- * One move to the controller's own values in `target` (the rotation as the
- * controller counts it, not turned for rotation_cw), at `feed`, else at the
- * Z feed for a height alone and the X/Y feed for anything else: the
+ * `target` with X and Y as the controller's numbers: on a machine whose
+ * link takes a skew out X carries Y too, so a move naming either names
+ * both, the one left out staying where `here` has it. The backend's
+ * openpnp.controller_target.
+ */
+export function controllerTarget(device: MockDevice, target: Partial<Record<AxisName, number>>, here: Partial<Record<AxisName, number>> | null = null): Partial<Record<AxisName, number>> {
+    if (linkSkew(device) === 0 || (target.x === undefined && target.y === undefined)) {
+        return { ...target };
+    }
+    const x = target.x ?? here?.x;
+    const y = target.y ?? here?.y;
+    if (x === undefined || y === undefined) {
+        throw new Error("the axes are skewed: a move across needs the head's X and Y, so read its place first");
+    }
+    const [cx, cy] = toController(device, x, y);
+    return { ...target, x: cx, y: cy };
+}
+
+/**
+ * One move to `target` (x, y and z, the rotation as the controller counts
+ * it, not turned for rotation_cw), X and Y as the controller's numbers
+ * (`here` filling in the one left out on skewed axes), at `feed`, else at
+ * the Z feed for a height alone and the X/Y feed for anything else: the
  * backend's openpnp.move_line.
  */
-export function moveLine(device: MockDevice, target: Partial<Record<AxisName, number>>, feed: number | null = null): string {
+export function moveLine(device: MockDevice, target: Partial<Record<AxisName, number>>, feed: number | null = null, here: Partial<Record<AxisName, number>> | null = null): string {
+    target = controllerTarget(device, target, here);
     const words = [device.move];
     AXIS_NAMES.forEach((name, index) => {
         const value = target[name];
@@ -1058,7 +1141,7 @@ export function gotoLines(device: MockDevice, here: Partial<Record<AxisName, num
             lines.push(safeLine(device));
             z = device.safe_z;
         }
-        lines.push(moveLine(device, want.rotation !== undefined ? { ...across, rotation: want.rotation } : across, feed));
+        lines.push(moveLine(device, want.rotation !== undefined ? { ...across, rotation: want.rotation } : across, feed, here));
     } else if (want.rotation !== undefined) {
         lines.push(moveLine(device, { rotation: want.rotation }, feed));
     }
@@ -1069,6 +1152,27 @@ export function gotoLines(device: MockDevice, here: Partial<Record<AxisName, num
 }
 
 /** How far the head moves to keep the nozzle's tip on a point as the nozzle turns from 0 to `degrees`, the tip `runout` off the axis at 0. */
+/**
+ * The G92 that declares the head at `given` (x and y places of the nozzle,
+ * z, the rotation as the controller counts it), X and Y as the controller's
+ * numbers; on skewed axes the controller's X holds Y too, so X and Y go
+ * together. The backend's openpnp.declare_line.
+ */
+export function declareLine(device: MockDevice, given: Partial<Record<AxisName, number>>): string {
+    const values = { ...given };
+    if (linkSkew(device) !== 0 && (values.x !== undefined || values.y !== undefined)) {
+        if (values.x === undefined || values.y === undefined) {
+            throw new Error("the axes are skewed: declare X and Y together");
+        }
+        [values.x, values.y] = toController(device, values.x, values.y);
+    }
+    const words = AXIS_NAMES.flatMap((name, index) => {
+        const value = values[name];
+        return value === undefined ? [] : [`${device.axes[index]}${gnum(value)}`];
+    });
+    return `G92 ${words.join(" ")}`;
+}
+
 export function tipShift(runout: [number, number], degrees: number): [number, number] {
     const [sx, sy] = turnPoint(runout, degrees);
     return [runout[0] - sx, runout[1] - sy];
@@ -1216,7 +1320,7 @@ export function planDevice(
             angle,
         });
     }
-    const head = [`; ${title || "placement"} on ${device.name}: ${blocks.length} parts`, ...device.init];
+    const head = [`; ${title || "placement"} on ${device.name}: ${blocks.length} parts`, ...device.init, ...skewLines(device)];
     return { head, blocks, tail: [...(device.wait ? [device.wait] : []), ...device.end], skipped, fit };
 }
 

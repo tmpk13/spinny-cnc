@@ -13,7 +13,10 @@ jog: Marlin answers with where the queued moves end, so jogs pressed
 quickly add up. A jog is queued and answered at once; a goto rises to the
 safe height only when it goes across, puts the height last, and is
 answered once its moves have run (the file's wait command). A stop is the
-file's stop (M410), sent ahead of anything in flight.
+file's stop (M410), sent ahead of anything in flight. On axes out of
+square the places are square ones and the link takes the file's skew out
+of every line and reading, or the firmware does, told the factor at the
+connect and whenever the file changes it (_gcode_skew).
 
 Backend is made of this part and its others: the methods use the
 backend's state and publishing as theirs.
@@ -30,10 +33,23 @@ from fastapi import HTTPException
 from spinny_laser.machines import GCODE
 
 from .gcode_link import IDENTIFY, GcodeLinkError, firmware_of
-from .kinematics import check_feed, num
+from .kinematics import check_feed
 from .log import log, wire_line, wire_note
 from .openpnp import LINE as GCODE_LINE
-from .openpnp import AXIS_NAMES, GcodeMachine, goto_lines, lifts_leaving, move_line, move_z, needs_lift, read_position, safe_line, seesaw_jog
+from .openpnp import (
+    AXIS_NAMES,
+    GcodeMachine,
+    declare_line,
+    goto_lines,
+    head_place,
+    lifts_leaving,
+    move_line,
+    move_z,
+    needs_lift,
+    safe_line,
+    seesaw_jog,
+    unknown_in,
+)
 
 if TYPE_CHECKING:
     from .app import GotoBody, JogBody, PositionBody
@@ -122,6 +138,16 @@ class GcodePart:
             # Grbl and others do not take M115: the machine is still there.
             pass
         try:
+            # Before the first place is read: the skew changes the numbers.
+            self._gcode_skew(machine)
+        except GcodeLinkError as exc:
+            # A machine whose firmware was to take the skew out and cannot
+            # would move every place up to a millimeter off: not connected.
+            with self._lock:
+                self._close_gcode()
+            self.publish_message("error", f"{machine.name}: {exc}")
+            raise
+        try:
             self._gcode_position(machine)
         except (GcodeLinkError, ValueError) as exc:
             self.publish_message("error", f"{machine.name}: the head's place could not be read: {exc}")
@@ -183,7 +209,7 @@ class GcodePart:
                 continue
             if reply is None:
                 continue
-            position = read_position(reply, machine.axes)
+            position = head_place(machine, reply)
             if position and position != self.gcode.position:
                 self.gcode.position = {**(self.gcode.position or {}), **position}
                 self.broadcast.publish_threadsafe({"type": "state", **self.snapshot()})
@@ -272,15 +298,47 @@ class GcodePart:
             raise HTTPException(status_code=409, detail="the bottom camera routine is moving the head")
         if self.top.routine_active:
             raise HTTPException(status_code=409, detail="the top camera routine is moving the head")
+        self._gcode_skew(machine)
         return machine
+
+    def _gcode_skew(self, machine: GcodeMachine) -> None:
+        """Tells the firmware the axes' skew it is to take out, when this
+        connection has not told it that yet: the file's skew with skew_by
+        "firmware", or 0 once the file gives back to the link a skew this
+        connection told the firmware. Called at the connect and before every
+        request that sends the head lines, so a file written meanwhile holds
+        from the next one on, as the link's own skew does. GcodeLinkError
+        when the firmware does not know the line (a Marlin built without
+        it answers `echo:Unknown command`, then `ok`)."""
+        want = machine.firmware_skew
+        told = self.gcode.skew_told
+        if told is None and machine.skew_by != "firmware":
+            # Never told one: the firmware keeps its own, none as built.
+            return
+        if told is not None and abs(want - told) <= 1e-12:
+            return
+        line = machine.skew_command(want)
+        if not line:
+            # A firmware built with its factor: nothing to tell it.
+            return
+        reply = self.gcode.command(line, machine.timeout)
+        unknown = unknown_in(reply)
+        if unknown is not None:
+            raise GcodeLinkError(
+                f"'{line}': the firmware does not know it ({unknown}): Marlin takes it with SKEW_CORRECTION and"
+                ' SKEW_CORRECTION_GCODE built in; flash such a build, or set [motion] skew_by = "link" for this backend to take the skew out'
+            )
+        self.gcode.skew_told = want
+        log.info("%s: the firmware told the axes' skew: %s", machine.name, line)
 
     def _gcode_position(self, machine: GcodeMachine) -> dict:
         """The head's place as the controller reports it (Marlin: where the
-        queued moves end), kept as the link's."""
+        queued moves end), X and Y places of the nozzle (the link's skew
+        taken out), kept as the link's."""
         if not machine.position:
             raise ValueError(f"{machine.name}'s file has no [gcode] position command")
         reply = self.gcode.command(machine.position, machine.timeout)
-        position = read_position(reply, machine.axes)
+        position = head_place(machine, reply)
         if "x" not in position or "y" not in position:
             raise GcodeLinkError(f"'{machine.position}' answered no {machine.axes[0]} and {machine.axes[1]}: {' | '.join(reply)}")
         self.gcode.position = position
@@ -334,7 +392,7 @@ class GcodePart:
             # A feed given is the move's (a held jog matches its pieces to
             # the time between them); none is the file's own for the axes.
             feed = body.feed
-            lines = [move_line(machine, target, feed)]
+            lines = [move_line(machine, target, feed, here)]
             # Leaving the up camera with the nozzle down near its lens goes
             # up first, when the file asks for it.
             if lifts_leaving(machine, here, target, self._up_place(machine).position):
@@ -398,8 +456,12 @@ class GcodePart:
             raise ValueError("give r, a, h and/or z")
         with self._move_lock:
             machine = self._gcode_movable()
-            words = [f"{machine.axes[AXIS_NAMES.index(name)]}{num(value)}" for name, value in given.items()]
-            self.gcode.command("G92 " + " ".join(words), machine.timeout)
+            if machine.link_skew and ("x" in given) != ("y" in given):
+                # On skewed axes the controller's X holds Y too: the one not
+                # given is declared again where it is.
+                here = self._gcode_position(machine)
+                given = {"x": here["x"], "y": here["y"], **given}
+            self.gcode.command(declare_line(machine, given), machine.timeout)
             self._gcode_position(machine)
         return self._publish_gcode_state()
 
@@ -439,7 +501,7 @@ class GcodePart:
         height from there could drive the other nozzle down."""
         if not self.gcode.homed or not machine.position:
             return
-        z = read_position(self.gcode.command(machine.position, machine.timeout), machine.axes).get("z")
+        z = head_place(machine, self.gcode.command(machine.position, machine.timeout)).get("z")
         if z is None or not needs_lift(machine, z):
             return
         self.gcode.command(move_z(machine, machine.safe_z), machine.timeout)

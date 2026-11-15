@@ -222,6 +222,28 @@ describe("reading an OpenPnP setup", () => {
         expect(gcodeMachineOf(buildProfile("lumen", items, kept), "lumen").vacuum?.part_on).toEqual([220, 241]);
     });
 
+    test("OpenPnP's non-squareness comes as the file's skew, from either OpenPnP's way of keeping it", () => {
+        // OpenPnP 2: N1's X is a transform of the controller's X and Y.
+        const transformed = MACHINE
+            .replace('axis-X-id="AX" axis-Y-id="AY" axis-Z-id="AZ" axis-rotation-id="AA"', 'axis-X-id="AXT" axis-Y-id="AY" axis-Z-id="AZ" axis-rotation-id="AA"')
+            .replace(
+                "</axes>",
+                '<axis class="org.openpnp.machine.reference.axis.ReferenceLinearTransformAxis" id="AXT" name="x" type="X" input-axis-x-id="AX" factor-x="1.0" input-axis-y-id="AY" factor-y="0.0023" compensation="true"/>\n</axes>',
+            );
+        const { items, warnings } = machineItems(readMachine(transformed));
+        const value = (id: string): string | undefined => items.find((item) => item.id === id)?.value;
+        expect(value("axes")).toBe("X Y Z A");
+        expect(value("skew")).toBe("skew 0.0023 (0.1318 degrees)");
+        expect(warnings).toEqual([]);
+        const device = gcodeMachineOf(buildProfile("lumen", items, new Set(items.filter((item) => item.keep).map((item) => item.id))), "lumen");
+        expect([device.skew, device.skew_by]).toEqual([0.0023, "link"]);
+        // OpenPnP 1's driver factor went out the other way round.
+        const old = machineItems(readMachine(MACHINE.replace('name="GcodeDriver"', 'name="GcodeDriver" non-squareness-factor="-0.0023"')));
+        expect(old.items.find((item) => item.id === "skew")?.value).toBe("skew 0.0023 (0.1318 degrees)");
+        // Square: no skew at all.
+        expect(machineItems(readMachine(MACHINE)).items.some((item) => item.id === "skew")).toBe(false);
+    });
+
     test("Photon feeders come as feeders on the bus with its slots; one with no place is left out", () => {
         const extra = MACHINE.replace("</feeders>", `<feeder class="org.openpnp.machine.photon.PhotonFeeder" id="P1" name="Photon 3" enabled="true" part-id="C0402-100n" hardware-id="0102030405060708090a0b0c" part-pitch="2">
             <location units="Millimeters" x="0.0" y="0.0" z="0.0" rotation="0.0"/>

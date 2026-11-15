@@ -129,13 +129,19 @@ import {
     angleWord,
     codeOf,
     type AxisName,
+    declareLine,
     deviceDocument,
     deviceFit,
+    fromController,
     gnum,
     gotoLines,
     liftsLeaving,
+    linkSkew,
     moveLine,
     needsLift,
+    skewCommand,
+    toController,
+    unknownIn,
     placeLines,
     planDevice,
     planSummary,
@@ -2238,6 +2244,8 @@ export class MockBackend implements Api, EventFeed {
         light: boolean | null;
         reading: number | null;
         vacuumSwitched: boolean | null;
+        /** The axes' skew this connection told the firmware to take out; null until it told one. */
+        skewTold: number | null;
     } = {
         connected: false,
         url: null,
@@ -2247,6 +2255,7 @@ export class MockBackend implements Api, EventFeed {
         light: null,
         reading: null,
         vacuumSwitched: null,
+        skewTold: null,
     };
     private devicePositionRead = false;
     private deviceProgress: PlacingRun | null = null;
@@ -3858,8 +3867,25 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, read.problems[0] ?? "the text does not read");
         }
         this.machineTexts.set(id, kept);
+        this.machineWritten(id);
         this.emitChanged("machines", id);
         return { ...read, text: kept };
+    }
+
+    /**
+     * The connected machine's firmware told a skew its file now has it take
+     * out, unless something moves the head (the next request that moves it
+     * tells it then): the backend's machine_written.
+     */
+    private machineWritten(id: string): void {
+        if (id !== this.gcodeId || !this.deviceLink.connected || this.deviceSession !== null || this.deviceRoutine !== null || this.topSession !== null) {
+            return;
+        }
+        try {
+            this.gcodeSkew(this.gcodeOf(id));
+        } catch (error) {
+            this.message("error", `the axes' skew was not told to the firmware: ${errorText(error)}`);
+        }
     }
 
     async deleteMachineFile(id: string): Promise<void> {
@@ -7455,7 +7481,7 @@ export class MockBackend implements Api, EventFeed {
             lost: null,
             running: this.deviceSession !== null,
             homed: link.homed,
-            position: this.devicePositionRead ? { ...link.position } : null,
+            position: this.devicePositionRead ? this.devicePlace(this.gcodeId !== null && this.gcodeId === id ? device : null) : null,
             light: link.light,
             vacuum: { on: link.vacuumSwitched, reading: link.reading },
             progress: this.deviceProgress
@@ -7487,7 +7513,7 @@ export class MockBackend implements Api, EventFeed {
         this.lastGcode = id;
         this.machineUsed = id;
         this.url = url;
-        this.deviceLink = { ...this.deviceLink, connected: true, url, homed: false, light: null, reading: null, vacuumSwitched: null };
+        this.deviceLink = { ...this.deviceLink, connected: true, url, homed: false, light: null, reading: null, vacuumSwitched: null, skewTold: null };
         this.gcodeMotors = true;
         this.deviceNote("info", `connected to ${url} at ${device.baud} baud (mock)`);
         for (const line of device.init) {
@@ -7495,6 +7521,15 @@ export class MockBackend implements Api, EventFeed {
         }
         const answer = this.deviceLine(device, "M115").join(" ");
         this.gcodeFirmware = /FIRMWARE_NAME:\s*(.+?)(?:\s+[A-Z_]+:|$)/.exec(answer)?.[1]?.trim() ?? null;
+        try {
+            // Before the first place is read: the skew changes the numbers.
+            this.gcodeSkew(device);
+        } catch (error) {
+            // A firmware that was to take the skew out and cannot: not connected.
+            this.gcodeClose();
+            this.message("error", `${device.name}: ${errorText(error)}`);
+            throw error;
+        }
         this.deviceHere(device);
         this.message("info", `connected to ${url}: ${device.name}${this.gcodeFirmware ? `, ${this.gcodeFirmware}` : ""} (mock)`);
         this.takeCameraSettings(device);
@@ -7556,14 +7591,16 @@ export class MockBackend implements Api, EventFeed {
     /** The snapshot of a G-code machine: its head's place as the readout's joints, as the backend's _gcode_snapshot. */
     private gcodeSnapshot(id: string): Snapshot {
         let name = id;
+        let device: MockDevice | null = null;
         try {
-            name = this.gcodeOf(id).name;
+            device = this.gcodeOf(id);
+            name = device.name;
         } catch {
             // A file broken since the connect keeps its id for a name.
         }
         const link = this.deviceLink;
         const busy = this.deviceSession !== null || this.deviceRoutine !== null || this.topSession !== null;
-        const position = link.position;
+        const position = this.devicePlace(device);
         return {
             connected: link.connected,
             url: this.url,
@@ -7641,7 +7678,7 @@ export class MockBackend implements Api, EventFeed {
         if (liftsLeaving(device, here, target, this.deviceCameraPosition())) {
             this.deviceLine(device, safeLine(device));
         }
-        this.deviceLine(device, moveLine(device, target, feed));
+        this.deviceLine(device, moveLine(device, target, feed, here));
         this.emit({ type: "state", data: this.snapshot() });
     }
 
@@ -7679,20 +7716,37 @@ export class MockBackend implements Api, EventFeed {
     /** Declares where the head is (G92), as the backend's _gcode_set_position. */
     private async gcodeSetPosition(request: PositionRequest): Promise<void> {
         const device = this.gcodeIdle();
-        const given: [number, number][] = [];
+        let given: Partial<Record<AxisName, number>> = {};
         (["r", "z", "h", "a"] as const).forEach((joint, index) => {
             const value = request[joint];
             if (value !== undefined) {
-                given.push([index, value]);
+                given[(["x", "y", "z", "rotation"] as const)[index]!] = value;
             }
         });
-        if (given.length === 0) {
+        if (Object.keys(given).length === 0) {
             throw new ApiError(400, "give r, a, h and/or z");
         }
-        this.deviceLine(device, `G92 ${given.map(([index, value]) => `${device.axes[index]}${gnum(value)}`).join(" ")}`);
+        if (linkSkew(device) !== 0 && (given.x === undefined) !== (given.y === undefined)) {
+            // On skewed axes the controller's X holds Y too: the one not
+            // given is declared again where it is.
+            const here = this.deviceHere(device);
+            given = { x: here.x, y: here.y, ...given };
+        }
+        this.deviceLine(device, declareLine(device, given));
+        // The mock's controller takes the numbers declared: X and Y as its
+        // own (both given on skewed axes), one alone on square ones.
         const position = this.deviceLink.position;
-        for (const [index, value] of given) {
-            position[(["x", "y", "z", "rotation"] as const)[index]!] = value;
+        if (given.x !== undefined && given.y !== undefined) {
+            [position.x, position.y] = toController(device, given.x, given.y);
+        } else if (given.x !== undefined) {
+            position.x = given.x;
+        } else if (given.y !== undefined) {
+            position.y = given.y;
+        }
+        for (const name of ["z", "rotation"] as const) {
+            if (given[name] !== undefined) {
+                position[name] = given[name]!;
+            }
         }
         this.deviceHere(device);
         this.emit({ type: "state", data: this.snapshot() });
@@ -7816,7 +7870,45 @@ export class MockBackend implements Api, EventFeed {
         if (this.topSession !== null) {
             throw new ApiError(409, "the top camera routine is moving the head");
         }
-        return this.gcodeOf(this.gcodeId);
+        const device = this.gcodeOf(this.gcodeId);
+        this.gcodeSkew(device);
+        return device;
+    }
+
+    /**
+     * Tells the firmware the axes' skew it is to take out, when this
+     * connection has not told it that yet: the file's with skew_by
+     * "firmware", 0 once the file gives back to the link a skew it told.
+     * At the connect and before every request that sends the head lines,
+     * as the backend's _gcode_skew; 502 for a firmware that does not know
+     * the line.
+     */
+    private gcodeSkew(device: MockDevice): void {
+        const want = device.skew_by === "firmware" ? device.skew : 0;
+        const told = this.deviceLink.skewTold;
+        if ((told === null && device.skew_by !== "firmware") || (told !== null && Math.abs(want - told) <= 1e-12)) {
+            return;
+        }
+        const line = skewCommand(device, want);
+        if (!line) {
+            return;
+        }
+        const unknown = unknownIn(this.deviceLine(device, line));
+        if (unknown !== null) {
+            throw new ApiError(
+                502,
+                `'${line}': the firmware does not know it (${unknown}): Marlin takes it with SKEW_CORRECTION and SKEW_CORRECTION_GCODE built in;`
+                + ' flash such a build, or set [motion] skew_by = "link" for this backend to take the skew out',
+            );
+        }
+        this.deviceLink.skewTold = want;
+    }
+
+    /** Where the G-code machine's numbers put the nozzle: X and Y with the link's skew taken out. */
+    private devicePlace(device: MockDevice | null): { x: number; y: number; z: number; rotation: number } {
+        const position = this.deviceLink.position;
+        const [x, y] = device === null ? [position.x, position.y] : fromController(device, position.x, position.y);
+        return { ...position, x, y };
     }
 
     /** Centers the G-code machine's nozzle over the up camera, as the backend's gcode_nozzle does. */
@@ -9029,7 +9121,7 @@ export class MockBackend implements Api, EventFeed {
                 }
                 this.deviceLine(session.device, xyLine(session.device, head[0], head[1]));
                 const [ex, ey] = MOCK_HOME_ERROR;
-                this.deviceLine(session.device, `G92 ${session.device.axes[0]}${gnum(head[0] + ex)} ${session.device.axes[1]}${gnum(head[1] + ey)}`);
+                this.deviceLine(session.device, declareLine(session.device, { x: head[0] + ex, y: head[1] + ey }));
                 const signed = (value: number): string => `${value >= 0 ? "+" : ""}${value.toFixed(3)}`;
                 const against = this.topHomeFirst ? "the switches' home" : "where its numbers said";
                 this.message("info", `homed by the fiducial: the head was ${signed(-ex)}, ${signed(-ey)} mm off ${against} (mock)`);
@@ -9463,11 +9555,11 @@ export class MockBackend implements Api, EventFeed {
         this.emit({ type: "state", data: this.snapshot() });
     }
 
-    /** The head's place read off the G-code machine. */
+    /** The head's place read off the G-code machine, X and Y places of the nozzle (the link's skew taken out). */
     private deviceHere(device: MockDevice): { x: number; y: number; z: number; rotation: number } {
         this.deviceLine(device, device.position);
         this.devicePositionRead = true;
-        return { ...this.deviceLink.position };
+        return this.devicePlace(device);
     }
 
     async pnpPark(): Promise<PlacingState> {

@@ -41,7 +41,7 @@ import serial
 from .camera import DONE, ERROR, RUNNING, STOPPED
 from .link import check_url
 from .log import log
-from .openpnp import GcodeMachine, code_of, move_xy, move_z, needs_lift, read_position
+from .openpnp import GcodeMachine, code_of, head_place, move_xy, move_z, needs_lift
 from .pnp import Mover, PnpError
 
 OK = re.compile(r"^ok\b", re.IGNORECASE)
@@ -195,6 +195,9 @@ class GcodeLink:
         # motors were last switched on (they are at a connect).
         self.firmware: str | None = None
         self.motors = True
+        # The axes' skew this connection told the firmware to take out
+        # (the machine file's skew line); None until it told one.
+        self.skew_told: float | None = None
 
     # --- the port ---------------------------------------------------------------
 
@@ -237,6 +240,7 @@ class GcodeLink:
         self.busy = None
         self.firmware = None
         self.motors = True
+        self.skew_told = None
         self._reader = threading.Thread(target=self._read_loop, args=(port,), name="gcode-machine-reader", daemon=True)
         self._reader.start()
         self._note("info", f"connected to {url} at {baud} baud")
@@ -502,7 +506,7 @@ class GcodeMover(Mover):
             for line in self.machine.light_on:
                 self._command(line)
             self.link.light = True
-        position = read_position(self._command(self.machine.position), self.machine.axes)
+        position = head_place(self.machine, self._command(self.machine.position))
         if "x" not in position or "y" not in position:
             raise PnpError(f"'{self.machine.position}' answered no {self.machine.axes[0]} and {self.machine.axes[1]}")
         self._at = [position["x"], position["y"], position.get("z")]

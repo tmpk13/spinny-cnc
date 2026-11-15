@@ -32,7 +32,7 @@ its controller before each pick.
 | `firmware/core` | portable control core: parser, settings, planner, stepper, machine | `cd firmware && cargo test` |
 | `firmware/rp2040` | the SKR Pico firmware | `mise run flash` |
 | `firmware/virtual` | the core on a TCP socket with a virtual clock | `mise run virtual` |
-| `web/backend` `virtual_pnp` | a virtual LumenPnP: its Marlin on a TCP socket (moves in time, M400, M410, the vacuum sensor, Photon feeders) and its two cameras drawn from the head's place, served as JPEG snapshots | `mise run virtual-pnp` |
+| `web/backend` `virtual_pnp` | a virtual LumenPnP: its Marlin on a TCP socket (moves in time, M400, M410, the vacuum sensor, Photon feeders, axes out of square and M852 when built with it) and its two cameras drawn from the head's place, served as JPEG snapshots | `mise run virtual-pnp` |
 | `web/backend` | serial link (this project's firmware, or a G-code machine's controller), job import (and again for another bit), the Plot page's operations, markers, streaming, probing (grid or pads), dispensing, the cameras through pcbv and the list of those attached, alignment, the parts of a board, the tools a language model gets (the Auto tab's agent, and `spinny-mcp` for any MCP client), an installed release's update from GitHub's releases and its machine files offered against the operator's copies, API, serves the page | `uv run spinny-web`, `uv run spinny-mcp` |
 | `web/frontend` | the page | `cd web/frontend && bun run build` |
 | `toolpath` | `spinny_laser`: polar kinematics, copper clearing and deposition, paste stencils, centering patterns, pads and holes of a layer, the alignment fit, simple milling operations, machine configs, gcode tools | `uv run pytest toolpath/tests` |
@@ -85,7 +85,7 @@ flowchart LR
         SURV -->|pcbv locate --json| PVL[pcb-vision pcbv locate, one picture each]
         BE --> PNP[pick and place: a board's parts and fiducials from its KiCad file, those kept out of the position files marked, the nozzle centered over the bottom camera, its runout, a part's offset, size and angle on it]
         PF[parts: the parts filter, a regular expression over the reference, value or footprint, kept in config.json] --> PNP
-        PNP --> OPNP[openpnp: a G-code machine file's own tables read, the board fitted from references, the program as planned, a goto's lines]
+        PNP --> OPNP[openpnp: a G-code machine file's own tables read, the board fitted from references, the program as planned, a goto's lines, the axes' skew taken out of X]
         OPI[page openpnp.ts: OpenPnP's machine.xml, a job, parts.xml and packages.xml read into a G-code machine file and references] -->|the file saved, references taken| BE
         OPNP --> PLC[placer: a run part by part, from the cameras' looks and the vacuum's reads, failed picks retried]
         PNP --> PLC

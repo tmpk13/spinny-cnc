@@ -780,7 +780,8 @@ boards' turns were (find one turned a quarter to tell the two apart).
 *Write skew to machine file*, for a cartesian machine on this project's
 firmware, multiplies the file's X and Y steps per mm by the scales
 learned; load the file into the controller after. Out of square is said,
-never written: square the axes by hand. *Forget boards* starts over.
+never written: square the axes by hand, or on a G-code machine give its
+file's `[motion] skew` (MACHINES.md). *Forget boards* starts over.
 
 With the head camera, *Scan* beside the buttons picks *At rest* (the
 default) or *On the move*: the head then runs along each row without
@@ -849,7 +850,12 @@ of the wrong size stops it with why.
 with the calibration test's camera pattern (dark dots printed, or bright
 ones a laser marked) filling the picture, measures how the lens bends it
 and corrects every point pcbv reports from then on (kept, sent at every
-start; *Clear lens* forgets it). The top camera's *Measure camera* finds
+start; *Clear lens* forgets it). The top camera's *Measure camera* also
+says how far the machine's axes are from square, and the `[motion] skew`
+that squares them (MACHINES.md, G-code machines): the head's moves went
+through the skew the file takes out now, so what is left adds to it.
+Write it into the file by hand; it moves every place kept in machine
+numbers. It finds
 the lens too, with no pattern: tiles of its first picture followed into
 the pictures after each head move bend with their distance from the
 picture's center. It keeps the lens (and the scale at the picture's
@@ -1194,6 +1200,10 @@ a Pi's camera.
 - A home (G28) leaves the virtual head 0.2, -0.15 mm off the place its
   numbers say (`--home-error DX,DY`), and G92 changes the numbers, not
   the head, so *Home by fiducial* has something to find.
+- `--skew 0.0023` puts its axes out of square as a real LumenPnP's are
+  (the head stands at X + 0.0023 Y), for the file's `[motion] skew` to
+  take out; its Marlin knows no M852, as the stock Lumen build, unless
+  `--skew-gcode` builds it in for `skew_by = "firmware"`.
 - With the light off both pictures are dim.
 
 A spot is read from a picture taken after it was asked for: a snapshot

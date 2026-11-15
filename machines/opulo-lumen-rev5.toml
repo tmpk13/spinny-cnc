@@ -80,6 +80,16 @@ place_dwell_ms = 100
 pick_tries = 3
 park = [42.328, 411.916]   # Opulo's park place
 travel = [0.0, 0.0, 433.0, 487.0]   # Marlin's soft limits, the head's reach: the PNP tab's Machine view draws the machine as this box
+# The axes out of square: on this LumenPnP the head's Y travel leans 0.12
+# to 0.16 degrees toward +X (Measure camera from the head's moves, and a
+# survey's affine fit of 86 pictures: 89.86 to 89.89 degrees between X and
+# Y, 2026-11-14 and 15, docs/CV_REVIEW.md). tan 0.13 degrees is 0.0023,
+# 0.23 mm across a 100 mm board. The stock Lumen Marlin has no M852, so
+# this backend takes it out. A place measured in the numbers before this
+# (the bottom camera found at 241.98, 217.10: about 0.5 mm in X) is
+# measured again; Measure camera says what is left. Another machine
+# measures its own.
+skew = 0.0023
 # discard = [105.996, 221.582, 5.5]  # Opulo's discard place, for N1; left out, a failed part goes back in its pocket
 
 # The jog panel's bars: a G-code machine's defaults (X and Y on the pad and

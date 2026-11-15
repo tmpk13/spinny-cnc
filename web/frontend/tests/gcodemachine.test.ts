@@ -229,3 +229,59 @@ describe("a G-code machine used like the other machines, in the mock", () => {
         await expect(mock.deleteMachineFile("rig")).rejects.toThrow("disconnect");
     });
 });
+
+// The backend's web/backend/tests/test_gcode_skew.py: a file whose axes are
+// out of square sends the same lines for the same asks.
+describe("a G-code machine whose axes are out of square, in the mock", () => {
+    const SKEWED = PROFILE.replace("park = [40.0, 400.0]\n", "park = [40.0, 400.0]\nskew = 0.0023\n");
+
+    async function skewed(text = SKEWED): Promise<MockBackend> {
+        const mock = new MockBackend();
+        await connectGcode(mock, "rig", text);
+        // The controller's numbers that put the nozzle at X 100 Y 200, Z at the safe height.
+        await mock.command("G0 X99.54 Y200 Z5");
+        return mock;
+    }
+
+    test("a skew the file gets wrong is refused with the key", () => {
+        expect(() => gcodeMachineOf(gcodeFile(SKEWED.replace("skew = 0.0023", "skew = 0.13")), "rig")).toThrow("0.13 degrees is 0.0023");
+        expect(() => gcodeMachineOf(gcodeFile(SKEWED.replace("skew = 0.0023", 'skew = 0.0023\nskew_by = "both"')), "rig")).toThrow('[motion] skew_by must be "link"');
+        expect(() => gcodeMachineOf(gcodeFile(SKEWED.replace('init = ["G21", "G90"]', 'init = ["G21", "G90"]\nskew = "M852 I1"')), "rig")).toThrow("[gcode] skew must hold {skew}");
+        const square = gcodeMachineOf(gcodeFile(PROFILE), "rig");
+        expect([square.skew, square.skew_by, square.skew_line]).toEqual([0, "link", "M852 I{skew}"]);
+    });
+
+    test("the link sends X less the skew of Y, reads it back, and declares X and Y together", async () => {
+        const mock = await skewed();
+        let joint = (await mock.state()).machine?.joint;
+        expect(joint?.r).toBeCloseTo(100, 6);
+        expect(joint?.z).toBe(200);
+        let start = await txCount(mock);
+        await mock.jog({ kind: "joint", dz: 100 });
+        expect(await sentSince(mock, start)).toEqual(["M114", "G0 X99.31 Y300 F3000"]);
+        start = await txCount(mock);
+        await mock.goto({ kind: "board", x: 110 });
+        expect(await sentSince(mock, start)).toEqual(["M114", "G0 X109.31 Y300 F3000", "M400", "M114"]);
+        start = await txCount(mock);
+        await mock.setPosition({ z: 150 });
+        expect(await sentSince(mock, start)).toEqual(["M114", "G92 X109.655 Y150", "M114"]);
+        joint = (await mock.state()).machine?.joint;
+        expect(joint?.r).toBeCloseTo(110, 6);
+        expect(joint?.z).toBe(150);
+        // No line goes to the firmware.
+        expect((await mock.placingState()).log.some((entry) => entry.text.startsWith("M852"))).toBe(false);
+    });
+
+    test("with the firmware taking it out, the connect tells it and the lines stay square; a file written moves it back", async () => {
+        const mock = await skewed(SKEWED.replace("skew = 0.0023", 'skew = 0.0023\nskew_by = "firmware"'));
+        const sent = (await mock.placingState()).log.filter((entry) => entry.dir === "tx").map((entry) => entry.text);
+        expect(sent.slice(0, 5)).toEqual(["G21", "G90", "M115", "M852 I0.0023", "M114"]);
+        let start = await txCount(mock);
+        await mock.goto({ kind: "board", x: 100, y: 300 });
+        expect(await sentSince(mock, start)).toEqual(["M114", "G0 X100 Y300 F3000", "M400", "M114"]);
+        // Given back to the link: the firmware is told 0 at once.
+        start = await txCount(mock);
+        await mock.patchMachineFile("rig", ["motion", "skew_by"], "link");
+        expect(await sentSince(mock, start)).toEqual(["M852 I0"]);
+    });
+});

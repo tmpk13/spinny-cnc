@@ -26,6 +26,11 @@ The Photon feeders on the RS-485 bus answer M485 packets (`PhotonBus`).
 The ring light (M150) and the motors (M17/M18) are kept for the cameras
 and the record.
 
+`skew` puts the axes out of square, as a real machine's are: the head
+stands at X + skew * Y on the bed. M852 is unknown to it, as to the stock
+Lumen build, unless `skew_gcode` builds it with SKEW_CORRECTION_GCODE;
+then the factor M852 sets is taken out of every move.
+
 `serve` puts a machine on a TCP socket, one client at a time, as a USB
 serial port is held by one program; the machine keeps its place across
 clients. `main` is the `spinny-virtual-pnp` program: the machine from a
@@ -218,6 +223,8 @@ class VirtualMarlin:
         miss_every: int = 0,
         seed: int = 1,
         home_error: Point = (0.0, 0.0),
+        skew: float = 0.0,
+        skew_gcode: bool = False,
     ) -> None:
         self.out: queue.Queue[bytes] = queue.Queue()
         self.lines: list[str] = []
@@ -228,6 +235,15 @@ class VirtualMarlin:
         # place its numbers say, as homing switches do.
         self.origin = [0.0, 0.0, 0.0, 0.0, 0.0]
         self.home_error = (float(home_error[0]), float(home_error[1]))
+        # The axes out of square: the head's travel along Y leans toward +X
+        # by `skew` mm a mm, so it stands at X + skew * Y on the bed. A
+        # Marlin built with SKEW_CORRECTION_GCODE (`skew_gcode`) takes M852
+        # and moves its motors by `skew_factor` less, X - factor * Y: the
+        # head lands square where the two agree. The stock Lumen build
+        # knows no M852.
+        self.skew = float(skew)
+        self.skew_gcode = skew_gcode
+        self.skew_factor = 0.0
         self.relative = False
         self.feed = DEFAULT_FEED
         self.timed = timed
@@ -345,18 +361,28 @@ class VirtualMarlin:
                     return tuple(a + (b - a) * part for a, b in zip(segment.start, segment.end))
             return tuple(self._place)
 
+    def _on_bed(self, numbers) -> tuple[float, ...]:
+        """Where the head is on the bed with its numbers at `numbers` (X Y Z
+        A B): the numbers plus the origin, X off by the axes' skew less
+        what the firmware takes out of it."""
+        at = [value + shift for value, shift in zip(numbers, self.origin)]
+        at[0] += (self.skew - self.skew_factor) * at[1]
+        return tuple(at)
+
     def bed(self, now: float | None = None) -> tuple[float, ...]:
         """Where the head truly is on the bed now (what the cameras see),
-        X Y Z A B: where its numbers put it, plus the origin."""
+        X Y Z A B: where its numbers put it, plus the origin, the axes'
+        skew as it stands."""
         here = self.head(now)
         with self._lock:
-            return tuple(value + shift for value, shift in zip(here, self.origin))
+            return self._on_bed(here)
 
     @property
     def bed_position(self) -> tuple[float, float, float]:
         """Where the moves sent so far leave the head on the bed: X, Y, Z."""
         with self._lock:
-            return (self._place[0] + self.origin[0], self._place[1] + self.origin[1], self._place[2] + self.origin[2])
+            x, y, z = self._on_bed(self._place)[:3]
+            return (x, y, z)
 
     def nozzle_turn(self, degrees: float) -> float:
         """The nozzle's turn counterclockwise seen from above for an A of `degrees`."""
@@ -468,6 +494,8 @@ class VirtualMarlin:
             self._answer(self._i2c_read(fields) + "\r\nok\r\n")
         elif word == "M485" and self.bus is not None:
             self._answer(f"{self.bus.answer(rest.strip())}\r\nok\r\n")
+        elif word == "M852":
+            self._skew_command(code, fields)
         elif word == "M17":
             self.motors = True
             self._answer("ok\r\n")
@@ -477,6 +505,33 @@ class VirtualMarlin:
             self._answer("ok\r\n")
         else:
             self._answer("ok\r\n")
+
+    def _skew_command(self, code: str, fields: dict[str, str]) -> None:
+        """M852 as Marlin takes it: unknown to a build without
+        SKEW_CORRECTION_GCODE; with no factor the factor said; with I (or
+        S) from -1 to 1 the XY factor set, the head left where it is and
+        its X numbers made again from the motors', as Marlin does."""
+        if not self.skew_gcode:
+            self._answer(f'echo:Unknown command: "{code}"\r\nok\r\n')
+            return
+        given = fields.get("I") or fields.get("S")
+        if not given:
+            self._answer(f"echo:  M852 I{self.skew_factor:.6f} J0 K0\r\nok\r\n")
+            return
+        factor = float(given)
+        if not -1.0 <= factor <= 1.0:
+            self._answer("echo:min_skew_factor: -1 max_skew_factor: 1\r\nok\r\n")
+            return
+        self._wait_moves()
+        with self._lock:
+            changed = factor != self.skew_factor
+            if changed:
+                # The motors stay: the numbers that put the head there move.
+                self._place[0] += (factor - self.skew_factor) * (self._place[1] + self.origin[1])
+                self.skew_factor = factor
+            x, y, z = self._place[:3]
+        report = f"X:{x:.2f} Y:{y:.2f} Z:{z:.2f} E:0.00 Count X:0 Y:0 Z:0\r\n" if changed else ""
+        self._answer(f"{report}ok\r\n")
 
     # --- motion ---------------------------------------------------------------------------
 
@@ -554,7 +609,7 @@ class VirtualMarlin:
         something (or the tip comes down on something with it on), and let
         go when the suction stops."""
         with self._lock:
-            place = tuple(value + shift for value, shift in zip(self._place, self.origin))
+            place = self._on_bed(self._place)
         if not self.suction:
             self._tried = False
             if self.held is not None:
@@ -736,7 +791,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--miss-every", type=int, default=0, metavar="N", help="every Nth pick finds no part (default: never)")
     parser.add_argument("--home-error", type=_point, default=(0.2, -0.15), metavar="DX,DY", help="how far off its numbers a home leaves the head on the bed, mm, for Home by fiducial to find (default: 0.2,-0.15)")
     parser.add_argument("--seed", type=int, default=1, help="the seed of the small errors a pick leaves (default: 1)")
+    parser.add_argument(
+        "--skew",
+        type=float,
+        default=0.0,
+        metavar="FACTOR",
+        help="its axes out of square: the head's travel along Y leans toward +X by this many mm a mm (a real LumenPnP's 0.0023), for [motion] skew to take out (default: 0)",
+    )
+    parser.add_argument("--skew-gcode", action="store_true", help="its Marlin takes M852, as a build with SKEW_CORRECTION_GCODE does (default: unknown, as on the stock Lumen build)")
     args = parser.parse_args(argv)
+    if not (math.isfinite(args.skew) and abs(args.skew) <= 0.02):
+        print("spinny-virtual-pnp: --skew must be from -0.02 to 0.02 (mm of X per mm of Y)", file=sys.stderr)
+        return 2
 
     path = args.machine or default_machine_file()
     try:
@@ -764,6 +830,8 @@ def main(argv: list[str] | None = None) -> int:
         miss_every=args.miss_every,
         seed=args.seed,
         home_error=args.home_error,
+        skew=args.skew,
+        skew_gcode=args.skew_gcode,
     )
     machine.report_angle = True
     machine.light = 0

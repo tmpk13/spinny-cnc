@@ -45,7 +45,7 @@ from .findings import Target, UndoRefused
 from .gcode_link import GcodeLinkError, GcodeMover
 from .gcode_part import HOME_TIMEOUTS
 from .kinematics import num
-from .openpnp import GcodeMachine, Plan, board_fit, goto_lines, needs_lift, plan
+from .openpnp import GcodeMachine, Plan, board_fit, declare_line, goto_lines, needs_lift, plan
 from .placer import Placement, PlaceSetup, fiducial_fit
 from .pnp import CameraPlace, PnpError
 from .log import log
@@ -170,9 +170,20 @@ class PlacingPart:
     def machine_written(self, machine_id: str) -> None:
         """A machine file was written: the placing machine's board crop is
         told to the top camera's pcbv, so a crop drawn on the page holds at
-        once."""
+        once; and the connected machine's firmware is told a skew it is to
+        take out now, unless something moves the head (the next request
+        that moves it tells it then), so the place the page shows holds at
+        once too."""
         if machine_id == self._placing_id() and self.top.client.running:
             self.top.send_board_crop()
+        if machine_id != self._gcode_id or not self.gcode.connected:
+            return
+        if self.gcode.running or self.pnp.routine_active or self.top.routine_active:
+            return
+        try:
+            self._gcode_skew(self.gcode_machine())
+        except (GcodeLinkError, ValueError, LookupError, HTTPException) as exc:
+            self.publish_message("error", f"the axes' skew was not told to the firmware: {getattr(exc, 'detail', None) or exc}")
 
     def placing_machine(self) -> GcodeMachine:
         """The placing machine's file, read; 409 when there is no G-code machine to place with."""
@@ -220,6 +231,7 @@ class PlacingPart:
             raise HTTPException(status_code=409, detail="the bottom camera routine is moving the head")
         if self.top.routine_active:
             raise HTTPException(status_code=409, detail="the top camera routine is moving the head")
+        self._gcode_skew(machine)
         return machine
 
     def _head_lines(self, machine: GcodeMachine, lines: list[str]) -> None:
@@ -868,7 +880,6 @@ class PlacingPart:
         if home and not machine.home:
             raise ValueError(f"{machine.name}'s file has no [gcode] home command")
         mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
-        x, y = machine.axes[0], machine.axes[1]
 
         def homing() -> None:
             self._lift_before_home(machine)
@@ -876,7 +887,7 @@ class PlacingPart:
             self.gcode.homed = True
 
         def declare(head: tuple[float, float]) -> None:
-            self.gcode.command(f"G92 {x}{num(head[0])} {y}{num(head[1])}", machine.timeout)
+            self.gcode.command(declare_line(machine, {"x": head[0], "y": head[1]}), machine.timeout)
 
         self.top.home_by_fiducial(mover, profile.home_fiducial, profile.fiducial, profile.within, profile.z, homing if home else None, declare)
         return self.placing_state()

@@ -476,10 +476,19 @@ class TopCamera(PickCamera):
             f", the lens {kept_lens['k1']:+.4f} (corners {lens.corner_px * factor * mm_per_px * 1000.0:.0f} um)" if kept_lens is not None and lens is not None
             else ", no lens worth correcting" if lens is not None else ""
         )
+        # The moves went through the skew the machine file takes out now
+        # (link or firmware): what is left of it, added to that, is the
+        # file's skew that squares the axes. Under 90 degrees from +X to
+        # +Y (skew_deg below 0) is a skew above 0.
+        skew_now = getattr(getattr(mover, "machine", None), "skew", None)
+        said_skew = ""
+        if isinstance(skew_now, (int, float)):
+            numbers["skew"] = round(float(skew_now) - math.tan(math.radians(fit.skew_deg)), 6)
+            said_skew = f" ([motion] skew = {numbers['skew']:.4f} squares them)"
         words = (
             f"the top camera's picture measured by the head's moves: {mm_per_px * 1000.0:.2f} um a pixel"
             f" ({numbers['mm_per_px_x'] * 1000.0:.2f} along X, {numbers['mm_per_px_y'] * 1000.0:.2f} along Y),"
-            f" roll {roll:.2f} degrees{', mirrored' if fit.mirror else ''}, the axes {abs(fit.skew_deg):.2f} degrees from square,"
+            f" roll {roll:.2f} degrees{', mirrored' if fit.mirror else ''}, the axes {abs(fit.skew_deg):.2f} degrees from square{said_skew},"
             f" {rms_px:.2f} px rms, back at the start within {returned_um:.0f} um{said_lens}"
         )
         self.measured_picture = numbers

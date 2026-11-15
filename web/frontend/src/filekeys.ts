@@ -131,6 +131,7 @@ export const FILE_KEYS: FileKey[] = [
         ["motors_off", "the jog panel's Motors off", "disable steppers M18", "M18"],
         ["light_on", "the cameras' lights on: a line or a list", "lamp ring led light", []],
         ["light_off", "the cameras' lights off", "lamp ring led light", []],
+        ["skew", "tells the firmware the axes' skew when [motion] skew_by is firmware, {skew} for the factor; empty for a build with the factor in it", "skew correction out of square squareness non-squareness M852", "M852 I{skew}"],
     ]),
     ...keys("motion", "gcode", "G-code", [
         ["feed_xy", "mm/min across, and a jog's or goto's without a feed", "speed feed rate", 6000],
@@ -143,6 +144,8 @@ export const FILE_KEYS: FileKey[] = [
         ["pick_tries", "pockets tried for one part before it is left out", "retry attempts", 3],
         ["park", "X Y where Park takes the head", "rest out of the way", null],
         ["travel", "how far the head reaches, x0 y0 x1 y1 as places of the nozzle (the controller's soft limits): the Machine view draws the machine as this box", "machine view size limits reach extent soft limits", null],
+        ["skew", "how far the head's Y travel leans toward +X, mm of X per mm of Y (tan of the angle off square: 0.13 degrees is 0.0023); Measure camera says the one that squares the axes; changing it moves every place kept in machine numbers", "out of square squareness non-squareness axes angle shear M852", 0],
+        ["skew_by", "who takes the skew out: link (this backend, on every move and place read) or firmware (told by [gcode] skew at the connect, Marlin's M852)", "skew correction firmware marlin M852 out of square", "link"],
         ["discard", "X Y Z where a part that failed a check is let go; left out, back in its pocket", "reject bin trash drop", null],
     ]),
     ...keys("vacuum", "gcode", "G-code", [

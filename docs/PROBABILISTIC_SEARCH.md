@@ -100,7 +100,8 @@ board or out-of-square axes show only as residuals.
   machine's X and Y scale and how far its axes are out of square, shown with
   its uncertainty. *Write skew to machine file* multiplies a cartesian
   machine file's X and Y steps per mm by the scales; out of square is said,
-  never written.
+  never written (a G-code machine's file takes it as `[motion] skew`, by
+  hand: MACHINES.md).
 
 ## Full scan
 

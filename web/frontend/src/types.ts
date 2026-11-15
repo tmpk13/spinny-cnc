@@ -1505,6 +1505,9 @@ export interface GcodeDocument {
     rotation_cw: boolean;
     /** One Z motor drives two nozzles, both up only at the safe height (true): moves across come to it from either side, Z jogs stop at it; a plain Z (false): a nozzle above it stays there; not said (null): moves across come to it from either side, jogs go where sent. */
     seesaw?: boolean | null;
+    /** How far the head's travel along Y leans toward +X, mm of X per mm of Y ([motion] skew; 0 square), and who takes it out: this backend's link or the firmware. */
+    skew?: number;
+    skew_by?: "link" | "firmware";
     /** mm/min across and up or down. */
     feed_xy: number;
     feed_z: number;

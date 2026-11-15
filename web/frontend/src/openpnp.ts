@@ -222,6 +222,18 @@ interface Axis {
     feed: number | null;
     /** The axis a mapped axis (OpenPnP's ReferenceMappedAxis) follows: a seesaw's other nozzle's Z follows the first's. */
     input: string | null;
+    /** OpenPnP's class for it, its last name: ReferenceControllerAxis, ReferenceMappedAxis, ReferenceLinearTransformAxis. */
+    kind: string;
+    /**
+     * A linear transform axis's X and Y inputs and their factors: this axis
+     * is factorX * X + factorY * Y of the controller's axes. OpenPnP takes
+     * out its axes' non-squareness so, on the X axis: X plus the factor
+     * times Y.
+     */
+    inputX: string | null;
+    inputY: string | null;
+    factorX: number;
+    factorY: number;
 }
 
 interface Command {
@@ -306,6 +318,8 @@ export interface OpenPnpMachine {
     /** The head's homing fiducial, where the top camera looks for it; null when the file has none (or all zeros). */
     homeFiducial: Place | null;
     feeders: OpenPnpFeeder[];
+    /** OpenPnP 1's GcodeDriver non-squareness factor, which it added to X as the nozzle's place went out (X plus it times Y); 0 for none. */
+    driverSkew: number;
 }
 
 function commandsOf(driver: XmlNode | undefined): Command[] {
@@ -330,6 +344,11 @@ function axesOf(machine: XmlNode): Map<string, Axis> {
             safeHigh: node.attrs["safe-zone-high-enabled"] === "true" ? lengthOf(child(node, "safe-zone-high"), 0) : null,
             feed: child(node, "feedrate-per-second") ? lengthOf(child(node, "feedrate-per-second"), 0) * 60 : null,
             input: node.attrs["input-axis-id"] ?? null,
+            kind: (node.attrs["class"] ?? "").split(".").pop() ?? "",
+            inputX: node.attrs["input-axis-x-id"] || null,
+            inputY: node.attrs["input-axis-y-id"] || null,
+            factorX: number(node.attrs["factor-x"]),
+            factorY: number(node.attrs["factor-y"]),
         });
     }
     return axes;
@@ -557,6 +576,7 @@ export function readMachine(text: string): OpenPnpMachine {
         })(),
         discard: placeOf(child(machine, "discard-location")),
         feeders: kids(child(machine, "feeders"), "feeder").map((node) => feederOf(node, firstNozzle)),
+        driverSkew: number(driver?.attrs["non-squareness-factor"]),
         ...busOf(machine, driver, head),
     };
 }
@@ -585,6 +605,8 @@ export interface ProfileData {
     safeZ: number;
     /** One Z motor drives two nozzles: the first down below safe Z, the other above it. */
     seesaw: boolean;
+    /** How far the head's Y travel leans toward +X, mm of X per mm of Y: OpenPnP's non-squareness, taken out by this backend's link. */
+    skew: number;
     placeZ: number | null;
     pickDwell: number;
     placeDwell: number;
@@ -652,6 +674,7 @@ export function defaultProfile(name: string): ProfileData {
         feedZ: 1200,
         safeZ: 0,
         seesaw: false,
+        skew: 0,
         placeZ: null,
         pickDwell: 200,
         placeDwell: 150,
@@ -739,6 +762,7 @@ export function profileText(data: ProfileData): string {
         `feed_z = ${fixed(data.feedZ)}`,
         `safe_z = ${fixed(data.safeZ)}`,
         ...(data.seesaw ? ["seesaw = true            # one Z motor, two nozzles: moves across come to safe_z from either side, Z jogs stop there"] : []),
+        ...(data.skew !== 0 ? [`skew = ${Number(data.skew.toFixed(6))}           # OpenPnP's non-squareness: the head's Y travel leans this many mm toward +X a mm, taken out on every move`] : []),
         ...(data.placeZ === null
             ? ["# MEASURE: jog the tip down onto the board's top, and set this to that Z plus the parts' height.", `place_z = ${fixed(data.safeZ)}`]
             : [`place_z = ${fixed(data.placeZ)}`]),
@@ -900,7 +924,31 @@ export function machineItems(machine: OpenPnpMachine, nozzleName?: string): { it
         push({ id: "dwell", group: "Commands", label: "Dwell", value: dwellLine, keep: true, apply: (data) => { data.dwell = dwellLine; } });
     }
     if (nozzle) {
-        const letterOf = (id: string | undefined): string | null => (id ? machine.axes.get(id)?.letter ?? null : null);
+        // X taken out of square by a linear transform (OpenPnP 2's
+        // non-squareness) is X plus factor-y times Y of the controller's
+        // axes: its letter is its X input's, and the factor the file's
+        // skew. OpenPnP 1's driver factor went the other way (X out was the
+        // nozzle's X plus it times Y): its sign changes.
+        const xAxis = nozzle.axes.x ? machine.axes.get(nozzle.axes.x) : undefined;
+        const transform = xAxis?.kind === "ReferenceLinearTransformAxis" && xAxis.inputX !== null && Math.abs(xAxis.factorX - 1) < 1e-9 ? xAxis : undefined;
+        const letterOf = (id: string | undefined): string | null => {
+            const axis = id ? machine.axes.get(id) : undefined;
+            if (axis === transform && transform?.inputX) {
+                return machine.axes.get(transform.inputX)?.letter ?? null;
+            }
+            return axis?.letter ?? null;
+        };
+        const skew = transform && transform.inputY !== null ? transform.factorY : -machine.driverSkew;
+        if (skew !== 0) {
+            const shown = Number(skew.toFixed(6));
+            push({
+                id: "skew", group: "Motion", label: "Axes out of square", value: `skew ${shown} (${fixed(Math.abs(Math.atan(skew) * 180 / Math.PI))} degrees)`, keep: true,
+                note: transform ? `${transform.name} is ${fixed(transform.factorY)} of Y added to X: OpenPnP's places hold it` : "OpenPnP 1's non-squareness factor, its sign changed",
+                apply: (data) => { data.skew = skew; },
+            });
+        } else if (xAxis && xAxis.letter === null && !transform) {
+            warnings.push(`${nozzle.name}'s X is ${xAxis.name}, an axis made of others that is not read: its places may hold a correction left out`);
+        }
         const letters = [letterOf(nozzle.axes.x), letterOf(nozzle.axes.y), letterOf(nozzle.axes.z), letterOf(nozzle.axes.rotation)];
         if (letters.every((letter) => letter !== null)) {
             push({ id: "axes", group: "Commands", label: `${nozzle.name}'s axes`, value: letters.join(" "), keep: true, apply: (data) => { data.axes = letters as [string, string, string, string]; } });

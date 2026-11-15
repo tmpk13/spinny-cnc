@@ -104,6 +104,7 @@ motors_on = "M17"
 motors_off = "M18"
 light_on = ["M150 P255"]
 light_off = ["M150 P0"]
+skew = "M852 I{skew}"
 
 [motion]
 feed_xy = 6000
@@ -116,6 +117,8 @@ pick_tries = 3
 park = [40.0, 400.0]
 travel = [0.0, 0.0, 433.0, 487.0]
 seesaw = true
+skew = 0.0023
+skew_by = "link"
 discard = [10.0, 10.0, -1.0]
 
 [vacuum]

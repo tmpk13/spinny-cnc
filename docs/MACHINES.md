@@ -488,6 +488,7 @@ motors_on = "M17"        # the jog panel's Motors; empty: refused
 motors_off = "M18"
 light_on = []            # the cameras' lights, a line or a list; the cameras' routines switch them on first
 light_off = []
+skew = "M852 I{skew}"    # tells the firmware [motion] skew when skew_by = "firmware", {skew} for the factor; empty: a build with its factor in it, nothing sent
 
 [motion]
 feed_xy = 6000           # mm/min across, and of a jog or goto without a feed of its own
@@ -501,6 +502,8 @@ pick_tries = 3           # pockets tried for one part before it is left out, 1 t
 park = [40.0, 400.0]     # X Y where Park takes the head
 travel = [0.0, 0.0, 433.0, 487.0]  # how far the head reaches, x0 y0 x1 y1 as places of the nozzle (the controller's soft limits): the PNP tab's Machine view draws the machine as this box; nothing moves by it; left out, the view boxes the places the file names
 discard = [10.0, 10.0, -15.0]  # X Y Z where a part that failed a check is let go; left out, back in its pocket
+skew = 0.0023            # the axes out of square (below): the head's Y travel leans this many mm toward +X a mm, -0.02 to 0.02; left out, 0 (square)
+skew_by = "link"         # who takes it out: "link", this backend on every move and place read; "firmware", the controller told by [gcode] skew at the connect
 
 [vacuum]                 # a sensor: read after each pick and place when it has ranges
 read = "M105"            # the line, or lines; the reading is in the last one's answer
@@ -599,6 +602,32 @@ of the box. A pcbv built before crops takes none: the camera says so once
 and looks at the whole picture. Each camera picture's View menu draws a
 task's box and saves it here ([OPERATING.md](OPERATING.md)); a search
 record keeps the crops it looked with.
+
+A machine's X and Y axes are rarely square. `[motion] skew` says how far
+the head's travel along Y leans toward +X, in mm of X per mm of Y: the
+tangent of how far the angle from +X to +Y falls short of 90 degrees
+(0.13 degrees is 0.0023, 0.23 mm across a 100 mm board), the factor
+Marlin's `M852 I` takes and the Y factor of the X axis OpenPnP transforms
+for non-squareness. Uncorrected, a head sent to X Y stands at X + skew * Y.
+With `skew_by = "link"` (or left out) the backend takes it out: every
+move goes to the controller as X less skew * Y, every place it reports
+reads back as X plus skew * Y, and a move or G92 naming one of X and Y
+names both (on skewed axes the controller's X holds Y too), so the page,
+the cameras and every place in the file are square. With
+`skew_by = "firmware"` the controller does it, as Marlin built with
+`SKEW_CORRECTION` and `SKEW_CORRECTION_GCODE` does: the connect sends
+`[gcode] skew` with the factor after the firmware's name is asked, a
+placement's program starts with it, and a file written while connected
+tells the firmware its new factor (0 when the file gives the skew back
+to the link) before the next move. A firmware that answers the line as
+unknown (the stock Lumen build says `echo:Unknown command`, then `ok`)
+is not connected, with why. Measure camera (OPERATING.md) says the skew
+that squares the axes, from the head's moves through the skew taken out
+now. Changing the skew moves every place kept in machine numbers by the
+change times its Y (up to 0.9 mm at the far end of a LumenPnP's Y):
+measure the cameras' places, offsets, feeders and fiducials again. The
+OpenPnP import carries OpenPnP's own non-squareness, its places being
+square ones. The console's lines go out as typed.
 
 A feeder bus (`[bus]`, `[[slot]]`, and a feeder's `bus_id`, `slot`,
 `offset` and `advance` in place of `at`, `pitch` and `count`) carries
