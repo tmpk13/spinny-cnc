@@ -3245,16 +3245,18 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         settings = self.camera.settings()
         return PictureFrame((board[0] + settings.offset[0], board[1] + settings.offset[1]), settings.roll, False)
 
-    def _look_scale(self, client, measured: float) -> tuple[float, float, float]:
+    def _look_scale(self, client, measured: float, seen: float | None = None) -> tuple[float, float, float]:
         """A camera's picture size (full size px) and scale for a search:
         the size pcbv reports, the scale measured, else pcbv's own from a
-        lock."""
+        lock now, else from the look's newest lock (`seen`): Clear guesses
+        and a search's start leave pcbv unlocked wherever the head is off
+        the board, and a search refused there wanted a scale it had seen."""
         try:
             raw = client.pose()
         except VisionError:
             raw = {}
         width, height = raw.get("width"), raw.get("height")
-        scale = measured if measured > 0.0 else raw.get("mm_per_px") if raw.get("state") == "locked" else 0.0
+        scale = measured if measured > 0.0 else raw.get("mm_per_px") if raw.get("state") == "locked" else (seen or 0.0)
         if not isinstance(width, (int, float)) or not isinstance(height, (int, float)) or width <= 0 or height <= 0:
             raise ValueError("the camera has no picture yet: wait for one")
         if not isinstance(scale, (int, float)) or scale <= 0.0:
@@ -3642,7 +3644,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         job = self._job(self.head_look.job)
         middle, diagonal = self._board_size(job)
         settings = self.camera.settings()
-        width, height, scale = self._look_scale(self.camera.client, settings.mm_per_px)
+        width, height, scale = self._look_scale(self.camera.client, settings.mm_per_px, self.head_look.scale_seen)
         offset = settings.offset
         with self._owner_lock:
             link = self._movable()
@@ -3715,7 +3717,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         settings = self.camera.settings()
         if settings.scan_motion == "fly":
             return self._camera_fly_scan(job, settings, body)
-        width, height, scale = self._look_scale(self.camera.client, settings.mm_per_px)
+        width, height, scale = self._look_scale(self.camera.client, settings.mm_per_px, self.head_look.scale_seen)
         known = self._head_known(job, settings.corner_mm)
         box, stops, outline = self._scan_plan(self.head_look, job, known, (width * scale, height * scale), body.margin)
         prior = self._head_known(job, settings.corner_mm, corners=False)
@@ -3766,7 +3768,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         they were taken, the speed held so a small pad blurs little over
         the camera's exposure, which must be set by hand
         (boardlook.fly_scan)."""
-        width, height, scale = self._look_scale(self.camera.client, settings.mm_per_px)
+        width, height, scale = self._look_scale(self.camera.client, settings.mm_per_px, self.head_look.scale_seen)
         exposure = exposure_seconds(settings.controls)
         if exposure is None:
             raise ValueError("a flying scan needs the camera's exposure set by hand (manual exposure in its picture controls): the speed is held to it")

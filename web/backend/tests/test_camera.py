@@ -1297,3 +1297,19 @@ def test_a_real_pcbv_lists_its_search_candidates_and_the_posterior_takes_them(tm
         assert len(posterior.hypotheses) == len(raw["candidates"]) and lead.probability == max(h.probability for h in posterior.hypotheses)
     finally:
         client.close()
+
+
+def test_a_search_takes_the_scale_measured_else_a_lock_now_else_the_newest_lock_seen(client):
+    poses = [{"state": "lost", "width": 1280, "height": 720}]
+
+    class Client:
+        def pose(self):
+            return poses[-1]
+
+    look_scale = client.backend._look_scale
+    with pytest.raises(ValueError, match="scale is not measured"):
+        look_scale(Client(), 0.0)
+    assert look_scale(Client(), 0.0, 0.0161) == (1280.0, 720.0, 0.0161)
+    poses.append({"state": "locked", "width": 1280, "height": 720, "mm_per_px": 0.02})
+    assert look_scale(Client(), 0.0, 0.0161) == (1280.0, 720.0, 0.02)
+    assert look_scale(Client(), 0.03, 0.0161) == (1280.0, 720.0, 0.03)
