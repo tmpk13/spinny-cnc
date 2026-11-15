@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -32,9 +32,9 @@ from spinny_laser import machines as machine_files
 
 from .camera import CORNER_MM, LOOK_THRESHOLD, SETTLE_SECONDS, Spot, check_look, feature_limits, picture_to_machine, round_problem, spot_of
 from .cameras import check_controls
-from .crops import cut
+from .crops import crop_rows, cut
 from .openpnp import SHADES
-from .pictures import CameraMap, fit_camera, fresh_gray, phase_shift
+from .pictures import CameraMap, fit_camera, fit_lens, fresh_gray, phase_shift
 from .pnp import Mover, PickCamera, PnpError, RoutineProgress, calibrate
 from .vision import check_colors, check_lens
 
@@ -384,6 +384,8 @@ class TopCamera(PickCamera):
                 mover.go((point[0] - approach, point[1] - approach))
             mover.go(point)
 
+        grays: list = []
+
         def shift_to(point: Point, first) -> tuple[float, float, float]:
             reach(point)
             gray, _ = picture()
@@ -393,12 +395,16 @@ class TopCamera(PickCamera):
                     f"the picture at {mover.describe(point)} shares too little with the first (correlation {peak:.3f}):"
                     " measure over a board or a printed pattern, with a shorter step"
                 )
+            grays.append(gray)
             return dx, dy, peak
 
         reach(start)
         first, reply = picture()
         full_width = _full_width(settings.size, reply)
         factor = full_width / float(reply["width"])
+        # Where the measured pictures lie in the whole one, for the lens.
+        uncut = (float(reply["width"]), float(reply["height"]))
+        x0, _, y0, _ = crop_rows(crop, int(uncut[0]), int(uncut[1]))
         self._step(progress, "probing")
         if step <= 0.0:
             dx, dy, _ = shift_to((start[0] + PROBE_MM, start[1]), first)
@@ -409,6 +415,9 @@ class TopCamera(PickCamera):
             step = min(max(GRID_SHARE * first.shape[0] * per_px, GRID_MM[0]), GRID_MM[1])
             step = round(step, 2)
         self._step(progress, "grid")
+        # The probe's picture is no grid picture: the lens pairs each grid
+        # picture with its shift.
+        grays.clear()
         moves: list[Point] = []
         shifts: list[Point] = []
         peaks: list[float] = []
@@ -423,9 +432,21 @@ class TopCamera(PickCamera):
                 rows.append([round(i * step, 4), round(j * step, 4), round(dx * factor, 3), round(dy * factor, 3), round(peak, 4)])
         # Back where it began: how far the picture lies from the first is
         # the backlash and drift the moves hold.
+        grid = list(grays)
         back = shift_to(start, first)
         self._step(progress, "fitting")
         fit = fit_camera(moves, shifts)
+        # The lens from the same pictures' tiles (pictures.fit_lens). Kept,
+        # the scale is the one at the picture's center, where pcbv's
+        # correction leaves it: the whole pictures' shifts average the lens
+        # over them (0.4% coarser on a LumenPnP).
+        lens = fit_lens(first, grid, shifts, uncut, (float(x0), float(y0)))
+        if lens is not None and lens.worth:
+            # Only the scale: a radial lens bends no shift's direction on
+            # average, and the whole pictures' roll is the steadier.
+            centered = [(move, center) for move, center in zip(moves, lens.centers) if center is not None]
+            at_center = fit_camera([move for move, _ in centered], [center for _, center in centered])
+            fit = replace(fit, mm_per_px_x=at_center.mm_per_px_x, mm_per_px_y=at_center.mm_per_px_y)
         mm_per_px = fit.mm_per_px / factor
         rms_px, worst_px = fit.rms_px * factor, fit.worst_px * factor
         if rms_px > FIT_RMS_PX:
@@ -444,19 +465,32 @@ class TopCamera(PickCamera):
             "crop": list(crop) if crop is not None else None,
             # Each grid picture: the head's move (mm), the shift seen (full size px), the correlation's peak.
             "rows": rows,
+            "lens": lens.to_dict() if lens is not None else None,
         }
+        full_height = full_width * uncut[1] / uncut[0]
+        kept_lens = (
+            {"k1": round(lens.k1, 5), "k2": 0.0, "width": int(round(full_width)), "height": int(round(full_height))}
+            if lens is not None and lens.worth else None
+        )
+        said_lens = (
+            f", the lens {kept_lens['k1']:+.4f} (corners {lens.corner_px * factor * mm_per_px * 1000.0:.0f} um)" if kept_lens is not None and lens is not None
+            else ", no lens worth correcting" if lens is not None else ""
+        )
         words = (
             f"the top camera's picture measured by the head's moves: {mm_per_px * 1000.0:.2f} um a pixel"
             f" ({numbers['mm_per_px_x'] * 1000.0:.2f} along X, {numbers['mm_per_px_y'] * 1000.0:.2f} along Y),"
             f" roll {roll:.2f} degrees{', mirrored' if fit.mirror else ''}, the axes {abs(fit.skew_deg):.2f} degrees from square,"
-            f" {rms_px:.2f} px rms, back at the start within {returned_um:.0f} um"
+            f" {rms_px:.2f} px rms, back at the start within {returned_um:.0f} um{said_lens}"
         )
         self.measured_picture = numbers
         if keep is not None:
             self._message("info", keep(fit, numbers))
             return
         # Kept at once and logged with Undo, as every routine's result.
-        self._message("info", self.findings.keep("camera", words, {"mm_per_px": round(mm_per_px, 7), "roll": round(roll, 4), "mirror": fit.mirror}))
+        patch = {"mm_per_px": round(mm_per_px, 7), "roll": round(roll, 4), "mirror": fit.mirror}
+        if kept_lens is not None:
+            patch["lens"] = kept_lens
+        self._message("info", self.findings.keep("camera", words, patch))
 
     def find_fiducials(
         self,

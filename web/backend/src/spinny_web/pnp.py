@@ -953,6 +953,12 @@ class PickCamera:
             # A start that fails leaves the camera stopped and says why.
             self.client.close()
             self.start()
+        elif self.client.running and getattr(settings, "lens", None) != getattr(before, "lens", None):
+            # A lens kept by a routine, or taken back by Undo, holds at once.
+            try:
+                self.client.lens(getattr(settings, "lens", None))
+            except VisionError as exc:
+                self._message("error", f"the {self.label}'s lens correction was not taken: {exc}")
         return settings
 
     # --- pcbv -----------------------------------------------------------------

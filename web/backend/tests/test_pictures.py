@@ -42,9 +42,20 @@ def texture(seed: int = 3) -> Texture:
     return Texture(seed)
 
 
-def picture(surface: Texture, center, scale, roll, mirror, width=320, height=180) -> np.ndarray:
-    """What a camera of that scale, roll and mirror sees about `center`."""
+def picture(surface: Texture, center, scale, roll, mirror, width=320, height=180, lens: float = 0.0) -> np.ndarray:
+    """What a camera of that scale, roll and mirror sees about `center`;
+    with `lens` k, a scene point p (from the center, over the half
+    diagonal) shows at p (1 + k |p|^2)."""
     du, dv = np.meshgrid(np.arange(width) - width / 2.0, np.arange(height) - height / 2.0)
+    if lens:
+        # Each pixel's scene point: the lens undone, two rounds from the pixel.
+        norm = math.hypot(width / 2.0, height / 2.0)
+        x, y = du / norm, dv / norm
+        px, py = x, y
+        for _ in range(3):
+            r2 = px * px + py * py
+            px, py = x / (1.0 + lens * r2), y / (1.0 + lens * r2)
+        du, dv = px * norm, py * norm
     u = -du if mirror else du
     v = -dv
     c, s = math.cos(math.radians(roll)), math.sin(math.radians(roll))
@@ -103,19 +114,54 @@ def test_a_busy_picture_has_edges_and_a_flat_one_none():
         gray_array(reply, bytes(7))
 
 
-class TexturedCamera:
-    """A top camera over a textured surface, on a fake head."""
+def test_a_radial_lens_is_measured_from_the_tiles_of_pictures_the_heads_moves_shift():
+    from spinny_web.pictures import fit_lens
 
-    def __init__(self, mover, scale: float, roll: float, mirror: bool) -> None:
+    surface = texture()
+    scale = 0.024
+    moves = [(i * 0.6, j * 0.6) for j in (-1, 0, 1) for i in (-1, 0, 1) if (i, j) != (0, 0)]
+    for k in (-0.03, 0.0):
+        first = picture(surface, (7.0, 7.0), scale, 180.4, False, lens=k)
+        pictures = [picture(surface, (7.0 + mx, 7.0 + my), scale, 180.4, False, lens=k) for mx, my in moves]
+        shifts = [phase_shift(first, other)[:2] for other in pictures]
+        fit = fit_lens(first, pictures, shifts)
+        assert fit is not None and fit.tiles > 500
+        # pcbv's k1 undoes the lens: -k to first order.
+        assert fit.k1 == pytest.approx(-k, abs=0.004)
+        assert fit.worth is (k != 0.0), fit.to_dict()
+        # The shifts at the picture's center follow the head's moves at the
+        # camera's own scale, the lens taken out.
+        assert fit_camera(moves, fit.centers).mm_per_px == pytest.approx(scale, rel=0.002)
+    # A crop of the picture: its tiles placed in the whole picture.
+    first = picture(surface, (7.0, 7.0), scale, 180.4, False, lens=-0.03)
+    pictures = [picture(surface, (7.0 + mx, 7.0 + my), scale, 180.4, False, lens=-0.03) for mx, my in moves]
+    cut = (slice(20, 160), slice(40, 300))
+    shifts = [phase_shift(first[cut], other[cut])[:2] for other in pictures]
+    fit = fit_lens(first[cut], [other[cut] for other in pictures], shifts, (320.0, 180.0), (40.0, 20.0))
+    assert fit is not None and fit.k1 == pytest.approx(0.03, abs=0.006)
+
+
+class TexturedCamera:
+    """A top camera over a textured surface, on a fake head; `lens` as
+    picture() takes it."""
+
+    def __init__(self, mover, scale: float, roll: float, mirror: bool, lens: float = 0.0) -> None:
         self.mover = mover
         self.surface = texture()
         self.scale, self.roll, self.mirror = scale, roll, mirror
+        self.distortion = lens
+        # The lens corrections pcbv was told, in turn.
+        self.lenses: list = []
         self.running = True
         self.asked = 0
 
+    def lens(self, lens):
+        self.lenses.append(lens)
+        return {"ok": True}
+
     def gray(self, width=None):
         self.asked += 1
-        pixels = picture(self.surface, self.mover.place, self.scale, self.roll, self.mirror)
+        pixels = picture(self.surface, self.mover.place, self.scale, self.roll, self.mirror, lens=self.distortion)
         data = np.clip(pixels, 0, 255).astype(np.uint8).tobytes()
         return {"width": 320, "height": 180, "frame": self.asked, "age_ms": 0, "format": "gray"}, data
 
@@ -194,3 +240,31 @@ def test_measure_camera_finds_the_scale_roll_and_mirror_from_the_heads_moves(mon
     entry = camera.findings.newest()
     assert entry is not None and entry["kind"] == "camera"
     assert {change["name"] for change in entry["changes"]} >= {"mm_per_px", "roll"}
+    # A picture without a lens keeps none.
+    assert settings.lens is None and numbers["lens"] is not None and numbers["lens"]["worth"] is False
+
+
+def test_measure_camera_keeps_the_lens_it_finds_and_the_scale_at_the_pictures_center(monkeypatch):
+    monkeypatch.setattr(topcam, "SETTLE_SECONDS", 0.0)
+    store: dict = {"top": {"size": "640x360", "roll": 180.0}}
+    said = []
+    camera = TopCamera(lambda: store, lambda: None, lambda: None, lambda kind, text: said.append((kind, text)))
+    head = Head((7.0, 7.0))
+    camera.client = TexturedCamera(head, 0.024, 180.4, False, lens=-0.03)
+    camera.measure_picture(head, 0.0, 31.5, near_roll=180.0)
+    deadline = time.monotonic() + 60.0
+    while camera.progress.state == RUNNING and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert camera.progress.state == "done", (camera.progress.error, said)
+    settings = camera.settings()
+    assert settings.lens is not None and settings.lens["k1"] == pytest.approx(0.03, abs=0.005)
+    assert (settings.lens["k2"], settings.lens["width"], settings.lens["height"]) == (0.0, 640, 360)
+    # The scale at the picture's center, where pcbv's correction leaves it.
+    assert settings.mm_per_px == pytest.approx(0.012, rel=0.003)
+    assert "the lens +0.0" in said[-1][1]
+    # The roll from the whole pictures, where a radial lens bends nothing.
+    assert settings.roll == pytest.approx(180.4, abs=0.02)
+    entry = camera.findings.newest()
+    assert "lens" in {change["name"] for change in entry["changes"]}
+    # The running pcbv was told it at once.
+    assert camera.client.lenses == [settings.lens]

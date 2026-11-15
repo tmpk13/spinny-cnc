@@ -828,7 +828,14 @@ of the wrong size stops it with why.
 with the calibration test's camera pattern (dark dots printed, or bright
 ones a laser marked) filling the picture, measures how the lens bends it
 and corrects every point pcbv reports from then on (kept, sent at every
-start; *Clear lens* forgets it). *Pick* beside *Spots*, *Board pads* or
+start; *Clear lens* forgets it). The top camera's *Measure camera* finds
+the lens too, with no pattern: tiles of its first picture followed into
+the pictures after each head move bend with their distance from the
+picture's center. It keeps the lens (and the scale at the picture's
+center, where the correction leaves it) when the lens takes a tenth or
+more off the tiles' residual, logged with Undo; over a populated board
+the parts' heights blur it, so measure over a flat, textured surface
+where one lies on the bed. *Pick* beside *Spots*, *Board pads* or
 *Edges*, then a click on the camera's picture, keeps that color for what
 the camera looks for: marks and fiducials, the board's pads, or a blank
 board against the bed are then found by color instead of light or dark
