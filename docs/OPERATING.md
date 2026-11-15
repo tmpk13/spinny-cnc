@@ -1065,6 +1065,21 @@ feeder with `pocket` has each pocket looked at before its pick (an empty
 one is passed over), one with `marks` has its marks found once a run and
 its places moved to follow them.
 
+The *Machine view* panel (in the Machine folder) draws the machine from
+above in its file's X and Y: the head's reach (`[motion] travel`), the
+bed boards lie on (`[top_camera] bed`), the board area, the head with
+what the top camera sees, the board where its look put it and the stops
+of the newest search or scan. A drag on it sets the board area (cut to
+the bed), *Board near it* or *only within it* says which, and *Save*
+writes `board_area` and `board_area_only` into the file: near, a search
+with nothing known looks there first and then over the rest of the bed;
+only within, it never looks outside. *Clear area* and *Save* take them
+out again, and with none the whole bed is searched. *Add picture* (a
+photo of the machine from above) and *Add model* (an STL, drawn from
+above) put a picture of the machine under the drawing, kept with the
+machine file; *Drag sets* picks the box either is drawn over, by default
+the travel for a picture and its own coordinates for a model.
+
 With `part_on` in the file's `[vacuum]`, a pick that holds nothing, a
 part not on the nozzle over the bottom camera, one off by too much or of the
 wrong size is let go at `[motion] discard` (or back in its pocket) and
