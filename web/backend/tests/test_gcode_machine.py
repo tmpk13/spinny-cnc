@@ -383,6 +383,27 @@ def test_a_position_is_declared_homed_and_stopped(client):
     assert sent(client, start) == ["M18"] and client.get("/api/state").json()["machine"]["enabled"] is False
 
 
+def test_a_home_lifts_the_nozzles_first_once_this_link_homed_the_machine(client):
+    connect(client, "rig")
+    # The first home: the controller's Z is what it was powered on as, and
+    # a move to the safe height from there could drive the other nozzle
+    # down, so nothing goes out before the home line.
+    client.post("/api/goto", json={"kind": "joint", "h": 2.0})
+    start = len(client.fake.lines)
+    client.post("/api/home", json={})
+    assert sent(client, start) == ["G28", "M114"]
+    # Homed by this link, a nozzle left down goes up before the next home:
+    # the home line moves X and Y where Z stands.
+    client.post("/api/goto", json={"kind": "joint", "h": 2.0})
+    start = len(client.fake.lines)
+    client.post("/api/home", json={})
+    assert sent(client, start) == ["M114", "G0 Z5 F600", "M400", "G28", "M114"]
+    # At the safe height already, the home goes out alone.
+    start = len(client.fake.lines)
+    client.post("/api/home", json={})
+    assert sent(client, start) == ["M114", "G28", "M114"]
+
+
 def test_the_console_sends_a_line_as_typed(client):
     connect(client, "rig")
     assert client.post("/api/command", json={"line": "M114"}).json()["lines"][-1] == "ok"

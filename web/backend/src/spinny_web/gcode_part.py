@@ -33,7 +33,7 @@ from .gcode_link import IDENTIFY, GcodeLinkError, firmware_of
 from .kinematics import check_feed, num
 from .log import log, wire_line, wire_note
 from .openpnp import LINE as GCODE_LINE
-from .openpnp import AXIS_NAMES, GcodeMachine, goto_lines, lifts_leaving, move_line, read_position, safe_line, seesaw_jog
+from .openpnp import AXIS_NAMES, GcodeMachine, goto_lines, lifts_leaving, move_line, move_z, needs_lift, read_position, safe_line, seesaw_jog
 
 if TYPE_CHECKING:
     from .app import GotoBody, JogBody, PositionBody
@@ -422,12 +422,29 @@ class GcodePart:
             self.gcode.busy = "Home"
             self._publish_gcode_state()
             try:
+                self._lift_before_home(machine)
                 self.gcode.command(line, machine.timeout * HOME_TIMEOUTS)
             finally:
                 self.gcode.busy = None
             self.gcode.homed = True
             self._gcode_position(machine)
         return self._publish_gcode_state()
+
+    def _lift_before_home(self, machine: GcodeMachine) -> None:
+        """The nozzles to the safe height before the home line, from either
+        side on a seesaw: a LumenPnP's G28 homes X and Y where Z stands, so
+        a nozzle left down drags across the bed. Only once this link has
+        homed the machine: before that the controller's Z is what it was
+        powered on as (0 wherever the nozzles hang), and a move to the safe
+        height from there could drive the other nozzle down."""
+        if not self.gcode.homed or not machine.position:
+            return
+        z = read_position(self.gcode.command(machine.position, machine.timeout), machine.axes).get("z")
+        if z is None or not needs_lift(machine, z):
+            return
+        self.gcode.command(move_z(machine, machine.safe_z), machine.timeout)
+        if machine.wait:
+            self.gcode.command(machine.wait, machine.timeout * HOME_TIMEOUTS)
 
     def _gcode_realtime(self, action: str) -> dict:
         """The console's and the jog panel's realtime buttons: a reset or a
