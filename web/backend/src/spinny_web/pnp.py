@@ -37,7 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from spinny_laser import machines as machine_files
 
 from .cameras import apply_kept, check_controls
-from .findings import Findings
+from .findings import Findings, FindingsLog, Target
 from .camera import CAPTURE_KEYS, DONE, ERROR, RUNNING, STOPPED, MachineAccess, Spot, look_dict, picture_to_machine, spot_of, wait_settled
 from .kinematics import FOCUS_DECIMALS, coord
 from .link import LinkError, idle_status, settle
@@ -826,8 +826,9 @@ class PickCamera:
         # The last look taken by hand (Look once): what was asked for and
         # what was found, for the page to draw over the picture.
         self.look: dict | None = None
-        # What a routine found and holds for the operator to keep or discard.
-        self.findings = Findings()
+        # Where its routines record what they applied (findings.py): a log
+        # of its own until the backend gives it the shared one.
+        self.findings: Findings = FindingsLog(None).camera(self.log_name, self.findings_target(), busy=lambda: self.routine_active)
         self._thread: threading.Thread | None = None
         self._abort = threading.Event()
         self._lock = threading.Lock()
@@ -841,6 +842,16 @@ class PickCamera:
             return settings
         except ValueError:
             return self.Settings()
+
+    def findings_target(self, machine: Callable[[], str | None] | None = None) -> Target:
+        """The settings as the findings log reads and writes them, None
+        taking a clearable one back to none; `machine` names the G-code
+        machine they belong to."""
+
+        def write(values: dict) -> None:
+            self.update({key: value for key, value in values.items() if value is not None}, tuple(key for key, value in values.items() if value is None))
+
+        return Target(read=lambda: self.settings().model_dump(mode="json"), write=write, machine=machine or (lambda: None))
 
     def update(self, patch: dict, clear: tuple[str, ...] = ()):
         """Keeps new settings, the whole set checked first; `clear` names the
@@ -942,7 +953,8 @@ class PickCamera:
             "frame": frame,
             "routine": progress.to_dict() if progress is not None else None,
             "look": self.look,
-            "finding": self.findings.state(),
+            # The newest result its routines applied, as the log has it.
+            "applied": self.findings.newest(),
         }
 
     def look_once(self, polarity: str, radius: float | None = None) -> dict:
@@ -1089,15 +1101,16 @@ class UpCamera(PickCamera):
 
     # --- the routines -----------------------------------------------------------
 
-    def center_nozzle(self, mover: Mover, step: float, place: CameraPlace | None = None, keep: Callable[[CameraPlace], None] | None = None) -> None:
+    def center_nozzle(self, mover: Mover, step: float, place: CameraPlace | None = None, keep: Callable[[CameraPlace], None] | None = None, target: str | None = None) -> None:
         """Starts the nozzle routine on its own thread; the caller has
         checked that nothing else owns the machine. `place` and `keep` are
         the calibration of the machine the camera sits on, this one's by
-        default."""
+        default, and `target` where the findings log reads what `keep`
+        changed (the camera's own settings by default)."""
         if not (math.isfinite(step) and 0.0 <= step <= MAX_STEP):
             raise ValueError(f"the step must be 0 to {MAX_STEP:g} mm")
         start = place if place is not None else self.place()
-        self._begin("nozzle", NOZZLE_STEPS, mover, lambda progress: self._center(mover, step, progress, start, keep or self._keep_place))
+        self._begin("nozzle", NOZZLE_STEPS, mover, lambda progress: self._center(mover, step, progress, start, keep or self._keep_place, target))
 
     def measure_part(self, mover: Mover) -> None:
         """Starts the part routine on its own thread, over the camera as
@@ -1124,7 +1137,7 @@ class UpCamera(PickCamera):
         if place.height is not None:
             mover.lower(place.height)
 
-    def _center(self, mover: Mover, step: float, progress: RoutineProgress, place: CameraPlace, keep: Callable[[CameraPlace], None]) -> None:
+    def _center(self, mover: Mover, step: float, progress: RoutineProgress, place: CameraPlace, keep: Callable[[CameraPlace], None], target: str | None = None) -> None:
         settings = self.settings()
         self._over_camera(mover, progress, place)
         polarity = settings.nozzle_spot
@@ -1156,12 +1169,14 @@ class UpCamera(PickCamera):
         height = mover.height()
         if height is not None:
             seen.height = round(height, 4)
+        # Kept at once and logged with what it changed (findings.py).
+        before = self.findings.read(target)
         keep(seen)
-        self._message(
-            "info",
+        words = (
             f"nozzle centered over the bottom camera at {mover.describe(seen.position)},"
-            f" {seen.mm_per_px * 1000.0:.1f} um per pixel, roll {seen.roll:+.2f} degrees{', mirrored' if seen.mirror else ''}",
+            f" {seen.mm_per_px * 1000.0:.1f} um per pixel, roll {seen.roll:+.2f} degrees{', mirrored' if seen.mirror else ''}"
         )
+        self._message("info", self.findings.apply("nozzle", words, self.findings.since(before, target), marks={"spot": spot.to_dict()}))
 
     def look_at_part(
         self,
@@ -1225,7 +1240,7 @@ class UpCamera(PickCamera):
             "angle": round(direction, 3) if direction is not None else None,
         }
 
-    def measure_runout(self, mover: Mover, place: CameraPlace, keep: Callable[[CameraPlace], None], rotation_cw: bool = False) -> None:
+    def measure_runout(self, mover: Mover, place: CameraPlace, keep: Callable[[CameraPlace], None], rotation_cw: bool = False, target: str | None = None) -> None:
         """Starts the runout routine on its own thread: the nozzle over the
         camera, its tip found at six angles, and the circle they lie on
         gives how far the tip sits off the turning axis. `rotation_cw` is
@@ -1234,9 +1249,9 @@ class UpCamera(PickCamera):
             raise ValueError("this machine does not turn its nozzle: the runout is measured on a G-code machine")
         if not place.measured:
             raise ValueError("the nozzle is not centered over the bottom camera yet: center it first")
-        self._begin("runout", RUNOUT_STEPS, mover, lambda progress: self._runout(mover, progress, place, keep, rotation_cw))
+        self._begin("runout", RUNOUT_STEPS, mover, lambda progress: self._runout(mover, progress, place, keep, rotation_cw, target))
 
-    def _runout(self, mover: Mover, progress: RoutineProgress, place: CameraPlace, keep: Callable[[CameraPlace], None], rotation_cw: bool) -> None:
+    def _runout(self, mover: Mover, progress: RoutineProgress, place: CameraPlace, keep: Callable[[CameraPlace], None], rotation_cw: bool, target: str | None = None) -> None:
         settings = self.settings()
         self._over_camera(mover, progress, place, 0.0)
         self._step(progress, "turning")
@@ -1281,9 +1296,10 @@ class UpCamera(PickCamera):
             mirror=place.mirror,
             runout=(round(runout[0], 4), round(runout[1], 4)),
         )
+        before = self.findings.read(target)
         keep(kept)
         fit = f", the tips {rms * 1000.0:.0f} um rms off the circle" if rms > 0.0 else ""
-        self._message("info", f"nozzle runout {radius * 1000.0:.0f} um ({turns}){fit}")
+        self._message("info", self.findings.apply("runout", f"nozzle runout {radius * 1000.0:.0f} um ({turns}){fit}", self.findings.since(before, target)))
 
     def _measure(self, mover: Mover, progress: RoutineProgress, place: CameraPlace) -> None:
         self.part_offset = self.look_at_part(mover, place, progress)

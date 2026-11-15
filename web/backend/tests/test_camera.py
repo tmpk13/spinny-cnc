@@ -505,34 +505,46 @@ def test_finding_the_mark_measures_the_offset_the_roll_and_the_scale(client, fak
     assert state["routine"]["state"] == "done" and state["offset"] == pytest.approx(list(truth), abs=0.02)
 
 
-def test_a_find_asked_to_confirm_holds_what_it_measured_until_kept_or_discarded(client, fake):
+def test_a_find_keeps_what_it_measured_at_once_logs_it_and_undo_takes_it_back(client, fake):
     truth = (12.5, -3.25)
     mark = (30.0, 20.0)
     client.backend.camera.set_mark(mark)
     client.backend.camera.client = StandInClient(fake, mark, truth, 0.0, 0.02)
     client.put("/api/camera/settings", json={"offset": [11.0, -2.0], "roll": 0.0, "mm_per_px": 0.0})
-    # Nothing waits to be answered yet.
-    assert client.post("/api/cameras/finding", json={"camera": "head", "keep": True}).status_code == 400
+    assert client.get("/api/findings").json() == {"entries": [], "count": 0}
+    # An older page asking to confirm is answered as any request: nothing waits.
     assert client.post("/api/camera/find", json={"step": 2.0, "confirm": True}).status_code == 200
     state = wait_routine(client)
     assert state["routine"]["state"] == "done", state["routine"]
-    # Measured, held, not kept: the settings are as they were, the finding says what it found.
-    assert state["offset"] == [11.0, -2.0] and state["mm_per_px"] == 0.0
-    finding = state["finding"]
-    assert finding["kind"] == "offset" and "camera offset measured: X +12.5" in finding["text"]
-    assert finding["spot"]["mm"] < 0.03
-    response = client.post("/api/cameras/finding", json={"camera": "head", "keep": True})
+    assert state["offset"] == pytest.approx(list(truth), abs=0.02) and state["mm_per_px"] == pytest.approx(0.02, rel=0.01)
+    entry = state["applied"]
+    assert entry["kind"] == "offset" and entry["camera"] == "head" and "camera offset measured: X +12.5" in entry["text"]
+    assert entry["marks"]["spot"]["mm"] < 0.03 and entry["undoable"] is True and entry["why"] is None
+    changes = {change["name"]: change for change in entry["changes"]}
+    assert changes["offset"]["before"] == [11.0, -2.0] and changes["offset"]["after"] == pytest.approx(list(truth), abs=0.02)
+    assert changes["mm_per_px"]["before"] == 0.0 and changes["mm_per_px"]["label"] == "mm a pixel"
+    listed = client.get("/api/findings", params={"camera": "head"}).json()
+    assert listed["count"] == 1 and listed["entries"][0]["id"] == entry["id"]
+    assert client.get("/api/findings", params={"camera": "top"}).json()["entries"] == []
+    # Undo puts the settings back as they were, and is logged too.
+    response = client.post(f"/api/findings/{entry['id']}/undo")
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["kept"] is True and body["state"]["finding"] is None
-    assert body["state"]["offset"] == pytest.approx(list(truth), abs=0.02) and body["state"]["mm_per_px"] == pytest.approx(0.02, rel=0.01)
-    # Discarded, the offset kept before stays.
-    client.put("/api/camera/settings", json={"offset": [11.0, -2.0]})
-    assert client.post("/api/camera/find", json={"step": 0, "confirm": True}).status_code == 200
-    assert wait_routine(client)["finding"]["kind"] == "offset"
-    discarded = client.post("/api/cameras/finding", json={"camera": "head", "keep": False}).json()
-    assert discarded["kept"] is False and discarded["state"]["offset"] == [11.0, -2.0] and discarded["state"]["finding"] is None
-    assert client.post("/api/cameras/finding", json={"camera": "side", "keep": True}).status_code == 422
+    assert body["camera"] == "head" and body["entry"]["kind"] == "undo" and body["entry"]["undoes"] == entry["id"]
+    assert body["state"]["offset"] == [11.0, -2.0] and body["state"]["mm_per_px"] == 0.0
+    assert body["state"]["applied"]["id"] == body["entry"]["id"]
+    assert client.post(f"/api/findings/{entry['id']}/undo").status_code == 409
+    assert client.post("/api/findings/9999/undo").status_code == 404
+    # Measured again, then changed by hand: the measurement's undo is refused.
+    assert client.post("/api/camera/find", json={"step": 0}).status_code == 200
+    measured = wait_routine(client)["applied"]
+    assert measured["kind"] == "offset" and measured["id"] > body["entry"]["id"]
+    client.put("/api/camera/settings", json={"offset": [1.0, 1.0]})
+    refused = client.post(f"/api/findings/{measured['id']}/undo")
+    assert refused.status_code == 409 and "changed since" in refused.json()["detail"]
+    assert client.get("/api/camera").json()["offset"] == [1.0, 1.0]
+    assert client.get("/api/findings", params={"camera": "side"}).status_code == 422
+    assert client.get("/api/findings", params={"limit": 0}).status_code == 400
 
 
 def test_a_find_without_the_mark_in_view_ends_as_an_error(client, fake):
@@ -971,15 +983,15 @@ def test_the_head_camera_centers_holes_far_apart_and_makes_them_the_alignment_ma
 
     take("bottom left", (0.0, 0.0))
     take("top right", (40.0, 30.0))
-    # Asked to confirm: the features centered are held, the Align marks untouched until kept.
-    assert client.post("/api/camera/refine", json={"job": job.id, "count": 3, "confirm": True}).status_code == 200
+    # Kept at once and logged; Undo puts the Align marks back as they were.
+    assert client.post("/api/camera/refine", json={"job": job.id, "count": 3}).status_code == 200
     state = wait_routine(client)
-    assert state["routine"]["state"] == "done" and state["finding"]["kind"] == "features", state
-    assert len(state["finding"]["points"]) == 3 and "to be the job's camera marks in Align" in state["finding"]["text"]
+    entry = state["applied"]
+    assert state["routine"]["state"] == "done" and entry["kind"] == "features", state
+    assert len(entry["marks"]["points"]) == 3 and "the job's camera marks in Align" in entry["text"] and entry["undo"] == "held"
+    assert len(client.get("/api/align").json()["marks"]) == 3
+    assert client.post(f"/api/findings/{entry['id']}/undo").status_code == 200
     assert client.get("/api/align").json()["marks"] == []
-    kept = client.post("/api/cameras/finding", json={"camera": "head", "keep": True})
-    assert kept.status_code == 200 and len(client.get("/api/align").json()["marks"]) == 3
-    client.delete("/api/align")
     response = client.post("/api/camera/refine", json={"job": job.id, "count": 3})
     assert response.status_code == 200, response.text
     state = wait_routine(client)
@@ -992,6 +1004,11 @@ def test_the_head_camera_centers_holes_far_apart_and_makes_them_the_alignment_ma
         assert mark["machine"] == pytest.approx(list(seen_point(seen, mark["design"])), abs=0.02)
     fit = client.get("/api/align").json()["fit"]
     assert fit["rotation"] == pytest.approx(1.0, abs=0.01) and fit["rms"] < 0.02
+    # Marks changed since (cleared here): the centering's undo is refused.
+    newest = client.get("/api/findings", params={"camera": "head", "limit": 1}).json()["entries"][0]
+    client.delete("/api/align")
+    refused = client.post(f"/api/findings/{newest['id']}/undo")
+    assert refused.status_code == 409 and "the Align marks changed since" in refused.json()["detail"]
 
 
 def _png(path, width: int, height: int, pixel) -> None:
@@ -1203,15 +1220,21 @@ def test_a_blank_boards_corner_is_taken_by_its_edges_and_colors_are_picked_per_i
     assert "the board turned +2.000 degrees" in entry["note"]
     drawn = client.get(f"/api/camlog/{entry['files']['overlay']}").text
     assert "2 straight edges, numbered strongest first; their corner at x 540.0 y 435.0 px" in drawn
-    # Asked to confirm: the corner is held with the edges and where they meet, not taken until kept.
-    held = client.post("/api/camera/edge-corner", json={"job": job.id, "corner": "top right", "confirm": True})
-    assert held.status_code == 200, held.text
-    finding = held.json()["finding"]
-    assert finding["kind"] == "corner" and len(finding["lines"]) == 2 and finding["size"] == [1280.0, 720.0]
-    assert finding["points"][0]["label"] == "top right" and finding["corner"] == pytest.approx([540.0, 435.0], abs=0.01)
-    assert [point["corner"] for point in held.json()["board_look"]["corners"]["points"]] == ["bottom left"]
-    kept = client.post("/api/cameras/finding", json={"camera": "head", "keep": True}).json()["state"]
-    assert [point["corner"] for point in kept["board_look"]["corners"]["points"]] == ["bottom left", "top right"]
+    # Taken at once and logged with the edges and where they meet; Undo
+    # takes the corner back, and is refused once the corners changed since.
+    taken = client.post("/api/camera/edge-corner", json={"job": job.id, "corner": "top right"})
+    assert taken.status_code == 200, taken.text
+    entry = taken.json()["applied"]
+    marks = entry["marks"]
+    assert entry["kind"] == "corner" and len(marks["lines"]) == 2 and marks["size"] == [1280.0, 720.0]
+    assert marks["points"][0]["label"] == "top right" and marks["corner"] == pytest.approx([540.0, 435.0], abs=0.01)
+    assert [point["corner"] for point in taken.json()["board_look"]["corners"]["points"]] == ["bottom left", "top right"]
+    undone = client.post(f"/api/findings/{entry['id']}/undo").json()["state"]
+    assert [point["corner"] for point in undone["board_look"]["corners"]["points"]] == ["bottom left"]
+    again = client.post("/api/camera/edge-corner", json={"job": job.id, "corner": "top right"}).json()["applied"]
+    client.post("/api/camera/edge-corner", json={"job": job.id, "corner": "bottom right"})
+    refused = client.post(f"/api/findings/{again['id']}/undo")
+    assert refused.status_code == 409 and "corners changed since" in refused.json()["detail"]
     # A picture with no corner in it: refused, and kept in the log as the one to see.
     stand_in.blank = True
     refused = client.post("/api/camera/edge-corner", json={"job": job.id, "corner": "top left"})

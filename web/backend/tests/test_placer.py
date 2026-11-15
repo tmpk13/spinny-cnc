@@ -620,37 +620,43 @@ def test_the_top_camera_measures_its_offset_and_finds_the_fiducials(client):
     assert r2["at"] == pytest.approx(list(rough), abs=0.01) and r2["by"] == "camera"
 
 
-def test_the_top_cameras_offset_and_fiducials_asked_to_confirm_wait_to_be_kept(client):
+def test_the_top_cameras_offset_and_fiducials_are_kept_at_once_logged_and_undone(client):
     job_id = rig(client, profile(rest=TOP))
     with_top_camera(client, job_id)
     client.post("/api/command", json={"line": "G0 X120 Y80"})
     client.post("/api/pnp/top/mark")
-    assert client.post("/api/pnp/top/offset", json={"step": 1.0, "confirm": True}).status_code == 200
+    assert client.post("/api/pnp/top/offset", json={"step": 1.0}).status_code == 200
     assert routine_done(client, "/api/pnp/placing")["state"] == "done"
     top = client.get("/api/pnp/placing").json()["top"]
-    # Measured and held: no offset kept yet, the finding says it and shows the mark found.
-    assert top["offset"] is None and top["mm_per_px"] == 0.0
-    assert top["finding"]["kind"] == "offset" and "the top camera looks from" in top["finding"]["text"] and "dx" in top["finding"]["spot"]
-    kept = client.post("/api/cameras/finding", json={"camera": "top", "keep": True})
-    assert kept.status_code == 200, kept.text
-    top = kept.json()["state"]["top"]
-    assert top["finding"] is None and top["offset"] == pytest.approx(list(CAMERA_OFFSET), abs=0.01)
-    # The fiducials found are held as points on the machine, the references untouched until kept.
+    # Measured and kept, logged with the values before and the mark found.
+    assert top["offset"] == pytest.approx(list(CAMERA_OFFSET), abs=0.01)
+    entry = top["applied"]
+    assert entry["kind"] == "offset" and entry["camera"] == "top" and "the top camera looks from" in entry["text"] and "dx" in entry["marks"]["spot"]
+    changes = {change["name"]: change for change in entry["changes"]}
+    assert changes["offset"]["before"] is None and changes["mm_per_px"]["before"] == 0.0 and entry["machine"] is not None
+    # The fiducials found become references at once; Undo brings back the
+    # reference by hand they replaced, and forgets the fiducials shown.
     rough = true_place(job_places(client, job_id)["R1"])
     client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [rough[0] + 0.4, rough[1] - 0.3]})
-    assert client.post("/api/pnp/fiducials", json={"job": job_id, "confirm": True}).status_code == 200
+    assert client.post("/api/pnp/fiducials", json={"job": job_id}).status_code == 200
     assert routine_done(client, "/api/pnp/placing")["state"] == "done"
     state = client.get("/api/pnp/placing").json()
-    assert [entry["label"] for entry in state["top"]["finding"]["points"]] == ["FID1", "FID2"]
-    assert "2 fiducials found" in state["top"]["finding"]["text"]
-    assert not any(entry.get("by") == "fiducial" for entry in state["references"])
-    state = client.post("/api/cameras/finding", json={"camera": "top", "keep": True}).json()["state"]
-    assert {entry["ref"] for entry in state["references"] if entry.get("by") == "fiducial"} == {"FID1", "FID2"}
-    # Discarded, nothing is kept and nothing waits.
-    assert client.post("/api/pnp/fiducials", json={"job": job_id, "confirm": True}).status_code == 200
-    assert routine_done(client, "/api/pnp/placing")["state"] == "done"
-    assert client.post("/api/cameras/finding", json={"camera": "top", "keep": False}).json()["state"]["top"]["finding"] is None
-    assert client.post("/api/cameras/finding", json={"camera": "top", "keep": False}).status_code == 400
+    found = state["top"]["applied"]
+    assert found["kind"] == "fiducials" and [point["label"] for point in found["marks"]["points"]] == ["FID1", "FID2"]
+    assert "2 fiducials found" in found["text"]
+    assert {entry["ref"] for entry in state["references"]} == {"FID1", "FID2"}
+    [change] = found["changes"]
+    assert change["target"] == "references" and change["name"] == job_id and [ref["ref"] for ref in change["before"]] == ["R1"]
+    undone = client.post(f"/api/findings/{found['id']}/undo")
+    assert undone.status_code == 200, undone.text
+    state = undone.json()["state"]
+    assert [entry["ref"] for entry in state["references"]] == ["R1"] and state["top"]["fiducials"] is None
+    # The offset's undo takes the camera back to unmeasured.
+    top = client.post(f"/api/findings/{entry['id']}/undo").json()["state"]["top"]
+    assert top["offset"] is None and top["mm_per_px"] == 0.0
+    assert top["applied"]["kind"] == "undo" and top["applied"]["undoes"] == entry["id"]
+    log = client.get("/api/findings", params={"camera": "top"}).json()["entries"]
+    assert [item["kind"] for item in log] == ["undo", "undo", "fiducials", "offset"]
 
 
 def test_home_by_fiducial_homes_then_ties_the_numbers_to_the_bed(client):
@@ -811,7 +817,7 @@ def test_the_top_camera_searches_a_box_for_the_board_and_keeps_its_place(client,
     assert unloaded == {"job": None, "threshold": boardlook.THRESHOLD, "corner_mm": boardlook.CORNER_MM, "method": "vote", "board_stretch": False, "corners": None}
 
 
-def test_a_search_from_places_far_apart_offers_the_top_camera_s_roll_and_scale_to_keep(client, quick_search, monkeypatch):
+def test_a_search_from_places_far_apart_keeps_the_top_camera_s_roll_and_scale_with_an_undo(client, quick_search, monkeypatch):
     # The fake board is small: its finding stop and its check lie closer
     # than a real board's do.
     monkeypatch.setattr(boardlook, "PLACES_MM", 5.0)
@@ -832,12 +838,16 @@ def test_a_search_from_places_far_apart_offers_the_top_camera_s_roll_and_scale_t
     # the head's moves, the board's own, and the roll 0.4 degrees off.
     assert look["found"] is True and look["estimate"]["rotation"] == pytest.approx(2.0, abs=0.01)
     assert look["estimate"]["roll_off"] == pytest.approx(0.4, abs=0.01)
-    finding = top["finding"]
-    assert finding["kind"] == "picture" and "roll at 1.90 degrees (1.50 in use)" in finding["text"] and "16.10 um a pixel" in finding["text"]
-    response = client.post("/api/cameras/finding", json={"camera": "top", "keep": True})
+    # Kept at once, logged with the values in use before; Undo takes them back.
+    entry = top["applied"]
+    assert entry["kind"] == "picture" and "roll at 1.90 degrees (1.50 in use)" in entry["text"] and "16.10 um a pixel" in entry["text"]
+    assert top["roll"] == pytest.approx(1.9, abs=0.01) and top["mm_per_px"] == pytest.approx(0.0161)
+    changes = {change["name"]: (change["before"], change["after"]) for change in entry["changes"]}
+    assert changes["roll"][0] == 1.5 and changes["mm_per_px"] == (0.02, pytest.approx(0.0161))
+    response = client.post(f"/api/findings/{entry['id']}/undo")
     assert response.status_code == 200, response.text
     settings = client.get("/api/pnp/placing").json()["top"]
-    assert settings["roll"] == pytest.approx(1.9, abs=0.01) and settings["mm_per_px"] == pytest.approx(0.0161) and settings["finding"] is None
+    assert settings["roll"] == 1.5 and settings["mm_per_px"] == 0.02 and settings["applied"]["kind"] == "undo"
 
 
 def test_a_top_camera_with_only_the_file_s_scale_searches_by_it(client, quick_search):

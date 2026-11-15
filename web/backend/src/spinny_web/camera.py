@@ -28,7 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from spinny_laser import machines as machine_files
 
 from .cameras import apply_kept, check_controls
-from .findings import Finding, Findings
+from .findings import Findings, FindingsLog, Target
 from .kinematics import FOCUS_DECIMALS, coord
 from .link import Link, LinkError, idle_status, settle
 from .log import log
@@ -360,8 +360,9 @@ class Camera:
         self._publish = publish
         self._message = message
         self.client = VisionClient()
-        # What a routine found and holds for the operator to keep or discard.
-        self.findings = Findings()
+        # Where its routines record what they applied (findings.py): a log
+        # of its own until the backend gives it the shared one.
+        self.findings: Findings = FindingsLog(None).camera("head", self.findings_target(), busy=lambda: self.routine_active)
         # The job whose board pcbv looks for, and the path it was loaded from.
         self.board_job: str | None = None
         self._board_path: str | None = None
@@ -383,6 +384,10 @@ class Camera:
             return settings
         except ValueError:
             return CameraSettings()
+
+    def findings_target(self) -> Target:
+        """The settings as the findings log reads and writes them."""
+        return Target(read=lambda: self.settings().model_dump(mode="json"), write=self.update)
 
     def update(self, patch: dict) -> CameraSettings:
         """Keeps new settings; the whole set is checked first. A running
@@ -538,7 +543,8 @@ class Camera:
             "frame": frame,
             "pose": pose,
             "routine": progress.to_dict() if progress is not None else None,
-            "finding": self.findings.state(),
+            # The newest result its routines applied, as the log has it.
+            "applied": self.findings.newest(),
         }
 
     def shutdown(self) -> None:
@@ -550,10 +556,10 @@ class Camera:
 
     # --- the find routine -----------------------------------------------------
 
-    def find(self, access: MachineAccess, step: float, confirm: bool = False) -> None:
+    def find(self, access: MachineAccess, step: float) -> None:
         """Starts the routine on its own thread; the caller has checked
-        that nothing else owns the machine. With `confirm` what it measures
-        is held as a finding to keep or discard rather than kept."""
+        that nothing else owns the machine. What it measures is kept at
+        once and logged (findings.py)."""
         if not (math.isfinite(step) and 0.0 <= step <= MAX_STEP):
             raise ValueError(f"the step must be 0 to {MAX_STEP:g} mm")
         mark = self.mark
@@ -568,7 +574,7 @@ class Camera:
             self._looks = 0
             self.progress = RoutineProgress()
             progress = self.progress
-            self._thread = threading.Thread(target=self._find, args=(access, mark, step, progress, confirm), name="camera-find", daemon=True)
+            self._thread = threading.Thread(target=self._find, args=(access, mark, step, progress), name="camera-find", daemon=True)
             self._thread.start()
         self._publish()
 
@@ -619,7 +625,7 @@ class Camera:
         finally:
             self._publish()
 
-    def _find(self, access: MachineAccess, mark: Point, step: float, progress: RoutineProgress, confirm: bool = False) -> None:
+    def _find(self, access: MachineAccess, mark: Point, step: float, progress: RoutineProgress) -> None:
         link = access.link
         restarts = link.restarts
         settings = self.settings()
@@ -665,15 +671,9 @@ class Camera:
                 f"camera offset measured: X {found[0]:+.3f} Y {found[1]:+.3f} mm from the tool,"
                 f" {mm_per_px * 1000.0:.1f} um per pixel, roll {roll:+.2f} degrees"
             )
-
-            def keep(found=found, roll=roll, mm_per_px=mm_per_px) -> str:
-                self.update({"offset": found, "roll": roll, "mm_per_px": mm_per_px})
-                return words
-
-            if confirm:
-                # The mark centered in the picture is what it measured.
-                self.findings.hold(Finding("offset", words, keep, {"spot": spot.to_dict()}))
-            said = f"{words}: keep or discard it under the picture" if confirm else keep()
+            # Kept at once and logged, the mark centered in the picture
+            # drawn while the page offers its Undo.
+            said = self.findings.keep("offset", words, {"offset": found, "roll": roll, "mm_per_px": mm_per_px}, marks={"spot": spot.to_dict()})
             self._step(progress, "done", progress.total)
             progress.state = DONE
             self._message("info", said)

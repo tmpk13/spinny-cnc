@@ -17,7 +17,7 @@ backend's state and publishing as theirs."""
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from fastapi import HTTPException
 
@@ -41,7 +41,7 @@ from .boardlook import (
     search_stops,
 )
 from .feederbus import BusError, FeederBus, slot_place
-from .findings import Finding
+from .findings import Target, UndoRefused
 from .gcode_link import GcodeLinkError, GcodeMover
 from .gcode_part import HOME_TIMEOUTS
 from .kinematics import num
@@ -70,7 +70,7 @@ if TYPE_CHECKING:
         TopSettingsBody,
     )
 
-# A top camera search that found its board from looks far apart offers the
+# A top camera search that found its board from looks far apart keeps the
 # roll it measured once that is this far from the roll in use, degrees, or
 # whenever the camera's scale was not measured.
 PICTURE_ROLL_DEG = 0.05
@@ -80,6 +80,28 @@ PICTURE_ROLL_DEG = 0.05
 # pictures at half the true scale with a high share of their pads paired;
 # the design keeps those out while a camera somewhat off it still locks.
 DESIGN_SCALE_SPREAD = 1.5
+
+
+def take_corner(look, job_id: str, name: str, job_point: tuple[float, float], machine: tuple[float, float], middle: tuple[float, float], angle: float | None, by: str = "edges") -> Callable[[], None]:
+    """Takes a corner into a camera's look for a board (boardlook's
+    add_corner) and answers its undo for the findings log: the look's
+    corners put back as they were, refused (UndoRefused) once they changed
+    since. Corners of another job's board, which the corner taken dropped,
+    are not brought back: their board's middle is not known here."""
+    before_job = look.corners_job
+    before = look.corners_of(before_job)
+    look.add_corner(job_id, name, job_point, machine, middle, angle, by)
+    after = look.corners_of(job_id)
+
+    def undo() -> None:
+        if look.corners_job != job_id or look.corners_of(job_id) != after:
+            raise UndoRefused("the board's corners changed since: take the corner again, or clear the corners")
+        look.clear_corners()
+        if before_job == job_id:
+            for corner in before:
+                look.add_corner(job_id, corner.name, corner.job, corner.machine, middle, corner.angle, corner.by)
+
+    return undo
 
 
 class PlacingPart:
@@ -228,6 +250,58 @@ class PlacingPart:
             except (PnpError, VisionError, ValueError) as exc:
                 self.publish_message("error", f"{machine.name}: the {camera.label} did not take the file's settings: {exc}")
 
+    def _up_place_target(self) -> Target:
+        """The up camera's place on the G-code machine (what centering the
+        nozzle and the runout keep) as the findings log reads and writes
+        it, None taking a value away."""
+
+        def read() -> dict:
+            kept = self._placing_config().get("camera")
+            return dict(kept) if isinstance(kept, dict) else {}
+
+        def write(values: dict) -> None:
+            with self._config_lock:
+                config = self._placing_config()
+                kept = dict(config["camera"]) if isinstance(config.get("camera"), dict) else {}
+                for key, value in values.items():
+                    if value is None:
+                        kept.pop(key, None)
+                    else:
+                        kept[key] = value
+                config["camera"] = kept
+            self._save_config()
+            self.publish_placing()
+
+        return Target(read=read, write=write, machine=self._placing_id)
+
+    def _references_target(self) -> Target:
+        """The board's references on the G-code machine as the findings log
+        reads and writes them: each job's list, by its id. A job's list
+        written without the fiducials found also forgets the fiducials the
+        top camera shows found for it."""
+
+        def read() -> dict:
+            by_job: dict[str, list] = {}
+            for entry in self._placing_config().get("references", []):
+                if isinstance(entry, dict) and isinstance(entry.get("job"), str):
+                    by_job.setdefault(entry["job"], []).append(dict(entry))
+            return by_job
+
+        def write(values: dict) -> None:
+            with self._config_lock:
+                config = self._placing_config()
+                kept = [entry for entry in config.get("references", []) if not (isinstance(entry, dict) and entry.get("job") in values)]
+                for entries in values.values():
+                    kept.extend(dict(entry) for entry in entries or [])
+                config["references"] = kept
+            shown = self.top.fiducials
+            if shown is not None and shown.get("job") in values and not any(entry.get("by") == "fiducial" for entry in values[shown["job"]] or []):
+                self.top.fiducials = None
+            self._save_config()
+            self.publish_placing()
+
+        return Target(read=read, write=write, machine=self._placing_id, label=lambda job: f"the board's references (job {job})")
+
     def _keep_up_place(self, place: CameraPlace) -> None:
         kept = place.to_dict()
         # The height is the file's [up_camera] z, read from it every time.
@@ -242,7 +316,7 @@ class PlacingPart:
         moves; on the up camera's routine thread."""
         machine = self._placing_idle()
         mover = GcodeMover(self.gcode, machine, aborted=self.pnp.aborting)
-        self.pnp.center_nozzle(mover, step, place=self._up_place(machine), keep=self._keep_up_place)
+        self.pnp.center_nozzle(mover, step, place=self._up_place(machine), keep=self._keep_up_place, target="up place")
         return self.placing_state()
 
     def pnp_runout(self) -> dict:
@@ -250,7 +324,7 @@ class PlacingPart:
         the up camera; on the up camera's routine thread."""
         machine = self._placing_idle()
         mover = GcodeMover(self.gcode, machine, aborted=self.pnp.aborting)
-        self.pnp.measure_runout(mover, self._up_place(machine), self._keep_up_place, machine.rotation_cw)
+        self.pnp.measure_runout(mover, self._up_place(machine), self._keep_up_place, machine.rotation_cw, target="up place")
         return self.placing_state()
 
     def pnp_camera_place(self, body: PnpCameraBody) -> dict:
@@ -485,9 +559,10 @@ class PlacingPart:
     def _offer_top_picture(self, machine: GcodeMachine, found, scale: float | None) -> None:
         """A board found from looks far apart says the top camera's roll
         (the roll in use plus the guess's `roll_off`) and pcbv its scale:
-        held as a finding to keep under the picture when they differ from
-        the camera's settings (by 0.05 degrees, or a scale not measured), so
-        the picture is measured without a mark. The offset still needs one."""
+        kept at once and logged (findings.py, Undo takes them back) when
+        they differ from the camera's settings (by 0.05 degrees, or a scale
+        not measured), so the picture is measured without a mark. The
+        offset still needs one."""
         roll_off = getattr(found, "roll_off", None)
         if found is None or roll_off is None or not scale or scale <= 0.0:
             return
@@ -500,12 +575,7 @@ class PlacingPart:
             f"the board's turn from the head's moves puts the top camera's roll at {roll:.2f} degrees"
             f" ({in_use:.2f} in use) and pcbv its scale at {scale * 1000.0:.2f} um a pixel"
         )
-
-        def keep() -> str:
-            self.top.update({"mm_per_px": scale, "roll": roll})
-            return f"the top camera's roll {roll:.2f} degrees and scale {scale * 1000.0:.2f} um a pixel kept"
-
-        self.top.findings.hold(Finding("picture", words, keep))
+        self.top._message("info", self.top.findings.keep("picture", words, {"mm_per_px": scale, "roll": roll}))
 
     def top_scan(self, body: BoardScanBody) -> dict:
         """Moves the top camera over the whole board where a rough place
@@ -666,15 +736,14 @@ class PlacingPart:
         corner, rotation, marks = self._edge_corner(self.top.client, "top", self.top_look, body.corner, frame, settings)
         middle, _ = self._board_size(job)
         words = f"{body.corner} corner found by its edges at {corner[0]:.3f}, {corner[1]:.3f} mm, the board turned {rotation:+.3f} degrees"
-
-        def keep() -> str:
-            self.top_look.add_corner(job.id, body.corner, point, corner, middle, rotation, "edges")
-            # A corner taken is also one of the board's references.
-            self._keep_corner(job.id, body.corner, point, corner, rotation)
-            self.publish_placing()
-            return words
-
-        self.publish_message("info", self._found(self.top.findings, body.confirm, Finding("corner", words, keep, {**marks, "points": [{"at": list(corner), "label": body.corner}]})))
+        # Taken at once and logged: the look's corners come back by an undo
+        # this backend run holds, the references by their values.
+        before = self.top.findings.read("references")
+        undo = take_corner(self.top_look, job.id, body.corner, point, corner, middle, rotation)
+        # A corner taken is also one of the board's references.
+        self._keep_corner(job.id, body.corner, point, corner, rotation)
+        changes = self.top.findings.since(before, "references", (job.id,))
+        self.publish_message("info", self.top.findings.apply("corner", words, changes, {**marks, "points": [{"at": list(corner), "label": body.corner}]}, undo))
         return self.publish_placing()
 
     def top_corners_clear(self) -> dict:
@@ -700,11 +769,11 @@ class PlacingPart:
         self.top.update({"mark_at": (float(here["x"]), float(here["y"]))})
         return self.publish_placing()
 
-    def top_offset(self, step: float, confirm: bool = False) -> dict:
+    def top_offset(self, step: float) -> dict:
         machine = self._placing_idle()
         mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
         profile = machine.top
-        self.top.measure_offset(mover, step, profile.z if profile is not None else None, profile.offset if profile is not None else None, confirm)
+        self.top.measure_offset(mover, step, profile.z if profile is not None else None, profile.offset if profile is not None else None)
         return self.placing_state()
 
     def top_measure(self, step: float = 0.0, approach: float | None = None, settle: float = 0.0) -> dict:
@@ -793,17 +862,17 @@ class PlacingPart:
         guess = self._board_fit(body.job, parts)
         mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
 
-        def said(found: list[Found]):
+        def done(found: list[Found]) -> str:
             fit = fiducial_fit(found, guess.rotation)
             rms = f", {fit.rms * 1000.0:.0f} um rms" if len(found) > 1 else ""
-            return fit, f"{len(found)} fiducials found: the board is turned {fit.rotation:+.3f} degrees on the machine{rms}"
-
-        def done(found: list[Found]) -> str:
-            fit, words = said(found)
+            words = f"{len(found)} fiducials found: the board is turned {fit.rotation:+.3f} degrees on the machine{rms}"
+            # Kept at once and logged with the references they replaced.
+            before = self.top.findings.read("references")
             self._keep_fiducials(body.job, found, fit)
-            return words
+            points = [{"at": list(entry.seen), "label": entry.ref} for entry in found]
+            return self.top.findings.apply("fiducials", words, self.top.findings.since(before, "references", (body.job,)), {"points": points})
 
-        self.top.find_fiducials(mover, fiducials, guess.apply, top.fiducial, top.within, top.z, done, confirm=body.confirm, describe=lambda found: said(found)[1])
+        self.top.find_fiducials(mover, fiducials, guess.apply, top.fiducial, top.within, top.z, done)
         return self.placing_state()
 
     def _keep_fiducials(self, job_id: str, found: list[Found], fit) -> None:

@@ -443,6 +443,17 @@ def test_the_up_camera_on_the_device_centers_the_nozzle_and_corrects_each_place(
     assert placed["mm_per_px"] == pytest.approx(0.01, rel=0.01) and placed["height"] == -4.0
     # The routine moved the G-code machine.
     assert client.backend.pnp.target == "gcode"
+    # The place it kept on the machine is logged as the bottom camera's;
+    # Undo forgets it, as it was before, and the undo's undo keeps it again.
+    entry = client.get("/api/pnp").json()["applied"]
+    assert entry["kind"] == "nozzle" and entry["camera"] == "up" and entry["machine"] == "tray" and "spot" in entry["marks"]
+    changes = {change["name"]: change for change in entry["changes"]}
+    assert changes["position"]["target"] == "up place" and changes["position"]["before"] is None
+    undone = client.post(f"/api/findings/{entry['id']}/undo").json()
+    assert undone["camera"] == "up" and undone["state"]["applied"]["kind"] == "undo"
+    assert client.get("/api/pnp/placing").json()["camera"]["measured"] is False
+    client.post(f"/api/findings/{undone['entry']['id']}/undo")
+    assert client.get("/api/pnp/placing").json()["camera"]["position"] == pytest.approx([150.0, 30.0], abs=0.02)
     # A reference, then a run: U1 (from the tray, looked at) lands where
     # its center does, the offset turned with the nozzle.
     client.post("/api/pnp/references", json={"job": job.id, "ref": "R2", "at": [100.0, 60.0]})

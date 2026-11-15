@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 import threading
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 from spinny_laser import align as fitting
 from spinny_laser import pads as board_pads
@@ -164,6 +164,27 @@ class Alignment:
             self._for(job.id)
             self.marks = [mark for mark in self.marks if mark.source != CAMERA]
             self.marks.extend(Mark(design=design, machine=machine, source=CAMERA, kind=kind) for design, machine in pairs)
+            self._fit()
+        return self.state()
+
+    def snapshot(self) -> tuple[str | None, list[Mark]]:
+        """The job and copies of its marks as they are now, to put back with `restore`."""
+        with self._lock:
+            return self.job, [replace(mark) for mark in self.marks]
+
+    def restore(self, snapshot: tuple[str | None, list[Mark]], expected: tuple[str | None, list[Mark]]) -> dict:
+        """The job and marks `snapshot` took put back, when the marks now are
+        still those `expected` took (their fit's residuals aside); a
+        ValueError when they changed since."""
+
+        def key(mark: Mark) -> tuple:
+            return (mark.design, mark.machine, mark.source, mark.kind, mark.distance, mark.angle)
+
+        with self._lock:
+            if self.job != expected[0] or [key(mark) for mark in self.marks] != [key(mark) for mark in expected[1]]:
+                raise ValueError("the Align marks changed since")
+            self.job = snapshot[0]
+            self.marks = [replace(mark) for mark in snapshot[1]]
             self._fit()
         return self.state()
 
