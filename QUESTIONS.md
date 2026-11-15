@@ -288,3 +288,11 @@ Why it matters: folders, stacks, side by side, named layouts and peeking are cod
 - B. Retire it once the screens fit their budget: less code, and every page looks as the docs say.
 Applied: A, in 1599949 (docs/UI_REDESIGN.md).
 Answer:
+
+## Q48. How should the LumenPnP's 0.13 degrees out-of-square X and Y be taken out?
+Why it matters: up to 0.23 mm across a 100 mm board, in every look and every placement; Measure camera and a survey fit both measured it (docs/CV_REVIEW.md).
+- A. In the G-code link, for every move and position read, from a machine file key (OpenPnP's non-squareness factor) (recommended): no firmware change, but every place stored in machine numbers (camera offset, bottom camera, feeders, fiducials) moves by up to 0.9 mm at the far end of Y and is measured again once.
+- B. Marlin's SKEW_CORRECTION with M852: the firmware does it for every move, jogs too; the stock Lumen build has it off, so a rebuilt and flashed firmware.
+- C. Leave it: placements carry it.
+Applied: none yet; it moves every stored place, so it waits for an answer.
+Answer:
