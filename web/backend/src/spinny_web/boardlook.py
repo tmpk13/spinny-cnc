@@ -156,6 +156,20 @@ LOCK_SECONDS = 2.5
 # search makes before it gives up.
 CHECK_LOOKS = 3
 MAX_CHECKS = 3
+# A stop of a look that counts pcbv's searches (the posterior, with the
+# camera's scale known) ends on evidence before its clocks: with no lock
+# once pcbv ran this many searches on settled frames there, and with a
+# lock at the least match or better once pcbv tracked it this many poses
+# with no new search, since searches of one picture pool into one view
+# (posterior.py) and tracked poses bring nothing new. pcbv searches a
+# frame at a time when it holds no lock, about 30 a second. On a LumenPnP
+# with the scale known every stop that locked did so within 4 searches (59
+# stops), while six of 18 searches with the place known spent 5 to 27 s
+# waiting out LOCK_SECONDS and STOP_SECONDS. A weak lock is not ended
+# on: pcbv drops it and searches again (one tracked for 0.3 s gave way to
+# the right place).
+STOP_SEARCHES = 6
+TRACKED_POSES = 2
 # The speed a G-code machine's head is taken to move at when a place it is
 # seen at changed, mm/s, for when the move ends: lower than any feed, so the
 # wait is long enough.
@@ -783,6 +797,28 @@ class Consensus:
         """Whether two estimates put the board in one place, within the
         agreement looks of one guess have."""
         return self._near(a, b)
+
+    def agrees_here(self, look: Estimate, other: Estimate) -> bool:
+        """Whether `other` puts the board point `look` saw under its
+        picture's center where that center was, within the agreement: the
+        point a picture places best. A pose's own turn and middle come from
+        its corners, extrapolated past its pads (on a LumenPnP a right lock
+        read the board's turn as -2.2 degrees, truth 0.17, and its stop
+        never agreed with the place leading); they are not compared. A
+        look without its point or place is compared whole (agrees)."""
+        if look.seen is None or look.place is None:
+            return self.agrees(look, other)
+        return math.dist(other.apply(look.seen), look.place) <= self.agree_mm
+
+    # Whether the look's evidence comes once per pcbv search (the
+    # posterior) rather than once per pose (the vote): a stop then ends on
+    # the searches made there (StopEnd).
+    counts_searches = False
+
+    def counted_search(self, frame: PictureFrame) -> int | None:
+        """pcbv's number of the search the newest pose brought as evidence
+        at `frame`'s place; None when it brought none there."""
+        return None
 
     def _settle(self) -> None:
         """Sorts the estimates into guesses: the estimate with the most
@@ -1542,29 +1578,117 @@ def quick_first(box: Box, view: tuple[float, float], coarse: float) -> tuple[int
     return len(_lattice(x0, y0, x1, y1, step_x, step_y)), max(step_x, step_y)
 
 
+class StopEnd:
+    """When the look at one stop ends, told pose by pose (`see`, with the
+    pose's kind as BoardLook.sample says it and the time): `found` once the
+    board is found; without `check`, `likely` once the posterior leads with
+    this stop's lock but cannot call it found from one place
+    (Posterior.worth_checking); with `check` (a place found elsewhere)
+    `agreed` once CHECK_LOOKS looks here agree with it (_agrees),
+    `disagreed` once as many put it elsewhere. A look whose evidence comes
+    once per pcbv search (counts_searches) ends it on evidence too: `no
+    lock` once pcbv ran STOP_SEARCHES searches on the stop's settled
+    pictures without a lock, `searched` once a lock at the least match or
+    better is tracked TRACKED_POSES poses with no new search; neither
+    while a guess waits for another independent lock (wants_another_lock). The
+    clocks from `began` end it at the latest: `no lock` without a lock
+    after LOCK_SECONDS, `time up` after STOP_SECONDS, each past the
+    camera's settle time. The replays of search records use it on their
+    poses (searchreport.py)."""
+
+    def __init__(self, consensus: Consensus, frame: PictureFrame, check: Estimate | None, began: float) -> None:
+        self.consensus = consensus
+        self.frame = frame
+        self.check = check
+        self.began = began
+        self.locked = False
+        self.agreed = 0
+        self.disagreed = 0
+        # pcbv's numbers of the first and newest searches brought here, and
+        # the poses since the newest that tracked a lock.
+        self.first: int | None = None
+        self.newest: int | None = None
+        self.tracked = 0
+
+    @property
+    def searches(self) -> int:
+        """The searches pcbv ran from the first brought here to the newest:
+        poses are read slower than pcbv searches, so some are not read."""
+        return 0 if self.first is None or self.newest is None else self.newest - self.first + 1
+
+    def _agrees(self, look: Estimate, other: Estimate) -> bool:
+        """A look agrees with a place when it puts the board point under
+        its picture's center where the place does (agrees_here), or the
+        board's middle and turn where the place does (agrees): a pose's
+        turn can be off (the first), and so can a place found from one
+        picture's poses (the second; on a LumenPnP a place found 0.8
+        degrees off put a check 30 mm away 0.7 mm off its point). A wrong
+        place, a pitch of a repeated circuit away, fails both."""
+        return self.consensus.agrees_here(look, other) or self.consensus.agrees(look, other)
+
+    def see(self, seen: str, now: float) -> str | None:
+        consensus = self.consensus
+        check = self.check
+        if check is None and consensus.found:
+            return "found"
+        view = consensus.view
+        strong = seen == "used" and view is not None and view.match >= MIN_MATCH
+        if check is None and seen == "used" and getattr(consensus, "worth_checking", False):
+            best = consensus.best
+            if view is not None and best is not None and self._agrees(view, best):
+                return "likely"
+        if seen == "used":
+            # A weak lock (under the least match) does not hold the stop
+            # past the lock time: the posterior weighs it, the vote refuses it.
+            if view is None or view.match >= MIN_MATCH:
+                self.locked = True
+            if check is not None and strong:
+                if self._agrees(view, check):
+                    self.agreed += 1
+                else:
+                    self.disagreed += 1
+                if self.agreed >= CHECK_LOOKS:
+                    return "agreed"
+                if self.disagreed >= CHECK_LOOKS:
+                    return "disagreed"
+        if consensus.counts_searches:
+            number = consensus.counted_search(self.frame)
+            if number is not None:
+                self.first = number if self.first is None else min(self.first, number)
+                self.newest = number if self.newest is None else max(self.newest, number)
+                self.tracked = 0
+            elif strong and self.searches:
+                self.tracked += 1
+            elif seen != "same":
+                self.tracked = 0
+            if not consensus.wants_another_lock:
+                if self.searches and self.tracked >= TRACKED_POSES:
+                    return "searched"
+                if not self.locked and not strong and self.searches >= STOP_SEARCHES:
+                    return "no lock"
+        elapsed = now - self.began
+        if elapsed >= STOP_SECONDS + camera_module.SETTLE_SECONDS:
+            return "time up"
+        if not self.locked and elapsed >= LOCK_SECONDS + camera_module.SETTLE_SECONDS:
+            return "no lock"
+        return None
+
+
 def look_at_stop(
     look: BoardLook, frame: PictureFrame, stopped: Callable[[], bool], error: type[Exception], check: Estimate | None = None,
     gate: float = EMPTY_BUSY, size: tuple[float, float] | None = None, record=None, index: int | None = None,
 ) -> str:
-    """Reads poses with the head at rest at one stop: `found` once the
-    board is found; `no lock` when no lock came within LOCK_SECONDS,
-    `time up` when the stop's time ran out. Only frames taken the camera's
-    settle time after the stop began are used. With `check` (a place found
-    elsewhere) the stop checks it instead: `agreed` once CHECK_LOOKS looks
-    here put the board within the agreement of it, `disagreed` once as many
-    put it elsewhere. Without `check`, `likely` once the posterior leads
-    with this stop's lock but cannot call it found from one place
-    (Posterior.worth_checking): the search checks it from another. First
-    the picture's busy share (pictures.py) is
-    measured: under EMPTY_BUSY the stop ends `empty` at once, a look that
-    found nothing; under `gate` (a quick scan's first pass asks for a
-    picture that looks like board, BOARD_BUSY) it ends `sparse`, left for
-    later. `size` is the full size picture's width and height, px; the
-    share goes into `record` with the stop's `index`."""
+    """Reads poses with the head at rest at one stop until StopEnd ends it
+    (`found`, `likely`, `agreed`, `disagreed`, `searched`, `no lock`, `time
+    up`). Only frames taken the camera's settle time after the stop began
+    are used. First the picture's busy share (pictures.py) is measured:
+    under EMPTY_BUSY the stop ends `empty` at once, a look that found
+    nothing; under `gate` (a quick scan's first pass asks for a picture
+    that looks like board, BOARD_BUSY) it ends `sparse`, left for later.
+    `size` is the full size picture's width and height, px; the share goes
+    into `record` with the stop's `index`."""
     began = time.monotonic()
     trusted = began + camera_module.SETTLE_SECONDS
-    locked = False
-    agreed = disagreed = 0
     busy = look.busy(trusted, stopped) if gate > 0.0 else None
     if busy is not None:
         share, reply, captured = busy
@@ -1581,6 +1705,7 @@ def look_at_stop(
     def place(captured: float) -> PictureFrame | str:
         return frame if captured >= trusted else "the head is coming to rest"
 
+    rule = StopEnd(look.consensus, frame, check, began)
     while True:
         if stopped():
             raise error("stopped")
@@ -1588,34 +1713,9 @@ def look_at_stop(
             raise error(f"the camera's pcbv can answer no more ({look.failure}): stop and start the camera, then search again")
         seen = look.sample(place)
         look.publish()
-        if check is None and look.consensus.found:
-            return "found"
-        if check is None and seen == "used" and getattr(look.consensus, "worth_checking", False):
-            # The posterior leads with this stop's lock but one place cannot
-            # settle it: a check from another place can.
-            view, best = look.consensus.view, look.consensus.best
-            if view is not None and best is not None and look.consensus.agrees(view, best):
-                return "likely"
-        if seen == "used":
-            view = look.consensus.view
-            # A weak lock (under the least match) does not hold the stop
-            # past the lock time: the posterior weighs it, the vote refuses it.
-            if view is None or view.match >= MIN_MATCH:
-                locked = True
-            if check is not None and view is not None and view.match >= MIN_MATCH:
-                if look.consensus.agrees(view, check):
-                    agreed += 1
-                else:
-                    disagreed += 1
-                if agreed >= CHECK_LOOKS:
-                    return "agreed"
-                if disagreed >= CHECK_LOOKS:
-                    return "disagreed"
-        elapsed = time.monotonic() - began
-        if elapsed >= STOP_SECONDS + camera_module.SETTLE_SECONDS:
-            return "time up"
-        if not locked and elapsed >= LOCK_SECONDS + camera_module.SETTLE_SECONDS:
-            return "no lock"
+        end = rule.see(seen, time.monotonic())
+        if end is not None:
+            return end
         time.sleep(SAMPLE_SECONDS / 2.0)
 
 
@@ -1933,6 +2033,9 @@ def look_scan_stop(look: BoardLook, frame: PictureFrame, stopped: Callable[[], b
     began = time.monotonic()
     trusted = began + camera_module.SETTLE_SECONDS
     used = 0
+    # A look that counts pcbv's searches ends a stop without a lock after
+    # STOP_SEARCHES of them (StopEnd).
+    rule = StopEnd(look.consensus, frame, None, began)
 
     def place(captured: float) -> PictureFrame | str:
         return frame if captured >= trusted else "the head is coming to rest"
@@ -1942,11 +2045,19 @@ def look_scan_stop(look: BoardLook, frame: PictureFrame, stopped: Callable[[], b
             raise error("stopped")
         if look.failure is not None:
             raise error(f"the camera's pcbv can answer no more ({look.failure}): stop and start the camera, then scan again")
-        if look.sample(place) == "used":
+        seen = look.sample(place)
+        if seen == "used":
             used += 1
         look.publish()
         if used >= SCAN_LOOKS:
             return "locked"
+        if look.consensus.counts_searches:
+            number = look.consensus.counted_search(frame)
+            if number is not None:
+                rule.first = number if rule.first is None else min(rule.first, number)
+                rule.newest = number if rule.newest is None else max(rule.newest, number)
+            if used == 0 and seen != "used" and rule.searches >= STOP_SEARCHES:
+                return "no lock"
         elapsed = time.monotonic() - began
         if elapsed >= STOP_SECONDS + camera_module.SETTLE_SECONDS:
             return "time up"

@@ -384,6 +384,7 @@ class Posterior(Consensus):
         self.layout = Layout(stretch=stretch, delay=delay is not None)
         self.delay_prior = delay or (DELAY_S, DELAY_SIGMA_S)
         self.scale = float(scale) if scale and scale > 0.0 else 0.0
+        self._scale_given = self.scale > 0.0
         self.known = known
         self._box_given = box
         self._diffuse_count = int(diffuse)
@@ -403,6 +404,9 @@ class Posterior(Consensus):
         self._next_id = 0
         self._searches = 0
         self._acquisitions: set = set()
+        # The view the newest pose brought a search to and that search's
+        # key (_search_of); None when it brought none (counted_search).
+        self._counted: tuple[int, tuple] | None = None
         self.log_elsewhere = 0.0
         self.elsewhere = 1.0
         self._box = self._box_given
@@ -1119,6 +1123,7 @@ class Posterior(Consensus):
             self.looks += 1
             self.last_state = state
             self.problem = problem
+            self._counted = None
             if state != "locked":
                 self.view = None
             if estimate is not None:
@@ -1147,6 +1152,7 @@ class Posterior(Consensus):
                 self._draw()
             view = self._view_of(place, raw, captured)
             view.searches.add(search)
+            self._counted = (view.index, search)
             if listed:
                 candidates = self._candidates(raw, place, to_job, None) if to_job is not None else []
             elif to_job is not None:
@@ -1204,9 +1210,35 @@ class Posterior(Consensus):
             return lock, False
         return None, False
 
+    @staticmethod
+    def _view_key(frame: PictureFrame) -> tuple | None:
+        """The place a view is kept under; None on the move, where every
+        picture is a view of its own."""
+        if frame.velocity != (0.0, 0.0):
+            return None
+        return (round(frame.center[0] / VIEW_MM), round(frame.center[1] / VIEW_MM), round(frame.roll / VIEW_DEG), frame.mirror)
+
+    @property
+    def counts_searches(self) -> bool:
+        """A stop ends on the searches made there (StopEnd) once the
+        camera's scale is known: without it pcbv tries scale windows in
+        turn, and a lock took up to hundreds of searches."""
+        return self._scale_given
+
+    def counted_search(self, frame: PictureFrame) -> int | None:
+        """pcbv's number of the search the newest pose brought as evidence
+        to the view at `frame`'s place; None when it brought none there,
+        or a search pcbv did not number."""
+        key = self._view_key(frame)
+        with self._mutex:
+            counted = self._counted
+            if key is None or counted is None or self._view_keys.get(key) != counted[0]:
+                return None
+            search = counted[1]
+            return int(search[1]) if search[0] == "search" else None
+
     def _view_of(self, frame: PictureFrame, raw: dict, captured: float) -> View:
-        moving = frame.velocity != (0.0, 0.0)
-        key = None if moving else (round(frame.center[0] / VIEW_MM), round(frame.center[1] / VIEW_MM), round(frame.roll / VIEW_DEG), frame.mirror)
+        key = self._view_key(frame)
         index = self._view_keys.get(key) if key is not None else None
         if index is None:
             view = View(len(self.views), frame, captured=captured)

@@ -393,6 +393,110 @@ def test_a_recorded_search_replays_through_the_posterior_and_the_sweep_sets_both
     assert "the posterior, threshold" in text and "the vote, need" in text
     shown = searchreport.text(searchreport.summarize(loaded), None, None, searchreport.posterior_ifs(loaded))
     assert "threshold 0.5: found" in shown
+    # Its stops ended again by today's stop rule, with the vote it ran with
+    # and with the posterior: every stop kept, none longer than recorded.
+    for method in ("vote", "posterior"):
+        stopped = searchreport.replay_stops(loaded, method)
+        assert stopped["method"] == method and stopped["saved_s"] >= 0.0
+        assert [row["stop"] for row in stopped["stops"]] == [event["index"] for event in loaded.of("arrived")]
+        assert all(row["replayed"] is not None and row["replayed_s"] <= row["seconds"] + 1e-9 for row in stopped["stops"])
+
+
+def tracked(raw: dict, frame: int) -> dict:
+    """pcbv's pose of a later frame that tracked `raw`'s lock: no search."""
+    return {**raw, "frame": frame, "searched": False}
+
+
+def test_a_stop_with_the_scale_known_ends_on_pcbvs_searches_not_on_its_clocks():
+    from spinny_web.boardlook import LOCK_SECONDS, STOP_SEARCHES, TRACKED_POSES, StopEnd
+
+    # A stop off the board: pcbv searches frame after frame and never locks.
+    posterior = Posterior(board(), (100.0, 50.0, 200.0, 120.0), scale=SCALE)
+    pcbv = FakePcbv()
+    far = PictureFrame((100.0, 50.0), 0.0, False)
+    rule = StopEnd(posterior, far, None, 0.0)
+    ends = []
+    for i in range(STOP_SEARCHES + 2):
+        feed(posterior, pcbv.pose(far.center), far)
+        ends.append(rule.see("none", 0.01 * (i + 1)))
+    assert ends[: STOP_SEARCHES - 1] == [None] * (STOP_SEARCHES - 1) and ends[STOP_SEARCHES - 1] == "no lock"
+    assert 0.01 * STOP_SEARCHES < LOCK_SECONDS
+    # Poses read slower than pcbv searches: its numbers count the searches
+    # not read too.
+    rule = StopEnd(posterior, far, None, 0.0)
+    pcbv.searches += 1
+    feed(posterior, pcbv.pose(far.center), far)
+    assert rule.see("none", 0.01) is None
+    pcbv.searches += STOP_SEARCHES
+    feed(posterior, pcbv.pose(far.center), far)
+    assert rule.see("none", 0.02) == "no lock"
+
+    # A lock at a place of a repeated pattern: two places as likely, so not
+    # worth a check, and tracking it adds nothing: the stop ends `searched`.
+    posterior = Posterior(board(), (100.0, 50.0, 200.0, 120.0), scale=SCALE)
+    pcbv = FakePcbv(pitch=6.0, ratio=1.0)
+    here = PictureFrame(truth_middle(), 0.0, False)
+    rule = StopEnd(posterior, here, None, 0.0)
+    raw = pcbv.pose(here.center)
+    feed(posterior, raw, here)
+    assert not posterior.worth_checking and rule.see("used", 0.01) is None
+    ends = []
+    for i in range(TRACKED_POSES):
+        feed(posterior, tracked(raw, 100 + i), here)
+        ends.append(rule.see("used", 0.02 + 0.01 * i))
+    assert ends == [None] * (TRACKED_POSES - 1) + ["searched"]
+
+    # The vote counts each pose, and a posterior with no scale searches
+    # scale windows that can take hundreds of searches: the clocks only.
+    for consensus in (boardlook.Consensus(MIDDLE), Posterior(board(), (100.0, 50.0, 200.0, 120.0))):
+        rule = StopEnd(consensus, far, None, 0.0)
+        pcbv = FakePcbv()
+        for i in range(STOP_SEARCHES + 2):
+            raw = pcbv.pose(far.center)
+            consensus.take(raw, far, 0.0, DESIGN.board_to_job, None, None)
+            assert rule.see("none", 0.01 * (i + 1)) is None
+        assert rule.see("none", LOCK_SECONDS + boardlook.camera_module.SETTLE_SECONDS) == "no lock"
+
+
+def test_a_weak_lock_tracked_holds_the_stop_for_pcbvs_next_search():
+    from spinny_web.boardlook import MIN_MATCH, STOP_SEARCHES, StopEnd
+
+    posterior = Posterior(board(), (100.0, 50.0, 200.0, 120.0), scale=SCALE)
+    here = PictureFrame(truth_middle(), 0.0, False)
+    pcbv = FakePcbv()
+    rule = StopEnd(posterior, here, None, 0.0)
+    raw = pcbv.pose(here.center)
+    # Paired under the least match: pcbv lets go of such a lock and searches
+    # again (on a LumenPnP the right place came at its third search).
+    paired = int(raw["expected"] * (MIN_MATCH - 0.2))
+    weak = {**raw, "found": paired, "inliers": paired}
+    weak["candidates"] = [{**item, "found": paired, "inliers": paired} for item in raw["candidates"]]
+    feed(posterior, weak, here)
+    ends = [rule.see("used", 0.01)]
+    for i in range(STOP_SEARCHES):
+        feed(posterior, tracked(weak, 100 + i), here)
+        ends.append(rule.see("used", 0.02 + 0.01 * i))
+    assert ends == [None] * (STOP_SEARCHES + 1)
+
+
+def test_a_lock_agrees_with_a_place_by_the_point_under_its_picture_center():
+    from spinny_web.boardlook import Estimate
+
+    consensus = boardlook.Consensus(MIDDLE)
+    place = Estimate(0.0, (100.0, 50.0), (120.0, 65.0), 0.03)
+    # A lock 30 mm from the board's middle that read the turn 2 degrees
+    # off, its point under the picture's center right.
+    seen = (50.0, 15.0)
+    look_ = Estimate(2.0, (0.0, 0.0), (0.0, 0.0), 0.03, seen=seen, place=place.apply(seen))
+    look_.shift = (place.apply(seen)[0] - turn(seen, 2.0)[0], place.apply(seen)[1] - turn(seen, 2.0)[1])
+    look_.center = look_.apply(MIDDLE)
+    assert consensus.agrees_here(look_, place) and not consensus.agrees(look_, place)
+    # The same point 0.8 mm away: a wrong place by either.
+    wrong = Estimate(0.0, (100.8, 50.0), (120.8, 65.0), 0.03)
+    assert not consensus.agrees_here(look_, wrong)
+    # A look with no point is compared whole.
+    whole = Estimate(0.0, (100.0, 50.0), (120.0, 65.0), 0.03)
+    assert consensus.agrees_here(whole, place)
 
 
 def test_a_scans_rows_cover_the_box_back_and_forth():

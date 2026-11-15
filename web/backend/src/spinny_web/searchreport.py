@@ -28,9 +28,12 @@ record's folder; written into the folder it opens as a file too).
     spinny-search sweep [--dir DIR] [--camera head|top] [--kind search|look]
                         [--method vote|posterior|both] [--need 3,4,5] [--agree 0.25,0.5,1]
                         [--threshold 0.5,0.7,0.9] [--pcbv PROGRAM] [--json]
+    spinny-search stops [--dir DIR] [--camera head|top] [--method vote|posterior] [--json]
 
 `sweep` runs every record kept through the same: a change to the
-consensus settings or to pcbv weighed on all the searches at once.
+consensus settings or to pcbv weighed on all the searches at once. `stops`
+ends every search's stops again by today's stop rule (boardlook.StopEnd)
+on their recorded poses: how much sooner each would have moved on.
 """
 
 from __future__ import annotations
@@ -50,6 +53,7 @@ from typing import TypeGuard
 from spinny_laser.align import turn
 
 from .boardlook import AGREE_MM, Consensus, Estimate, KnownPlace, PictureFrame, corners_from, pose_estimate, rival_of
+from . import camera as camera_module
 from .camera import picture_to_machine
 from .searchlog import BOARD, EVENTS, RECORD, RECORD_ID
 
@@ -600,6 +604,111 @@ def replay_posterior(record: Record, truth: Place | None = None, threshold: floa
     row["views"] = sum(1 for view in posterior.views if view.observed)
     row["recorded"] = record.settings.get("method") == "posterior" and threshold is None
     return row
+
+
+def replay_stops(record: Record, method: str | None = None) -> dict:
+    """The record's stops ended again by today's stop rule (StopEnd) on
+    their recorded poses, with the look's method (the record's unless
+    given): each stop's end and time as recorded and as replayed, and the
+    seconds the search would have saved. A stop that ends earlier leaves
+    its later poses out; what the search would have done next instead
+    (a check sooner, another stop) is not asked, so the saving is of the
+    stops the record has."""
+    from .boardlook import MIN_MATCH, StopEnd
+    from .posterior import Posterior
+
+    method = method or record.settings.get("method") or "vote"
+    to_job = _affine(record)
+    if method == "posterior":
+        consensus = posterior_of(record)
+    else:
+        settings = record.settings
+        consensus = Consensus(
+            record.middle, need=settings.get("need"), agree_mm=settings.get("agree_mm"), agree_deg=settings.get("agree_deg"),
+            history=settings.get("history"), threshold=settings.get("threshold"), corner_mm=settings.get("corner_mm"),
+            corners=corners_from(settings.get("corners")), min_match=settings.get("min_match", 0.0), sessions=settings.get("sessions") or 1,
+        )
+    picture = record.header.get("picture") or {}
+    roll = float(picture.get("roll") or 0.0) if _number(picture.get("roll")) else 0.0
+    mirror = bool(picture.get("mirror"))
+    targets = {event.get("index"): _point(event.get("target")) for event in record.of("stop")}
+    checks = {}
+    for event in record.of("check"):
+        found = _estimate(event.get("estimate"))
+        if found is not None and _number(event.get("stop")):
+            checks[int(event["stop"])] = found
+    stops: list[dict] = []
+    rule: StopEnd | None = None
+    row: dict | None = None
+    resets = 0
+    for event in record.events:
+        kind = event.get("event")
+        if kind == "settings":
+            consensus.tune(event.get("threshold"), event.get("corner_mm"), corners_from(event.get("corners")) if "corners" in event else None)
+            continue
+        if kind == "recheck":
+            resets += 1
+            continue
+        if kind == "arrived":
+            resets += 1
+            index = event.get("index")
+            target = targets.get(index)
+            row = {"stop": index, "check": index in checks, "began": event.get("t"), "result": None, "seconds": None, "replayed": None, "replayed_s": None}
+            stops.append(row)
+            rule = StopEnd(consensus, PictureFrame(target, roll, mirror), checks.get(index), float(event.get("t") or 0.0)) if target is not None else None
+            continue
+        if kind == "stop_end" and row is not None and event.get("index") == row["stop"]:
+            row["result"] = event.get("result")
+            if _number(row["began"]) and _number(event.get("t")):
+                row["seconds"] = round(float(event["t"]) - float(row["began"]), 3)
+            if row["replayed"] is None:
+                row["replayed"], row["replayed_s"] = row["result"], row["seconds"]
+            continue
+        if kind != "pose" or not isinstance(event.get("pose"), dict) or row is None:
+            continue
+        if row["replayed"] is not None and row["result"] is None:
+            # The stop ended earlier in the replay: its later poses never came.
+            continue
+        raw = event["pose"]
+        place = event.get("place")
+        where = None
+        if isinstance(place, dict) and _point(place.get("center")) is not None:
+            where = PictureFrame(_point(place["center"]), float(place.get("roll") or 0.0), bool(place.get("mirror")))
+        elif isinstance(event.get("refused"), str):
+            where = event["refused"]
+        elif targets.get(event.get("stop")) is not None:
+            where = PictureFrame(targets[event.get("stop")], roll, mirror)
+        estimate = problem = None
+        if isinstance(where, PictureFrame) and to_job is not None:
+            estimate, problem = pose_estimate(raw, where, to_job, record.middle)
+            if estimate is not None:
+                acquisition = raw.get("acquisition")
+                estimate.session = int(acquisition) if _number(acquisition) else resets
+                estimate.rival = rival_of(raw)
+        if estimate is not None and not isinstance(consensus, Posterior) and estimate.match < consensus.min_match:
+            estimate = None
+        # The candidates are of the frame their search ran on: placed as
+        # the look placed it, at the stop once the settle time had passed
+        # (BoardLook.sample, look_at_stop).
+        searched_where = None
+        age, read = raw.get("candidates_age_ms"), event.get("read", event.get("t"))
+        if raw.get("candidates") and _number(age) and _number(read) and rule is not None and _number(row["began"]):
+            settled = float(row["began"]) + camera_module.SETTLE_SECONDS
+            searched_where = rule.frame if float(read) - float(age) / 1000.0 >= settled else "the head is coming to rest"
+        consensus.take(
+            raw, where, float(event.get("captured") or 0.0), to_job, estimate, problem, estimate.session if estimate is not None else resets, searched_where,
+        )
+        seen = "used" if estimate is not None else "locked" if raw.get("state") == "locked" else "none"
+        if rule is not None and row["replayed"] is None and _number(event.get("t")):
+            end = rule.see(seen, float(event["t"]))
+            if end is not None:
+                row["replayed"] = end
+                row["replayed_s"] = round(float(event["t"]) - float(row["began"]), 3) if _number(row["began"]) else None
+    saved = sum(
+        max(0.0, row["seconds"] - row["replayed_s"]) for row in stops if _number(row["seconds"]) and _number(row["replayed_s"])
+    )
+    total = record.events[-1].get("t") if record.events and _number(record.events[-1].get("t")) else None
+    return {"method": method, "stops": stops, "saved_s": round(saved, 3), "total_s": total, "min_match": MIN_MATCH}
 
 
 def posterior_ifs(record: Record, truth: Place | None = None, thresholds=THRESHOLDS) -> list[dict]:
@@ -1221,6 +1330,10 @@ def main(argv: list[str] | None = None) -> int:
     sweeping.add_argument("--threshold", default=",".join(f"{t:g}" for t in THRESHOLDS), help="thresholds the posterior tries (default %(default)s)")
     sweeping.add_argument("--pcbv", metavar="PROGRAM", help="run PROGRAM locate on every record's pictures")
     sweeping.add_argument("--json", action="store_true", help="print the totals as JSON")
+    stopping = commands.add_parser("stops", help="every search's stops ended again by today's stop rule: the seconds it saves")
+    stopping.add_argument("--camera", choices=("head", "top"), help="only this camera's records")
+    stopping.add_argument("--method", choices=("vote", "posterior"), help="the way to call a board found (default: each record's own)")
+    stopping.add_argument("--json", action="store_true", help="print each record's stops as JSON")
     args = parser.parse_args(argv)
     folder = args.dir if args.dir is not None else default_dir()
     try:
@@ -1233,6 +1346,27 @@ def main(argv: list[str] | None = None) -> int:
                 where = f" middle {center[0]:.2f}, {center[1]:.2f} turned {estimate.get('rotation', 0.0):+.2f}" if isinstance(center, list) else ""
                 stops = f" {line['visited']}/{line['stops']} stops" if line.get("stops") else ""
                 print(f"{line['id']}  {line['camera']:4} {line['kind']:6} {line['result']:10} {_f(line.get('seconds'), 1, ' s'):>8}{stops}  {line.get('job_name') or line.get('job')}{where}")
+            return 0
+        if args.command == "stops":
+            rows = []
+            for path in sorted(folder.iterdir()) if folder.is_dir() else []:
+                if not RECORD_ID.match(path.name):
+                    continue
+                try:
+                    record = load(path)
+                except ValueError:
+                    continue
+                if record.header.get("kind") != "search" or (args.camera and record.header.get("camera") != args.camera):
+                    continue
+                rows.append({"id": path.name, **replay_stops(record, args.method)})
+            if args.json:
+                print(json.dumps(rows, indent=1))
+                return 0
+            for row in rows:
+                changed = sum(1 for stop in row["stops"] if stop["replayed"] != stop["result"])
+                print(f"{row['id']}  {row['method']:9} {len(row['stops']):4} stops {_f(row['total_s'], 1, ' s'):>8}  saved {row['saved_s']:6.1f} s  {changed} ended otherwise")
+            recorded = sum(float(row["total_s"] or 0.0) for row in rows)
+            print(f"{len(rows)} searches: {recorded:.1f} s recorded, {sum(row['saved_s'] for row in rows):.1f} s saved")
             return 0
         if args.command == "sweep":
             records = []
