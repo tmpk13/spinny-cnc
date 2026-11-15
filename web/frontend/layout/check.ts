@@ -256,7 +256,7 @@ function wallFindings(): Finding[] {
     return findings;
 }
 
-const PAGES = ["overview", "jobs", "plot", "cam", "pnp", "auto", "config", "connection", "plugins"];
+const PAGES = ["overview", "jobs", "plot", "cam", "pnp", "auto", "facts", "config", "connection", "plugins"];
 
 async function openDetails(page: Page): Promise<void> {
     await page.evaluate(() => document.querySelectorAll("details").forEach((d) => d.setAttribute("open", "")));
@@ -418,6 +418,14 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
         },
     },
     {
+        // The Use and Setup sides side by side (a narrow window shows one):
+        // each page laid out by its pane's width.
+        name: "side by side", pages: ["jobs", "facts", "pnp", "config"], enter: async (page) => {
+            await page.evaluate(() => document.querySelector<HTMLElement>(".tabs-split")?.click());
+            await page.waitForTimeout(300);
+        },
+    },
+    {
         // The example plugin turned on: its panel on the Jobs page.
         name: "a plugin turned on", pages: ["plugins", "jobs"], enter: async (page) => {
             await page.keyboard.press("Escape");
@@ -439,7 +447,7 @@ try {
         const page = await context.newPage();
         page.on("pageerror", (error) => console.error(`page error: ${error.message}`));
         await page.goto(`${server.url}?mock=1`);
-        await page.waitForSelector(".tabs .tab");
+        await page.waitForSelector(".tabs .tab[aria-selected=\"true\"]");
         await page.waitForTimeout(500);
         for (const state of STATES) {
             await state.enter(page);

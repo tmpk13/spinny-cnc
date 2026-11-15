@@ -41,7 +41,11 @@ import { mountReportLink } from "./views/reportlink.ts";
 import { mountStatusBar } from "./views/statusbar.ts";
 import { mountSteps } from "./views/steps.ts";
 import { mountTests } from "./views/tests.ts";
-import { mountTabs } from "./views/tabs.ts";
+import { mountSideKeys, mountTabs } from "./views/tabs.ts";
+import { mountFacts } from "./views/facts.ts";
+import { followAddress, mountLinks } from "./views/links.ts";
+import { mountSetupLinks } from "./views/setuplinks.ts";
+import { mountSplitHandle } from "./views/split.ts";
 import { mountTodo } from "./views/todo.ts";
 import { mountToasts } from "./views/toasts.ts";
 import { mountVision } from "./views/vision.ts";
@@ -348,6 +352,9 @@ function main(): void {
     mountJobJson(panel("jobjson"), ctx);
     const vision = mountVision(panel("camera"), ctx, panel("camera-view"), { controls: panel("camera-controls"), sight: panel("camera-sight"), changes: panel("camera-changes") });
     mountAlign(panel("align"), ctx);
+    // The Setup side's Checklist: what the machine knows, where each value
+    // came from; the calibration tests beside it.
+    mountFacts(panel("facts"), ctx);
     mountTests(panel("tests"), ctx);
     mountConsole(panel("console"), ctx);
     // The Plot page: the position, the jog and the spindle again beside
@@ -392,6 +399,8 @@ function main(): void {
     // The Config page: the machine files beside the list of every key a
     // file can set, the file's value next to the board's.
     const config = mountConfig(panel("machine-file"), ctx, panel("settings"));
+    // A link to `machine-file/<id>` opens that file.
+    panel("machine-file").addEventListener("spinny:goto", (event) => void config.open((event as CustomEvent<string>).detail));
     mountOpenPnpImport(panel("openpnp-import"), ctx, (id) => void config.open(id));
     // The release running and its update from GitHub.
     mountVersion(panel("version"), ctx);
@@ -404,6 +413,13 @@ function main(): void {
     // adds its controls to the heads and puts the panels where the
     // operator left them.
     mountPageSettings(tabTools, mountPanels(panel("app")));
+    // The two sides: the handle between them side by side, the keys that
+    // swap them, the links between them (and to the other tabs showing
+    // them), and the Use side's panels' links to what they run on.
+    mountSplitHandle(panel("pane-divider"), panel("app"));
+    mountSideKeys();
+    mountLinks(ctx, { apiBase, mock });
+    mountSetupLinks(ctx);
     mountSearch(tabTools);
     mountBugReport(tabTools, ctx);
     mountTooltips();
@@ -423,6 +439,8 @@ function main(): void {
     }
     feed.start();
     void refreshAll(ctx);
+    // A link opened in a tab of its own: its target, once every view is up.
+    followAddress();
 }
 
 if (typeof document !== "undefined" && document.getElementById("app")) {

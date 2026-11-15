@@ -266,8 +266,21 @@ export function markupDefaults(columns: HTMLElement[]): Defaults {
     return withStacks(ids, stacked, stuck, folders);
 }
 
-/** Whether the page is laid out in columns (the wide layout) rather than as one column. */
-function wide(): boolean {
+/**
+ * Whether a page is laid out in columns (the wide layout) rather than as
+ * one column. Each side's pane lays its page out by its own width (side by
+ * side, its share of the window), which the stylesheet's container query
+ * gives the page as `--wide`; where no stylesheet says (a test's document),
+ * the window's width decides, as it does for a node in no page.
+ */
+function wide(node: Element | null = null): boolean {
+    const page = node?.closest("main.page") ?? null;
+    if (page && typeof getComputedStyle === "function") {
+        const said = getComputedStyle(page).getPropertyValue("--wide").trim();
+        if (said === "1" || said === "0") {
+            return said === "1";
+        }
+    }
     return typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 64rem)").matches;
 }
 
@@ -360,7 +373,9 @@ export function mountPanels(app: HTMLElement): PanelsController {
     let lastColumn: HTMLElement | null = null;
 
     const stored = readObject(readStored(LAYOUT_KEY));
-    for (const root of childrenOf(app, "main.page")) {
+    // The pages sit in the sides' panes (src/sides.ts), or straight in #app.
+    const roots = [...childrenOf(app, "main.page"), ...childrenOf(app, ".pane").flatMap((pane) => childrenOf(pane, "main.page"))];
+    for (const root of roots) {
         const id = root.id.replace(/^page-/, "");
         const columns = childrenOf(root, ".column");
         const defaults = markupDefaults(columns);
@@ -684,7 +699,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
         const index = page.columns.indexOf(column);
         const mark = page.more[index] ?? null;
         const docked = childrenOf(column, ".panel[data-dock]").some((node) => !["data-join-up", "data-join-down", "data-stacked", "data-off"].some((name) => node.hasAttribute(name)) && !node.classList.contains("hidden"));
-        markCut(column, mark, !wide() || docked);
+        markCut(column, mark, !wide(column) || docked);
         if (mark && !mark.hidden) {
             const bottom = column.getBoundingClientRect().bottom;
             const below = Array.from(column.querySelectorAll<HTMLElement>("section.panel[id]"))
@@ -1106,7 +1121,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
 
     /** Puts each panel's height handle on its bottom edge and each column handle between its columns. */
     function positionHandles(page: PageView): void {
-        if (!wide()) {
+        if (!wide(page.root)) {
             return;
         }
         for (const panel of panels.values()) {
@@ -1227,7 +1242,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
         const rem = remPx();
         const column = panel.root.closest(".column") as HTMLElement | null;
         const gap = parseFloat(getComputedStyle(panel.page.root).getPropertyValue("--gap")) || 0.75;
-        const room = wide() && column
+        const room = wide(panel.root) && column
             ? column.clientHeight
             : window.innerHeight - Math.max(0, panel.page.root.getBoundingClientRect().top);
         return Math.round(((room / rem) - 2 * gap) * 4) / 4;
@@ -1467,7 +1482,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
      * let go into it, and the folder's own grip (`whole`) drags the folder.
      */
     function dragPanel(panel: PanelView, event: PointerEvent, whole = false): void {
-        if (event.button !== 0 || !editing || !wide()) {
+        if (event.button !== 0 || !editing || !wide(panel.root)) {
             return;
         }
         event.preventDefault();
@@ -1523,7 +1538,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
      * to pull.
      */
     function dragTab(panel: PanelView, tab: HTMLElement, event: PointerEvent): void {
-        if (event.button !== 0 || !wide()) {
+        if (event.button !== 0 || !wide(panel.root)) {
             return;
         }
         const page = panel.page;
@@ -1659,8 +1674,12 @@ export function mountPanels(app: HTMLElement): PanelsController {
         },
         scrollColumn(edge) {
             const page = [...pages.values()].find((entry) => entry.id === app.getAttribute("data-page"));
-            const column = wide() ? (lastColumn && page?.columns.includes(lastColumn) ? lastColumn : null) : null;
-            const targets: (HTMLElement | Window)[] = column ? [column] : wide() ? page?.columns ?? [] : [window];
+            const broad = wide(page?.root ?? null);
+            const column = broad ? (lastColumn && page?.columns.includes(lastColumn) ? lastColumn : null) : null;
+            // One column on a pane of its own (side by side) scrolls in the pane, not the window.
+            const pane = page?.root.closest<HTMLElement>(".pane") ?? null;
+            const narrowIn = pane && document.getElementById("app")?.hasAttribute("data-split") ? pane : window;
+            const targets: (HTMLElement | Window)[] = column ? [column] : broad ? page?.columns ?? [] : [narrowIn];
             for (const target of targets) {
                 const end = target instanceof Window ? document.documentElement.scrollHeight : target.scrollHeight;
                 target.scrollTo({ top: edge === "top" ? 0 : end, behavior: "smooth" });

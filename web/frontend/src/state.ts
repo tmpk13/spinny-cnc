@@ -85,6 +85,8 @@ export interface Toast {
     id: number;
     level: MessageLevel;
     text: string;
+    /** A button in the toast, such as "Show here" after a link went to another tab. */
+    action?: { label: string; run: () => void };
 }
 
 export interface AppState {
@@ -247,8 +249,8 @@ export function pendingTotal(pending: Record<string, number>): number {
 
 let nextToast = 1;
 
-export function pushToast(store: Store<AppState>, level: MessageLevel, text: string): Toast {
-    const toast: Toast = { id: nextToast++, level, text };
+export function pushToast(store: Store<AppState>, level: MessageLevel, text: string, action?: Toast["action"]): Toast {
+    const toast: Toast = action ? { id: nextToast++, level, text, action } : { id: nextToast++, level, text };
     store.set({ toasts: [...store.get().toasts, toast] });
     return toast;
 }

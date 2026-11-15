@@ -54,7 +54,7 @@ try {
             }, shot.storage);
         }
         await page.goto(`${server.url}?mock=1${shot.page ? `&page=${shot.page}` : ""}`);
-        await page.waitForSelector(".tabs .tab");
+        await page.waitForSelector(".tabs .tab[aria-selected=\"true\"]");
         await page.waitForTimeout(600);
         if (shot.before) {
             const said = await page.evaluate(shot.before);

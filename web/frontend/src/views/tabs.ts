@@ -1,44 +1,56 @@
-// The page's tabs: the Overview page (a card for each page, with what it
-// holds now), the Jobs page (the dashboard: position, jogging, the
-// jobs and their preview), the Plot page (simple cuts made by hand, a
-// board's holes drilled), the CAM page, the PNP page (parts, the board and
-// the up camera), the Auto page (a conversation with a language model that
-// makes jobs and other data) and the Config page (the machine files and
-// the list of their keys). The pick is set on #app for the stylesheet and remembered
-// per browser. A tab whose page holds edits not applied yet carries their
-// count.
+// The page's tabs, on two sides (src/sides.ts). The Use side: the
+// Overview page (a card for each page, with what it holds now), the Jobs
+// page (the dashboard: position, jogging, the jobs and their preview), the
+// Plot page (simple cuts made by hand, a board's holes drilled), the CAM
+// page, the PNP page (parts, the board and the up camera) and the Auto page
+// (a conversation with a language model that makes jobs and other data).
+// The Setup side: the Checklist (what the machine knows, where each value
+// came from, what is missing), the Config page (the machine files and the
+// list of their keys), the Connection page and the Plugins page.
+//
+// The bar names each side by a button with the side's tabs after it; the
+// other side's tabs fold away behind its button, so one press swaps sides
+// and the page each side last showed comes back. Side by side (split),
+// both sides show at once, each in a pane of its own with its tabs, and a
+// handle between the panes sets their widths. Which page each side shows,
+// and whether they are side by side, is set on #app for the stylesheet
+// and remembered per browser. A tab whose page holds edits not applied yet
+// carries their count.
 //
 // What the page settings menu sets for the tabs is kept per browser too
 // (TabPrefs): the tab the page opens on, whether the bar folds to a thin
 // strip that opens on hover or a press, and tabs kept out of the bar, which
 // then open from a More folder at the bar's end.
 
-import { el, readStored, writeStored } from "../dom.ts";
+import { el, readStored, svgIcon, writeStored } from "../dom.ts";
 import { countText } from "../format.ts";
 import { readObject } from "../layout.ts";
 import { popUp } from "../dismiss.ts";
 import { closeMenu, openMenu } from "../menu.ts";
+import { isSide, otherSide, readAddress, SIDES, type Side } from "../sides.ts";
 import type { AppState, Store } from "../state.ts";
 
-export type PageId = "overview" | "jobs" | "plot" | "cam" | "pnp" | "auto" | "config" | "connection" | "plugins";
+export type PageId = "overview" | "jobs" | "plot" | "cam" | "pnp" | "auto" | "facts" | "config" | "connection" | "plugins";
 
 /**
- * The pages in the bar's order: each one's tab label, its tooltip, and its
- * color, a Solarized accent by name (the Overview's is the muted text
- * color: it stands for every page). The color is the page's own: its tab
- * is underlined in it, its panels wear it along their top edge, and its
- * Overview card draws in it, unless the page settings turn colors off.
+ * The pages in the bar's order: each one's tab label, its tooltip, its
+ * side, and its color, a Solarized accent by name (the Overview's and the
+ * Checklist's are grays: each stands for its whole side).
+ * The color is the page's own: its tab is underlined in it, its panels
+ * wear it along their top edge, and its Overview card draws in it, unless
+ * the page settings turn colors off.
  */
-export const PAGES: { id: PageId; label: string; tip: string; accent: string }[] = [
-    { id: "overview", label: "Overview", tip: "every page at a glance", accent: "base01" },
-    { id: "jobs", label: "Jobs", tip: "jobs, the preview and runs", accent: "orange" },
-    { id: "plot", label: "Plot", tip: "operations drawn by hand", accent: "green" },
-    { id: "cam", label: "CAM", tip: "CAM profiles and their G-code", accent: "cyan" },
-    { id: "pnp", label: "PNP", tip: "pick and place", accent: "violet" },
-    { id: "auto", label: "Auto", tip: "a model that makes jobs", accent: "magenta" },
-    { id: "config", label: "Config", tip: "machine files and settings", accent: "yellow" },
-    { id: "connection", label: "Connection", tip: "the port and the machine connected", accent: "blue" },
-    { id: "plugins", label: "Plugins", tip: "page plugins and their switches", accent: "red" },
+export const PAGES: { id: PageId; label: string; tip: string; accent: string; side: Side }[] = [
+    { id: "overview", label: "Overview", tip: "every page at a glance", accent: "base01", side: "use" },
+    { id: "jobs", label: "Jobs", tip: "jobs, the preview and runs", accent: "orange", side: "use" },
+    { id: "plot", label: "Plot", tip: "operations drawn by hand", accent: "green", side: "use" },
+    { id: "cam", label: "CAM", tip: "CAM profiles and their G-code", accent: "cyan", side: "use" },
+    { id: "pnp", label: "PNP", tip: "pick and place", accent: "violet", side: "use" },
+    { id: "auto", label: "Auto", tip: "a model that makes jobs", accent: "magenta", side: "use" },
+    { id: "facts", label: "Checklist", tip: "what the machine knows: each value, where it came from, and what is missing", accent: "base00", side: "setup" },
+    { id: "config", label: "Config", tip: "machine files and settings", accent: "yellow", side: "setup" },
+    { id: "connection", label: "Connection", tip: "the port and the machine connected", accent: "blue", side: "setup" },
+    { id: "plugins", label: "Plugins", tip: "page plugins and their switches", accent: "red", side: "setup" },
 ];
 
 /** A page's color as a CSS value, its Solarized variable; the page's accent for a page not listed. */
@@ -47,8 +59,22 @@ export function accentOf(page: string): string {
     return accent ? `var(--${accent})` : "var(--accent)";
 }
 
+/** The side a page is on. */
+export function sideOf(page: PageId): Side {
+    return PAGES.find((entry) => entry.id === page)!.side;
+}
+
+/** The pages of a side, in the bar's order. */
+export function pagesOf(side: Side): PageId[] {
+    return PAGES.filter((page) => page.side === side).map((page) => page.id);
+}
+
 const PAGE_KEY = "spinny.page";
 export const TABS_KEY = "spinny.tabs";
+/** The page each side last showed, so a swap brings it back. */
+export const SIDE_PAGES_KEY = "spinny.side-pages";
+/** Whether the sides show side by side, and the Use side's share of the width. */
+export const SPLIT_KEY = "spinny.split";
 
 /** The pages' names before they were renamed, so an old address or a
  * page remembered from before still opens the same page. */
@@ -81,7 +107,7 @@ function isPage(value: string | null | undefined): value is PageId {
 }
 
 /** A page id, an old name of one, or null. */
-function pageNamed(value: string | null | undefined): PageId | null {
+export function pageNamed(value: string | null | undefined): PageId | null {
     if (isPage(value)) {
         return value;
     }
@@ -124,17 +150,50 @@ export function writeTabPrefs(prefs: TabPrefs): void {
     }
 }
 
+/** The page each side shows, from stored text: a page of the side, else the side's first. */
+export function parseSidePages(text: string | null): Record<Side, PageId> {
+    const raw = readObject(text);
+    const pages = { use: "jobs", setup: "facts" } as Record<Side, PageId>;
+    for (const side of ["use", "setup"] as Side[]) {
+        const page = pageNamed(typeof raw[side] === "string" ? raw[side] : null);
+        if (page !== null && sideOf(page) === side) {
+            pages[side] = page;
+        }
+    }
+    return pages;
+}
+
+/** The split's settings: whether the sides show side by side, and the Use side's share of the width, 0.2 to 0.8. */
+export interface SplitPrefs {
+    on: boolean;
+    share: number;
+}
+
+export const SPLIT_SHARE = 0.6;
+export const SPLIT_MIN = 0.2;
+export const SPLIT_MAX = 0.8;
+
+export function parseSplitPrefs(text: string | null): SplitPrefs {
+    const raw = readObject(text);
+    const share = typeof raw["share"] === "number" && Number.isFinite(raw["share"]) ? Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, raw["share"])) : SPLIT_SHARE;
+    return { on: raw["on"] === true, share };
+}
+
 /**
  * The page to open on: the one named in the address (`?page=plot`,
- * `?page=cam`, `?page=pnp`, `?page=auto`, `?page=config`), else the start
- * page the settings name, else the one last shown in this browser, else
- * the Jobs page.
+ * `?page=config`), else the page the side named in it (`?side=setup`)
+ * last showed, else the start page the settings name, else the one last
+ * shown in this browser, else the Jobs page.
  */
 export function readPage(): PageId {
     try {
-        const asked = pageNamed(new URLSearchParams(globalThis.location?.search ?? "").get("page"));
+        const address = readAddress(globalThis.location?.search ?? "", "");
+        const asked = pageNamed(address.page);
         if (asked !== null) {
             return asked;
+        }
+        if (address.side !== null) {
+            return parseSidePages(readStored(SIDE_PAGES_KEY))[address.side];
         }
     } catch {
         // No address to read; the settings and the memory decide.
@@ -153,29 +212,153 @@ export function onPage(listener: (id: PageId) => void): void {
     pageListeners.push(listener);
 }
 
-/** Shows a page: the attribute the stylesheet switches on, the tabs' state, and the memory of it. */
-export function showPage(id: PageId): void {
-    const app = document.getElementById("app");
-    app?.setAttribute("data-page", id);
-    for (const tab of Array.from(document.querySelectorAll<HTMLButtonElement>(".tabs .tab"))) {
-        tab.setAttribute("aria-selected", tab.dataset["page"] === id ? "true" : "false");
+// What this browser tab shows: the page each side shows, the side in
+// front (side by side, the one last worked in), and whether the sides
+// are side by side when the window is wide enough for it.
+const shown: Record<Side, PageId> = parseSidePages(null);
+let front: Side = "use";
+let split: SplitPrefs = { on: false, share: SPLIT_SHARE };
+const sideListeners: (() => void)[] = [];
+
+/** Hears every change of side, of a side's page or of the split. */
+export function onSides(listener: () => void): void {
+    sideListeners.push(listener);
+}
+
+/** Whether the window is wide enough for the sides side by side: the width the page's columns take. */
+export function wideWindow(): boolean {
+    return typeof globalThis.matchMedia !== "function" || globalThis.matchMedia("(min-width: 64rem)").matches;
+}
+
+/** The side in front: shown alone, or side by side the one last worked in. */
+export function frontSide(): Side {
+    return front;
+}
+
+/** The page a side shows, or showed last. */
+export function shownOn(side: Side): PageId {
+    return shown[side];
+}
+
+/** Whether both sides show now: asked for, and the window wide enough. */
+export function isSplit(): boolean {
+    return split.on && wideWindow();
+}
+
+/** Whether a side is in view in this tab: in front, or side by side. */
+export function sideInView(side: Side): boolean {
+    return side === front || isSplit();
+}
+
+export function splitPrefs(): SplitPrefs {
+    return { ...split };
+}
+
+/** Puts the sides side by side or one at a time, and remembers it unless `keep` is false (an address asked for it). */
+export function setSplit(on: boolean, keep = true): void {
+    split = { ...split, on };
+    if (keep) {
+        writeStored(SPLIT_KEY, JSON.stringify(split));
     }
+    applySides();
+}
+
+/** Sets the Use side's share of the width side by side, remembered unless `keep` is false (a drag under way). */
+export function setSplitShare(share: number, keep = true): void {
+    split = { ...split, share: Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, share)) };
+    if (keep) {
+        writeStored(SPLIT_KEY, JSON.stringify(split));
+    }
+    applySides();
+}
+
+/** Brings a side to the front with the page it last showed. */
+export function showSide(side: Side): void {
+    showPage(shown[side]);
+}
+
+/**
+ * Shows a page: in its side's pane, that side brought to the front (alone,
+ * the other side folds away; side by side, both stay). The attributes the
+ * stylesheet switches on, the tabs' state, and the memory of it.
+ */
+export function showPage(id: PageId): void {
+    const side = sideOf(id);
+    shown[side] = id;
+    front = side;
     writeStored(PAGE_KEY, id);
+    writeStored(SIDE_PAGES_KEY, JSON.stringify(shown));
+    applySides();
     for (const listener of pageListeners) {
         listener(id);
     }
 }
 
+/** Sets on the page what shows: #app's page, side and split, each page and pane up or not, each tab selected or not. */
+function applySides(): void {
+    const app = typeof document === "undefined" ? null : document.getElementById("app");
+    if (!app) {
+        return;
+    }
+    const both = isSplit();
+    app.setAttribute("data-page", shown[front]);
+    app.setAttribute("data-side", front);
+    app.toggleAttribute("data-split", both);
+    app.style.setProperty("--split-cols", `minmax(0, ${split.share}fr) var(--divider) minmax(0, ${1 - split.share}fr)`);
+    const up = (page: PageId): boolean => shown[sideOf(page)] === page && (both || sideOf(page) === front);
+    for (const main of Array.from(app.querySelectorAll<HTMLElement>("main.page"))) {
+        const page = pageNamed(main.id.replace(/^page-/, ""));
+        main.toggleAttribute("data-up", page !== null && up(page));
+    }
+    for (const pane of Array.from(app.querySelectorAll<HTMLElement>(".pane"))) {
+        const side = pane.dataset["side"];
+        pane.toggleAttribute("data-up", both || side === front);
+        pane.toggleAttribute("data-front", side === front);
+    }
+    for (const tab of Array.from(document.querySelectorAll<HTMLButtonElement>(".tabs .tab"))) {
+        const page = pageNamed(tab.dataset["page"]);
+        tab.setAttribute("aria-selected", page !== null && up(page) ? "true" : "false");
+    }
+    for (const listener of sideListeners) {
+        listener();
+    }
+}
+
 /**
- * Mounts the tab bar in `root`: a tab per page, the More folder for tabs
+ * Mounts the tab bar in `root`: each side's button with its tabs after it,
+ * the button that puts the sides side by side, the More folder for tabs
  * kept out, and a tools area at the bar's end, returned, for the page
  * settings.
  */
 export function mountTabs(root: HTMLElement, store: Store<AppState>): HTMLElement {
-    const list = el("div", { class: "tabs-list", role: "tablist", "aria-label": "Pages" });
+    const groups = SIDES.map((entry) => {
+        const button = el("button", {
+            type: "button",
+            class: "tabs-side",
+            "data-side": entry.id,
+            title: `${entry.label}: ${entry.tip}`,
+            onclick: () => {
+                showSide(entry.id);
+                root.removeAttribute("data-open");
+            },
+        }, entry.label);
+        const list = el("div", { class: "tabs-list", role: "tablist", "aria-label": `${entry.label} pages`, "data-side": entry.id });
+        return { side: entry.id, button, list, group: el("div", { class: "tabs-group", "data-side": entry.id }, button, list) };
+    });
+    const splitButton = el("button", {
+        type: "button",
+        class: "tabs-tool tabs-split",
+        "aria-pressed": "false",
+        onclick: () => {
+            setSplit(!split.on);
+            root.removeAttribute("data-open");
+        },
+    }, svgIcon("M1 2h14v12H1z M2.5 3.5v9h4.6v-9z M8.9 3.5v9h4.6v-9z", true));
     const more = el("button", { type: "button", class: "tabs-more", "aria-haspopup": "menu" }, "More");
     const tools = el("div", { class: "tabs-tools" });
-    const bar = el("div", { class: "tabs-bar" }, list, more, tools);
+    // The Setup side's group goes with the tools, so side by side they sit
+    // over the Setup pane together (the stylesheet).
+    const bar = el("div", { class: "tabs-bar" }, groups[0]!.group, el("div", { class: "tabs-right" }, groups[1]!.group, splitButton, more, tools));
     // Folded, the bar is a strip naming the page; a press opens it, for a
     // screen with no hover.
     const strip = el("button", { type: "button", class: "tabs-strip", "aria-label": "Show the tabs" });
@@ -195,18 +378,32 @@ export function mountTabs(root: HTMLElement, store: Store<AppState>): HTMLElemen
         // The page's color, on its tab and on its page for the panels.
         tab.style.setProperty("--page-accent", accentOf(page.id));
         document.getElementById(`page-${page.id}`)?.style.setProperty("--page-accent", accentOf(page.id));
-        list.append(tab);
+        groups.find((entry) => entry.side === page.side)!.list.append(tab);
         return { page: page.id, tab };
     });
     let prefs = readTabPrefs();
-    const current = (): PageId => pageNamed(document.getElementById("app")?.getAttribute("data-page")) ?? "jobs";
+    split = parseSplitPrefs(readStored(SPLIT_KEY));
 
-    /** The bar as the settings and the page shown have it. */
+    /** The bar as the settings, the sides and the page shown have it. */
     function draw(): void {
-        const page = current();
+        const both = isSplit();
+        const page = shown[front];
         for (const { page: id, tab } of tabs) {
             tab.hidden = prefs.hidden.includes(id);
         }
+        for (const entry of groups) {
+            const open = both || entry.side === front;
+            entry.list.hidden = !open;
+            entry.button.setAttribute("aria-pressed", entry.side === front ? "true" : "false");
+            entry.button.toggleAttribute("data-open", open);
+            entry.button.title = open
+                ? `${entry.button.textContent}: ${SIDES.find((side) => side.id === entry.side)!.tip}`
+                : `swap to ${entry.button.textContent} (\\): ${SIDES.find((side) => side.id === entry.side)!.tip}; it opens on ${PAGES.find((other) => other.id === shown[entry.side])!.label}`;
+        }
+        splitButton.hidden = !wideWindow();
+        splitButton.setAttribute("aria-pressed", both ? "true" : "false");
+        splitButton.title = both ? "one side at a time (|)" : "Use and Setup side by side (|)";
+        splitButton.setAttribute("aria-label", splitButton.title);
         more.hidden = prefs.hidden.length === 0;
         const label = PAGES.find((entry) => entry.id === page)?.label ?? page;
         // The page shown when its own tab is kept out: More stands for it.
@@ -216,6 +413,7 @@ export function mountTabs(root: HTMLElement, store: Store<AppState>): HTMLElemen
         more.style.setProperty("--page-accent", inMore ? accentOf(page) : "var(--border-strong)");
         more.title = inMore ? "the page shown; its tab is kept out of the bar" : "tabs kept out of the bar";
         root.toggleAttribute("data-fold", prefs.fold);
+        root.toggleAttribute("data-split", both);
         // Drawn by the stylesheet, so no button's text is a tab's name twice.
         strip.dataset["label"] = label;
         strip.title = "show the tabs";
@@ -224,7 +422,7 @@ export function mountTabs(root: HTMLElement, store: Store<AppState>): HTMLElemen
     more.addEventListener("click", () => {
         openMenu(prefs.hidden.map((id) => ({
             label: PAGES.find((entry) => entry.id === id)!.label,
-            checked: id === current(),
+            checked: id === shown[front],
             run: () => {
                 showPage(id);
                 root.removeAttribute("data-open");
@@ -264,8 +462,17 @@ export function mountTabs(root: HTMLElement, store: Store<AppState>): HTMLElemen
         prefs = next;
         draw();
     });
-    onPage(() => draw());
+    sideListeners.push(() => draw());
+    // A window made narrow shows one side; made wide again, both, if asked.
+    globalThis.matchMedia?.("(min-width: 64rem)").addEventListener?.("change", () => applySides());
 
+    // The page each side showed last, then the page to open on, and side
+    // by side if the address or the memory asks.
+    Object.assign(shown, parseSidePages(readStored(SIDE_PAGES_KEY)));
+    const asked = readAddress(globalThis.location?.search ?? "", "").split;
+    if (asked !== null) {
+        split = { ...split, on: asked };
+    }
     showPage(readPage());
     draw();
     // The count is drawn by the stylesheet from an attribute, so the tab's
@@ -278,9 +485,56 @@ export function mountTabs(root: HTMLElement, store: Store<AppState>): HTMLElemen
                 tab.title = `${countText(count, "edit", "edits")} on this page not applied`;
             } else {
                 tab.removeAttribute("data-pending");
-                tab.removeAttribute("title");
+                tab.title = PAGES.find((entry) => entry.id === page)!.tip;
+            }
+        }
+        // A side folded away says how many edits it holds.
+        for (const entry of groups) {
+            const count = pagesOf(entry.side).reduce((sum, page) => sum + pendingOn(state.pending, page), 0);
+            if (count > 0) {
+                entry.button.setAttribute("data-pending", String(count));
+            } else {
+                entry.button.removeAttribute("data-pending");
             }
         }
     }, ["pending"]);
     return tools;
+}
+
+/** Whether a key press is one the sides answer: `\` swaps them, `|` puts them side by side or back, with no field in use. */
+export function sideKey(event: KeyboardEvent): "swap" | "split" | null {
+    if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing) {
+        return null;
+    }
+    const target = event.target;
+    if (target instanceof Element && target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")) {
+        return null;
+    }
+    return event.key === "\\" ? "swap" : event.key === "|" ? "split" : null;
+}
+
+/** Swaps the side in front, or the split, by the keys `sideKey` names. */
+export function mountSideKeys(): void {
+    document.addEventListener("keydown", (event) => {
+        const key = sideKey(event);
+        if (key === null || event.defaultPrevented) {
+            return;
+        }
+        event.preventDefault();
+        if (key === "swap") {
+            showSide(otherSide(front));
+        } else if (wideWindow()) {
+            setSplit(!split.on);
+        }
+    });
+}
+
+/** The side a pane or page element belongs to; null outside the panes. */
+export function sideOfNode(node: Element): Side | null {
+    const side = node.closest<HTMLElement>(".pane")?.dataset["side"];
+    if (isSide(side)) {
+        return side;
+    }
+    const page = pageNamed(node.closest("main.page")?.id.replace(/^page-/, ""));
+    return page === null ? null : sideOf(page);
 }

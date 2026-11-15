@@ -17,7 +17,17 @@ export function mountToasts(root: HTMLElement, ctx: Ctx): void {
                     dropToast(ctx.store, toast.id);
                 }, TOAST_MS[toast.level]);
             }
-            return el("div", { class: `toast ${toast.level}`, role: "status", onclick: () => dropToast(ctx.store, toast.id) }, toast.text);
+            const action = toast.action;
+            // The action's button runs it and lets the toast go; a press
+            // anywhere else on the toast only lets it go.
+            const press = action
+                ? el("button", { type: "button", class: "btn btn-small toast-action", onclick: (event: Event) => {
+                    event.stopPropagation();
+                    dropToast(ctx.store, toast.id);
+                    action.run();
+                } }, action.label)
+                : null;
+            return el("div", { class: `toast ${toast.level}`, role: "status", onclick: () => dropToast(ctx.store, toast.id) }, toast.text, ...(press ? [press] : []));
         }));
     }, ["toasts"]);
 }

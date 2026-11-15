@@ -29,6 +29,8 @@
     --system-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --font: "Inter", var(--system-font);
     --mono: "JetBrains Mono", var(--system-mono);
+    /* The handle between the Use and Setup panes side by side. */
+    --divider: 0.5rem;
 
     /* Solarized */
     --base03: #002b36;
@@ -266,46 +268,82 @@ input[type="checkbox"] {
 #app {
     display: grid;
     grid-template-rows: auto auto 1fr;
+    grid-template-columns: minmax(0, 1fr);
     min-height: 100vh;
 }
 
-/* Pages under one status bar; the tabs set which is up on #app. */
-#app[data-page="plot"] > #page-jobs,
-#app[data-page="cam"] > #page-jobs,
-#app[data-page="pnp"] > #page-jobs,
-#app[data-page="auto"] > #page-jobs,
-#app[data-page="config"] > #page-jobs,
-#app[data-page="connection"] > #page-jobs,
-#app[data-page="overview"] > #page-jobs {
+#app > .statusbar,
+#app > .tabs {
+    grid-column: 1 / -1;
+}
+
+/* The two sides' panes (src/sides.ts), the Use side's pages in one and
+   the Setup side's in the other. The tabs set which page each pane shows
+   and which panes are up (data-up): one at a time, or both side by side
+   (data-split) with a handle between them. Each pane is a container its
+   page lays itself out by, so a page side by side takes its pane's width
+   for its columns, not the window's. */
+.pane {
+    grid-row: 3;
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+    container: pane / inline-size;
+}
+
+.pane:not([data-up]),
+.page:not([data-up]),
+.pane-divider {
     display: none;
 }
 
-#app:not([data-page="overview"]) > #page-overview {
-    display: none;
+/* The columns the panes take side by side, the Use side's share set by
+   the handle; the tab bar takes the same, so each side's tabs sit over
+   its pane. */
+#app[data-split] {
+    grid-template-columns: var(--split-cols, minmax(0, 3fr) var(--divider) minmax(0, 2fr));
 }
 
-#app:not([data-page="connection"]) > #page-connection {
-    display: none;
+#app[data-split] > #pane-use {
+    grid-column: 1;
 }
 
-#app:not([data-page="auto"]) > #page-auto {
-    display: none;
+#app[data-split] > #pane-setup {
+    grid-column: 3;
 }
 
-#app:not([data-page="pnp"]) > #page-pnp {
-    display: none;
+/* Side by side, a pane whose page is one column scrolls on its own. */
+#app[data-split] > .pane {
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
-#app:not([data-page="plot"]) > #page-plot {
-    display: none;
+#app[data-split] > .pane-divider {
+    display: block;
+    grid-row: 3;
+    grid-column: 2;
+    cursor: col-resize;
+    touch-action: none;
+    background: var(--panel-2);
+    border-inline: thin solid var(--border-strong);
 }
 
-#app:not([data-page="cam"]) > #page-cam {
-    display: none;
+.pane-divider:hover,
+.pane-divider:focus-visible,
+.pane-divider[data-dragging] {
+    background: color-mix(in oklab, var(--accent) 30%, var(--panel-2));
 }
 
-#app:not([data-page="config"]) > #page-config {
-    display: none;
+.pane-divider:focus-visible {
+    outline-offset: -0.125rem;
+}
+
+/* The page's width as the panel layer reads it (src/views/panels.ts):
+   1 where its pane lays it out in columns. */
+.page {
+    --wide: 0;
 }
 
 /* The tab bar: the tabs, the More folder holding tabs kept out of the
@@ -329,8 +367,99 @@ input[type="checkbox"] {
 
 /* The tabs wrap with the tools rather than as a block of their own, so
    on a narrow screen the gear shares the last row of tabs. */
-.tabs-list {
+.tabs-list,
+.tabs-group,
+.tabs-right {
     display: contents;
+}
+
+/* Each side's name, before its tabs (src/views/tabs.ts). The side in view
+   reads as the heading of its tabs; the other one, its tabs folded away
+   behind it, is a button that swaps to it, a chevron saying it goes
+   somewhere. */
+.tabs .tabs-side {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 2rem;
+    padding: 0.2rem 0.75rem;
+    margin-inline: 0.25rem 0.35rem;
+    font: inherit;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: transparent;
+    border: thin solid var(--border-strong);
+    border-radius: 1rem;
+    cursor: pointer;
+    transition: color 0.12s, background-color 0.12s, border-color 0.12s;
+}
+
+.tabs .tabs-side:hover {
+    color: var(--strong);
+    background: var(--btn);
+}
+
+.tabs .tabs-side[data-open] {
+    color: var(--strong);
+    border-color: transparent;
+    background: color-mix(in oklab, var(--strong) 8%, transparent);
+}
+
+.tabs .tabs-side:not([data-open])::after {
+    content: "";
+    width: 0.35rem;
+    height: 0.35rem;
+    border-right: 0.125rem solid currentColor;
+    border-bottom: 0.125rem solid currentColor;
+    transform: rotate(-45deg);
+}
+
+/* A side folded away counts the edits it holds that are not applied. */
+.tabs .tabs-side[data-pending]::before {
+    content: attr(data-pending);
+    order: 2;
+    min-width: 1.4em;
+    padding: 0.05em 0.4em;
+    border-radius: 1em;
+    font-size: 0.9em;
+    letter-spacing: 0;
+    text-align: center;
+    color: var(--on-fill);
+    background: color-mix(in oklab, var(--hold) 85%, var(--base03));
+}
+
+.tabs .tabs-side[data-pending]::after {
+    order: 3;
+}
+
+/* Side by side, the bar takes the panes' columns: each side's name and
+   tabs over its pane, the tools at the Setup pane's end. */
+.tabs[data-split] .tabs-bar {
+    display: grid;
+    grid-template-columns: var(--split-cols, minmax(0, 3fr) var(--divider) minmax(0, 2fr));
+    align-items: start;
+    padding: 0;
+}
+
+.tabs[data-split] .tabs-group[data-side="use"],
+.tabs[data-split] .tabs-right {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 0;
+    padding: 0 var(--gap);
+}
+
+.tabs[data-split] .tabs-group[data-side="use"] {
+    grid-column: 1;
+}
+
+.tabs[data-split] .tabs-right {
+    grid-column: 3;
 }
 
 .tabs .tab,
@@ -826,6 +955,15 @@ table.settings-list td {
     #app {
         height: 100vh;
         height: 100dvh;
+    }
+}
+
+/* A pane at least as wide as a wide window: its page in columns, each
+   scrolling on its own. Alone the pane has the window's width, side by
+   side its share. */
+@container pane (min-width: 64rem) {
+    .page {
+        --wide: 1;
     }
 
     .grid {
@@ -2264,7 +2402,7 @@ table.groups, table.settings {
     border-bottom: thin solid var(--border);
 }
 
-@media (min-width: 64rem) {
+@container pane (min-width: 64rem) {
     .settings-actions {
         top: 0;
     }
@@ -2620,6 +2758,11 @@ table.settings tbody tr:hover td {
 
 .toast.error {
     border-left-color: var(--danger);
+}
+
+/* A toast's one action ("Show here"), after its words. */
+.toast-action {
+    margin-left: 0.75rem;
 }
 
 @keyframes toast-in {
@@ -4523,15 +4666,9 @@ dialog.bug-dialog::backdrop {
    name, who made it, its id and Delete on one line, then what it does,
    its state and its source in a fold; one turned on is marked down its
    side. */
-#app[data-page="plugins"] > #page-jobs {
-    display: none;
-}
+/* The Plugins page shows by data-up, as every page does. */
 
-#app:not([data-page="plugins"]) > #page-plugins {
-    display: none;
-}
-
-@media (min-width: 64rem) {
+@container pane (min-width: 64rem) {
     .plugins-grid {
         grid-template-columns: minmax(0, 48rem);
     }
@@ -4946,7 +5083,7 @@ dialog.bug-dialog::backdrop {
    shrinks to its head, which stands on its side and reads from the top,
    with only its name, fold button and menu; a stack's tabs wait until it
    unfolds. */
-@media (min-width: 64rem) {
+@container pane (min-width: 64rem) {
     .panel-row-cell[data-folded] {
         flex: 0 0 auto;
     }
@@ -4984,7 +5121,7 @@ dialog.bug-dialog::backdrop {
     }
 }
 
-@media (max-width: 63.99rem) {
+@container pane (max-width: 63.99rem) {
     .panel-row,
     .panel-row-cell {
         display: contents;
@@ -5066,13 +5203,13 @@ dialog.bug-dialog::backdrop {
     padding-bottom: 0.35rem;
 }
 
-@media (min-width: 64rem) {
+@container pane (min-width: 64rem) {
     .panel-folder[data-shut] > :not(.panel-folder-head) {
         display: none !important;
     }
 }
 
-@media (max-width: 63.99rem) {
+@container pane (max-width: 63.99rem) {
     .panel-folder {
         display: contents;
     }
@@ -5359,7 +5496,7 @@ dialog.bug-dialog::backdrop {
     display: none;
 }
 
-@media (min-width: 64rem) {
+@container pane (min-width: 64rem) {
     .panel-resize {
         display: block;
         position: absolute;
@@ -5770,11 +5907,193 @@ table.find-guesses tr.elsewhere td {
 
 /* The folder's box is drawn on the wide layout only; there it wears the
    color for its panels. */
-@media (min-width: 64rem) {
+@container pane (min-width: 64rem) {
     :root:not([data-colors="off"]) .page .panel-folder .panel,
     :root:not([data-colors="off"]) .page .panel-folder .panel-tab[aria-selected="true"] {
         border-top: thin solid var(--border);
     }
+}
+
+/* --- the Setup side (src/views/facts.ts, src/views/links.ts) ----------- */
+
+/* The Checklist page: the list of facts, as wide as its rows read well,
+   the calibration tests beside it. */
+@container pane (min-width: 64rem) {
+    .facts-grid {
+        grid-template-columns: minmax(0, 3fr) minmax(20rem, 2fr);
+    }
+}
+
+.facts-summary {
+    margin: 0;
+    color: var(--text);
+}
+
+/* How much of what the machine runs on is automatic (measured or
+   detected, solid) and how much a person set (hatched); the rest is
+   defaults and missing. Neutral tones: it is a share, not a state. */
+.facts-meter {
+    display: flex;
+    height: 0.5rem;
+    border-radius: 0.25rem;
+    overflow: hidden;
+    background: var(--panel-2);
+    border: thin solid var(--border);
+}
+
+.facts-meter-auto {
+    background: var(--muted);
+}
+
+.facts-meter-hand {
+    background: repeating-linear-gradient(135deg, var(--muted) 0 0.15rem, transparent 0.15rem 0.35rem);
+}
+
+.facts-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--flow);
+}
+
+.facts {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+/* A fact: its mark, name, value, where it came from, and the link to where
+   it is set; what it needs on a line of its own under them. */
+.fact {
+    display: grid;
+    grid-template-columns: 1rem minmax(8rem, 1.2fr) minmax(0, 2fr) auto auto;
+    grid-template-areas:
+        "mark label value source action"
+        ". need need need need";
+    align-items: baseline;
+    gap: 0.25rem 0.75rem;
+    padding: 0.4rem 0.25rem;
+    border-bottom: thin solid var(--border);
+    border-radius: var(--radius);
+}
+
+.fact:last-child {
+    border-bottom: 0;
+}
+
+.fact-mark {
+    grid-area: mark;
+    align-self: center;
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 50%;
+    border: 0.1rem solid var(--muted);
+}
+
+/* Automatic values get a full dot, values a person set an empty one; only
+   what needs someone now is in color. */
+.fact:is([data-source="measured"], [data-source="detected"]) .fact-mark {
+    background: var(--muted);
+}
+
+.fact[data-need] .fact-mark {
+    border-color: var(--hold);
+    background: var(--hold);
+}
+
+.fact-label {
+    grid-area: label;
+    font-weight: 600;
+    color: var(--strong);
+}
+
+.fact-value {
+    grid-area: value;
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
+}
+
+.fact-source {
+    grid-area: source;
+    font-size: 0.8rem;
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+.fact[data-source="missing"] .fact-source {
+    color: var(--strong);
+    font-weight: 600;
+}
+
+.fact-action {
+    grid-area: action;
+}
+
+.fact-need {
+    grid-area: need;
+    font-size: 0.85rem;
+    color: color-mix(in oklab, var(--hold) 55%, var(--strong));
+}
+
+.fact.flash {
+    animation: fact-flash 1.6s ease-out;
+}
+
+@keyframes fact-flash {
+    0%, 30% { background: color-mix(in oklab, var(--accent) 22%, transparent); }
+    100% { background: transparent; }
+}
+
+/* A narrow pane (side by side): the value under the name. */
+@container pane (max-width: 40rem) {
+    .fact {
+        grid-template-columns: 1rem minmax(0, 1fr) auto auto;
+        grid-template-areas:
+            "mark label source action"
+            ". value value value"
+            ". need need need";
+    }
+}
+
+/* A link to the other side (or this one): a link, not a button, so it can
+   open in a tab of its own. */
+.side-link {
+    color: var(--accent);
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.side-link:hover {
+    text-decoration: underline;
+}
+
+/* The Setup link in a Use panel's head: quiet while all it depends on is
+   set, in the color for "needs you" when something is missing. */
+.setup-link {
+    display: inline-block;
+    padding: 0.2rem 0.55rem;
+    border-radius: 1rem;
+    color: var(--muted);
+    font-size: 0.75rem;
+    letter-spacing: 0.02em;
+}
+
+.setup-link:hover {
+    color: var(--strong);
+    background: var(--btn);
+    text-decoration: none;
+}
+
+.setup-link[data-need] {
+    color: color-mix(in oklab, var(--hold) 55%, var(--strong));
+    background: color-mix(in oklab, var(--hold) 16%, var(--panel));
+    border: thin solid color-mix(in oklab, var(--hold) 45%, var(--panel));
+}
+
+.setup-link[hidden] {
+    display: none;
 }
 
 /* --- movement (src/look.ts) -------------------------------------------- */
@@ -5803,7 +6122,7 @@ table.find-guesses tr.elsewhere td {
     from { opacity: 0; transform: translateY(-0.25rem) scale(0.98); }
 }
 
-#app > .page {
+.pane > .page {
     animation: page-in 0.2s ease-out;
 }
 

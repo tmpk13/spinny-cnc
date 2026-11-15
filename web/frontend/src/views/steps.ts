@@ -256,6 +256,18 @@ export function mountSteps(root: HTMLElement, ctx: Ctx, setups: Setup[] | ((stat
         }
     }
 
+    // A link to `steps/<setup>` (the Checklist's Measure) picks that setup.
+    root.addEventListener("spinny:goto", (event) => {
+        const id = (event as CustomEvent<string>).detail;
+        const state = ctx.store.get();
+        const fitting = typeof setups === "function" ? setups(state) : setupsFor(setups, state);
+        if (fitting.some((setup) => setup.id === id)) {
+            chosen = id;
+            writeStored(`${key}.setup`, chosen);
+            render(state);
+        }
+    });
+
     ctx.store.subscribe((state) => render(state), ["snapshot", "settings", "job", "heightMap", "camera", "progress", "mapChoice", "pnp", "components", "placing"]);
     render(ctx.store.get());
 }

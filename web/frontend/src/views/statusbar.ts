@@ -13,7 +13,7 @@ import type { AppState } from "../state.ts";
 import type { Firmware, Port } from "../types.ts";
 import type { Ctx } from "./context.ts";
 import { runActive, runMapUse, showMapUse } from "./heightmap.ts";
-import { showPage } from "./tabs.ts";
+import { goTo } from "./links.ts";
 
 /** How often the ports are listed again while nothing is connected, ms: a controller plugged in shows up by itself. */
 export const PORT_POLL_MS = 10_000;
@@ -96,8 +96,9 @@ export function firmwareLabel(firmware: Firmware | null): { text: string; title:
 
 export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
     // The state, a press away from the Connection tab where the port is picked.
-    const stateBadge = el("button", { type: "button", class: "badge state", "data-state": "none", title: "the machine's state; press for the Connection tab" }, "No link");
-    stateBadge.addEventListener("click", () => showPage("connection"));
+    const stateBadge = el("button", { type: "button", class: "badge state", "data-state": "none", title: "the machine's state; press for the Connection page (Setup side)" }, "No link");
+    // On the Setup side: here, or in the tab that shows that side.
+    stateBadge.addEventListener("click", () => void goTo({ panel: "connection", detail: null }));
     const firmware = el("span", { class: "firmware muted" }, "");
     // Shown only for a machine that is not the polar laser.
     const profile = el("span", { class: "badge profile hidden" }, "");

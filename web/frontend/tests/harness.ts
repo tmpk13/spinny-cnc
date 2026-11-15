@@ -125,3 +125,16 @@ export function pnpRoots() {
     }
     return roots;
 }
+
+/**
+ * Puts the page at an address on its own origin. Another test file can
+ * leave the window at about:blank, where an address with a path does not
+ * take, so the window is put back on its origin first.
+ */
+export function at(address: string): void {
+    const dom = (globalThis as { happyDOM?: { setURL(url: string): void } }).happyDOM;
+    if (dom && !location.href.startsWith("http://localhost/")) {
+        dom.setURL("http://localhost/");
+    }
+    history.replaceState(null, "", address);
+}

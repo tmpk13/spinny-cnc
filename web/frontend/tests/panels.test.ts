@@ -541,7 +541,10 @@ describe("the page's own markup", () => {
         expect(folders("pnp")).toEqual({ "pnp-view": "Bottom camera", "pnp-top-view": "Top camera", "pnp-head": "Machine" });
         const jobs = markupDefaults(Array.from(doc.querySelectorAll<HTMLElement>("#page-jobs > .column")));
         expect(jobs.stuck).toEqual({ camera: "camera-view", find: "camera-view" });
-        expect(jobs.stacked).toEqual({ "camera-controls": "camera", "camera-sight": "camera", "camera-changes": "camera", tests: "align" });
+        expect(jobs.stacked).toEqual({ "camera-controls": "camera", "camera-sight": "camera", "camera-changes": "camera" });
+        // The calibration tests are setup: the Checklist's page has them.
+        expect(doc.querySelector("#pane-setup #page-facts #tests")).not.toBeNull();
+        expect(doc.querySelector("#page-jobs #tests")).toBeNull();
     });
 
     test("every panel's menu turns edit mode on and off", () => {
