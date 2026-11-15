@@ -4,7 +4,10 @@ The top camera's board look and search, measured on a real machine for
 the first time (2026-11-14), what the numbers said, and what changed
 because of them. Decisions and their reasons live in the commits named
 here; the pictures and records are kept on the machine that took them
-(`var/surveys/`, `var/searchlog/`), not in git.
+(`var/surveys/`, `var/searchlog/`), not in git. The programs that took
+and graded them are in the repository: `mise run survey` (the sweep),
+`survey-grade`, `survey-baseline` and `survey-searches` (spinny-survey),
+and `search-report` for the search records.
 
 ## The setup
 
@@ -49,6 +52,15 @@ pictures are graded against (the board lies turned 0.17 degrees).
 | --- | --- | --- | --- | --- |
 | the scale within a fifth | 106 | 52 | 54 | 0.07 mm |
 | no scale (scale windows) | 116 | 48 | 68 | 0.07 mm |
+
+This sweep is the baseline every pcbv change has to beat: `mise run
+survey-baseline` grades it against the truth and the numbers kept in
+`web/backend/src/spinny_web/survey_baseline.json` (right rms 0.069 and
+0.070 mm) and fails when a build has fewer right locks, more wrong ones
+or a worse rms; pcb-vision 1a2d4fb and bf6c52b give the same numbers.
+17 of its pictures (nine right, five wrong, three off the board) are a
+test fixture in pcb-vision (`fixtures/survey/battery`), run by its
+`cargo test`.
 
 In a 6 mm patch over a dense part of the board every picture locked
 right, the centers agreeing to 0.031 mm rms. Right locks lie over the

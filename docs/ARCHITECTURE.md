@@ -81,6 +81,8 @@ flowchart LR
         EXT[Claude Code or another MCP client] <-->|stdio, MCP| MCP
         MCP --> TOOLS2[tools, over HTTP]
         TOOLS2 -->|HTTP| BE
+        SURV[spinny-survey: a sweep of the top camera kept in var/surveys, pcbv locate on every picture graded against one robust fit, the battery card baseline, searches graded against a survey's truth] -->|HTTP| BE
+        SURV -->|pcbv locate --json| PVL[pcb-vision pcbv locate, one picture each]
         BE --> PNP[pick and place: a board's parts and fiducials from its KiCad file, those kept out of the position files marked, the nozzle centered over the bottom camera, its runout, a part's offset, size and angle on it]
         PF[parts: the parts filter, a regular expression over the reference, value or footprint, kept in config.json] --> PNP
         PNP --> OPNP[openpnp: a G-code machine file's own tables read, the board fitted from references, the program as planned, a goto's lines]
