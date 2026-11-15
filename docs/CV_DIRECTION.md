@@ -6,6 +6,8 @@ behind every claim are in [CV_HARDWARE.md](CV_HARDWARE.md); the design of
 the probability search is in
 [PROBABILISTIC_SEARCH.md](PROBABILISTIC_SEARCH.md). This file only judges
 them: what works, what to build next, what to stop building.
+[CV_REVIEW.md](CV_REVIEW.md) replays the sessions' pictures and records to
+rank changes for speed, accuracy and wrong locks, with sources.
 
 ## Status after the second session (2026-11-14, night)
 
