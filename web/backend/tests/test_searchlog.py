@@ -445,3 +445,25 @@ def test_a_sweep_weighs_other_settings_and_a_pcbv_build_on_every_record(tmp_path
     assert searchreport.main(["--dir", str(log_dir), "sweep", "--need", "1,5", "--agree", "0.5"]) == 0
     out = capsys.readouterr().out
     assert "2 records, 1 found" in out and "need 1 within 0.5: 1 of 2, 1 wrong" in out and "(as recorded in 2)" in out
+
+
+def test_a_guess_every_check_disagreed_with_is_forgotten_when_the_search_gives_up(tmp_path, quick):
+    # The checks look where nothing locks: the guess found is never agreed.
+    seen = SeenBoard(BOX, 2.0, (150.0, 80.0), design_shift=DESIGN.shift)
+    box = (140.0, 70.0, 200.0, 125.0)
+    start = (0.0 + OFFSET[0], 0.0 + OFFSET[1])
+    stops = search_stops(box, (1280 * SCALE, 720 * SCALE), start)
+    camera = ScriptedCamera(seen)
+    look = BoardLook(lambda: camera, publish=lambda: None, paused=lambda: True)
+    look.start("j1", DESIGN.board_to_job, MIDDLE, lambda captured: "the watcher is held off")
+    try:
+        with pytest.raises(RuntimeError, match="no check agreed"):
+            search(
+                look, Mover(camera), stops, OFFSET, lambda point: PictureFrame(point, 0.0, False), lambda: False, lambda index, count: None,
+                RuntimeError, checks=lambda found: [(900.0, 900.0)],
+            )
+        # Kept, the watcher would go on calling it found and remember it as
+        # the place the next search starts from.
+        assert not look.consensus.found and look.consensus.guesses == [] and look.found_known("j1") is None
+    finally:
+        look.stop()

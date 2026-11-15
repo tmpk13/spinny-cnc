@@ -127,6 +127,11 @@ CORNERS = ("bottom left", "bottom right", "top right", "top left")
 # and how often at most it tells the page that the look changed.
 SAMPLE_SECONDS = 0.2
 PUBLISH_SECONDS = 0.5
+# A quick scan's lattice (a search with no place known over a bed much
+# larger than the board) is spaced at this share of the board's shorter
+# side: wherever the board lies, a stop falls a fifth of that side or more
+# inside its edges.
+QUICK_SHARE = 0.6
 # The search: how much of a picture the next stop's picture overlaps, the
 # most stops a box may take, how long a stop is looked at once a lock came
 # (s), and how long one is looked at for a first lock.
@@ -1344,14 +1349,42 @@ def search_box(center: Point, size: float) -> Box:
     return (center[0] - half, center[1] - half, center[0] + half, center[1] + half)
 
 
-def search_stops(box: Box, view: tuple[float, float], start: Point) -> list[Point]:
+def _lattice(x0: float, y0: float, x1: float, y1: float, step_x: float, step_y: float, between: bool = False) -> list[Point]:
+    """Points `step_x` by `step_y` apart centered in a box, one at least; with
+    `between` the points halfway between those (none along an axis with one)."""
+    nx = max(1, math.ceil((x1 - x0) / step_x - 1e-9))
+    ny = max(1, math.ceil((y1 - y0) / step_y - 1e-9))
+    if between:
+        nx, ny = nx - 1, ny - 1
+    cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+    return [(cx + (i - (nx - 1) / 2.0) * step_x, cy + (j - (ny - 1) / 2.0) * step_y) for j in range(ny) for i in range(nx)]
+
+
+def _nearest_first(stops: list[Point], start: Point) -> list[Point]:
+    return sorted(stops, key=lambda p: (round(math.dist(p, start), 6), math.atan2(p[1] - start[1], p[0] - start[0])))
+
+
+def search_stops(box: Box, view: tuple[float, float], start: Point, coarse: float | None = None) -> list[Point]:
     """The places for the picture's center that cover a box with pictures
     `view` (width, height mm) apart less OVERLAP: a grid centered in the
-    box, a stop at least, nearest `start` first. A ValueError for a box
-    that would take more than MAX_STOPS."""
+    box, a stop at least, nearest `start` first. With `coarse` (mm) a quick
+    scan of a box much larger than the board instead: a lattice that far
+    apart (never closer than the grid), then the lattice halfway between
+    it, each nearest `start` first; spaced at QUICK_SHARE of the board's
+    shorter side, the first lattice has a stop well inside the board
+    wherever it lies, where its looks lock right (its edges' looks lock
+    wrong most often). A ValueError for a box that would take more than
+    MAX_STOPS."""
     x0, y0, x1, y1 = min(box[0], box[2]), min(box[1], box[3]), max(box[0], box[2]), max(box[1], box[3])
     step_x = max(view[0] * (1.0 - OVERLAP), 0.1)
     step_y = max(view[1] * (1.0 - OVERLAP), 0.1)
+    if coarse is not None and coarse > 0.0:
+        step_x, step_y = max(step_x, coarse), max(step_y, coarse)
+        first = _lattice(x0, y0, x1, y1, step_x, step_y)
+        then = _lattice(x0, y0, x1, y1, step_x, step_y, between=True)
+        if len(first) + len(then) > MAX_STOPS:
+            raise ValueError(f"the box needs {len(first) + len(then)} stops of the camera's picture, more than {MAX_STOPS}: draw a smaller box")
+        return _nearest_first(first, start) + _nearest_first(then, start)
     nx = max(1, math.ceil((x1 - x0) / step_x - 1e-9))
     ny = max(1, math.ceil((y1 - y0) / step_y - 1e-9))
     if nx * ny > MAX_STOPS:
@@ -1492,6 +1525,7 @@ def search(
         look.mosaic.begin(look.job, [round(v, 4) for v in outline] if outline is not None else None, "search")
     visited = 0
     covered = False
+    refuted = False
     made = 0
     places_of = checks or (lambda found: [found.center])
 
@@ -1549,6 +1583,7 @@ def search(
             # checked; else the search goes on.
             while result == "found":
                 if made >= MAX_CHECKS:
+                    refuted = True
                     raise error(
                         f"the board was found {made} times but no check agreed: the looks at another place on it put it elsewhere"
                         " or saw nothing there; check the board's side and finish, or take its corners"
@@ -1580,6 +1615,12 @@ def search(
     except BaseException as exc:
         result = "not found" if covered else "stopped" if stopped() else "error"
         look.end_record(result, only=record, message=str(exc) or type(exc).__name__, visited=visited)
+        if refuted:
+            # Every check disagreed with the guess: forgotten, or the watcher
+            # would go on calling it found and keep it as the place the next
+            # search starts from (a LumenPnP's second search started at a
+            # feeder's tape the first had refuted).
+            look.restart()
         raise
     finally:
         # The watcher's looks afterwards are wherever the head is taken next.
