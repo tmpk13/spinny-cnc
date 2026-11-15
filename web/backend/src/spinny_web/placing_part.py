@@ -24,6 +24,7 @@ from fastapi import HTTPException
 from spinny_laser.machines import GCODE
 
 from .boardlook import (
+    QUICK_SHARE,
     KnownPlace,
     PictureFrame,
     corners_known,
@@ -428,10 +429,19 @@ class PlacingPart:
         width, height, scale = self._look_scale(self.top.client, settings.mm_per_px, self.top_look.scale_seen or self._design_top_scale())
         here = self._here(machine)
         center = (float(here["x"]) + offset[0], float(here["y"]) + offset[1])
-        box = body.box if body.box is not None else self._corners_box(self.top_look, job, settings.corner_mm) or search_box(center, diagonal)
         known = self._top_known(job, settings.corner_mm)
         prior = self._top_known(job, settings.corner_mm, corners=False)
-        stops = search_stops(box, (width * scale, height * scale), known.place.center if known is not None else center)
+        box = body.box if body.box is not None else self._corners_box(self.top_look, job, settings.corner_mm)
+        coarse = None
+        bed = machine.top.bed if machine.top is not None else None
+        outline = self._board_box(job)
+        if box is None and known is None and bed is not None and outline is not None:
+            # Nothing says where the board is: a quick scan of the bed, its
+            # stops spaced by the board's size so one falls well inside it.
+            box = bed
+            coarse = QUICK_SHARE * min(outline[2] - outline[0], outline[3] - outline[1])
+        box = box or search_box(center, diagonal)
+        stops = search_stops(box, (width * scale, height * scale), known.place.center if known is not None else center, coarse)
         steer = (
             {"width": width, "height": height, "scale": scale, "speed": max(machine.feed_xy / 60.0, 1.0), "start": center}
             if settings.look_method == "posterior" else None

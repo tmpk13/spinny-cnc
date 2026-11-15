@@ -517,3 +517,30 @@ def test_the_vote_leaves_out_a_lock_that_paired_under_half_of_what_it_should_sho
     every = Consensus(MIDDLE, need=1, sessions=1, min_match=0.0)
     every.see("locked", estimate(10.0, match=0.33), None)
     assert every.found
+
+
+def test_a_quick_scan_of_a_bed_puts_a_stop_well_inside_the_board_wherever_it_lies():
+    bed = (24.0, 66.0, 457.0, 553.0)
+    board = (99.8, 94.6)
+    coarse = boardlook.QUICK_SHARE * min(board)
+    stops = search_stops(bed, (20.6, 11.6), (60.0, 175.0), coarse)
+    # The coarse lattice first (8 by 9), nearest the start, then the 7 by 8
+    # halfway between.
+    assert len(stops) == 72 + 56
+    assert stops[0] == min(stops[:72], key=lambda p: math.dist(p, (60.0, 175.0)))
+    xs = sorted({round(x, 6) for x, _ in stops[:72]})
+    assert len(xs) == 8 and all(b - a == pytest.approx(coarse) for a, b in zip(xs, xs[1:]))
+    assert all(bed[0] <= x <= bed[2] and bed[1] <= y <= bed[3] for x, y in stops)
+    # Wherever a board square to the bed lies in it, one of the first
+    # lattice's stops is a fifth of its shorter side inside its edges.
+    margin = (1.0 - boardlook.QUICK_SHARE) / 2.0 * min(board)
+    for x0 in range(int(bed[0]), int(bed[2] - board[0]), 7):
+        for y0 in range(int(bed[1]), int(bed[3] - board[1]), 7):
+            inside = [
+                (x, y) for x, y in stops[:72]
+                if x0 + margin - 1e-6 <= x <= x0 + board[0] - margin + 1e-6 and y0 + margin - 1e-6 <= y <= y0 + board[1] - margin + 1e-6
+            ]
+            assert inside, (x0, y0)
+    # Without the coarse spacing the bed would take far more stops.
+    with pytest.raises(ValueError, match="more than"):
+        search_stops(bed, (20.6, 11.6), (60.0, 175.0))

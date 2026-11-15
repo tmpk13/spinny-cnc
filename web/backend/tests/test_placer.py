@@ -860,6 +860,31 @@ def test_a_top_camera_with_only_the_file_s_scale_searches_by_it(client, quick_se
     assert look["found"] is True and look["estimate"]["rotation"] == pytest.approx(2.0, abs=0.01)
 
 
+def test_a_search_with_nothing_known_scans_the_file_s_bed_quickly(client, quick_search):
+    rig(client, profile(rest=TOP + "bed = [100.0, 40.0, 300.0, 200.0]\n"))
+    job_id = outlined_job(client)
+    board = SeenBoard((0.0, 0.0, 40.0, 30.0), 2.0, (150.0, 80.0), design_shift=(-100.0, -70.0))
+    camera = BoardTopCamera(client.fake, (34.0, -9.0), board, roll=1.5)
+    client.backend.top.client = camera
+    client.put("/api/pnp/top", json={"offset": [34.0, -9.0], "mm_per_px": 0.02, "roll": 1.5, "mirror": False})
+    assert client.post("/api/pnp/top/board", json={"job": job_id}).status_code == 200
+    # No box drawn, no corners, references or place found before.
+    response = client.post("/api/pnp/top/search", json={})
+    assert response.status_code == 200, response.text
+    assert routine_done(client, "/api/pnp/placing")["state"] == "done"
+    look = client.get("/api/pnp/placing").json()["top"]["board_look"]
+    assert look["found"] is True and look["estimate"]["rotation"] == pytest.approx(2.0, abs=0.01)
+    # Its stops covered the bed 18 mm apart (0.6 of the board's 30 mm),
+    # not the square about the head a search with nothing known took before.
+    record = client.get("/api/searchlog?camera=top").json()["records"][0]
+    shown = client.get(f"/api/searchlog/{record['id']}").json()["record"]
+    assert shown["box"] == [100.0, 40.0, 300.0, 200.0]
+    planned = shown["stops"]
+    assert len(planned) == 12 * 9 + 11 * 8
+    first = planned[: 12 * 9]
+    assert min(math.dist(a, b) for a in first for b in first if a != b) == pytest.approx(18.0)
+
+
 def test_the_top_camera_searches_with_the_posterior_when_its_look_method_says_so(client, quick_search):
     rig(client, profile(rest=TOP))
     job_id = outlined_job(client)

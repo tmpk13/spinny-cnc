@@ -1430,6 +1430,8 @@ export interface GcodeTopCamera {
     roll?: number | null;
     /** The picture's scale as designed, mm a pixel of the full size picture at the camera's size; searches plan by it until one is measured. Missing or null: none given. */
     mm_per_px?: number | null;
+    /** Where boards lie, x0 y0 x1 y1 of the places the picture's center goes over: a search with no place known and no box scans it quickly. Missing or null: none given. */
+    bed?: [number, number, number, number] | null;
     fiducial: SpotPolarity;
     within: number;
     /** A fiducial on the bed, as the nozzle's place over it, that Home by fiducial finds; missing or null: none. */

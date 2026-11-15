@@ -171,6 +171,7 @@ export const FILE_KEYS: FileKey[] = [
         ["offset", "the top camera's center from the nozzle, as designed; Measure offset finds it", "top camera nozzle offset", null],
         ["roll", "the top camera's picture turn as mounted, degrees (180 upside down); Measure offset measures it", `top camera ${TURN_WORDS}`, 0],
         ["mm_per_px", "the top camera's scale as designed, mm a pixel at its size: searches plan by it until one is measured", "top camera scale resolution pixel size", null],
+        ["bed", "where boards lie, x0 y0 x1 y1 of the picture's center: a search with no place known scans it quickly", "top camera bed area board quick scan", null],
         ["fiducial", "dark or bright: how a fiducial looks to the top camera", "top camera shade fiducial", "bright"],
         ["within", "mm from where a fiducial, mark or pocket is expected that it is looked for", "top camera search reach", 2],
         ["home_fiducial", "a bed fiducial, as the nozzle's place over it, for Home by fiducial", "top camera homing fiducial", null],

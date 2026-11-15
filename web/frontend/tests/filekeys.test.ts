@@ -145,6 +145,7 @@ z = 0
 offset = [40.0, 0.0]
 roll = 180
 mm_per_px = 0.016
+bed = [20.0, 60.0, 450.0, 550.0]
 fiducial = "bright"
 within = 2.0
 home_fiducial = [60.0, 170.0]

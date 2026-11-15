@@ -157,6 +157,11 @@ roll = 180
 # board on a LumenPnP; Opulo's 0.0130 is at its own capture size): searches
 # plan their stops by it until a scale is measured or seen locked.
 mm_per_px = 0.0161
+# Where boards lie, as the places the picture's center goes over: the whole
+# travel (Marlin's soft limits, X 0 to 433 and Y 0 to 487, plus the offset).
+# A search with no place known and no box drawn scans it on a lattice spaced
+# by the board's size; narrow it to the staging plates for a quicker scan.
+bed = [24.0, 66.0, 456.0, 552.0]
 # The camera itself, taken by the top camera when the machine connects, as
 # the bottom camera's above.
 # device = "/dev/video4"
