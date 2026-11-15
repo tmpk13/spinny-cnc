@@ -22,6 +22,7 @@ a run), a feeder's marks and a part in its pocket.
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 from typing import Callable
 
@@ -29,10 +30,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from spinny_laser import machines as machine_files
 
-from .camera import CORNER_MM, LOOK_THRESHOLD, Spot, check_look, feature_limits, picture_to_machine, round_problem, spot_of
+from .camera import CORNER_MM, LOOK_THRESHOLD, SETTLE_SECONDS, Spot, check_look, feature_limits, picture_to_machine, round_problem, spot_of
 from .findings import Finding
 from .cameras import check_controls
 from .openpnp import SHADES
+from .pictures import CameraMap, fit_camera, fresh_gray, phase_shift
 from .pnp import Mover, PickCamera, PnpError, RoutineProgress, calibrate
 from .vision import check_colors, check_lens
 
@@ -46,6 +48,38 @@ LOOK_TRIES = 2
 DEFAULT_STEP = 2.0
 MAX_STEP = 20.0
 OFFSET_LIMIT = 500.0
+# Measure camera: the picture's scale, roll and mirror from the head's
+# moves alone, over any surface with texture (pictures.fit_camera). A first
+# move of PROBE_MM along X tells the scale roughly; the grid's step then
+# shifts the picture by GRID_SHARE of its height (within GRID_MM), over a 3
+# by 3 grid about the start, GRID_PASSES times. Pictures are measured
+# MEASURE_WIDTH px wide at most; a shift whose correlation peaks under
+# MIN_PEAK shares too little with the first picture, and a fit worse than
+# FIT_RMS_PX (full size px) is refused. On a LumenPnP (3 mm steps, twice)
+# the moves fitted to 0.9 px rms, with 8 to 18 um of backlash on a return.
+PICTURE_STEPS = ("lifting", "probing", "grid", "fitting", "done")
+PROBE_MM = 0.5
+GRID_SHARE = 0.15
+GRID_MM = (0.2, 5.0)
+GRID_PASSES = 2
+MEASURE_WIDTH = 640
+MIN_PEAK = 0.05
+FIT_RMS_PX = 3.0
+
+
+def nearest_turn(degrees: float, near: float) -> float:
+    """`degrees` written the way nearest `near` (a roll of -179.6 near
+    180 reads 180.4): the same turn, so a setting keeps its written form."""
+    return near + ((degrees - near + 180.0) % 360.0 - 180.0)
+
+
+def _full_width(size: str, reply: dict) -> float:
+    """The full size picture's width, px: the camera's size setting
+    (WIDTHxHEIGHT), else the shrunk picture's own width."""
+    match = machine_files._CAMERA_SIZE.match(size or "")
+    if match:
+        return float(size.split("x")[0])
+    return float(reply["width"])
 
 
 @dataclass
@@ -155,13 +189,15 @@ class TopCamera(PickCamera):
     clearable = ("mark_at", "offset", "nozzle_box")
     routines = {
         "offset": "measuring the top camera's offset", "fiducials": "finding the fiducials", "search": "looking for the board",
-        "scan": "scanning the board", "home": "homing by the fiducial",
+        "scan": "scanning the board", "home": "homing by the fiducial", "picture": "measuring the top camera's picture",
     }
 
     def __init__(self, store: Callable[[], dict], save: Callable[[], None], publish: Callable[[], None], message: Callable[[str, str], None]) -> None:
         super().__init__(store, save, publish, message)
         # The last fiducials found: the job, each one's places, the fit's rms.
         self.fiducials: dict | None = None
+        # The numbers of the last Measure camera (CameraMap's and the run's).
+        self.measured_picture: dict | None = None
 
     def settings(self) -> TopCameraSettings:
         return super().settings()
@@ -170,7 +206,7 @@ class TopCamera(PickCamera):
         return super().update(patch, clear)
 
     def state(self) -> dict:
-        return {**super().state(), "fiducials": self.fiducials}
+        return {**super().state(), "fiducials": self.fiducials, "measured_picture": self.measured_picture}
 
     # --- the look -----------------------------------------------------------------
 
@@ -278,6 +314,106 @@ class TopCamera(PickCamera):
         if self.settings().mark_at is None:
             raise ValueError("put the nozzle's tip over a mark and press Nozzle on mark first")
         self._begin("offset", OFFSET_STEPS, mover, lambda progress: self._offset(mover, progress, step, z, guess, confirm))
+
+    def measure_picture(
+        self, mover: Mover, step: float, z: float | None, keep: Callable[[CameraMap, dict], str] | None = None, near_roll: float | None = None,
+    ) -> None:
+        """Starts Measure camera on its own thread: the picture's scale,
+        roll and mirror from the head's moves over whatever lies under the
+        camera (a board, a printed pattern: anything with texture that does
+        not repeat within a few mm), no mark needed. `step` is the grid's
+        step, mm (0: one that shifts the picture by GRID_SHARE of its
+        height). `z` is the height the head looks from. `keep` takes the
+        map and the run's numbers and keeps them, answering the words to
+        say (by default the settings take the scale, roll and mirror).
+        The roll is written the way nearest `near_roll` (the roll in use),
+        else the settings' roll."""
+        if not (math.isfinite(step) and 0.0 <= step <= GRID_MM[1]):
+            raise ValueError(f"the step must be 0 to {GRID_MM[1]:g} mm")
+        self._begin("picture", PICTURE_STEPS, mover, lambda progress: self._picture(mover, progress, step, z, keep, near_roll))
+
+    def _picture(
+        self, mover: Mover, progress: RoutineProgress, step: float, z: float | None, keep: Callable[[CameraMap, dict], str] | None,
+        near_roll: float | None,
+    ) -> None:
+        settings = self.settings()
+        mover.begin()
+        self._step(progress, "lifting")
+        mover.lift()
+        if z is not None:
+            mover.lower(z)
+        start = mover.here()
+
+        def picture():
+            gray, reply = fresh_gray(self.client, time.monotonic() + SETTLE_SECONDS, MEASURE_WIDTH, mover.stopped)
+            return gray, reply
+
+        def shift_to(point: Point, first) -> tuple[float, float, float]:
+            mover.go(point)
+            gray, _ = picture()
+            dx, dy, peak = phase_shift(first, gray)
+            if peak < MIN_PEAK:
+                raise PnpError(
+                    f"the picture at {mover.describe(point)} shares too little with the first (correlation {peak:.3f}):"
+                    " measure over a board or a printed pattern, with a shorter step"
+                )
+            return dx, dy, peak
+
+        first, reply = picture()
+        full_width = _full_width(settings.size, reply)
+        factor = full_width / float(reply["width"])
+        self._step(progress, "probing")
+        if step <= 0.0:
+            dx, dy, _ = shift_to((start[0] + PROBE_MM, start[1]), first)
+            moved = math.hypot(dx, dy)
+            if moved < 0.5:
+                raise PnpError("the picture did not move with the head: is the camera on the head, over something with texture?")
+            per_px = PROBE_MM / moved
+            step = min(max(GRID_SHARE * first.shape[0] * per_px, GRID_MM[0]), GRID_MM[1])
+            step = round(step, 2)
+        self._step(progress, "grid")
+        moves: list[Point] = []
+        shifts: list[Point] = []
+        peaks: list[float] = []
+        order = [(i, j) for j in (-1, 0, 1) for i in ((-1, 0, 1) if j != 0 else (1, 0, -1))]
+        for _ in range(GRID_PASSES):
+            for i, j in order:
+                dx, dy, peak = shift_to((start[0] + i * step, start[1] + j * step), first)
+                moves.append((i * step, j * step))
+                shifts.append((dx, dy))
+                peaks.append(peak)
+        # Back where it began: how far the picture lies from the first is
+        # the backlash and drift the moves hold.
+        back = shift_to(start, first)
+        self._step(progress, "fitting")
+        fit = fit_camera(moves, shifts)
+        mm_per_px = fit.mm_per_px / factor
+        rms_px, worst_px = fit.rms_px * factor, fit.worst_px * factor
+        if rms_px > FIT_RMS_PX:
+            raise PnpError(
+                f"the head's moves fit the pictures badly ({rms_px:.1f} px rms over the grid): the head may slip, or the surface"
+                " repeats within the step; measure over another place"
+            )
+        roll = nearest_turn(fit.roll, settings.roll if near_roll is None else near_roll)
+        returned_um = math.hypot(back[0], back[1]) * factor * mm_per_px * 1000.0
+        numbers = {
+            **fit.to_dict(), "mm_per_px": round(mm_per_px, 7), "mm_per_px_x": round(fit.mm_per_px_x / factor, 7),
+            "mm_per_px_y": round(fit.mm_per_px_y / factor, 7), "roll": round(roll, 4), "rms_px": round(rms_px, 3),
+            "worst_px": round(worst_px, 3), "step": step, "pictures": len(moves) + 1, "returned_um": round(returned_um, 1),
+            "least_peak": round(min(peaks), 4), "head": [round(start[0], 4), round(start[1], 4)],
+        }
+        words = (
+            f"the top camera's picture measured by the head's moves: {mm_per_px * 1000.0:.2f} um a pixel"
+            f" ({numbers['mm_per_px_x'] * 1000.0:.2f} along X, {numbers['mm_per_px_y'] * 1000.0:.2f} along Y),"
+            f" roll {roll:.2f} degrees{', mirrored' if fit.mirror else ''}, the axes {abs(fit.skew_deg):.2f} degrees from square,"
+            f" {rms_px:.2f} px rms, back at the start within {returned_um:.0f} um"
+        )
+        self.measured_picture = numbers
+        if keep is not None:
+            self._message("info", keep(fit, numbers))
+            return
+        self.update({"mm_per_px": round(mm_per_px, 7), "roll": round(roll, 4), "mirror": fit.mirror})
+        self._message("info", words)
 
     def find_fiducials(
         self,

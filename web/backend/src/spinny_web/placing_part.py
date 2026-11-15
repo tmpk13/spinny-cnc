@@ -700,6 +700,17 @@ class PlacingPart:
         self.top.measure_offset(mover, step, profile.z if profile is not None else None, profile.offset if profile is not None else None, confirm)
         return self.placing_state()
 
+    def top_measure(self, step: float = 0.0) -> dict:
+        """Measure camera: the top camera's scale, roll and mirror from the
+        head's moves over whatever lies under it (topcam.measure_picture),
+        on its routine thread; the roll measured is written the way nearest
+        the one in use."""
+        machine = self._placing_idle()
+        mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
+        profile = machine.top
+        self.top.measure_picture(mover, step, profile.z if profile is not None else None, near_roll=self._top_roll(machine))
+        return self.placing_state()
+
     def top_home(self, home: bool = True) -> dict:
         """Homes the machine, then finds the bed's homing fiducial with the
         top camera and declares where the head is from it (visual homing,

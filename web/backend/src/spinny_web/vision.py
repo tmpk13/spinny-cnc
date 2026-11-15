@@ -436,6 +436,19 @@ class VisionClient:
         reply["bytes"] = len(data)
         return reply, data
 
+    def gray(self, width: int | None = None) -> tuple[dict, bytes]:
+        """The newest picture's luma, a byte a pixel, row major, shrunk by a
+        whole factor to at most `width` px wide (full size without), and
+        the reply (`width`, `height`, `frame`, `age_ms`, `format`). A pcbv
+        built before it could answers a JPEG: pictures.gray_array says so."""
+        fields: dict = {"format": "gray"}
+        if width is not None:
+            fields["width"] = int(width)
+        reply = self.request("frame", **fields)
+        data = reply.pop("bytes", b"")
+        reply["bytes"] = len(data)
+        return reply, data
+
     def spot(
         self,
         radius: float | None = None,
