@@ -251,12 +251,5 @@ Answer:
 Why it matters: each task (board look, spots, edges, Measure camera; nozzle, part) looks only inside its crop, kept in the machine file and drawn on the picture.
 - A. A box in shares of the picture, x0 y0 x1 y1 from its top left (recommended): any part of the picture, drawn by a drag, kept across capture sizes; pcbv clips its spots, edges and board features to it.
 - B. A circle about the picture's center, in mm, as the bottom camera's part crops are: simpler, but a task can only look at the middle.
-Applied: A, in progress on branch cv-crop.
-Answer:
-
-## Q42. Which cameras get crops first?
-Why it matters: the head camera of this project's machines also finds marks and boards, but keeps its settings outside a machine file.
-- A. The LumenPnP's top and bottom cameras now, the head camera after (recommended): they are the ones failing on hardware (Center nozzle took a spot off to the side).
-- B. All three at once.
-Applied: A.
+Applied: A, in 7bc130c and fdaa98c (pcbv d75f4c0).
 Answer:
