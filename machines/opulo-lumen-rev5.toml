@@ -63,7 +63,11 @@ light_on = ["M150 P255 R255 U255 B255"]   # the ring lights both cameras share
 light_off = ["M150 P0"]
 
 [motion]
-feed_xy = 6000           # mm/min; Opulo's machine allows 17000
+# Travel, mm/min: 200 mm/s (Opulo's machine allows 17000). On a LumenPnP a
+# whole-bed search took 23.9 s against 33.5 at 100 mm/s, no step was lost
+# (the board found within 0.02 mm after as before) and the picture was
+# still the moment the head arrived.
+feed_xy = 12000
 feed_z = 3000            # mm/min; Opulo's allows 20000
 safe_z = 31.5            # both nozzles up
 seesaw = true            # Z drives N1 down below 31.5 and N2 above it: moves across come to 31.5 from either side, Z jogs stop there
