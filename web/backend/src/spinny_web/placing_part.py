@@ -73,8 +73,12 @@ if TYPE_CHECKING:
 
 # A top camera search that found its board from looks far apart keeps the
 # roll it measured once that is this far from the roll in use, degrees, or
-# whenever the camera's scale was not measured.
-PICTURE_ROLL_DEG = 0.05
+# whenever the camera's scale was not measured. On a LumenPnP one search's
+# roll scattered 0.07 degrees and carried the axes' skew (0.13 to 0.16
+# degrees) where its places lay along one axis, while Measure camera reads
+# the roll to 0.02: at 0.05 every search rewrote a measured roll by its own
+# noise (180.33 measured, then 180.43, 180.50, 180.61, 180.53).
+PICTURE_ROLL_DEG = 0.3
 # With only the file's scale as designed, pcbv's board search keeps within
 # this factor of it either way (a measured one: vision.SCALE_SPREAD). On the
 # LumenPnP's top camera the windows' search without any scale locked
@@ -613,22 +617,27 @@ class PlacingPart:
         """A board found from looks far apart says the top camera's roll
         (the roll in use plus the guess's `roll_off`) and pcbv its scale:
         kept at once and logged (findings.py, Undo takes them back) when
-        they differ from the camera's settings (by 0.05 degrees, or a scale
-        not measured), so the picture is measured without a mark. The
-        offset still needs one."""
+        they differ from the camera's settings (by PICTURE_ROLL_DEG, or a
+        scale not measured), so the picture is measured without a mark.
+        A scale measured is kept: `scale` is pcbv's newest lock's, which
+        may be a wrong lock's (a LumenPnP search's last check locked a
+        repeated cell 39 mm off at 3% over the scale), and a search moved
+        a measured 16.13 um to 16.47. The offset still needs a mark."""
         roll_off = getattr(found, "roll_off", None)
         if found is None or roll_off is None or not scale or scale <= 0.0:
             return
         settings = self.top.settings()
         in_use = self._top_roll(machine)
         roll = in_use + roll_off
-        if settings.mm_per_px > 0.0 and abs(roll_off) < PICTURE_ROLL_DEG:
+        unmeasured = settings.mm_per_px <= 0.0
+        if not unmeasured and abs(roll_off) < PICTURE_ROLL_DEG:
             return
-        words = (
-            f"the board's turn from the head's moves puts the top camera's roll at {roll:.2f} degrees"
-            f" ({in_use:.2f} in use) and pcbv its scale at {scale * 1000.0:.2f} um a pixel"
-        )
-        self.top._message("info", self.top.findings.keep("picture", words, {"mm_per_px": scale, "roll": roll}))
+        words = f"the board's turn from the head's moves puts the top camera's roll at {roll:.2f} degrees ({in_use:.2f} in use)"
+        patch: dict = {"roll": roll}
+        if unmeasured:
+            words += f" and pcbv its scale at {scale * 1000.0:.2f} um a pixel"
+            patch["mm_per_px"] = scale
+        self.top._message("info", self.top.findings.keep("picture", words, patch))
 
     def top_scan(self, body: BoardScanBody) -> dict:
         """Moves the top camera over the whole board where a rough place

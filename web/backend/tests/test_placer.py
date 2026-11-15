@@ -830,17 +830,19 @@ def test_the_top_camera_searches_a_box_for_the_board_and_keeps_its_place(client,
     assert unloaded == {"job": None, "threshold": boardlook.THRESHOLD, "corner_mm": boardlook.CORNER_MM, "method": "vote", "board_stretch": False, "corners": None}
 
 
-def test_a_search_from_places_far_apart_keeps_the_top_camera_s_roll_and_scale_with_an_undo(client, quick_search, monkeypatch):
+def far_apart_search(client, monkeypatch, roll: float, settings: dict, file: str = "") -> dict:
+    """A top camera search of a board found from looks far apart, the
+    camera sitting at `roll` degrees and set to `settings`, the machine
+    file's top camera given `file` too: the top camera's state after it."""
     # The fake board is small: its finding stop and its check lie closer
     # than a real board's do.
     monkeypatch.setattr(boardlook, "PLACES_MM", 5.0)
-    rig(client, profile(rest=TOP))
+    rig(client, profile(rest=TOP + file))
     job_id = outlined_job(client)
     board = SeenBoard((0.0, 0.0, 40.0, 30.0), 2.0, (150.0, 80.0), design_shift=(-100.0, -70.0))
-    # The camera sits at 1.9 degrees; the roll in use says 1.5.
-    camera = BoardTopCamera(client.fake, (34.0, -9.0), board, roll=1.9, scale=0.0161)
+    camera = BoardTopCamera(client.fake, (34.0, -9.0), board, roll=roll, scale=0.0161)
     client.backend.top.client = camera
-    client.put("/api/pnp/top", json={"offset": [34.0, -9.0], "mm_per_px": 0.02, "roll": 1.5, "mirror": False})
+    client.put("/api/pnp/top", json={"offset": [34.0, -9.0], "mirror": False, **settings})
     assert client.post("/api/pnp/top/board", json={"job": job_id}).status_code == 200
     response = client.post("/api/pnp/top/search", json={"box": [140.0, 70.0, 200.0, 125.0]})
     assert response.status_code == 200, response.text
@@ -848,19 +850,43 @@ def test_a_search_from_places_far_apart_keeps_the_top_camera_s_roll_and_scale_wi
     top = client.get("/api/pnp/placing").json()["top"]
     look = top["board_look"]
     # Looks from the stop that found it and the check's place: the turn by
-    # the head's moves, the board's own, and the roll 0.4 degrees off.
+    # the head's moves, the board's own, and the roll as far off as set.
     assert look["found"] is True and look["estimate"]["rotation"] == pytest.approx(2.0, abs=0.01)
-    assert look["estimate"]["roll_off"] == pytest.approx(0.4, abs=0.01)
-    # Kept at once, logged with the values in use before; Undo takes them back.
+    assert look["estimate"]["roll_off"] == pytest.approx(roll - settings.get("roll", 0.0), abs=0.01)
+    return top
+
+
+def test_a_search_from_places_far_apart_keeps_the_top_camera_s_roll_with_an_undo_and_its_measured_scale(client, quick_search, monkeypatch):
+    # The camera sits at 1.9 degrees; the roll in use says 1.5.
+    top = far_apart_search(client, monkeypatch, 1.9, {"mm_per_px": 0.02, "roll": 1.5})
+    # The roll kept at once, logged with the value in use before; the
+    # scale measured stays (pcbv's newest lock may be a wrong one's).
     entry = top["applied"]
-    assert entry["kind"] == "picture" and "roll at 1.90 degrees (1.50 in use)" in entry["text"] and "16.10 um a pixel" in entry["text"]
-    assert top["roll"] == pytest.approx(1.9, abs=0.01) and top["mm_per_px"] == pytest.approx(0.0161)
+    assert entry["kind"] == "picture" and "roll at 1.90 degrees (1.50 in use)" in entry["text"] and "um a pixel" not in entry["text"]
+    assert top["roll"] == pytest.approx(1.9, abs=0.01) and top["mm_per_px"] == 0.02
     changes = {change["name"]: (change["before"], change["after"]) for change in entry["changes"]}
-    assert changes["roll"][0] == 1.5 and changes["mm_per_px"] == (0.02, pytest.approx(0.0161))
+    assert set(changes) == {"roll"} and changes["roll"][0] == 1.5
+    # Undo takes it back.
     response = client.post(f"/api/findings/{entry['id']}/undo")
     assert response.status_code == 200, response.text
     settings = client.get("/api/pnp/placing").json()["top"]
     assert settings["roll"] == 1.5 and settings["mm_per_px"] == 0.02 and settings["applied"]["kind"] == "undo"
+
+
+def test_a_search_leaves_a_measured_top_camera_whose_roll_is_off_by_its_noise(client, quick_search, monkeypatch):
+    # 0.1 degrees off: within one search's scatter and the axes' skew.
+    top = far_apart_search(client, monkeypatch, 1.6, {"mm_per_px": 0.02, "roll": 1.5})
+    assert top["roll"] == 1.5 and top["mm_per_px"] == 0.02
+    assert (top.get("applied") or {}).get("kind") != "picture"
+
+
+def test_a_search_fills_an_unmeasured_top_camera_s_scale_and_roll(client, quick_search, monkeypatch):
+    # Nothing measured: the file's design scale plans the stops, and the
+    # search keeps pcbv's scale with the roll, however near the roll is.
+    top = far_apart_search(client, monkeypatch, 1.6, {"roll": 1.5}, file="mm_per_px = 0.02\n")
+    entry = top["applied"]
+    assert entry["kind"] == "picture" and "16.10 um a pixel" in entry["text"]
+    assert top["roll"] == pytest.approx(1.6, abs=0.01) and top["mm_per_px"] == pytest.approx(0.0161)
 
 
 def test_a_top_camera_with_only_the_file_s_scale_searches_by_it(client, quick_search):
