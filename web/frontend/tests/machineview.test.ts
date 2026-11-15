@@ -8,7 +8,7 @@ import { connectGcode } from "./gcoderig.ts";
 import { click, findButton, setup, settle } from "./harness.ts";
 
 /** A binary STL of the triangles given, nine numbers each; its header starts with `solid`, as some binary files do. */
-function binaryStl(triangles: number[][]): Uint8Array {
+function binaryStl(triangles: number[][]): Uint8Array<ArrayBuffer> {
     const bytes = new Uint8Array(84 + 50 * triangles.length);
     bytes.set(new TextEncoder().encode("solid but binary"));
     const view = new DataView(bytes.buffer);
