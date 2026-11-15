@@ -23,6 +23,10 @@
 // camera). The marks turn with it, their words kept level, and the pointer
 // is turned back into the picture's own pixels. The View menu sets the
 // crosshair's shape (a cross, a circle, both) and reach, kept per camera.
+// The View menu also says which way the arrow keys move the head with the
+// pointer over the picture (as shown, the other way, or the machine's axes
+// through the jog keys), kept per camera; a drag always moves the head so
+// what the camera sees follows the pointer.
 // A spot a routine or a look found stays over the picture until Clear
 // marks, moving with the machine so it stays over what it marked (or, the
 // View menu's Marks follow the machine off, where it was drawn). Edges
@@ -255,6 +259,38 @@ export function arrowMove(way: [number, number], turn: Turn, mm: number, calibra
     const [mx, my] = pictureToMachine(px, py, calibration.mmPerPx, calibration.roll, calibration.mirror);
     const length = Math.hypot(mx, my);
     return length > 0 ? [(mx / length) * mm, (my / length) * mm] : [0, 0];
+}
+
+/**
+ * Which way an arrow key with the pointer over a picture moves the head,
+ * chosen per camera in its View menu: `shown`, the way the arrow points on
+ * the picture as shown (a camera on the head looks further that way, a
+ * fixed camera sees the nozzle go that way); `reversed`, the other way (a
+ * camera on the head sees the picture's content go the way the arrow
+ * points, as a drag would move it; a fixed camera sees the nozzle go
+ * against the arrow); `axes`, the picture leaves the arrow keys to the jog
+ * keys, which follow the machine's axes and the jog panel's step.
+ */
+export type ArrowWay = "shown" | "reversed" | "axes";
+
+export const ARROW_WAYS: { value: ArrowWay; label: string }[] = [
+    { value: "shown", label: "Arrow keys as the picture shows" },
+    { value: "reversed", label: "Arrow keys the other way" },
+    { value: "axes", label: "Arrow keys on the machine's axes" },
+];
+
+/** A kept arrow key choice, or `shown` for anything else. */
+export function readArrowWay(kept: string | null): ArrowWay {
+    return ARROW_WAYS.find((entry) => entry.value === kept)?.value ?? "shown";
+}
+
+/** The head's move an arrow key `way` over a picture shown turned asks for under a choice; null under `axes`, which leaves the key to the jog keys. */
+export function arrowStep(choice: ArrowWay, way: [number, number], turn: Turn, mm: number, calibration: Calibration): [number, number] | null {
+    if (choice === "axes") {
+        return null;
+    }
+    const [mx, my] = arrowMove(way, turn, mm, calibration);
+    return choice === "reversed" ? [-mx + 0, -my + 0] : [mx, my];
 }
 
 /**
@@ -677,6 +713,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     const followKey = `spinny.picture.${options.key}.follow`;
     const confirmKey = `spinny.picture.${options.key}.confirm`;
     const edgesKey = `spinny.picture.${options.key}.edges`;
+    const arrowsKey = `spinny.picture.${options.key}.arrows`;
     let zoom = 1;
     // The edge view: on when switched on (kept per camera), the edges last
     // read and when, and whether a request is out.
@@ -697,6 +734,8 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     // Quarters the picture is turned by hand, counterclockwise, over Upright's turn.
     let byHand = readQuarters(readStored(turnKey));
     let crosshair = readCrosshair(readStored(crosshairKey), readStored(crosshairSizeKey));
+    // Which way the arrow keys move the head over this picture (kept per camera).
+    let arrows = readArrowWay(readStored(arrowsKey));
     // The turn the picture is shown at, set at each fit.
     let turn: Turn = UNTURNED;
     let searchBox: MachineBox | null = options.boxes ? readBox(boxKey) : null;
@@ -743,7 +782,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     upright.title = "show the picture turned by the camera's roll so the machine's +X points right and +Y up";
     const reset = button("Reset view", () => resetView(), "btn btn-quiet btn-small", "back to the whole picture filling its box: zoom 1, not panned");
     const turnButton = button("Turn", () => turnBy(-1), "btn btn-quiet btn-small");
-    const view = button("View", () => openView(), "btn btn-quiet btn-small", "the crosshair's shape and size, and whether marks follow the machine");
+    const view = button("View", () => openView(), "btn btn-quiet btn-small", "the crosshair's shape and size, whether marks follow the machine, and which way the arrow keys move the head over the picture");
     view.setAttribute("aria-haspopup", "menu");
     const clearMarks = button("Clear marks", () => {
         kept = [];
@@ -853,6 +892,10 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
             writeStored(crosshairSizeKey, size);
             draw(ctx.store.get());
         };
+        const pickArrows = (way: ArrowWay) => (): void => {
+            arrows = way;
+            writeStored(arrowsKey, way);
+        };
         openMenu([
             ...CROSSHAIR_SHAPES.map((entry) => ({ label: entry.label, run: pickShape(entry.value), checked: crosshair.shape === entry.value })),
             "-",
@@ -867,6 +910,8 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
                 },
                 checked: followOn,
             },
+            "-",
+            ...ARROW_WAYS.map((entry) => ({ label: entry.label, run: pickArrows(entry.value), checked: arrows === entry.value })),
             ...(options.finding ? [{
                 label: "Ask before keeping what routines find",
                 run: () => writeStored(confirmKey, confirmFindings(options.key) ? "0" : "1"),
@@ -1224,11 +1269,11 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         void options.move([-mx, -my]);
     });
 
-    // The arrow keys with the pointer over the picture move the head the
-    // way they point on the picture, turned as it is shown (a jog pad's
-    // arrows keep the machine's axes): a camera on the head looks further
-    // that way, a fixed camera sees the nozzle go that way. 1 mm a press,
-    // a tenth with Shift.
+    // The arrow keys with the pointer over the picture move the head as the
+    // View menu's choice for this camera says (ArrowWay): by default the way
+    // they point on the picture, turned as it is shown, or the other way;
+    // on the machine's axes the picture leaves them to the jog keys. 1 mm a
+    // press, a tenth with Shift.
     let hovered = false;
     box.addEventListener("pointerenter", () => {
         hovered = true;
@@ -1238,7 +1283,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     });
     const arrowKey = (event: KeyboardEvent): void => {
         const way = ARROWS[event.key];
-        if (!hovered || way === undefined || event.repeat || event.ctrlKey || event.metaKey || event.altKey || !options.visible()) {
+        if (!hovered || way === undefined || arrows === "axes" || event.repeat || event.ctrlKey || event.metaKey || event.altKey || !options.visible()) {
             return;
         }
         const target = event.target as HTMLElement | null;
@@ -1252,8 +1297,10 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         }
         event.preventDefault();
         event.stopPropagation();
-        const mm = event.shiftKey ? 0.1 : 1;
-        void options.move(arrowMove(way, turn, mm, calibration));
+        const move = arrowStep(arrows, way, turn, event.shiftKey ? 0.1 : 1, calibration);
+        if (move !== null) {
+            void options.move(move);
+        }
     };
     globalThis.addEventListener?.("keydown", arrowKey, true);
 

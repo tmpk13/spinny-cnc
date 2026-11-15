@@ -542,11 +542,16 @@ smaller than its box, and the marks beyond its edges (known points, a
 search box, the board) show in the room around it, where a search box can
 be drawn too. A drag with the middle button, or with Alt, pans the view;
 *Reset view* goes back to the whole picture filling its box, not panned.
-With the pointer over the picture the arrow keys move the head the way
-they point on the picture as it is shown, turned or not (1 mm a press, a
-tenth with Shift): a camera on the head looks further that way, the fixed
-bottom camera sees the nozzle go that way; the jog panel's keys and pad
-keep the machine's axes. A drag moves the head
+With the pointer over the picture the arrow keys move the head (1 mm a
+press, a tenth with Shift) as the picture's *View* menu says, kept per
+camera: *Arrow keys as the picture shows* (the default) moves it the way
+they point on the picture as it is shown, turned or not, so a camera on
+the head looks further that way and the fixed bottom camera sees the
+nozzle go that way; *Arrow keys the other way* moves it against that (a
+camera on the head then sees the picture's content go the way the arrow
+points, as a drag moves it); *Arrow keys on the machine's axes* leaves
+them to the jog keys, which keep the machine's axes and the jog panel's
+step, as the jog panel's keys and pad always do. A drag moves the head
 so what the camera sees follows the pointer, a line showing the move; a
 double-click brings a point to the crosshair (both once the camera's
 scale is measured). The grip under the picture makes its box taller or

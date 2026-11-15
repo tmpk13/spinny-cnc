@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { boardMarks, boxShares, frameSize, nozzleBoxMarks, reachMark, shownSpots } from "../src/views/camview.ts";
-import { addTurn, armBox, armedPick, ARROWS, arrowMove, armPick, clampZoom, confirmFindings, crosshairMarks, disarmPick, dragMove, followShift, frameRequestWidth, growBox, keptMarks, levelText, machineToPicture, MAX_KEPT_SPOTS, mountPicture, pictureToMachine, readCrosshair, readQuarters, shiftMark, type ShownSpot, spotMarks, stepZoom, takeSpots, turnTransform, UNTURNED, unturnOffset, uprightTurn, zoomText } from "../src/views/picture.ts";
+import { addTurn, armBox, armedPick, ARROWS, arrowMove, arrowStep, armPick, clampZoom, confirmFindings, crosshairMarks, disarmPick, dragMove, followShift, frameRequestWidth, growBox, keptMarks, levelText, machineToPicture, MAX_KEPT_SPOTS, mountPicture, pictureToMachine, readArrowWay, readCrosshair, readQuarters, shiftMark, type ShownSpot, spotMarks, stepZoom, takeSpots, turnTransform, UNTURNED, unturnOffset, uprightTurn, zoomText } from "../src/views/picture.ts";
 import type { CameraFinding } from "../src/types.ts";
 import { click, setup, settle } from "./harness.ts";
 
@@ -306,6 +306,53 @@ describe("the picture view", () => {
         expect(view.zoom()).toBe(1);
         expect(viewBox()[0]).toBeCloseTo(0, 6);
         view.stop();
+    });
+
+    test("the View menu says per camera which way the arrow keys move the head: as shown, the other way, or left to the jog keys", () => {
+        const calibration = { mmPerPx: 0.1, roll: 0, mirror: false };
+        const clean = (move: [number, number] | null): number[] | null => move === null ? null : move.map((v) => Number(v.toFixed(9)) + 0);
+        expect(readArrowWay(null)).toBe("shown");
+        expect(readArrowWay("reversed")).toBe("reversed");
+        expect(readArrowWay("sideways")).toBe("shown");
+        expect(clean(arrowStep("shown", ARROWS["ArrowUp"]!, UNTURNED, 1, calibration))).toEqual([0, 1]);
+        expect(clean(arrowStep("reversed", ARROWS["ArrowUp"]!, UNTURNED, 1, calibration))).toEqual([0, -1]);
+        expect(arrowStep("axes", ARROWS["ArrowUp"]!, UNTURNED, 1, calibration)).toBeNull();
+        const key = "test-arrows";
+        localStorage.removeItem(`spinny.picture.${key}.arrows`);
+        const { view, moves } = mounted(true, undefined, key);
+        const box = view.root.querySelector(".picture-box") as HTMLElement;
+        box.dispatchEvent(new MouseEvent("pointerenter"));
+        const press = (name: string): KeyboardEvent => {
+            const event = new KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true });
+            document.body.dispatchEvent(event);
+            return event;
+        };
+        const choose = (label: string): void => {
+            click(view.root, "View");
+            const item = [...document.querySelectorAll<HTMLButtonElement>(".menu-item")].find((node) => node.textContent === label)!;
+            item.click();
+        };
+        expect(press("ArrowRight").defaultPrevented).toBe(true);
+        expect(clean(moves.at(-1)!)).toEqual([1, 0]);
+        // The other way: the picture's content goes the way the arrow points, as a drag would move it.
+        click(view.root, "View");
+        expect([...document.querySelectorAll<HTMLButtonElement>(".menu-item")].find((node) => node.textContent === "Arrow keys as the picture shows")!.getAttribute("aria-checked")).toBe("true");
+        [...document.querySelectorAll<HTMLButtonElement>(".menu-item")].find((node) => node.textContent === "Arrow keys the other way")!.click();
+        expect(localStorage.getItem(`spinny.picture.${key}.arrows`)).toBe("reversed");
+        expect(press("ArrowRight").defaultPrevented).toBe(true);
+        expect(clean(moves.at(-1)!)).toEqual([-1, 0]);
+        // On the machine's axes the key is left to the jog keys.
+        choose("Arrow keys on the machine's axes");
+        const count = moves.length;
+        expect(press("ArrowRight").defaultPrevented).toBe(false);
+        expect(moves).toHaveLength(count);
+        view.stop();
+        // The choice is kept for the camera: a picture mounted again has it.
+        const again = mounted(true, undefined, key);
+        (again.view.root.querySelector(".picture-box") as HTMLElement).dispatchEvent(new MouseEvent("pointerenter"));
+        expect(press("ArrowLeft").defaultPrevented).toBe(false);
+        again.view.stop();
+        localStorage.removeItem(`spinny.picture.${key}.arrows`);
     });
 
     test("the arrow keys over the picture move the head the way they point on the picture, turned as shown", () => {
