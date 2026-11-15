@@ -167,6 +167,11 @@ def detection(features) -> np.ndarray:
     return P_MAX * (1.0 - np.exp(-np.asarray(features, dtype=float) / FEATURES_HALF))
 
 
+def _detection(features: float) -> float:
+    """detection for one count, without numpy's cost for a scalar."""
+    return P_MAX * (1.0 - math.exp(-float(features) / FEATURES_HALF))
+
+
 def strength(match: float, passed: bool = True) -> float:
     """How many times likelier a candidate of this match is the board than a
     false one."""
@@ -401,6 +406,10 @@ class Posterior(Consensus):
         self._diffuse: np.ndarray | None = None
         self._diffuse_log: np.ndarray | None = None
         self._miss_total: np.ndarray | None = None
+        # Each hypothesis' features in each view, while its fit stays:
+        # its id to (its mean's bytes, view index to (the view's size and
+        # scale when counted, the count)).
+        self._seen: dict[int, tuple[bytes, dict[int, tuple[tuple, float]]]] = {}
         if self._box is not None:
             self._draw()
 
@@ -539,6 +548,66 @@ class Posterior(Consensus):
         inside = (np.abs(u) <= hw) & (np.abs(v) <= hh)
         return inside.sum(axis=1) * self.board.weight
 
+    def _seen_counts(self, hypothesis: Hypothesis) -> dict[int, float]:
+        """How many of the board's features the hypothesis' fit puts in
+        each observed view's picture, by view index (features_in for its
+        mean). Counted for every view a pose is taken in, so they are kept
+        while its fit stays and each view's size and scale stay, and the
+        views still to count are counted together; a view taken on the
+        move goes through features_in, which knows the camera's delay."""
+        mean = hypothesis.mean
+        key = mean.tobytes()
+        cached = self._seen.get(hypothesis.id)
+        if cached is None or cached[0] != key:
+            cached = (key, {})
+            self._seen[hypothesis.id] = cached
+        counts = cached[1]
+        still: list[View] = []
+        for view in self.views:
+            if not view.observed:
+                continue
+            shape = (view.width, view.height, view.scale)
+            held = counts.get(view.index)
+            if held is not None and held[0] == shape:
+                continue
+            if view.frame.velocity != (0.0, 0.0):
+                counts[view.index] = (shape, float(self.features_in(mean, view)[0]))
+            else:
+                still.append(view)
+        if still:
+            mx, my = self._feature_places(mean)
+            centers = np.array([view.frame.center for view in still])
+            rolls = np.radians([view.frame.roll for view in still])
+            scales = np.array([view.scale for view in still])
+            cr, sr = np.cos(rolls)[:, None], np.sin(rolls)[:, None]
+            ox = mx[None, :] - centers[:, 0:1]
+            oy = my[None, :] - centers[:, 1:2]
+            u = (ox * cr + oy * sr) / scales[:, None]
+            v = (-ox * sr + oy * cr) / scales[:, None]
+            hw = np.array([view.width for view in still])[:, None] / 2.0 * (1.0 - 2.0 * EDGE_SHARE)
+            hh = np.array([view.height for view in still])[:, None] / 2.0 * (1.0 - 2.0 * EDGE_SHARE)
+            inside = ((np.abs(u) <= hw) & (np.abs(v) <= hh)).sum(axis=1) * self.board.weight
+            for view, count in zip(still, inside):
+                counts[view.index] = ((view.width, view.height, view.scale), float(count))
+        if len(self._seen) > 4 * MAX_HYPOTHESES:
+            alive = {h.id for h in self.hypotheses}
+            self._seen = {ident: held for ident, held in self._seen.items() if ident in alive}
+        return {index: held[1] for index, held in counts.items()}
+
+    def _feature_places(self, state: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Where one state (turn, middle and the layout's other parts) puts
+        the board's features on the machine, as features_in does."""
+        theta = float(state[0])
+        c, s = math.cos(theta), math.sin(theta)
+        d = self.board.features - np.asarray(self.board.middle)
+        if self.layout.stretch and len(state) >= 6:
+            half = math.tan(float(state[5])) / 2.0
+            jx = float(state[3]) * d[:, 0] + half * d[:, 1]
+            jy = half * d[:, 0] + float(state[4]) * d[:, 1]
+        else:
+            jx, jy = d[:, 0], d[:, 1]
+        return c * jx - s * jy + float(state[1]), s * jx + c * jy + float(state[2])
+
     def _weigh_view_diffuse(self, view: View) -> None:
         """What a view says of the poses drawn from the prior: the log of
         its chance to have given no candidate at each."""
@@ -563,8 +632,13 @@ class Posterior(Consensus):
         late = layout.delay_of(state, self.delay_prior[0]) - self.delay_prior[0]
         vx, vy = view.frame.velocity
         center = np.array([view.frame.center[0] - vx * late, view.frame.center[1] - vy * late])
-        seen = np.linalg.solve(matrix, center - state[1:3]) + np.asarray(self.board.middle)
-        return np.array([seen[0], seen[1], state[0]])
+        # The 2 by 2 solve written out: called for every candidate of every
+        # hypothesis at every pose, numpy's solve cost most of a replay.
+        a, b, c, d = float(matrix[0][0]), float(matrix[0][1]), float(matrix[1][0]), float(matrix[1][1])
+        rx, ry = float(center[0] - state[1]), float(center[1] - state[2])
+        det = a * d - b * c
+        middle = self.board.middle
+        return np.array([(d * rx - b * ry) / det + middle[0], (a * ry - c * rx) / det + middle[1], state[0]])
 
     def _measurement(self, candidate: Candidate, view: View) -> tuple[np.ndarray, np.ndarray]:
         """A candidate as a measurement (the job's point under the picture's
@@ -754,7 +828,9 @@ class Posterior(Consensus):
                     diff = a.mean[:3] - b.mean[:3]
                     diff[0] = _wrap_rad(diff[0])
                     joint = a.cov[:3, :3] + b.cov[:3, :3]
-                    if float(diff @ np.linalg.solve(joint, diff)) >= GATE:
+                    # The distance over the joint spread's trace is no more
+                    # than the gated one: pairs far apart need no solve.
+                    if float(diff @ diff) >= GATE * float(np.trace(joint)) or float(diff @ np.linalg.solve(joint, diff)) >= GATE:
                         continue
                     keep, gone = (a, b) if len(a.members) >= len(b.members) else (b, a)
                     for view_index, candidate in gone.members.items():
@@ -788,18 +864,21 @@ class Posterior(Consensus):
             return -math.inf
         clutter = CLUTTER / (self.board.area * 2.0 * math.pi)
         total = math.log(prior)
+        seen_by_view = self._seen_counts(hypothesis)
         for view in self.views:
             if not view.observed:
                 continue
-            seen = float(self.features_in(mean, view)[0])
+            seen = seen_by_view[view.index]
             candidate = hypothesis.members.get(view.index)
             if candidate is None:
-                total += math.log1p(-min(float(detection(seen)), 0.999999))
+                total += math.log1p(-min(_detection(seen), 0.999999))
                 continue
-            p = max(float(detection(max(seen, candidate.expected))), P_FLOOR)
+            p = max(_detection(max(seen, candidate.expected)), P_FLOOR)
             z, noise = self._measurement(candidate, view)
             r = self._residual(z, self.predict(mean, view))
-            log_kernel = -0.5 * (float(r @ np.linalg.solve(noise, r)) + 3.0 * LOG_2PI + math.log(np.linalg.det(noise)))
+            # The measurement's noise is diagonal (_measurement).
+            variances = np.diag(noise)
+            log_kernel = -0.5 * (float((r * r / variances).sum()) + 3.0 * LOG_2PI + float(np.log(variances).sum()))
             total += math.log(p) + math.log(max(candidate.strength, 1e-12)) - math.log(clutter) + log_kernel
         if self._anchors():
             corner_log, furthest, _ = self._corner_log(mean, self._box_area())
