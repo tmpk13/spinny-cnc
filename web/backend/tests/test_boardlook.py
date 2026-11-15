@@ -353,13 +353,17 @@ def test_a_board_found_is_checked_where_the_picture_holds_the_most_pads():
     # Pads all in the bottom left: the middle holds none of them.
     pads = [(4.0 + i, 4.0 + j) for i in range(5) for j in range(4)]
     places = boardlook.check_places(found, MIDDLE, outline, pads, view)
-    assert len(places) == boardlook.MAX_CHECKS
+    # Only places holding half the most pads or more: here two.
+    assert 1 <= len(places) <= boardlook.MAX_CHECKS
     # The first holds every pad, inside the edge margin (a fifth of the
     # board's 30 mm side), and the next lie a picture's height apart.
     first = (places[0][0] - 100.0, places[0][1] - 50.0)
     assert boardlook.held_counts(found, [first], pads, view) == [20]
     assert 6.0 - 1e-9 <= first[0] <= 34.0 and 6.0 - 1e-9 <= first[1] <= 24.0
-    assert math.dist(places[0], places[1]) >= min(view) - 1e-9 and len({tuple(p) for p in places}) == len(places)
+    assert len({tuple(p) for p in places}) == len(places)
+    # Spread pads: the checks after the first go as far from it as they can.
+    spread_places = boardlook.check_places(found, MIDDLE, outline, [(x * 2.0, y * 2.0) for x in range(21) for y in range(16)], view)
+    assert len(spread_places) == boardlook.MAX_CHECKS and math.dist(spread_places[0], spread_places[1]) > 15.0
     # Pads spread evenly: a place holding at least what the middle holds.
     spread = [(x * 2.0, y * 2.0) for x in range(21) for y in range(16)]
     best = boardlook.check_places(found, MIDDLE, outline, spread, view)[0]

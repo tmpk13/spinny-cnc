@@ -1616,18 +1616,19 @@ def check_places(
 ) -> list[Point]:
     """Where to check a board found (`found` puts the job's frame on the
     machine), machine points for the picture's center, the best first:
-    the places whose picture holds the most pads and holes (dense_places),
-    each at least a picture's height from the ones before while the board
-    has room; `count` at most. A board without features is checked at its middle."""
-    ranked = [place for place, _ in dense_places(found, middle, outline, features, view)]
-    places: list[Point] = []
-    # Apart first; on a board too small for that, the densest left.
-    for apart in (min(view), 1e-6):
-        for place in ranked:
-            if len(places) >= count:
-                break
-            if all(math.dist(place, kept) >= apart for kept in places):
-                places.append(place)
+    the place whose picture holds the most pads and holes (dense_places),
+    then among those holding at least half as many each time the one
+    farthest from the places taken: checks far apart give the board's
+    turn from the head's places (places_fit) over a long baseline; `count`
+    at most. A board without features is checked at its middle."""
+    dense = dense_places(found, middle, outline, features, view)
+    ranked = [place for place, held in dense if held * 2 >= dense[0][1]] or [dense[0][0]]
+    places: list[Point] = [ranked[0]]
+    while len(places) < count:
+        left = [place for place in ranked if all(math.dist(place, kept) > 1e-6 for kept in places)]
+        if not left:
+            break
+        places.append(max(left, key=lambda place: min(math.dist(place, kept) for kept in places)))
     return [found.apply(point) for point in places]
 
 
@@ -1796,8 +1797,10 @@ def search(
                 assert best is not None
                 places = places_of(best) or [best.center]
                 # A check PLACES_MM or more from where the board was found
-                # gives the turn from the head's places (places_fit).
-                places = sorted(places, key=lambda point: math.dist(point, stop) < PLACES_MM)
+                # gives the turn from the head's places (places_fit), the
+                # farther the better: two places 25 mm apart on one side of
+                # a LumenPnP board put its middle 0.12 mm off.
+                places = sorted(places, key=lambda point: (math.dist(point, stop) < PLACES_MM, -math.dist(point, stop)))
                 place = places[min(made, len(places) - 1)]
                 made += 1
                 outcome = visit(len(stops) + made - 1, place, middle=True, check=best)
