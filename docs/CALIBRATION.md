@@ -144,7 +144,11 @@ surface, so run the material test on a corner of the same sheet first. A
 mill plunges once per dot, each as wide as the tool. The top right dot is
 left out, so a picture of the pattern says which way it lies, turned or
 mirrored. *Save SVG* gives the same grid as a sheet to print at 100%,
-with a 10 mm bar to check the printer's scale against.
+with a 10 mm bar to check the printer's scale against. A whole card holding
+this grid, a 1 mm one, fiducials, rulers and placement targets, to burn
+into layout blue on a metal plate, is in
+[calibration-card](calibration-card/README.md); the calibration test does
+not draw it yet.
 
 To measure the lens, put the camera over the pattern so the dots fill
 its picture and press *Measure lens* in the camera's *Lens and colors*
