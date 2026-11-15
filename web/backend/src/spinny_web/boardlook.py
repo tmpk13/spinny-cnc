@@ -72,7 +72,7 @@ from .kinematics import FOCUS_DECIMALS, coord
 from .link import idle_status, settle
 from .log import log
 from .crops import cut
-from .pictures import BOARD_BUSY, BUSY_WIDTH, EMPTY_BUSY, busy_share, fresh_gray
+from .pictures import BOARD_BUSY, BUSY_WIDTH, EMPTY_BUSY, busy_share, fresh_gray, phase_shift
 from .vision import VisionClient, VisionError
 
 Point = tuple[float, float]
@@ -170,6 +170,13 @@ MAX_CHECKS = 3
 # the right place).
 STOP_SEARCHES = 6
 TRACKED_POSES = 2
+# A stop's pictures are trusted from the first of two frames in a row that
+# agree within this many pixels of the busy test's picture (BUSY_WIDTH, a
+# quarter of a 1280 px picture: 0.4 full size px, 6 um on a LumenPnP),
+# instead of a fixed settle time after every move (camera.SETTLE_SECONDS,
+# then the ceiling): 9.5 s of a 40 s whole-bed search waited it out.
+SETTLED_PX = 0.1
+SETTLE_BY_FRAMES = True
 # The speed a G-code machine's head is taken to move at when a place it is
 # seen at changed, mm/s, for when the move ends: lower than any feed, so the
 # wait is long enough.
@@ -1386,6 +1393,37 @@ class BoardLook:
             self._recheck(record)
         return seen
 
+    def settle(self, began: float, stopped: Callable[[], bool]) -> float:
+        """When the picture came to rest after a stop began at `began`: the
+        capture time of the first of two frames in a row whose pictures
+        agree within SETTLED_PX (phase_shift at BUSY_WIDTH), as Measure
+        camera and OpenPnP's frame difference settling do; the camera's
+        settle time after `began` at the latest, and that too for a camera
+        that gives no pictures as luma."""
+        ceiling = began + camera_module.SETTLE_SECONDS
+        if not self.busy_test:
+            return ceiling
+        try:
+            asked = time.monotonic()
+            last, reply = fresh_gray(self.client, began, BUSY_WIDTH, stopped)
+            age = reply.get("age_ms")
+            last_at = asked - float(age) / 1000.0 if _number(age) else asked
+            while last_at < ceiling:
+                asked = time.monotonic()
+                gray, reply = fresh_gray(self.client, last_at + 1e-3, BUSY_WIDTH, stopped)
+                age = reply.get("age_ms")
+                captured = asked - float(age) / 1000.0 if _number(age) else asked
+                if gray.shape == last.shape:
+                    dx, dy, _ = phase_shift(cut(last, self.crop()), cut(gray, self.crop()))
+                    if math.hypot(dx, dy) <= SETTLED_PX:
+                        return max(last_at, began)
+                last, last_at = gray, captured
+        except (AttributeError, VisionError, ValueError) as exc:
+            if stopped() or dead_camera(str(exc)):
+                return ceiling
+            log.warning("board look: no settle by frames: %s", exc)
+        return ceiling
+
     def busy(self, since: float, stopped: Callable[[], bool]) -> tuple[float, dict, float] | None:
         """How busy the camera's picture taken `since` or later is
         (pictures.busy_share), its reply and when it was taken; None when
@@ -1689,15 +1727,18 @@ def look_at_stop(
 ) -> str:
     """Reads poses with the head at rest at one stop until StopEnd ends it
     (`found`, `likely`, `agreed`, `disagreed`, `searched`, `no lock`, `time
-    up`). Only frames taken the camera's settle time after the stop began
-    are used. First the picture's busy share (pictures.py) is measured:
+    up`). Only frames taken once the picture came to rest are used
+    (BoardLook.settle; the camera's settle time after the stop began at
+    the latest). First the picture's busy share (pictures.py) is measured:
     under EMPTY_BUSY the stop ends `empty` at once, a look that found
     nothing; under `gate` (a quick scan's first pass asks for a picture
     that looks like board, BOARD_BUSY) it ends `sparse`, left for later.
     `size` is the full size picture's width and height, px; the share goes
     into `record` with the stop's `index`."""
     began = time.monotonic()
-    trusted = began + camera_module.SETTLE_SECONDS
+    trusted = look.settle(began, stopped) if SETTLE_BY_FRAMES else began + camera_module.SETTLE_SECONDS
+    if record is not None:
+        record.event("settled", index=index, seconds=round(trusted - began, 3))
     busy = look.busy(trusted, stopped) if gate > 0.0 else None
     if busy is not None:
         share, reply, captured = busy

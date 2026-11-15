@@ -151,3 +151,50 @@ def test_a_camera_whose_pcbv_stopped_ends_the_search_at_once(quick):
     finally:
         look.stop()
     assert len(mover.places) <= 2
+
+
+class RingingCamera:
+    """Pictures of a textured surface from a head that rings after its
+    move: each picture asked for is shifted by the next of `offsets` (px
+    along the picture's x), then still."""
+
+    def __init__(self, offsets) -> None:
+        from test_pictures import texture
+
+        self.surface = texture()
+        self.offsets = list(offsets)
+        self.asked = 0
+        # When each picture was asked for: its capture, the age being 0.
+        self.times: list[float] = []
+        self.running = True
+
+    def gray(self, width=None):
+        from test_pictures import picture
+
+        self.times.append(time.monotonic())
+        offset = self.offsets[min(self.asked, len(self.offsets) - 1)]
+        self.asked += 1
+        pixels = picture(self.surface, (7.0 + 0.024 * offset, 7.0), 0.024, 0.0, False)
+        data = np.clip(pixels, 0, 255).astype(np.uint8).tobytes()
+        return {"width": 320, "height": 180, "frame": self.asked, "age_ms": 0, "format": "gray"}, data
+
+
+def test_a_stop_trusts_its_pictures_once_two_in_a_row_agree_not_after_a_fixed_time(monkeypatch):
+    monkeypatch.setattr(camera_module, "SETTLE_SECONDS", 5.0)
+    camera = RingingCamera([3.0, 1.2, 0.5, 0.03, 0.0])
+    look = BoardLook(lambda: camera, publish=lambda: None, paused=lambda: True)
+    began = time.monotonic()
+    trusted = look.settle(began, lambda: False)
+    # The fourth and fifth pictures agree: trusted from the fourth, before
+    # the settle time's ceiling.
+    assert camera.asked == 5 and trusted == pytest.approx(camera.times[3], abs=0.02) and trusted < began + 5.0
+    # A head that never comes to rest: the ceiling.
+    monkeypatch.setattr(camera_module, "SETTLE_SECONDS", 0.3)
+    camera = RingingCamera([3.0 * (-1) ** i for i in range(400)])
+    look = BoardLook(lambda: camera, publish=lambda: None, paused=lambda: True)
+    began = time.monotonic()
+    assert look.settle(began, lambda: False) == pytest.approx(began + 0.3)
+    # A camera that gives no pictures as luma: the ceiling too.
+    look.busy_test = False
+    assert look.settle(began, lambda: False) == pytest.approx(began + 0.3)
+
