@@ -254,11 +254,11 @@ Why it matters: each task (board look, spots, edges, Measure camera; nozzle, par
 Applied: A, in 7bc130c and fdaa98c (pcbv d75f4c0).
 Answer:
 
-## Q43. Should the nine tabs become four areas on a rail: Home, Job, Run, Machines?
-Why it matters: it decides where everything on the page lives (docs/UI_REDESIGN.md, The areas); every later phase builds on it.
-- A. Four areas on a vertical rail, the tabs becoming groups inside them (recommended): TODO.md's side panel; a job's setup and run share one screen, and Plot, CAM and PNP stop repeating the jog and preview.
-- B. Keep the nine tabs and apply the other principles inside each page: less change, but four tabs keep making jobs and three keep their own jog.
-Applied: A, in 1599949 (docs/UI_REDESIGN.md).
+## Q43. Should the Use side's six tabs become three areas on a rail: Home, Job, Run?
+Why it matters: it decides where the work lives on the Use side (docs/UI_REDESIGN.md, The areas); the Machines area this asked about became the Setup side at your direction (docs/UI_SPLIT.md, 46611f5).
+- A. Three areas on a vertical rail, the tabs becoming groups inside them, the Setup side's name below them (recommended): TODO.md's side panel; a job's setup and run share one screen, and Plot, CAM and PNP stop repeating the jog and preview.
+- B. Keep the six tabs and apply the other principles inside each page: less change, but four tabs keep making jobs and three keep their own jog.
+Applied: A, in 1599949 (docs/UI_REDESIGN.md); the Setup side is built (46611f5), the rail is not.
 Answer:
 
 ## Q44. Should color mean only a state?
@@ -270,7 +270,7 @@ Answer:
 
 ## Q45. Should Plot, CAM's profile pick and Auto become ways to make a job inside Job?
 Why it matters: four tabs make jobs today, each with its own preview, and Plot its own run.
-- A. One New job: Open a file, Draw it (the Plot operations), Describe it (the assistant); profiles edited in Machines; Auto a drawer on any screen (recommended).
+- A. One New job: Open a file, Draw it (the Plot operations), Describe it (the assistant); profiles edited on the Setup side; Auto a drawer on any screen (recommended).
 - B. Keep Plot, CAM and Auto as areas of their own on the rail.
 Applied: A, in 1599949 (docs/UI_REDESIGN.md).
 Answer:
@@ -295,4 +295,19 @@ Why it matters: up to 0.23 mm across a 100 mm board, in every look and every pla
 - B. Marlin's SKEW_CORRECTION with M852: the firmware does it for every move, jogs too; the stock Lumen build has it off, so a rebuilt and flashed firmware.
 - C. Leave it: placements carry it.
 Applied: none yet; it moves every stored place, so it waits for an answer.
+Answer:
+
+## Q49. When the Setup side is open in another tab behind this one, where should a Setup link go?
+Why it matters: with both sides in tabs of one window, the other tab is out of sight, and a browser rarely lets a page bring itself to the front (docs/UI_SPLIT.md, Links).
+- A. To that tab, with a toast here saying so and a Show here button (recommended): the tab kept for setup stays the one setup happens in; a press on the toast brings it here instead.
+- B. Here, unless the other tab is in view (a second window beside this one): no tab to go looking for, but both tabs can end up on the Setup side.
+Applied: A, in 46611f5.
+Answer:
+
+## Q50. May a routine measure a Setup value again by itself, moving the machine to do it?
+Why it matters: keeping values checked is the last step to a machine that sets itself up (docs/UI_SPLIT.md, Toward a machine that sets itself up), but a routine that moves the machine on its own can hit a clamp or a part left on the bed.
+- A. Only on a press; checks that move nothing (a look, the firmware's answer at connect) may run by themselves and mark a value stale (recommended): nothing moves unasked.
+- B. Quick moving checks too (Find mark over the camera's mark) at connect or before a run, after a confirm that names them.
+- C. Each value's own setting, in its machine file.
+Applied: none yet; nothing built re-measures by itself, and a moving check waits for an answer.
 Answer:

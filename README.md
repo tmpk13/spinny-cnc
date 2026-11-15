@@ -33,5 +33,6 @@ Reference: [operating](docs/OPERATING.md), [machine files](docs/MACHINES.md),
 [gcode toolchain](docs/GCODE.md), [M2 Nano assessment](docs/M2_NANO.md),
 [releases](docs/RELEASE.md), [page plugins](docs/PLUGINS.md),
 [board vision: where it goes](docs/CV_DIRECTION.md),
-[page design principles](docs/UI_PRINCIPLES.md) and the
-[redesign they lead to](docs/UI_REDESIGN.md).
+[page design principles](docs/UI_PRINCIPLES.md), the
+[redesign they lead to](docs/UI_REDESIGN.md) and the page's
+[Use and Setup sides](docs/UI_SPLIT.md).

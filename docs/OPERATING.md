@@ -338,6 +338,27 @@ camera settings and the CAM profile editors count their edits the same
 way, and every tab shows the count of edits not applied on its page;
 leaving the page with any asks first.
 
+### The Use and Setup sides
+
+The tabs are on two sides. *Use* (Overview, Jobs, Plot, CAM, PNP, Auto)
+is what is done on every run; *Setup* (Checklist, Config, Connection,
+Plugins) is what the machine is and knows. The other side's name in the
+bar, or the `\` key, swaps to it, on the page it showed last; the
+button after the tabs, or `|`, shows both side by side with a handle
+between them (on a window at least about 1000 px wide). Each side also
+opens in a tab of its own: `/?side=setup` (keep `?mock=1` or `?api=` as
+the page has them), or the middle button on any link to it.
+
+The Checklist lists every value the machine runs on, where it came from
+(measured and when, detected, in the file, typed, the default, missing),
+and a link to where it is set or measured. A panel on the Use side that
+runs on one of those values has a Setup link in its head, which turns
+yellow and counts when something it needs is missing. A link opens its
+target in the other pane when the sides are side by side, in a tab that
+already shows that side when there is one (a toast here offers *Show
+here*), and otherwise here, with Back to return. How it works and why:
+[UI_SPLIT.md](UI_SPLIT.md).
+
 ### Panels, tabs and the page settings
 
 The Overview tab has a card for every other page: a small drawing of

@@ -163,6 +163,27 @@ sequenceDiagram
     Agent-->>Page: auto event: not busy
 ```
 
+The page is two sides, Use and Setup ([UI_SPLIT.md](UI_SPLIT.md)),
+shown one at a time, side by side in one tab, or in tabs of their own.
+Each tab has its own store and event feed from the backend; the tabs tell
+each other which side they show, and pass on a link's target, over a
+BroadcastChannel; the backend's `changed` event has every tab read again
+what another tab, another computer or the MCP tools wrote.
+
+```mermaid
+flowchart LR
+    subgraph one [Browser tab: Use, or both side by side]
+        S1[store and views]
+    end
+    subgraph two [Browser tab: Setup]
+        S2[store and views]
+    end
+    S1 <-->|BroadcastChannel: hello, go a target, went| S2
+    BE[backend] -->|WebSocket: state, camera, runs, changed| S1
+    BE -->|WebSocket| S2
+    S2 -->|PUT a machine file, settings, a CAM profile| BE
+```
+
 Each part keeps its own module diagram next to its code:
 [firmware/README.md](../firmware/README.md),
 [web/backend/README.md](../web/backend/README.md),

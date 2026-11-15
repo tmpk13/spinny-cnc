@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Figures for docs/UI_PRINCIPLES.md and docs/UI_REDESIGN.md.
+"""Figures for docs/UI_PRINCIPLES.md, docs/UI_REDESIGN.md and docs/UI_SPLIT.md.
 
 Concept drawings and mockups of the proposed screens, drawn as SVG in the
 page's Solarized light palette. Places are set by hand; the helpers size
@@ -1558,9 +1558,344 @@ def screen_machines():
     return s.save("screen-machines.svg")
 
 
+# ---------------------------------------------------------------- the two sides (docs/UI_SPLIT.md)
+
+
+def link_pill(s, x, y, label, need=False):
+    """A Use panel's Setup link: quiet, or in the color for needs you."""
+    w = tw(label, 10.5, True) + 18
+    if need:
+        s.rect(x, y, w, 20, fill=SOFT["warn"], stroke=C["yellow"], sw=0.8, r=10)
+    s.text(x + w / 2, y + 14, label, size=10.5, weight=700, anchor="middle",
+           fill="#7a5c00" if need else C["muted"])
+    return w
+
+
+def side_pill(s, x, y, label, open_=True):
+    """A side's name in the bar: the heading of its tabs, or a button that swaps to it."""
+    w = tw(label.upper(), 10.5, True) + (26 if open_ else 38)
+    if open_:
+        s.rect(x, y, w, 24, fill=C["tint"], r=12)
+    else:
+        s.rect(x, y, w, 24, stroke=C["muted"], sw=1, r=12)
+        chev(s, x + w - 13, y + 12, "right", C["muted"], 3.6)
+    s.text(x + 13, y + 16.5, label.upper(), size=10.5, weight=700, spacing=1.2, fill=C["ink"] if open_ else C["muted"])
+    return w
+
+
+def tab_row(s, x, y, labels, chosen, size=12.5):
+    """Tabs as the page draws them: words, the chosen one on a lighter tab with an underline."""
+    for i, label in enumerate(labels):
+        w = tw(label, size, True) + 22
+        if i == chosen:
+            s.rect(x, y - 4, w, 30, fill=C["panel"], r=3)
+            s.rect(x, y + 23, w, 3, fill=C["ink"])
+        s.text(x + w / 2, y + 16, label, size=size, weight=700 if i == chosen else 600, anchor="middle",
+               fill=C["ink"] if i == chosen else C["muted"])
+        x += w + 2
+    return x
+
+
+def page_bar(s, x, y, w, state="Idle", kind="neutral"):
+    """The page's top bar: its name, the machine's state and Stop."""
+    s.rect(x, y, w, 40, fill=C["panel"])
+    s.circle(x + 20, y + 20, 7.5, stroke=C["muted"], sw=1.5)
+    s.circle(x + 20, y + 20, 2.7, fill=C["red"])
+    s.text(x + 34, y + 25, "Spinny Laser", size=13, weight=700)
+    chip(s, x + w - 230, y + 9, f"Polar laser: {state}", kind)
+    button(s, x + w - 86, y + 6, "STOP", "danger", w=74, h=28, size=12.5)
+    s.line(x, y + 40, x + w, y + 40, C["line"])
+
+
+def fact_row(s, x, y, w, label, value, source, action, kind, need=None, flash=False, size=12.0):
+    """One row of the Checklist: its mark, name, value, where it came from, and the link to where it is set."""
+    h = 44 if need else 28
+    if flash:
+        s.rect(x - 6, y - 4, w + 12, h + 4, fill="#dbe9f3", r=6)
+    if kind == "auto":
+        s.circle(x + 6, y + 11, 4.2, fill=C["muted"])
+    elif kind == "need":
+        s.circle(x + 6, y + 11, 4.2, fill=C["yellow"])
+    else:
+        s.circle(x + 6, y + 11, 3.6, fill=C["panel"], stroke=C["muted"], sw=1.3)
+    s.text(x + 20, y + 15, label, size=size, weight=700)
+    s.text(x + w * 0.42, y + 15, value, size=size - 1, mono=True)
+    aw = tw(action, size - 0.5, True)
+    s.text(x + w, y + 15, action, size=size - 0.5, weight=700, fill=C["blue"], anchor="end")
+    s.text(x + w - aw - 12, y + 15, source, size=size - 1.5, anchor="end",
+           fill=C["ink"] if kind == "need" and source == "missing" else C["muted"],
+           weight=700 if source == "missing" else None)
+    if need:
+        s.text(x + 20, y + 33, need, size=size - 1.5, fill="#8a6a00")
+    s.line(x, y + h - 2, x + w, y + h - 2, C["line"])
+    return y + h + 4
+
+
+def fig_sides():
+    s = Svg(1020, 470, "The page as two sides: Use, what is done on every run, and Setup, what the machine is "
+                       "and knows; links run between them, and either can be open in its own tab or beside the "
+                       "other")
+    blocks = [
+        (24, "Use", "what you do on every run", ["Overview", "Jobs", "Plot", "CAM", "PNP", "Auto"],
+         ["Make a job", "Set it on the board: find it, probe it", "Run it, place it, watch it"]),
+        (546, "Setup", "what the machine is and knows", ["Checklist", "Config", "Connection", "Plugins"],
+         ["Its values and where each came from", "Its machine file and firmware settings",
+          "Its port, cameras, plugins"]),
+    ]
+    for x, name, sub, tabs, items in blocks:
+        s.rect(x, 24, 450, 300, fill=C["page"], stroke=C["line"], r=12)
+        s.text(x + 22, 58, name.upper(), size=15, weight=700, spacing=2)
+        s.text(x + 22 + tw(name.upper(), 15, True) + 2.2 * len(name) + 12, 58, sub, size=13, fill=C["muted"])
+        tx = x + 22
+        for i, label in enumerate(tabs):
+            w = tw(label, 11.5, True) + 16
+            s.rect(tx, 74, w, 24, fill=C["panel"] if i == 0 else "none", stroke=C["line"], r=5)
+            s.text(tx + w / 2, 90, label, size=11.5, weight=600, anchor="middle", fill=C["ink"] if i == 0 else C["muted"])
+            tx += w + 6
+        for i, item in enumerate(items):
+            yy = 128 + i * 56
+            s.rect(x + 22, yy, 406, 44, fill=C["panel"], stroke=C["line"], r=8)
+            s.text(x + 38, yy + 27, item, size=13)
+    # Use panels link to what they run on; the Checklist links to the routines that measure it.
+    s.path("M418,186 C470,186 500,156 560,156", stroke=C["blue"], sw=2)
+    s.path("M552,151 L561,156 L552,161", stroke=C["blue"], sw=2)
+    s.text(490, 140, "Setup link", size=11.5, weight=700, fill=C["blue"], anchor="middle")
+    s.path("M560,232 C500,232 470,262 420,262", stroke=C["blue"], sw=2, dash="5 4")
+    s.path("M428,257 L419,262 L428,267", stroke=C["blue"], sw=2)
+    s.text(490, 282, "Measure", size=11.5, weight=700, fill=C["blue"], anchor="middle")
+    badge(s, 452, 186, 1)
+    badge(s, 452, 262, 2)
+    # Three ways to have both: swap, side by side, a tab each.
+    ways = [
+        (24, "One at a time", "the other side's name swaps to it (\\)"),
+        (366, "Side by side", "both in one tab, a handle between (|)"),
+        (708, "A tab or window each", "the same addresses; links reach the other"),
+    ]
+    for x, title, text in ways:
+        s.rect(x, 344, 290, 102, fill=C["panel"], stroke=C["line"], r=10)
+        s.text(x + 16, 368, title, size=13, weight=700)
+        s.text(x + 16, 388, text, size=11.5, fill=C["muted"])
+    # small drawings of each way
+    s.rect(40, 400, 120, 34, fill=C["page"], stroke=C["muted"], r=4)
+    s.text(100, 422, "Use", size=11, weight=700, anchor="middle")
+    s.path("M168,417 H196", stroke=C["muted"], sw=1.5)
+    s.path("M190,412 L196,417 L190,422", stroke=C["muted"], sw=1.5)
+    s.rect(200, 400, 100, 34, fill=C["page"], stroke=C["muted"], r=4, dash="4 3")
+    s.text(250, 422, "Setup", size=11, anchor="middle", fill=C["muted"])
+    s.rect(382, 400, 258, 34, fill=C["page"], stroke=C["muted"], r=4)
+    s.line(538, 400, 538, 434, C["muted"], 2.4)
+    s.text(460, 422, "Use", size=11, weight=700, anchor="middle")
+    s.text(589, 422, "Setup", size=11, weight=700, anchor="middle")
+    for k, label in enumerate(("Use", "Setup")):
+        bx = 724 + k * 134
+        s.rect(bx, 400, 124, 34, fill=C["page"], stroke=C["muted"], r=4)
+        s.rect(bx, 400, 124, 8, fill=C["line"], r=4)
+        s.text(bx + 62, 426, label, size=11, weight=700, anchor="middle")
+    s.path("M849,419 H857", stroke=C["blue"], sw=2)
+    badge(s, 314, 350, 3)
+    return s.save("sides.svg")
+
+
+def fig_split():
+    s = Svg(1020, 600, "Use and Setup side by side in one tab: each side's tabs over its pane, a Use panel's "
+                       "Setup link opening the fact it runs on in the other pane")
+    X, Y, W, H = 10, 10, 1000, 580
+    s.rect(X, Y, W, H, fill=C["page"], stroke=C["line"], r=12)
+    page_bar(s, X, Y, W)
+    split = X + 590
+    # the bar: each side's name and tabs over its own pane
+    s.rect(X, Y + 41, W, 40, fill="#efe9d6")
+    side_pill(s, X + 12, Y + 49, "Use")
+    end_use = tab_row(s, X + 70, Y + 51, ["Overview", "Jobs", "Plot", "CAM", "PNP", "Auto"], 1, 12)
+    side_pill(s, split + 18, Y + 49, "Setup")
+    end_setup = tab_row(s, split + 92, Y + 51, ["Checklist", "Config", "Connection"], 0, 12)
+    s.line(X, Y + 81, X + W, Y + 81, C["line"])
+    badge(s, end_use + 14, Y + 61, 1)
+    badge(s, end_setup + 14, Y + 61, 1)
+    # the handle
+    s.rect(split, Y + 82, 8, H - 82, fill="#e3dcc6")
+    for k in range(3):
+        s.circle(split + 4, Y + 300 + k * 8, 1.4, fill=C["muted"])
+    badge(s, split + 4, Y + 270, 2)
+    # Use pane: the Jobs page in its columns
+    top = Y + 96
+    panel(s, X + 14, top, 170, 150, "Position")
+    for i, (a, v) in enumerate((("R", "12.300"), ("A", "45.00"))):
+        field(s, X + 28, top + 56 + i * 40, 142, v, None, h=30, unit=a)
+    panel(s, X + 14, top + 162, 170, 300, "Jog")
+    greylines(s, X + 30, top + 214, 138, 3)
+    for r in range(3):
+        for c in range(3):
+            s.rect(X + 30 + c * 46, top + 250 + r * 40, 40, 34, fill=C["field"], stroke=C["line"], r=5)
+    panel(s, X + 196, top, 380, 230, "Preview")
+    board_preview(s, X + 236, top + 52, 300, 160, C["panel"], holes=False)
+    panel(s, X + 196, top + 242, 380, 220, "Camera")
+    pill_x, pill_y = X + 300, top + 252
+    pill_w = link_pill(s, pill_x, pill_y, "Setup: 1 to do", need=True)
+    s.rect(X + 212, top + 290, 200, 150, fill="#2f3533", r=6)
+    s.text(X + 312, top + 370, "picture", size=11, fill="#9aa5a2", anchor="middle")
+    buttons(s, X + 424, top + 292, [("Start", "plain"), ("Look once", "plain")], gap=6, h=26, size=11.5)
+    badge(s, pill_x + pill_w + 16, pill_y + 10, 3)
+    # Setup pane: the Checklist, one column at its width
+    px, pw = split + 22, X + W - split - 36
+    panel(s, px, top, pw, 466, "Checklist")
+    s.text(px + 16, top + 64, "8 values: 3 measured or detected, 3 by hand, 2 missing", size=11.5)
+    s.rect(px + 16, top + 74, pw - 32, 7, fill=C["field"], stroke=C["line"], r=3.5)
+    s.rect(px + 16, top + 74, (pw - 32) * 3 / 8, 7, fill=C["muted"], r=3.5)
+    ry = top + 104
+    s.text(px + 16, ry, "Camera on the head", size=12, weight=700)
+    ry += 12
+    ry = fact_row(s, px + 16, ry, pw - 32, "Camera", "/dev/video0", "detected", "Open", "auto", size=11.5)
+    ry = fact_row(s, px + 16, ry, pw - 32, "Offset", "not measured", "missing", "Measure", "need",
+                  need="measure it before lining a job up by camera", flash=True, size=11.5)
+    ry = fact_row(s, px + 16, ry, pw - 32, "Scale", "0.0161 mm/px", "measured 2 d ago", "Find", "auto", size=11.5)
+    ry = fact_row(s, px + 16, ry, pw - 32, "Lens", "none", "default", "Measure", "hand", size=11.5)
+    ry += 8
+    s.text(px + 16, ry, "Motion", size=12, weight=700)
+    ry += 12
+    ry = fact_row(s, px + 16, ry, pw - 32, "Travel height", "H 12.00 mm", "typed", "Set", "hand", size=11.5)
+    fact_row(s, px + 16, ry, pw - 32, "Jog controls", "from Polar laser", "in the file", "Edit", "hand", size=11.5)
+    badge(s, px + pw + 4, top + 159, 4)
+    # the link's way: from the Camera panel's head to the row in the other pane
+    sx, sy = pill_x + pill_w + 30, pill_y + 10
+    s.path(f"M{sx},{sy} C{sx + 90},{sy} {px - 50},{top + 156} {px + 4},{top + 156}", stroke=C["blue"],
+           sw=2, dash="6 4")
+    s.path(f"M{px - 5},{top + 151} L{px + 5},{top + 156} L{px - 5},{top + 162}", stroke=C["blue"], sw=2)
+    return s.save("split.svg")
+
+
+def fig_checklist():
+    s = Svg(1020, 600, "The Checklist: every value the machine runs on, where it came from and when, what "
+                       "fills it in, and what needs someone now")
+    X, Y, W, H = 10, 10, 1000, 580
+    s.rect(X, Y, W, H, fill=C["page"], stroke=C["line"], r=12)
+    x, w = X + 20, 640
+    panel(s, x, Y + 20, w, H - 40, "Checklist")
+    chip(s, x + w - 104, Y + 30, "2 to do", "warn")
+    s.text(x + 16, Y + 84, "12 values the machine runs on: 6 measured or detected, 4 written or typed by hand,",
+           size=12)
+    s.text(x + 16, Y + 101, "1 left at the default, 1 missing.", size=12)
+    s.rect(x + 16, Y + 112, w - 32, 9, fill=C["field"], stroke=C["line"], r=4.5)
+    s.rect(x + 16, Y + 112, (w - 32) * 6 / 12, 9, fill=C["muted"], r=4.5)
+    for k in range(int((w - 32) * 4 / 12 / 5)):
+        hx = x + 16 + (w - 32) * 6 / 12 + k * 5
+        s.line(hx, Y + 120, hx + 4, Y + 113, C["muted"], 1.2)
+    badge(s, x + w - 6, Y + 116, 1)
+    buttons(s, x + 16, Y + 132, [("All", "plain"), ("Needs you (2)", "plain")], gap=6, h=26, size=11.5)
+    ry = Y + 186
+    groups = [
+        ("Connection", [
+            ("Connection", "/dev/ttyACM0", "detected", "Open", "auto", None),
+            ("Machine file", "Polar laser", "in the file", "Open", "hand", None),
+            ("Board's settings", "2 written, not saved", "detected", "Save", "need", "save them, or a restart loses them"),
+        ]),
+        ("Camera on the head", [
+            ("Offset from the tool", "3.20, -1.05 mm", "measured 2 d ago", "Measure", "auto", None),
+            ("Picture scale", "0.0161 mm a pixel", "in the file", "Find board", "hand", None),
+            ("Lens correction", "k1 -0.031, k2 0.002", "measured 5 d ago", "Measure", "auto", None),
+        ]),
+        ("Pick and place", [
+            ("Up camera's place", "not measured", "missing", "Measure", "need", "center the nozzle over it to place by vision"),
+            ("Nozzle runout", "0.012, -0.004 mm", "measured 1 h ago", "Measure", "auto", None),
+        ]),
+    ]
+    for name, rows in groups:
+        s.text(x + 16, ry, name, size=12.5, weight=700)
+        ry += 12
+        for label, value, source, action, kind, need in rows:
+            ry = fact_row(s, x + 16, ry, w - 32, label, value, source, action, kind, need)
+        ry += 12
+    badge(s, x + w + 10, Y + 345, 2)
+    badge(s, x + w + 10, Y + 377, 3)
+    badge(s, x + w + 10, Y + 273, 4)
+    badge(s, x + w + 10, Y + 465, 5)
+    # the legend of what the marks and sources mean
+    lx, lw = x + w + 30, X + W - (x + w + 30) - 20
+    s.rect(lx, Y + 20, lw, 300, fill=C["panel"], stroke=C["line"], r=10)
+    s.text(lx + 16, Y + 46, "WHERE A VALUE CAME FROM", size=10.5, weight=700, spacing=1.1)
+    legend = [
+        ("auto", "measured", "a routine found it, then"),
+        ("auto", "detected", "read from the machine"),
+        ("hand", "in the file", "written by hand or a tool"),
+        ("hand", "typed", "typed on the page"),
+        ("hand", "default", "nothing set it"),
+        ("need", "missing", "not known, and needed"),
+    ]
+    for i, (kind, label, text) in enumerate(legend):
+        yy = Y + 74 + i * 38
+        if kind == "auto":
+            s.circle(lx + 22, yy - 4, 4.2, fill=C["muted"])
+        elif kind == "need":
+            s.circle(lx + 22, yy - 4, 4.2, fill=C["yellow"])
+        else:
+            s.circle(lx + 22, yy - 4, 3.6, fill=C["panel"], stroke=C["muted"], sw=1.3)
+        s.text(lx + 36, yy, label, size=12, weight=700)
+        s.text(lx + 36, yy + 16, text, size=11, fill=C["muted"])
+    s.rect(lx, Y + 336, lw, 184, fill=C["panel"], stroke=C["line"], r=10)
+    s.text(lx + 16, Y + 362, "WHAT FILLS IT IN", size=10.5, weight=700, spacing=1.1)
+    para(s, lx + 16, Y + 386, lw - 32, "Full dots are nobody's work. An empty dot is a person's: where a "
+         "routine exists (Measure, Find board), it can take the value over; where none does, that value is "
+         "the next routine to write.", size=11.5, fill=C["muted"])
+    return s.save("checklist.svg")
+
+
+def fig_automation():
+    s = Svg(1020, 420, "A value's way from asked for to automatic: missing, set by hand, measured by a routine, "
+                       "kept checked; the Checklist turns from a form into a health board")
+    stages = [
+        ("Missing", "the page asks for it", "need", "Offset", "not measured", "missing", "Measure"),
+        ("By hand", "typed or in the file", "hand", "Offset", "3.30, -1.00 mm", "in the file", "Measure"),
+        ("Measured", "a routine found it", "auto", "Offset", "3.20, -1.05 mm", "measured 2 d ago", "Measure"),
+        ("Kept checked", "checked at each run", "auto", "Offset", "3.20, -1.05 mm", "checked today", ""),
+    ]
+    x = 20
+    for i, (title, sub, kind, label, value, source, action) in enumerate(stages):
+        s.rect(x, 24, 226, 196, fill=C["panel"], stroke=C["line"], r=10)
+        s.text(x + 16, 52, f"{i + 1}. {title}", size=14, weight=700)
+        s.text(x + 16, 72, sub, size=11.5, fill=C["muted"])
+        if kind == "auto":
+            s.circle(x + 22, 108, 4.2, fill=C["muted"])
+        elif kind == "need":
+            s.circle(x + 22, 108, 4.2, fill=C["yellow"])
+        else:
+            s.circle(x + 22, 108, 3.6, fill=C["panel"], stroke=C["muted"], sw=1.3)
+        s.text(x + 34, 112, label, size=12, weight=700)
+        s.text(x + 34, 134, value, size=11, mono=True)
+        s.text(x + 34, 156, source, size=11, fill=C["ink"] if kind == "need" else C["muted"],
+               weight=700 if kind == "need" else None)
+        if action:
+            s.text(x + 210, 112, action, size=11.5, weight=700, fill=C["blue"], anchor="end")
+        who = {"need": "someone, now", "hand": "someone, once", "auto": "a routine, on request"}[kind]
+        if i == 3:
+            who = "nobody: the machine"
+        s.text(x + 16, 200, f"Work: {who}", size=11.5, fill=C["muted"])
+        if i < 3:
+            s.path(f"M{x + 230},{122} H{x + 244}", stroke=C["muted"], sw=1.6)
+            s.path(f"M{x + 239},{117} L{x + 245},{122} L{x + 239},{127}", stroke=C["muted"], sw=1.6)
+        x += 248
+    # the list as a whole over time
+    s.rect(20, 240, 980, 160, fill=C["panel"], stroke=C["line"], r=10)
+    s.text(36, 266, "THE CHECKLIST OVER TIME", size=10.5, weight=700, spacing=1.1)
+    bars = [("Today (the mock)", 1, 1, 4, 2), ("Each routine written", 6, 4, 1, 1), ("The aim", 11, 1, 0, 0)]
+    for i, (label, auto, hand, default, missing) in enumerate(bars):
+        yy = 288 + i * 28
+        s.text(36, yy + 12, label, size=12)
+        total = auto + hand + default + missing
+        bx, bw = 220, 600
+        cx = bx
+        for count, fill in ((auto, C["muted"]), (hand, "#c9c2ab"), (default, C["field"]), (missing, C["yellow"])):
+            if count:
+                s.rect(cx, yy, bw * count / total, 16, fill=fill, stroke=C["line"], sw=0.6)
+                cx += bw * count / total
+        s.text(bx + bw + 14, yy + 12, f"{auto} of {total} automatic", size=11.5, fill=C["muted"])
+    s.text(36, 386, "What stays by hand are choices only a person makes: which machine file, which plugins.",
+           size=11.5, fill=C["muted"])
+    return s.save("automation.svg")
+
+
 FIGURES = [fig_budget, fig_layers, fig_regions, fig_next_action, fig_disabled_wall, fig_dark_cockpit, fig_modes,
            fig_words, fig_undo, fig_dock, screen_home, screen_job, screen_run_find, screen_running, screen_place,
-           screen_machines]
+           screen_machines, fig_sides, fig_split, fig_checklist, fig_automation]
 
 
 def main():

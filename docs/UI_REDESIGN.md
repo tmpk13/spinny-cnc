@@ -7,6 +7,12 @@ the order to build it in. Nothing here is built yet; the open choices are
 in [QUESTIONS.md](../QUESTIONS.md) (Q43 to Q47), and the mockups apply the
 recommended answer to each.
 
+Since 46611f5 the page is two sides, Use and Setup
+([UI_SPLIT.md](UI_SPLIT.md)): the Machines area proposed below became the
+Setup side, a press, a pane or a tab away from the work rather than one
+more area among it. The rest of this proposal now applies to the Use
+side.
+
 The figures are drawn by [ui/figures.py](ui/figures.py) (`mise run
 ui-figures`). Magenta numbers on a figure are notes, explained under it;
 they are not part of the page.
@@ -88,10 +94,11 @@ Every screen has the same six regions, each with one job
    Connection tab's one-press switching). Version, "live" and the mock
    chip leave the bar; the mock chip shows only on the mock, and a lost
    link shows only when lost.
-2. **Areas** (rail, left): Home, Job, Run, Machines; below them Search,
+2. **Areas** (rail, left): Home, Job, Run, and the Setup side's name,
+   which swaps to it ([UI_SPLIT.md](UI_SPLIT.md)); below them Search,
    Assistant, To-do and Settings. This is the vertical side panel from
    TODO.md; the tabs at the top become the groups inside an area (the
-   steps of Run, the sections of Machines).
+   steps of Run, the Setup side's pages).
 3. **Steps**: in Run, the machine's steps, read from its machine file
    (the TODO.md item "steps as part of the config per machine"). Done,
    now and next, each one press to open.
@@ -124,23 +131,28 @@ flowchart LR
         Home
         Job
         Run
-        Machines
-        Settings
         Assistant
+    end
+    subgraph setup [Setup side, built]
+        Checklist
+        SetupFiles[Machine files and firmware]
+        SetupConnection[Connection]
+        SetupPlugins[Plugins]
+        PageSettings[Page settings, proposed]
     end
     Overview --> Home
     Jobs -- "jobs and their operations" --> Job
     Jobs -- "setup steps, height map, camera, run" --> Run
     Plot -- "drawn operations" --> Job
     CAM -- "a job's profile" --> Job
-    CAM -- "profiles" --> Machines
+    CAM -- "profiles" --> SetupFiles
     PNP -- "parts" --> Job
     PNP -- "fiducials, feeders, placing" --> Run
-    PNP -- "cameras, nozzle, bed" --> Machines
+    PNP -- "cameras, nozzle, bed" --> Checklist
     Auto --> Assistant
-    Config --> Machines
-    Connection --> Machines
-    Plugins --> Settings
+    Config --> SetupFiles
+    Connection --> SetupConnection
+    Plugins --> SetupPlugins
 ```
 
 | Area | Holds | Groups inside it |
@@ -148,8 +160,8 @@ flowchart LR
 | Home | where you left off, the machine, what needs you, recent jobs | none |
 | Job | the jobs; a job is its operations and its place on the board | New job: Open a file, Draw it, Describe it |
 | Run | doing a job on the connected machine | the machine file's steps, ending in Run |
-| Machines | every machine file, its connection, calibration, cameras, firmware settings; CAM profiles | per machine: Setup, Cameras, Machine file, Firmware |
-| Settings (rail) | the page itself: look, layouts, plugins, bug reports, version and updates | sections in a sheet |
+| Setup (the other side, [UI_SPLIT.md](UI_SPLIT.md)) | what the machine knows and where each value came from, every machine file, its connection, calibration, cameras, firmware settings; CAM profiles; plugins | its pages: Checklist, Config, Connection, Plugins; later Cameras |
+| Settings (rail) | the page itself: look, layouts, bug reports, version and updates; proposed to move to the Setup side | sections in a sheet |
 | Assistant (rail) | the Auto chat, as a drawer over any screen | none |
 
 A pick and place job is a job like any other: its parts are its
@@ -247,11 +259,16 @@ locked buttons.
    log to read.
 4. A camera's picture shows itself while it has something to show (the
    part on the nozzle, a fiducial) and goes when done; its settings live
-   in Machines.
+   on the Setup side.
 
-### Machines
+### Setup
 
-![Proposed Machines area](ui/screen-machines.svg)
+The Machines area became the Setup side; its first page, the Checklist,
+is built and described in [UI_SPLIT.md](UI_SPLIT.md#the-checklist). The
+mockup below was drawn before the split and still shows where the
+machine list and the routines are meant to go.
+
+![Proposed Machines area, now the Setup side](ui/screen-machines.svg)
 
 1. One list of machines: today's Connection tab, the Config tab's machine
    pick and Use this machine, and New, in one place. Add a machine makes a
@@ -292,7 +309,8 @@ copies go ([principle 10](UI_PRINCIPLES.md#10-one-set-of-machine-controls)).
 ## Where every panel goes
 
 Layer 1 is in view on its screen, layer 2 one press away in place, layer
-3 in Machines or Settings ([principle 2](UI_PRINCIPLES.md#2-three-layers-sorted-by-how-often)).
+3 on the Setup side ([principle 2](UI_PRINCIPLES.md#2-three-layers-sorted-by-how-often),
+[principle 14](UI_PRINCIPLES.md#14-use-and-setup-are-two-sides)).
 
 | Today | Goes to | Layer |
 |---|---|---|
@@ -315,11 +333,11 @@ Layer 1 is in view on its screen, layer 2 one press away in place, layer
 | Job JSON | a job's menu | 3 |
 | Camera view | Run canvas in the steps that use the camera | 1 |
 | Camera: Start, Stop, Look once | in the step that needs the camera | 1 |
-| Camera: device, size, fps, spots | Machines, Cameras | 3 |
-| Camera: offset, Center nozzle, runout | Machines, Setup routines | 3 |
+| Camera: device, size, fps, spots | Setup, Cameras | 3 |
+| Camera: offset, Center nozzle, runout | Setup, Setup routines | 3 |
 | Picture controls | the picture's own popover | 2 |
-| Lens and colors | Machines, Cameras | 3 |
-| Camera changes | Undo toasts; Machines, Cameras, Changes | 1, 3 |
+| Lens and colors | Setup, Cameras | 3 |
+| Camera changes | Undo toasts; Setup, Cameras, Changes | 1, 3 |
 | Find board | Run step Find board: result and action; method, threshold, scan, corners in More | 1, 2 |
 | Console | Run step panel, folded; errors in the top bar | 2 |
 | Jobs: list, drop, pick a file | Job list and New job | 1 |
@@ -327,7 +345,7 @@ Layer 1 is in view on its screen, layer 2 one press away in place, layer
 | Jobs: Combine, Save job, Delete all | the job menu | 2 |
 | Height map | Run step Height map: what probing will do and Probe; the rest in More | 1, 2 |
 | Align | Find board's More: line up by marks (its own step on a machine without a camera) | 2 |
-| Tests | Machines, Setup checklist | 3 |
+| Tests | Setup, the Checklist page (moved, 46611f5) | 3 |
 | Run | Run step Run: the Ready card; Hold and Stop while running; pick up at a line in More | 1, 2 |
 | **Plot page** | | |
 | Position, Jog | dock | 1, 2 |
@@ -337,7 +355,7 @@ Layer 1 is in view on its screen, layer 2 one press away in place, layer
 | Markers | dock More; Draw it: Add here | 2 |
 | **CAM page** | | |
 | Profile pick | Job, an operation's details | 2 |
-| Axes, tools, operations, the profile file | Machines, CAM profiles | 3 |
+| Axes, tools, operations, the profile file | Setup, CAM profiles | 3 |
 | Preview | Job canvas | 1 |
 | Export | Job menu: Export G-code | 2 |
 | **PNP page** | | |
@@ -348,19 +366,19 @@ Layer 1 is in view on its screen, layer 2 one press away in place, layer
 | PNP steps | the step strip | 1 |
 | Placing | Run step Place: progress, Pause, Stop, the issue; run the rest, window, repeat in More | 1, 2 |
 | Head: Light, Park, Vacuum | quick bar | 2 |
-| Head: nozzle and camera moves, Read vacuum, Tune | Machines, Setup routines | 3 |
+| Head: nozzle and camera moves, Read vacuum, Tune | Setup, Setup routines | 3 |
 | Board on the machine | Run step Fiducials: Find fiducials and the result; references by hand in More | 1, 2 |
-| Feeders | Run step Feeders: what is low or missing; slots in Machines | 1, 3 |
-| Machine view | Machines, Bed; the bed map as Find board's canvas without a camera | 3 |
-| Nozzle | Machines, Setup routine Nozzle and up camera | 3 |
+| Feeders | Run step Feeders: what is low or missing; slots on the Setup side | 1, 3 |
+| Machine view | Setup, Bed; the bed map as Find board's canvas without a camera | 3 |
+| Nozzle | Setup, Setup routine Nozzle and up camera | 3 |
 | **Other pages** | | |
 | Auto, What it can do | Assistant drawer; New job, Describe it | 2 |
-| Machine file | Machines, Machine file | 3 |
-| Import from OpenPnP | Machines, Add a machine | 3 |
+| Machine file | Setup, Machine file | 3 |
+| Import from OpenPnP | Setup, Add a machine | 3 |
 | Version | Settings, About and updates; Home, Needs you | 3 |
 | Bug reports | Settings, Bug reports | 3 |
-| Settings (firmware keys) | Machines, Firmware, differences only by default | 3 |
-| Connection | Machines list; the top bar's machine chip | 1, 3 |
+| Settings (firmware keys) | Setup, Firmware, differences only by default | 3 |
+| Connection | Setup, Connection; the top bar's machine chip | 1, 3 |
 | Plugins | Settings, Plugins | 3 |
 | Panel layouts, hidden panels | Settings, Layout (Q47) | 3 |
 
@@ -368,6 +386,10 @@ Layer 1 is in view on its screen, layer 2 one press away in place, layer
 
 Each phase ships on its own and leaves the page better than it found it;
 the smallest come first.
+
+0. **Two sides** (built, 46611f5): Use and Setup, swapped, side by side
+   or in tabs of their own, linked both ways; the Checklist; the backend's
+   `changed` event ([UI_SPLIT.md](UI_SPLIT.md)).
 
 1. **Quiet the page.** Color only for states: "Colors for tabs and panels"
    off by default, the next action's button dark, blue only for work in
@@ -385,7 +407,7 @@ the smallest come first.
    card before Run.
 4. **Areas.** The rail (Q43); Job takes Jobs, Plot, CAM's profile pick
    and Auto's job making (Q45); Run takes the setup steps and placing;
-   Machines takes Config, Connection, the camera settings, calibrations
+   the Setup side takes the camera settings, calibrations
    and CAM profiles; Home replaces Overview.
 5. **Hold the line.** The budget becomes a check in `mise run
    test-layout`: each screen's default state within 40 controls and 200

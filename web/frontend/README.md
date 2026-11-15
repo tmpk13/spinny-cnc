@@ -164,11 +164,21 @@ toggle that hides the built-in system ports; it marks a machine whose
 last report is old, as the Position panel does, before the backend gives
 the link up. The console's *Log* shows the backend's log, *Wire* the last lines over the wire with their times, polls included.
 
-The page has six tabs under the status bar (`PAGES` in
-`src/views/tabs.ts`), remembered per browser and set by `?page=plot`,
-`?page=cam`, `?page=pnp`, `?page=auto` or `?page=config` in the address
-(the old names `machine` and `mill` still open them): *Jobs*, the panels
-above, *Plot*, *CAM*, *PNP*, *Auto* and *Config*. The CAM page shows a profile from
+The page's tabs are on two sides under the status bar (`PAGES` in
+`src/views/tabs.ts`; the design in `docs/UI_SPLIT.md`): *Use*, with
+*Overview*, *Jobs* (the panels above), *Plot*, *CAM*, *PNP* and *Auto*,
+and *Setup*, with the *Checklist* (`src/facts.ts`, `src/views/facts.ts`),
+*Config*, *Connection* and *Plugins*. A side swaps in by its name in the
+bar or `\`, both show side by side by the bar's button or `|`
+(`src/views/split.ts` holds the handle), and each pane lays its page out
+by its own width (container queries). The page each side shows is
+remembered per browser and set by the address: `?page=plot`,
+`?side=setup`, `#panel/detail` for a target, `split=1` (`src/sides.ts`;
+the old names `machine` and `mill` still open their pages). Links
+between the sides (`src/views/links.ts`) go to the other pane, to a tab
+already showing that side (`src/tabsync.ts`, a BroadcastChannel), or
+swap this tab with a history entry; Use panels that run on a Checklist
+value carry a Setup link in their head (`src/views/setuplinks.ts`). The CAM page shows a profile from
 `cam/` (`docs/CAM.md`): its axes,
 its tools and its operations, every cutting setting of an operation in a
 field that writes the one value back into the file (a field left empty is
@@ -251,8 +261,19 @@ classDiagram
         Store  shallow merge, key filtered listeners
         AppState
     }
+    class sides {
+        readAddress / addressFor  ?side= ?page= #panel/detail, the backend's parameters kept
+    }
+    class tabsync {
+        TabSync  the page's tabs on a BroadcastChannel: hello, go, went
+        peerFor(peers, side)  a tab in view first, then the one focused last
+    }
+    class facts {
+        factsOf(state) Fact[]  each value the machine runs on, where it came from, what fills it in
+        measuredBy(entries, target, name, now)  the routine result that still holds
+    }
     class views {
-        context statusbar tabs steps banner dro jog laser markers mill jobs jobjson calibrate center heightmap focushere previewpanel vision picture camview cameracontrols camerapick camlog align pnp device auto console settingslist cam config editor toasts
+        context statusbar tabs split links setuplinks facts steps banner dro jog laser markers mill jobs jobjson calibrate center heightmap focushere previewpanel vision picture camview cameracontrols camerapick camlog align pnp device auto console settingslist cam config editor toasts
     }
     class align {
         fitRigid(pairs) rotation, shift, scale, rms, residuals
@@ -396,5 +417,8 @@ classDiagram
     mock_cam --> mock_jobs
     mock_machines --> toml
     mock_machines --> controls
+    views --> sides
+    views --> tabsync
+    views --> facts
     main ..> mock_backend : ?mock=1
 ```

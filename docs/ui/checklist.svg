@@ -1,0 +1,149 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1020" height="600" viewBox="0 0 1020 600" role="img" aria-label="The Checklist: every value the machine runs on, where it came from and when, what fills it in, and what needs someone now">
+<title>The Checklist: every value the machine runs on, where it came from and when, what fills it in, and what needs someone now</title>
+<rect width="1020" height="600" rx="14" fill="#f7f2e2"/>
+<rect x="10" y="10" width="1000" height="580" rx="12" fill="#eee8d5" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="30" y="30" width="640" height="540" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<path d="M44.4,48.2 L48.0,51.8 L51.6,48.2" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="59" y="54" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#073642" letter-spacing="1.1">CHECKLIST</text>
+<rect x="566" y="40" width="70.2" height="22" rx="11" fill="#f6e9c3"/>
+<circle cx="578" cy="51" r="3.6" fill="#b58900"/>
+<text x="587" y="55.1" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" font-weight="600" fill="#073642">2 to do</text>
+<text x="46" y="94" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642">12 values the machine runs on: 6 measured or detected, 4 written or typed by hand,</text>
+<text x="46" y="111" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642">1 left at the default, 1 missing.</text>
+<rect x="46" y="122" width="608" height="9" rx="4.5" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="1"/>
+<rect x="46" y="122" width="304" height="9" rx="4.5" fill="#586e75"/>
+<line x1="350" y1="130" x2="354" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="355" y1="130" x2="359" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="360" y1="130" x2="364" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="365" y1="130" x2="369" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="370" y1="130" x2="374" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="375" y1="130" x2="379" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="380" y1="130" x2="384" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="385" y1="130" x2="389" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="390" y1="130" x2="394" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="395" y1="130" x2="399" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="400" y1="130" x2="404" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="405" y1="130" x2="409" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="410" y1="130" x2="414" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="415" y1="130" x2="419" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="420" y1="130" x2="424" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="425" y1="130" x2="429" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="430" y1="130" x2="434" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="435" y1="130" x2="439" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="440" y1="130" x2="444" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="445" y1="130" x2="449" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="450" y1="130" x2="454" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="455" y1="130" x2="459" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="460" y1="130" x2="464" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="465" y1="130" x2="469" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="470" y1="130" x2="474" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="475" y1="130" x2="479" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="480" y1="130" x2="484" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="485" y1="130" x2="489" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="490" y1="130" x2="494" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="495" y1="130" x2="499" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="500" y1="130" x2="504" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="505" y1="130" x2="509" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="510" y1="130" x2="514" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="515" y1="130" x2="519" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="520" y1="130" x2="524" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="525" y1="130" x2="529" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="530" y1="130" x2="534" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="535" y1="130" x2="539" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="540" y1="130" x2="544" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="545" y1="130" x2="549" y2="123" stroke="#586e75" stroke-width="1.2" stroke-linecap="round"/>
+<circle cx="664" cy="126" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="664" y="130.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">1</text>
+<rect x="46" y="142" width="38" height="26" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="65" y="159.1" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#073642" text-anchor="middle">All</text>
+<rect x="90" y="142" width="97" height="26" rx="6" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="138.5" y="159.1" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#073642" text-anchor="middle">Needs you (2)</text>
+<text x="46" y="196" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#073642">Connection</text>
+<circle cx="52" cy="219" r="4.2" fill="#586e75"/>
+<text x="66" y="223" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#073642">Connection</text>
+<text x="301.4" y="223" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#073642">/dev/ttyACM0</text>
+<text x="654" y="223" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#268bd2" text-anchor="end">Open</text>
+<text x="614.1" y="223" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75" text-anchor="end">detected</text>
+<line x1="46" y1="234" x2="654" y2="234" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="52" cy="251" r="3.6" fill="#fdf6e3" stroke="#586e75" stroke-width="1.3"/>
+<text x="66" y="255" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#073642">Machine file</text>
+<text x="301.4" y="255" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#073642">Polar laser</text>
+<text x="654" y="255" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#268bd2" text-anchor="end">Open</text>
+<text x="614.1" y="255" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75" text-anchor="end">in the file</text>
+<line x1="46" y1="266" x2="654" y2="266" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="52" cy="283" r="4.2" fill="#b58900"/>
+<text x="66" y="287" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#073642">Board's settings</text>
+<text x="301.4" y="287" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#073642">2 written, not saved</text>
+<text x="654" y="287" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#268bd2" text-anchor="end">Save</text>
+<text x="614.1" y="287" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75" text-anchor="end">detected</text>
+<text x="66" y="305" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#8a6a00">save them, or a restart loses them</text>
+<line x1="46" y1="314" x2="654" y2="314" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<text x="46" y="332" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#073642">Camera on the head</text>
+<circle cx="52" cy="355" r="4.2" fill="#586e75"/>
+<text x="66" y="359" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#073642">Offset from the tool</text>
+<text x="301.4" y="359" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#073642">3.20, -1.05 mm</text>
+<text x="654" y="359" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#268bd2" text-anchor="end">Measure</text>
+<text x="592.3" y="359" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75" text-anchor="end">measured 2 d ago</text>
+<line x1="46" y1="370" x2="654" y2="370" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="52" cy="387" r="3.6" fill="#fdf6e3" stroke="#586e75" stroke-width="1.3"/>
+<text x="66" y="391" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#073642">Picture scale</text>
+<text x="301.4" y="391" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#073642">0.0161 mm a pixel</text>
+<text x="654" y="391" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#268bd2" text-anchor="end">Find board</text>
+<text x="581" y="391" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75" text-anchor="end">in the file</text>
+<line x1="46" y1="402" x2="654" y2="402" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="52" cy="419" r="4.2" fill="#586e75"/>
+<text x="66" y="423" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#073642">Lens correction</text>
+<text x="301.4" y="423" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#073642">k1 -0.031, k2 0.002</text>
+<text x="654" y="423" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#268bd2" text-anchor="end">Measure</text>
+<text x="592.3" y="423" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75" text-anchor="end">measured 5 d ago</text>
+<line x1="46" y1="434" x2="654" y2="434" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<text x="46" y="452" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#073642">Pick and place</text>
+<circle cx="52" cy="475" r="4.2" fill="#b58900"/>
+<text x="66" y="479" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#073642">Up camera's place</text>
+<text x="301.4" y="479" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#073642">not measured</text>
+<text x="654" y="479" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#268bd2" text-anchor="end">Measure</text>
+<text x="592.3" y="479" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#073642" text-anchor="end">missing</text>
+<text x="66" y="497" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#8a6a00">center the nozzle over it to place by vision</text>
+<line x1="46" y1="506" x2="654" y2="506" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="52" cy="523" r="4.2" fill="#586e75"/>
+<text x="66" y="527" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#073642">Nozzle runout</text>
+<text x="301.4" y="527" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#073642">0.012, -0.004 mm</text>
+<text x="654" y="527" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#268bd2" text-anchor="end">Measure</text>
+<text x="592.3" y="527" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" fill="#586e75" text-anchor="end">measured 1 h ago</text>
+<line x1="46" y1="538" x2="654" y2="538" stroke="#dcd5bf" stroke-width="1" stroke-linecap="round"/>
+<circle cx="680" cy="355" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="680" y="359.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">2</text>
+<circle cx="680" cy="387" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="680" y="391.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+<circle cx="680" cy="283" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="680" y="287.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">4</text>
+<circle cx="680" cy="475" r="11.5" fill="#d33682" stroke="#ffffff" stroke-width="2"/>
+<text x="680" y="479.4" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#ffffff" text-anchor="middle">5</text>
+<rect x="700" y="30" width="290" height="300" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="716" y="56" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#073642" letter-spacing="1.1">WHERE A VALUE CAME FROM</text>
+<circle cx="722" cy="80" r="4.2" fill="#586e75"/>
+<text x="736" y="84" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#073642">measured</text>
+<text x="736" y="100" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">a routine found it, then</text>
+<circle cx="722" cy="118" r="4.2" fill="#586e75"/>
+<text x="736" y="122" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#073642">detected</text>
+<text x="736" y="138" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">read from the machine</text>
+<circle cx="722" cy="156" r="3.6" fill="#fdf6e3" stroke="#586e75" stroke-width="1.3"/>
+<text x="736" y="160" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#073642">in the file</text>
+<text x="736" y="176" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">written by hand or a tool</text>
+<circle cx="722" cy="194" r="3.6" fill="#fdf6e3" stroke="#586e75" stroke-width="1.3"/>
+<text x="736" y="198" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#073642">typed</text>
+<text x="736" y="214" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">typed on the page</text>
+<circle cx="722" cy="232" r="3.6" fill="#fdf6e3" stroke="#586e75" stroke-width="1.3"/>
+<text x="736" y="236" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#073642">default</text>
+<text x="736" y="252" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">nothing set it</text>
+<circle cx="722" cy="270" r="4.2" fill="#b58900"/>
+<text x="736" y="274" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#073642">missing</text>
+<text x="736" y="290" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">not known, and needed</text>
+<rect x="700" y="346" width="290" height="184" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="716" y="372" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#073642" letter-spacing="1.1">WHAT FILLS IT IN</text>
+<text x="716" y="396" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">Full dots are nobody's work. An empty dot is a</text>
+<text x="716" y="412.3" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">person's: where a routine exists (Measure,</text>
+<text x="716" y="428.7" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">Find board), it can take the value over; where</text>
+<text x="716" y="445" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">none does, that value is the next routine to</text>
+<text x="716" y="461.3" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">write.</text>
+</svg>

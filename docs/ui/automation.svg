@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1020" height="420" viewBox="0 0 1020 420" role="img" aria-label="A value's way from asked for to automatic: missing, set by hand, measured by a routine, kept checked; the Checklist turns from a form into a health board">
+<title>A value's way from asked for to automatic: missing, set by hand, measured by a routine, kept checked; the Checklist turns from a form into a health board</title>
+<rect width="1020" height="420" rx="14" fill="#f7f2e2"/>
+<rect x="20" y="24" width="226" height="196" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="36" y="52" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#073642">1. Missing</text>
+<text x="36" y="72" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">the page asks for it</text>
+<circle cx="42" cy="108" r="4.2" fill="#b58900"/>
+<text x="54" y="112" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#073642">Offset</text>
+<text x="54" y="134" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#073642">not measured</text>
+<text x="54" y="156" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#073642">missing</text>
+<text x="230" y="112" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#268bd2" text-anchor="end">Measure</text>
+<text x="36" y="200" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">Work: someone, now</text>
+<path d="M250,122 H264" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M259,117 L265,122 L259,127" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="268" y="24" width="226" height="196" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="284" y="52" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#073642">2. By hand</text>
+<text x="284" y="72" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">typed or in the file</text>
+<circle cx="290" cy="108" r="3.6" fill="#fdf6e3" stroke="#586e75" stroke-width="1.3"/>
+<text x="302" y="112" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#073642">Offset</text>
+<text x="302" y="134" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#073642">3.30, -1.00 mm</text>
+<text x="302" y="156" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">in the file</text>
+<text x="478" y="112" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#268bd2" text-anchor="end">Measure</text>
+<text x="284" y="200" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">Work: someone, once</text>
+<path d="M498,122 H512" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M507,117 L513,122 L507,127" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="516" y="24" width="226" height="196" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="532" y="52" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#073642">3. Measured</text>
+<text x="532" y="72" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">a routine found it</text>
+<circle cx="538" cy="108" r="4.2" fill="#586e75"/>
+<text x="550" y="112" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#073642">Offset</text>
+<text x="550" y="134" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#073642">3.20, -1.05 mm</text>
+<text x="550" y="156" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">measured 2 d ago</text>
+<text x="726" y="112" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#268bd2" text-anchor="end">Measure</text>
+<text x="532" y="200" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">Work: a routine, on request</text>
+<path d="M746,122 H760" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M755,117 L761,122 L755,127" fill="none" stroke="#586e75" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="764" y="24" width="226" height="196" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="780" y="52" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#073642">4. Kept checked</text>
+<text x="780" y="72" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">checked at each run</text>
+<circle cx="786" cy="108" r="4.2" fill="#586e75"/>
+<text x="798" y="112" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#073642">Offset</text>
+<text x="798" y="134" font-family="'JetBrains Mono', 'DejaVu Sans Mono', Menlo, Consolas, monospace" font-size="11" fill="#073642">3.20, -1.05 mm</text>
+<text x="798" y="156" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#586e75">checked today</text>
+<text x="780" y="200" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">Work: nobody: the machine</text>
+<rect x="20" y="240" width="980" height="160" rx="10" fill="#fdf6e3" stroke="#dcd5bf" stroke-width="1"/>
+<text x="36" y="266" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" fill="#073642" letter-spacing="1.1">THE CHECKLIST OVER TIME</text>
+<text x="36" y="300" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642">Today (the mock)</text>
+<rect x="220" y="288" width="75" height="16" fill="#586e75" stroke="#dcd5bf" stroke-width="0.6"/>
+<rect x="295" y="288" width="75" height="16" fill="#c9c2ab" stroke="#dcd5bf" stroke-width="0.6"/>
+<rect x="370" y="288" width="300" height="16" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="0.6"/>
+<rect x="670" y="288" width="150" height="16" fill="#b58900" stroke="#dcd5bf" stroke-width="0.6"/>
+<text x="834" y="300" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">1 of 8 automatic</text>
+<text x="36" y="328" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642">Each routine written</text>
+<rect x="220" y="316" width="300" height="16" fill="#586e75" stroke="#dcd5bf" stroke-width="0.6"/>
+<rect x="520" y="316" width="200" height="16" fill="#c9c2ab" stroke="#dcd5bf" stroke-width="0.6"/>
+<rect x="720" y="316" width="50" height="16" fill="#f6f0dc" stroke="#dcd5bf" stroke-width="0.6"/>
+<rect x="770" y="316" width="50" height="16" fill="#b58900" stroke="#dcd5bf" stroke-width="0.6"/>
+<text x="834" y="328" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">6 of 12 automatic</text>
+<text x="36" y="356" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" fill="#073642">The aim</text>
+<rect x="220" y="344" width="550" height="16" fill="#586e75" stroke="#dcd5bf" stroke-width="0.6"/>
+<rect x="770" y="344" width="50" height="16" fill="#c9c2ab" stroke="#dcd5bf" stroke-width="0.6"/>
+<text x="834" y="356" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">11 of 12 automatic</text>
+<text x="36" y="386" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11.5" fill="#586e75">What stays by hand are choices only a person makes: which machine file, which plugins.</text>
+</svg>

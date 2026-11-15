@@ -4,7 +4,8 @@ Rules for anything shown on the page, so it stays easy to use as it
 grows. Each rule says what to do, why (the research behind it, listed
 under [Sources](#sources) with how strong it is), and how to check a
 change against it. [UI_REDESIGN.md](UI_REDESIGN.md) applies them to
-today's page, screen by screen.
+today's page, screen by screen; [UI_SPLIT.md](UI_SPLIT.md) is the page's
+two sides, Use and Setup (principle 14).
 
 ## Who the page is for
 
@@ -56,9 +57,9 @@ doing? Does any task need two screens at once?
 2. **One press, in place**: used on some runs; under a More in the same
    panel, a menu, or the dock opened. Never deeper than that, and never a
    dialog that hides the work.
-3. **Machines and Settings**: set once, checked now and then (camera
-   devices, lens, calibrations, firmware keys, machine files, profiles,
-   plugins, layouts).
+3. **The Setup side**: set once, checked now and then (camera devices,
+   lens, calibrations, firmware keys, machine files, profiles, plugins,
+   layouts), on the page's other side (principle 14).
 
 How often a control is used decides its layer, not how important or how
 new it is. A More that holds a setting changed from its default says so
@@ -346,12 +347,41 @@ makes the trade visible before a screen fills up.
 
 **Check.** Run the counts before and after a change.
 
+### 14. Use and Setup are two sides
+
+![The page as two sides and the links between them](ui/sides.svg)
+
+**Rule.** What changes with the job or the run is on the Use side; what
+describes the machine (set once, measured, checked now and then) is on
+the Setup side, with the routine that measures it. A Use panel never
+holds a setup value: it links to it, and its link says when something it
+runs on is missing. Every setup value shows where it came from
+(measured and when, detected, in the file, typed, default, missing).
+Either side swaps in with one press, both show side by side, and each has
+an address, so it can sit in a tab or window of its own. A value a person
+types is a routine not written yet, unless only a person can choose it.
+[UI_SPLIT.md](UI_SPLIT.md) is how it is built.
+
+**Why.** Setup and operation run at different rhythms, and the rare
+controls cost attention on every run when mixed in [Sweller 1988];
+control rooms keep engineering and maintenance displays apart from the
+operator's [ISA-101]. Setting a value up while watching what it does needs
+both views at once, not one hiding the other [Woods 1984]. Software can
+take work off people only where it can work a value out [Tesler], and
+automation that hides what it did leaves people unable to catch its
+mistakes [Bainbridge 1983]: hence the source on every value.
+
+**Check.** Is anything on the Use side set once per machine? Does each
+setup value say where it came from? Could a routine measure what is
+asked for?
+
 ## Before adding anything to the page
 
 1. Can the page work it out instead of asking (detect, measure,
    default)? Then it needs no control.
-2. Which step of which area is it used in? If none, it belongs in
-   Machines (per machine) or Settings (the page).
+2. Which side is it? Set once per machine (or for the page): the Setup
+   side, linked from the Use panels that run on it. Used on runs: which
+   step of which area of the Use side?
 3. How often is it used? That is its layer.
 4. In which states can it act? Outside them it is not shown; inside them,
    if it is still locked, its tooltip says why and the unlocking action
