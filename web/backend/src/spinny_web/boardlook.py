@@ -1641,9 +1641,10 @@ class StopEnd:
     `disagreed` once as many put it elsewhere. A look whose evidence comes
     once per pcbv search (counts_searches) ends it on evidence too: `no
     lock` once pcbv ran STOP_SEARCHES searches on the stop's settled
-    pictures without a lock, `searched` once a lock at the least match or
-    better is tracked TRACKED_POSES poses with no new search; neither
-    while a guess waits for another independent lock (wants_another_lock). The
+    pictures without a lock, `searched` (not at a check, which counts its
+    own looks) once a lock at the least match or better is tracked
+    TRACKED_POSES poses with no new search; neither while a guess waits for
+    another independent lock (wants_another_lock). The
     clocks from `began` end it at the latest: `no lock` without a lock
     after LOCK_SECONDS, `time up` after STOP_SECONDS, each past the
     camera's settle time. The replays of search records use it on their
@@ -1715,7 +1716,8 @@ class StopEnd:
             elif seen != "same":
                 self.tracked = 0
             if not consensus.wants_another_lock:
-                if self.searches and self.tracked >= TRACKED_POSES:
+                # A check counts its own looks (CHECK_LOOKS), tracked or not.
+                if check is None and self.searches and self.tracked >= TRACKED_POSES:
                     return "searched"
                 if not self.locked and not strong and self.searches >= STOP_SEARCHES:
                     return "no lock"
