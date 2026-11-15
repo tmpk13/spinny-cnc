@@ -57,7 +57,7 @@ same afternoon ([on the machine](#on-the-machine-2026-11-15)).
 | A third place in the final fit | spinny 105727d | survey right locks 20 mm or more apart: the board's middle 0.18 mm off (rms) from two places, 0.11 from three, 0.08 from four |
 | Placed parts | not changed | the survey board is mostly bare (32 of its 229 front parts on their pads, [MOSAIC_INSPECTION.md](MOSAIC_INSPECTION.md)), so `--placed all` told pcbv bodies that are not there (14 right, 69 wrong against 56, 16 for none, +-1%): no grade of a board with parts placed yet. A change made on that misreading was reverted (ba97c58); the section below rests on it too |
 | Frames stamped with the V4L2 buffer's time | pcb-vision d88e201 | the LumenPnP's top camera: the stamp 32 ms (median) before the dequeue, a frame |
-| Axes 0.13 deg out of square | QUESTIONS.md Q48 | with the new pcbv the survey's leave-one-out error is 0.049 mm rigid, 0.033 affine: a third of what is left |
+| Axes 0.13 deg out of square | spinny 7bd8079: the G-code link takes out the machine file's `[motion] skew` (0.0023 in the LumenPnP's), Marlin's M852 an option (`skew_by = "firmware"`); Measure camera says the skew that squares the axes | with the new pcbv the survey's leave-one-out error is 0.049 mm rigid, 0.033 affine: a third of what is left; not run on the machine since |
 | The survey stitched, and parts checked in it | spinny cbf1b4e, c6f2584: [MOSAIC_INSPECTION.md](MOSAIC_INSPECTION.md) | seams 81 um rms from the head's places, 25 with the lens, the backlash, a tilt and the board's relief fitted; the board's pads 22 um (median) off an affine refit, which finds the axes 0.121 deg out of square from the board alone; a bare footprint told by the color between its pads 96% of the time, a 0.2 mm offset 70 to 80%, 0.1 mm 20 to 40%, a passive's half turn not at all |
 | Travel at 200 mm/s | spinny c8cf980 | on the machine: a whole-bed search from nothing 33.5 s at 100 mm/s, 23.9 to 28.9 at 200 (its moves 27.6 to 17.9 s, as modeled); no step lost |
 | A truth from the same session | done on the machine | the afternoon's survey of the same grid graded the board 0.4 um and 0.003 deg from the night's truth: it had not moved |
@@ -123,7 +123,7 @@ deg). Searches started from the night's head places, five a set.
 Left open: the posterior's weak first lock; check places on this board
 that repeat (pick ones whose pads have no twin within the scale window);
 the vote's and the posterior's final places apart; a board scan's stops
-still wait the fixed settle (look_scan_stop); the axes' skew (Q48); and,
+still wait the fixed settle (look_scan_stop); the axes' skew taken out (7bd8079) not yet run on the machine; and,
 with pcbv's turn scattering 0.10 deg a picture on the afternoon's survey,
 the posterior's ROLL_DEG (0.3) and the vote's AGREE_DEG (1) can come down.
 
