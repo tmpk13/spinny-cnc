@@ -231,6 +231,12 @@ export function mountMachineView(root: HTMLElement, ctx: Ctx): MachineView {
     onlyPick.addEventListener("change", () => {
         const doc = ctx.store.get().placing?.document;
         const box = pending?.target === "area" ? pending.box : doc?.top?.board_area ?? null;
+        if (box === null && pending === null) {
+            // No area to say it of: nothing to save, and the choice goes back.
+            note.textContent = "draw or type a board area first: near or only within is said of it";
+            render(ctx.store.get());
+            return;
+        }
         setEdit({ target: "area", box, only: onlyPick.value === "only" });
     });
     const onlyLabel = labeled("Board", onlyPick, "labeled inline");
