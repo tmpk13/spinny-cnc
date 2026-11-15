@@ -7,6 +7,21 @@ the probability search is in
 [PROBABILISTIC_SEARCH.md](PROBABILISTIC_SEARCH.md). This file only judges
 them: what works, what to build next, what to stop building.
 
+## Status after the second session (2026-11-14, night)
+
+Numbers in [CV_HARDWARE.md](CV_HARDWARE.md#second-session-cv_directionmd-on-the-machine).
+
+| Item | Status |
+| --- | --- |
+| 1. Camera measured by moving the head | Done: Measure camera on the top camera panel, 16 to 19 s; measure over the board's surface (parts' tops read 0.8% finer). The head camera of this project's machines has no such routine yet |
+| 2. Points, not poses | Done for a found board's final place and for a guess whose looks span 20 mm; a single pose's estimate still fits its corners |
+| 3. Look where the board is dense | Done: checks and a known place's first stops by pads in view, 20 mm inside the edge, spread apart |
+| 4. Throw out empty pictures | Done: the share of strong edges ends an empty stop in 0.28 s; a quick scan asks pcbv only where pictures look like board. Whole bed 43.6 s against the 60 s target; thresholds tuned on one board and bed |
+| 5. Where boards lie | Done: `[top_camera] board_area` and `board_area_only`, set on the Machine view panel (a picture or STL model of the machine as its background); 23 s from nothing with an area |
+| 6. History and undo | Done: every routine keeps at once and logs its values before and after, with Undo (a Changes panel per camera). Searches now keep a measured roll too |
+| 7. Grade on real pictures | Done: `spinny-survey` (survey, survey-grade, survey-baseline, survey-searches) reproduces the baseline; a 17 picture fixture in pcb-vision. Boards that look different still need sessions |
+| 8. Nozzle side | Started: the bottom camera found 180 mm from the file's place, the top camera's offset right within about 0.1 to 0.2 mm; Center nozzle failed on its spot; no part placed |
+
 ## Where it stands
 
 | Piece | On hardware | Verdict |
@@ -149,6 +164,16 @@ with no rule written for that case.
 3. the next session's records, graded against a surveyed truth, show it
    finds at least as many boards as the vote with no wrong place called
    found.
+
+Status of the three (second session): 1. holds, the 400 s scan replays
+in 51 s; 2. is understood: one place's pictures pool into one view, so
+weak wrong locks elsewhere and the unexplored bed keep a single place
+under 0.5, and a search now checks a likely lead from a second place;
+3. holds for searches (11 of 11 found by both, none wrong, the
+posterior's place closer when it calls) but not for looks at rest (the
+vote 2 of 6, the posterior none), and with the place known the
+posterior's final place came out 0.07 to 0.09 mm off against the vote's
+0.025 to 0.052, which is not understood yet. The vote stays the default.
 
 Why the posterior: it reads an empty picture as evidence against the
 board being there, which is exactly what the cheap board test (item 4)
