@@ -354,11 +354,13 @@ def register(pictures, heads: np.ndarray, camera: Camera, windows: list[Window],
     residual, peak and busy share filled in, in place; returns the
     windows.
 
-    A Hann windowed phase correlation reads a shift short (by a third at
-    3 px in a 48 px window of soft texture: the window itself does not
-    move), so picture j's window is rendered again moved by the residual
-    found and correlated again, up to `rounds` times, until what is left
-    is under a hundredth of a pixel: at no shift the reading is unbiased.
+    A Hann windowed phase correlation reads a shift short, since the
+    window itself does not move: by a third at 3 px in a 48 px window of
+    soft texture, by 2% on a board's sharp pads at 48 px and not
+    measurably at 160 px. So picture j's window is rendered again moved
+    by the residual found and correlated again, up to `rounds` times,
+    until what is left is under a hundredth of a pixel: at no shift the
+    reading is unbiased.
     A window of picture i busy less than `skip_busy` is not correlated.
     Places lie on `relief` when given."""
     for w in windows:

@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .pictures import phase_shift
+from .stitch import phase_shift_near
 
 Point = tuple[float, float]
 Polygon = list[Point]
@@ -589,6 +590,20 @@ def region_mask(part: Part, size: int, step: float, grow: float = 0.15) -> np.nd
     return straight | turned
 
 
+def body_mask(part: Part, size: int, step: float, grow: float = 0.1) -> np.ndarray:
+    """Where the part's body lies on its crop, its fabrication box grown by
+    `grow` mm, together with the same box turned a quarter, so a quarter
+    turn of the crop keeps it: the part itself, with less of the pads
+    beside it than the courtyard holds (bright pads look alike whether a
+    part covers their inner ends or not)."""
+    x0, y0, x1, y1 = body_box(part)
+    reach_x = max(abs(x0), abs(x1)) + grow
+    reach_y = max(abs(y0), abs(y1)) + grow
+    k = (np.arange(size) - (size - 1) / 2.0) * step
+    u, v = np.meshgrid(k, k)
+    return ((np.abs(u) <= reach_x) & (np.abs(v) <= reach_y)) | ((np.abs(u) <= reach_y) & (np.abs(v) <= reach_x))
+
+
 def region_mask_box(region: np.ndarray, grow: int) -> np.ndarray:
     """A mask grown by `grow` px each way (a square dilation), for the
     board around a part: everything outside the grown region."""
@@ -608,12 +623,13 @@ def size_limit(crop: np.ndarray) -> float:
     return 0.25 * min(np.shape(crop))
 
 
-def locate(test: np.ndarray, golden: np.ndarray, weight: np.ndarray, rounds: int = 3) -> tuple[float, float, float]:
+def locate(test: np.ndarray, golden: np.ndarray, weight: np.ndarray, rounds: int = 3, reach: float | None = None) -> tuple[float, float, float]:
     """How far the test crop's content lies from the golden's, px right and
     down, and the correlation's peak: both weighted by `weight` (0 to 1)
-    about their means, phase correlated, and the test moved back by what
-    was found and read again (a windowed correlation reads a shift short,
-    stitch.register says why)."""
+    about their means, phase correlated (the peak sought within `reach`
+    px when given), and the test moved back by what was found and read
+    again (a windowed correlation reads a shift short, stitch.register
+    says why)."""
     t = np.asarray(test, dtype=np.float32)
     g = np.asarray(golden, dtype=np.float32)
     use = weight > 0.5
@@ -623,7 +639,10 @@ def locate(test: np.ndarray, golden: np.ndarray, weight: np.ndarray, rounds: int
     dx = dy = peak = 0.0
     for _ in range(rounds):
         moved = shift_image(filled, -dx, -dy) if (dx or dy) else filled
-        ex, ey, peak = phase_shift(a, moved * weight)
+        if reach is None:
+            ex, ey, peak = phase_shift(a, moved * weight)
+        else:
+            ex, ey, peak = phase_shift_near(a, moved * weight, max(1.0, reach - math.hypot(dx, dy)))
         dx, dy = dx + ex, dy + ey
         if math.hypot(ex, ey) < 0.02 or math.hypot(dx, dy) > size_limit(t):
             break
@@ -631,7 +650,8 @@ def locate(test: np.ndarray, golden: np.ndarray, weight: np.ndarray, rounds: int
 
 
 def compare(test: np.ndarray, golden: np.ndarray, mask: np.ndarray, step: float, pads: np.ndarray | None = None,
-            context: np.ndarray | None = None, span: float = 8.0, fine: float = 1.0) -> Verdict:
+            context: np.ndarray | None = None, span: float = 8.0, fine: float = 1.0, reach: float | None = None,
+            pads_mask: np.ndarray | None = None) -> Verdict:
     """A part's crop against its golden crop (both square, in the part's
     own frame, the same size). With a `context` mask (the board around
     the part) the test is first moved to align the board with the
@@ -639,19 +659,21 @@ def compare(test: np.ndarray, golden: np.ndarray, mask: np.ndarray, step: float,
     the golden and with `pads` (the layout's pads drawn on the crop); the
     part's offset by phase correlation; the quarter turn whose undoing
     matches best; and the small angle about it, searched every `fine`
-    degrees within `span` and refined by a parabola."""
+    degrees within `span` and refined by a parabola. `reach` (mm) bounds
+    the shifts sought; `pads_mask` is where the bare pads are compared
+    (`mask` without it)."""
     t = np.asarray(test, dtype=np.float32)
     g = np.asarray(golden, dtype=np.float32)
     bx = by = 0.0
     if context is not None:
-        bx, by, _ = locate(t, g, gaussian_blur(context.astype(np.float32), 3.0))
+        bx, by, _ = locate(t, g, gaussian_blur(context.astype(np.float32), 3.0), reach=None if reach is None else reach / step)
         if math.hypot(bx, by) <= size_limit(t):
             t = shift_image(np.nan_to_num(t, nan=float(np.nanmean(t))), -bx, -by)
         else:
             bx = by = 0.0
     golden_ncc = ncc(t, g, mask)
-    pads_ncc = ncc(t, pads, mask) if pads is not None else math.nan
-    dx, dy, peak = locate(t, g, gaussian_blur(mask.astype(np.float32), 4.0))
+    pads_ncc = ncc(t, pads, mask if pads_mask is None else pads_mask) if pads is not None else math.nan
+    dx, dy, peak = locate(t, g, gaussian_blur(mask.astype(np.float32), 4.0), reach=None if reach is None else reach / step)
     # np.rot90(crop, k) turns it k quarters counterclockwise as seen (rows
     # down): a part turned q quarters is undone by k = -q.
     quarters = tuple(ncc(np.rot90(t, -q % 4), g, mask) for q in range(4))
@@ -792,3 +814,26 @@ def under(view: np.ndarray, cover: np.ndarray, pads: np.ndarray, pad_level: floa
     bare_pads = board_level + np.asarray(pads, dtype=np.float32) * (pad_level - board_level)
     c = np.clip(np.asarray(cover, dtype=np.float32), 0.0, 1.0)
     return np.asarray(view, dtype=np.float32) * (1.0 - c) + bare_pads * c
+
+
+def body_gap(part: Part, size: int, step: float, clear: float = 2.0) -> np.ndarray:
+    """Where a placed part's body shows and a bare footprint shows only
+    its mask: the body's box less the pads (and `clear` px about them,
+    which the optics blur), on the part's crop."""
+    box = own_raster(part, [box_polygon(body_box(part))], size, step) > 0.5
+    pads = own_raster(part, part.pads, size, step)
+    return box & (gaussian_blur(pads, clear) < 0.05)
+
+
+def gap_luma(crop: np.ndarray, gap: np.ndarray) -> float:
+    """The median luma of a crop where `gap` says (body_gap). On the
+    LumenPnP's top camera a placed 0603 part's body read 60 to 108 there
+    and a bare footprint's blue mask 15 to 61 (5th to 95th percentile):
+    a threshold under the darkest placed part found 91% of bare
+    footprints with no placed part called missing, where correlating the
+    crop with a golden or with the bare pads found under half. The blue
+    share of the colors, b / (r + g + b), separated them better still
+    (0.52 to 0.68 against 0.70 to 0.96: 96% found)."""
+    values = np.asarray(crop, dtype=np.float32)[np.asarray(gap, dtype=bool)]
+    values = values[np.isfinite(values)]
+    return float(np.median(values)) if values.size else math.nan

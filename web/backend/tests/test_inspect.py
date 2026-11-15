@@ -351,3 +351,18 @@ def test_cutout_and_under_move_a_real_part():
     assert np.allclose(background[whole], view[whole], atol=1e-3)
     moved = ins.paste(background, luma, cover, dx=5.0)
     assert not np.allclose(moved, view)
+
+
+def test_body_gap_tells_a_part_from_bare_pads():
+    part = ins.parts_of(BOARD)[0]
+    size = ins.crop_size(part, 0.02)
+    gap = ins.body_gap(part, size, 0.02)
+    assert gap.any()
+    pads = ins.own_raster(part, part.pads, size, 0.02)
+    # No pad lies in the gap.
+    assert float(pads[gap].max()) < 0.05
+    bare = 30.0 + 170.0 * pads
+    luma, cover = ins.sprite(part, size, 0.02)
+    placed = ins.paste(bare, luma * 0.0 + 90.0, cover)
+    assert ins.gap_luma(bare, gap) == pytest.approx(30.0, abs=1.0)
+    assert ins.gap_luma(placed, gap) == pytest.approx(90.0, abs=3.0)
