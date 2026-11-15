@@ -58,8 +58,9 @@ board or out-of-square axes show only as residuals.
   - pcbv's candidates (pcb-vision 5885ddc: up to five distinct poses per
     search, passed or not, with `found` and `expected`; an older pcbv's
     lock and its rival stand in). A candidate is the board with a chance
-    that grows as (match / 0.5)^4, halved for one that failed pcbv's
-    checks, against two false candidates a picture gives on average,
+    that grows as exp(15 (match - 0.65)), a logistic fit of right against
+    wrong locks on a survey of real pictures, halved for one that failed
+    pcbv's checks, against two false candidates a picture gives on average,
     spread over the board's points and every turn.
   - What a pose predicts the picture shows: the job's pads and holes it
     puts in view (a fixed 400 of them stand for the rest; a grid over the

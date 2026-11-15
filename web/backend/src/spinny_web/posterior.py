@@ -84,11 +84,16 @@ LIKELY = 0.25
 # False candidates a view gives, on average, spread over the board's points
 # and every turn.
 CLUTTER = 2.0
-# A candidate's match against the matches of false ones: (match /
-# MATCH_REF) ** MATCH_POWER times as likely true, half that for one that did
-# not pass pcbv's checks for a lock.
-MATCH_REF = 0.5
-MATCH_POWER = 4.0
+# A candidate's match against the matches of false ones: exp(MATCH_SLOPE *
+# (match - MATCH_EVEN)) times as likely true, half that for one that did not
+# pass pcbv's checks for a lock. A logistic fit of right against wrong locks
+# on a LumenPnP's survey of a populated board (98 locks, the scale within
+# 3%: cross-validated AUC 0.965; the lock's rms and scale added nothing).
+# Replayed over two sessions' 49 records it called 2 more boards found, one
+# whole-bed search 50 s sooner, and held the wrong places of three searches
+# at a tenth of what the earlier (match / 0.5) ** 4 gave them.
+MATCH_EVEN = 0.65
+MATCH_SLOPE = 15.0
 FAILED = 0.5
 # How well a candidate places the picture: the head's place from one picture
 # to the next (mm; the camera's offset is off the same for every picture,
@@ -178,7 +183,7 @@ def _detection(features: float) -> float:
 def strength(match: float, passed: bool = True) -> float:
     """How many times likelier a candidate of this match is the board than a
     false one."""
-    return (max(match, 0.0) / MATCH_REF) ** MATCH_POWER * (1.0 if passed else FAILED)
+    return math.exp(MATCH_SLOPE * (min(max(match, 0.0), 1.0) - MATCH_EVEN)) * (1.0 if passed else FAILED)
 
 
 @dataclass

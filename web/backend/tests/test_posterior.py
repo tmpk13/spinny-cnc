@@ -139,9 +139,11 @@ def test_detection_grows_with_the_features_in_view_and_strength_with_the_match()
     assert float(detection(0)) == 0.0
     assert float(detection(6)) == pytest.approx(0.9 * (1.0 - math.exp(-1.0)))
     assert float(detection(100)) == pytest.approx(0.9, abs=1e-6)
-    assert strength(1.0) == pytest.approx(16.0)
-    assert strength(0.5) == pytest.approx(1.0)
-    assert strength(0.5, passed=False) == pytest.approx(0.5)
+    # Even at the match where right and wrong locks were as likely, steep
+    # about it: a right lock's 0.85 against a wrong one's 0.32.
+    assert strength(0.65) == pytest.approx(1.0)
+    assert strength(0.65, passed=False) == pytest.approx(0.5)
+    assert strength(0.85) / strength(0.32) > 1000.0
 
 
 def test_a_lock_makes_a_hypothesis_where_the_board_lies_and_two_searches_find_it():
