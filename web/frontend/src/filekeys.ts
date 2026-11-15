@@ -142,6 +142,7 @@ export const FILE_KEYS: FileKey[] = [
         ["place_dwell_ms", "ms after the vacuum lets go of a part", "vacuum wait place", 150],
         ["pick_tries", "pockets tried for one part before it is left out", "retry attempts", 3],
         ["park", "X Y where Park takes the head", "rest out of the way", null],
+        ["travel", "how far the head reaches, x0 y0 x1 y1 as places of the nozzle (the controller's soft limits): the Machine view draws the machine as this box", "machine view size limits reach extent soft limits", null],
         ["discard", "X Y Z where a part that failed a check is let go; left out, back in its pocket", "reject bin trash drop", null],
     ]),
     ...keys("vacuum", "gcode", "G-code", [
@@ -172,6 +173,8 @@ export const FILE_KEYS: FileKey[] = [
         ["roll", "the top camera's picture turn as mounted, degrees (180 upside down); Measure offset measures it", `top camera ${TURN_WORDS}`, 0],
         ["mm_per_px", "the top camera's scale as designed, mm a pixel at its size: searches plan by it until one is measured", "top camera scale resolution pixel size", null],
         ["bed", "where boards lie, x0 y0 x1 y1 of the picture's center: a search with no place known scans it quickly", "top camera bed area board quick scan", null],
+        ["board_area", "where a board is expected, x0 y0 x1 y1 of the picture's center inside bed: a search with nothing known looks there (first, or only with board_area_only); the Machine view draws it", "top camera board area scan region staging plate machine view", null],
+        ["board_area_only", "true: boards are only ever placed inside board_area, a search never looks outside it; false: only near it, the rest of the bed after", "top camera board area only within near", false],
         ["fiducial", "dark or bright: how a fiducial looks to the top camera", "top camera shade fiducial", "bright"],
         ["within", "mm from where a fiducial, mark or pocket is expected that it is looked for", "top camera search reach", 2],
         ["home_fiducial", "a bed fiducial, as the nozzle's place over it, for Home by fiducial", "top camera homing fiducial", null],

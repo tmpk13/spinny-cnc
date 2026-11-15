@@ -1432,6 +1432,10 @@ export interface GcodeTopCamera {
     mm_per_px?: number | null;
     /** Where boards lie, x0 y0 x1 y1 of the places the picture's center goes over: a search with no place known and no box scans it quickly. Missing or null: none given. */
     bed?: [number, number, number, number] | null;
+    /** Where a board is expected, x0 y0 x1 y1 in the frame of `bed` and inside it; missing or null: none given, the whole bed. */
+    board_area?: [number, number, number, number] | null;
+    /** Boards are only ever placed inside the board area, so a search never looks outside it (true); false: only near it, a search looks there first, then the rest of the bed. Missing: false. */
+    board_area_only?: boolean;
     fiducial: SpotPolarity;
     within: number;
     /** A fiducial on the bed, as the nozzle's place over it, that Home by fiducial finds; missing or null: none. */
@@ -1465,6 +1469,8 @@ export interface GcodeDocument {
     place_dwell_ms: number;
     /** Where the head waits out of the way; null when the file has none. */
     park: [number, number] | null;
+    /** How far the head reaches, x0 y0 x1 y1 as places of the nozzle (the controller's soft limits): the Machine view draws the machine as this box. Missing or null: not said. */
+    travel?: [number, number, number, number] | null;
     /** Where the up camera is as designed, before centering measures it. */
     camera_position: [number, number] | null;
     /** The up camera's roll and mirror as mounted, used until centering measures them; null or missing: none given. */

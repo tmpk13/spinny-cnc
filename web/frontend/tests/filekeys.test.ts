@@ -114,6 +114,7 @@ pick_dwell_ms = 200
 place_dwell_ms = 150
 pick_tries = 3
 park = [40.0, 400.0]
+travel = [0.0, 0.0, 433.0, 487.0]
 seesaw = true
 discard = [10.0, 10.0, -1.0]
 
@@ -146,6 +147,8 @@ offset = [40.0, 0.0]
 roll = 180
 mm_per_px = 0.016
 bed = [20.0, 60.0, 450.0, 550.0]
+board_area = [40.0, 80.0, 200.0, 200.0]
+board_area_only = true
 fiducial = "bright"
 within = 2.0
 home_fiducial = [60.0, 170.0]

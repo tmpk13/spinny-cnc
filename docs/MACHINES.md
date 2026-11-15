@@ -499,6 +499,7 @@ pick_dwell_ms = 200
 place_dwell_ms = 150
 pick_tries = 3           # pockets tried for one part before it is left out, 1 to 20
 park = [40.0, 400.0]     # X Y where Park takes the head
+travel = [0.0, 0.0, 433.0, 487.0]  # how far the head reaches, x0 y0 x1 y1 as places of the nozzle (the controller's soft limits): the PNP tab's Machine view draws the machine as this box; nothing moves by it; left out, the view boxes the places the file names
 discard = [10.0, 10.0, -15.0]  # X Y Z where a part that failed a check is let go; left out, back in its pocket
 
 [vacuum]                 # a sensor: read after each pick and place when it has ranges
@@ -529,6 +530,8 @@ z = 0                    # the height the head looks from; left out, the safe he
 offset = [40.0, 0.0]     # its picture's center from the nozzle as designed; Measure offset finds it
 roll = 180               # degrees from the picture's x axis to +X, counterclockwise seen from above, as mounted (180: upside down); used until Measure offset measures the scale and roll; left out, the measured one or 0
 bed = [20.0, 60.0, 450.0, 550.0]  # where boards lie, x0 y0 x1 y1 of the places the picture's center goes over: a search with no place known and no box drawn scans it on a lattice spaced by the board's size, then halfway between; left out, a square the board's diagonal on a side about the head
+board_area = [40.0, 80.0, 200.0, 200.0]  # where a board is expected, x0 y0 x1 y1 in the frame of bed and inside it: a search with nothing known looks there first, then the rest of the bed; drawn and set on the PNP tab's Machine view; left out, the whole bed
+board_area_only = false  # true: boards are only ever placed inside board_area, so a search never looks outside it
 mm_per_px = 0.016        # its scale as designed, mm a pixel of the full size picture at the size it runs at: until a scale is measured or seen locked, a search plans its stops by it and pcbv's search keeps within 1.5 times of it either way; left out, none
 fiducial = "bright"      # how a fiducial looks to it
 within = 2.0             # mm from where it is expected that a fiducial, mark or part is looked for

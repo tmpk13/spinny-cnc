@@ -122,6 +122,7 @@ def test_the_lumenpnp_file_reads_with_its_safe_height_and_pump_and_valve():
     assert lumen.top is not None and lumen.top.offset == (23.544, 65.188)
     # Its top camera shows the bed upside down, as Opulo's OpenPnP has it (flipped in X and Y).
     assert lumen.top.roll == 180.0 and lumen.top.mm_per_px == 0.0161 and lumen.top.bed == (24.0, 66.0, 456.0, 552.0)
+    assert lumen.travel == (0.0, 0.0, 433.0, 487.0) and lumen.top.board_area is None and not lumen.top.board_area_only
     assert lumen.vacuum is not None and lumen.vacuum.part_on is None
     assert lumen.vacuum.reading(["echo:i2c-reply: from:109 bytes:1 data:233", "ok"]) == 233.0
     # Its port is the one whose USB names say lumen; its bars say the seesaw.

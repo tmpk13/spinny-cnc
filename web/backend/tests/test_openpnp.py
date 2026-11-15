@@ -99,6 +99,30 @@ def test_a_file_that_does_not_read_names_the_key(change, words):
     assert words in str(error.value)
 
 
+def test_the_board_area_lies_inside_the_bed_and_the_travel_is_a_box():
+    top = "[top_camera]\nbed = [20.0, 60.0, 450.0, 550.0]\n"
+    read = parse(gcode_file(PROFILE + top + "board_area = [40.0, 80.0, 200.0, 200.0]\nboard_area_only = true\n"), "test")
+    assert read.top.board_area == (40.0, 80.0, 200.0, 200.0) and read.top.board_area_only is True
+    document = read.document()
+    assert document["top"]["board_area"] == [40.0, 80.0, 200.0, 200.0] and document["top"]["board_area_only"] is True
+    # Left out: no area, boards only near none.
+    plain = parse(gcode_file(PROFILE + top), "test")
+    assert plain.top.board_area is None and plain.top.board_area_only is False and plain.travel is None
+    assert plain.document()["travel"] is None
+    with pytest.raises(MachineError, match=r"\[top_camera\] board_area must lie inside bed"):
+        parse(gcode_file(PROFILE + top + "board_area = [10.0, 80.0, 200.0, 200.0]\n"), "test")
+    with pytest.raises(MachineError, match=r"\[top_camera\] board_area must be x0, y0, x1, y1 with x0 below x1"):
+        parse(gcode_file(PROFILE + top + "board_area = [200.0, 80.0, 40.0, 200.0]\n"), "test")
+    with pytest.raises(MachineError, match=r"\[top_camera\] board_area_only must be true or false"):
+        parse(gcode_file(PROFILE + top + "board_area_only = 1\n"), "test")
+    # Without a bed the area is only a box.
+    assert parse(gcode_file(PROFILE + "[top_camera]\nboard_area = [-5.0, 0.0, 5.0, 1.0]\n"), "test").top.board_area == (-5.0, 0.0, 5.0, 1.0)
+    travel = parse(gcode_file(PROFILE.replace("place_dwell_ms = 0", "place_dwell_ms = 0\ntravel = [0, 0, 433, 487]")), "test")
+    assert travel.travel == (0.0, 0.0, 433.0, 487.0) and travel.document()["travel"] == [0.0, 0.0, 433.0, 487.0]
+    with pytest.raises(MachineError, match=r"\[motion\] travel must be x0, y0, x1, y1"):
+        parse(gcode_file(PROFILE.replace("place_dwell_ms = 0", "place_dwell_ms = 0\ntravel = [0, 0, 0, 487]")), "test")
+
+
 def test_a_machine_id_is_the_whole_text():
     # A line break after an id is not part of a file name.
     assert check_id("openpnp-marlin") == "openpnp-marlin"

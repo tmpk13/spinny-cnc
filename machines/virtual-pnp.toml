@@ -64,6 +64,7 @@ pick_dwell_ms = 200
 place_dwell_ms = 100
 pick_tries = 3
 park = [42.328, 411.916]
+travel = [0.0, 0.0, 433.0, 487.0]   # the LumenPnP's soft limits: the Machine view's box
 
 [[controls.axes]]
 axis = "r"

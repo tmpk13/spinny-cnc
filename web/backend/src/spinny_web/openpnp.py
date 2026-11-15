@@ -213,6 +213,11 @@ class TopCameraProfile:
     where boards lie, as the places the picture's center goes over (x0, y0,
     x1, y1): a search with no place known and no box drawn scans it on a
     lattice spaced by the board's size first; None for none.
+    `board_area` is where a board is expected, in the same frame as `bed`
+    (x0, y0, x1, y1, inside `bed` when the file gives one): with
+    `board_area_only` false a search with nothing known looks there first,
+    then the rest of the bed; true says boards are only ever placed inside
+    it, so a search never looks outside it. None for none, the whole bed.
     `settings` are the camera's own settings the file names (of
     TOP_CAMERA_SETTINGS), put into the camera as the machine connects."""
 
@@ -221,6 +226,8 @@ class TopCameraProfile:
     roll: float | None = None
     mm_per_px: float | None = None
     bed: tuple[float, float, float, float] | None = None
+    board_area: tuple[float, float, float, float] | None = None
+    board_area_only: bool = False
     fiducial: str = "bright"
     within: float = 2.0
     home_fiducial: tuple[float, float] | None = None
@@ -316,6 +323,10 @@ class GcodeMachine:
     leave: float | None = None
     # Where the head waits out of the way, at the safe height.
     park: tuple[float, float] | None = None
+    # How far the head reaches, as places of the nozzle (x0, y0, x1, y1:
+    # the controller's soft limits): the Machine view draws the machine as
+    # this box; nothing moves by it. None: not said.
+    travel: tuple[float, float, float, float] | None = None
     # How far from the up camera's picture center a part is looked for, mm;
     # None looks as far as pcbv does by default (a third of the height).
     crop: float | None = None
@@ -390,6 +401,7 @@ class GcodeMachine:
             "pick_dwell_ms": self.pick_dwell_ms,
             "place_dwell_ms": self.place_dwell_ms,
             "park": list(self.park) if self.park is not None else None,
+            "travel": list(self.travel) if self.travel is not None else None,
             "camera_position": list(self.camera_position) if self.camera_position is not None else None,
             "camera_roll": self.camera_roll,
             "camera_mirror": self.camera_mirror,
@@ -423,6 +435,8 @@ class GcodeMachine:
                     "roll": top.roll,
                     "mm_per_px": top.mm_per_px,
                     "bed": list(top.bed) if top.bed is not None else None,
+                    "board_area": list(top.board_area) if top.board_area is not None else None,
+                    "board_area_only": top.board_area_only,
                     "fiducial": top.fiducial,
                     "within": top.within,
                     "home_fiducial": list(top.home_fiducial) if top.home_fiducial is not None else None,
@@ -517,6 +531,15 @@ class _Reader:
         ):
             raise self.fail(section, key, f"must be {size} numbers within {COORD_LIMIT:g}")
         return tuple(float(v) for v in value)
+
+    def box(self, table: dict, key: str, section: str) -> tuple[float, float, float, float] | None:
+        """A box x0, y0, x1, y1 with x0 below x1 and y0 below y1, or None when left out."""
+        if key not in table:
+            return None
+        x0, y0, x1, y1 = self.point(table, key, section, 4, None)
+        if not (x0 < x1 and y0 < y1):
+            raise self.fail(section, key, "must be x0, y0, x1, y1 with x0 below x1 and y0 below y1")
+        return (x0, y0, x1, y1)
 
     def flag(self, table: dict, key: str, section: str, default: bool) -> bool:
         value = table.get(key, default)
@@ -668,7 +691,10 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
     park = read.point(motion, "park", "motion", 2, None) if "park" in motion else None
     # Left out, the file does not say which: GcodeMachine.seesaw.
     seesaw = read.flag(motion, "seesaw", "motion", False) if "seesaw" in motion else None
-    read.done(motion, "motion", {"feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms", "discard", "pick_tries", "park", "seesaw"})
+    travel = read.box(motion, "travel", "motion")
+    read.done(
+        motion, "motion", {"feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms", "discard", "pick_tries", "park", "seesaw", "travel"}
+    )
 
     vacuum = None
     sensor = read.table(top, "vacuum")
@@ -692,18 +718,31 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
     top_camera = None
     looking = read.table(top, "top_camera")
     if looking:
+        bed = read.point(looking, "bed", "top_camera", 4, None) if "bed" in looking else None
+        board_area = read.box(looking, "board_area", "top_camera")
+        if board_area is not None and bed is not None:
+            low_x, high_x = sorted((bed[0], bed[2]))
+            low_y, high_y = sorted((bed[1], bed[3]))
+            if not (low_x <= board_area[0] and board_area[2] <= high_x and low_y <= board_area[1] and board_area[3] <= high_y):
+                raise read.fail("top_camera", "board_area", "must lie inside bed")
         top_camera = TopCameraProfile(
             z=read.number(looking, "z", "top_camera", None) if "z" in looking else None,
             offset=read.point(looking, "offset", "top_camera", 2, None) if "offset" in looking else None,
             roll=read.number(looking, "roll", "top_camera", None, -360.0, 360.0) if "roll" in looking else None,
             mm_per_px=read.number(looking, "mm_per_px", "top_camera", None, 1e-4, 1.0) if "mm_per_px" in looking else None,
-            bed=read.point(looking, "bed", "top_camera", 4, None) if "bed" in looking else None,
+            bed=bed,
+            board_area=board_area,
+            board_area_only=read.flag(looking, "board_area_only", "top_camera", False),
             fiducial=read.shade(looking, "fiducial", "top_camera", "bright"),
             within=read.number(looking, "within", "top_camera", 2.0, 0.1, 50.0),
             home_fiducial=read.point(looking, "home_fiducial", "top_camera", 2, None) if "home_fiducial" in looking else None,
             settings=read.camera(looking, "top_camera", TOP_CAMERA_SETTINGS),
         )
-        read.done(looking, "top_camera", {"z", "offset", "roll", "mm_per_px", "bed", "fiducial", "within", "home_fiducial", *TOP_CAMERA_SETTINGS})
+        read.done(
+            looking,
+            "top_camera",
+            {"z", "offset", "roll", "mm_per_px", "bed", "board_area", "board_area_only", "fiducial", "within", "home_fiducial", *TOP_CAMERA_SETTINGS},
+        )
 
     bus = None
     wire = read.table(top, "bus")
@@ -921,6 +960,7 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
         camera_settings=camera_settings,
         leave=leave,
         park=park,
+        travel=travel,
         crop=crop,
         classes=tuple(classes),
         bus=bus,

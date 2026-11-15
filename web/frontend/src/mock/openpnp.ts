@@ -115,6 +115,10 @@ export interface MockTopProfile {
     mm_per_px: number | null;
     /** Where boards lie, as the places the picture's center goes over (x0, y0, x1, y1); null: none given. */
     bed: [number, number, number, number] | null;
+    /** Where a board is expected, in the frame of `bed` and inside it; null: none given, the whole bed. */
+    board_area: [number, number, number, number] | null;
+    /** Boards are only ever placed inside the board area (true), or only near it (false: a search looks there first). */
+    board_area_only: boolean;
     fiducial: SpotPolarity;
     within: number;
     /** A fiducial on the bed, as the nozzle's place over it: Home by fiducial finds it. */
@@ -182,6 +186,8 @@ export interface MockDevice {
     leave: number | null;
     /** Where the head waits out of the way. */
     park: [number, number] | null;
+    /** How far the head reaches, as places of the nozzle (x0, y0, x1, y1); null: not said. */
+    travel: [number, number, number, number] | null;
     /** How far from the up camera's center a part is looked for, mm; null: as far as pcbv does. */
     crop: number | null;
     /** Classes of parts by size, each with its own crop. */
@@ -331,6 +337,18 @@ class Reader {
         return value as number[];
     }
 
+    /** A box x0, y0, x1, y1 with x0 below x1 and y0 below y1, or null when left out. */
+    box(table: TomlTable, key: string, section: string): [number, number, number, number] | null {
+        if (!(key in table)) {
+            return null;
+        }
+        const [x0, y0, x1, y1] = this.point(table, key, section, 4, null) as [number, number, number, number];
+        if (!(x0 < x1 && y0 < y1)) {
+            throw this.fail(section, key, "must be x0, y0, x1, y1 with x0 below x1 and y0 below y1");
+        }
+        return [x0, y0, x1, y1];
+    }
+
     done(table: TomlTable, section: string | null, known: string[]): void {
         const unknown = Object.keys(table).filter((key) => !known.includes(key)).sort();
         if (unknown.length > 0) {
@@ -420,7 +438,8 @@ export function parseGcodeTables(top: TomlTable, id: string, name: string, descr
     device.pick_tries = read.integer(motion, "pick_tries", "motion", 3, 1, 20);
     device.park = "park" in motion ? (read.point(motion, "park", "motion", 2, null) as [number, number]) : null;
     device.seesaw = "seesaw" in motion ? read.flag(motion, "seesaw", "motion", false) : null;
-    read.done(motion, "motion", ["feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms", "discard", "pick_tries", "park", "seesaw"]);
+    device.travel = read.box(motion, "travel", "motion");
+    read.done(motion, "motion", ["feed_xy", "feed_z", "safe_z", "place_z", "pick_dwell_ms", "place_dwell_ms", "discard", "pick_tries", "park", "seesaw", "travel"]);
     device.vacuum = null;
     const sensor = read.table(top, "vacuum");
     if (Object.keys(sensor).length > 0) {
@@ -444,18 +463,29 @@ export function parseGcodeTables(top: TomlTable, id: string, name: string, descr
     device.top = null;
     const looking = read.table(top, "top_camera");
     if (Object.keys(looking).length > 0) {
+        const bed = "bed" in looking ? (read.point(looking, "bed", "top_camera", 4, null) as [number, number, number, number]) : null;
+        const area = read.box(looking, "board_area", "top_camera");
+        if (area !== null && bed !== null) {
+            const [lowX, highX] = [Math.min(bed[0], bed[2]), Math.max(bed[0], bed[2])];
+            const [lowY, highY] = [Math.min(bed[1], bed[3]), Math.max(bed[1], bed[3])];
+            if (!(lowX <= area[0] && area[2] <= highX && lowY <= area[1] && area[3] <= highY)) {
+                throw read.fail("top_camera", "board_area", "must lie inside bed");
+            }
+        }
         device.top = {
             z: "z" in looking ? read.number(looking, "z", "top_camera", null) : null,
             offset: "offset" in looking ? (read.point(looking, "offset", "top_camera", 2, null) as [number, number]) : null,
             roll: "roll" in looking ? read.number(looking, "roll", "top_camera", null, -360, 360) : null,
             mm_per_px: "mm_per_px" in looking ? read.number(looking, "mm_per_px", "top_camera", null, 1e-4, 1) : null,
-            bed: "bed" in looking ? (read.point(looking, "bed", "top_camera", 4, null) as [number, number, number, number]) : null,
+            bed,
+            board_area: area,
+            board_area_only: read.flag(looking, "board_area_only", "top_camera", false),
             fiducial: read.shade(looking, "fiducial", "top_camera", "bright"),
             within: read.number(looking, "within", "top_camera", 2, 0.1, 50),
             home_fiducial: "home_fiducial" in looking ? (read.point(looking, "home_fiducial", "top_camera", 2, null) as [number, number]) : null,
             settings: read.camera(looking, "top_camera", TOP_CAMERA_SETTINGS),
         };
-        read.done(looking, "top_camera", ["z", "offset", "roll", "mm_per_px", "bed", "fiducial", "within", "home_fiducial", ...TOP_CAMERA_SETTINGS]);
+        read.done(looking, "top_camera", ["z", "offset", "roll", "mm_per_px", "bed", "board_area", "board_area_only", "fiducial", "within", "home_fiducial", ...TOP_CAMERA_SETTINGS]);
     }
     device.bus = null;
     const wire = read.table(top, "bus");
@@ -702,6 +732,7 @@ export function deviceDocument(device: MockDevice): GcodeDocument {
         pick_dwell_ms: device.pick_dwell_ms,
         place_dwell_ms: device.place_dwell_ms,
         park: device.park ? [...device.park] : null,
+        travel: device.travel ? [...device.travel] : null,
         camera_position: device.camera_position ? [...device.camera_position] : null,
         camera_roll: device.camera_roll,
         camera_mirror: device.camera_mirror,
@@ -731,6 +762,10 @@ export function deviceDocument(device: MockDevice): GcodeDocument {
                 z: device.top.z,
                 offset: device.top.offset ? [...device.top.offset] : null,
                 roll: device.top.roll,
+                mm_per_px: device.top.mm_per_px,
+                bed: device.top.bed ? [...device.top.bed] : null,
+                board_area: device.top.board_area ? [...device.top.board_area] : null,
+                board_area_only: device.top.board_area_only,
                 fiducial: device.top.fiducial,
                 within: device.top.within,
                 home_fiducial: device.top.home_fiducial ? [...device.top.home_fiducial] : null,

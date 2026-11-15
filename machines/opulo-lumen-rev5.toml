@@ -75,6 +75,7 @@ pick_dwell_ms = 200      # Opulo's for the N045 tip
 place_dwell_ms = 100
 pick_tries = 3
 park = [42.328, 411.916]   # Opulo's park place
+travel = [0.0, 0.0, 433.0, 487.0]   # Marlin's soft limits, the head's reach: the PNP tab's Machine view draws the machine as this box
 # discard = [105.996, 221.582, 5.5]  # Opulo's discard place, for N1; left out, a failed part goes back in its pocket
 
 # The jog panel's bars: a G-code machine's defaults (X and Y on the pad and
@@ -162,6 +163,13 @@ mm_per_px = 0.0161
 # A search with no place known and no box drawn scans it on a lattice spaced
 # by the board's size; narrow it to the staging plates for a quicker scan.
 bed = [24.0, 66.0, 456.0, 552.0]
+# Where a board is expected, in the same frame and inside the bed: a search
+# with nothing known looks there first, then the rest of the bed; with
+# board_area_only = true boards are only ever placed inside it and a search
+# never looks outside. The PNP tab's Machine view draws it and sets it by a
+# box dragged over the bed. Left out, the whole bed.
+# board_area = [60.0, 100.0, 260.0, 260.0]
+# board_area_only = false
 # The camera itself, taken by the top camera when the machine connects, as
 # the bottom camera's above.
 # device = "/dev/video4"
