@@ -156,6 +156,12 @@ LOCK_SECONDS = 2.5
 # search makes before it gives up.
 CHECK_LOOKS = 3
 MAX_CHECKS = 3
+# The places a found board's final fit takes looks from, at most: the stop
+# that found it, the check that agreed, and checks after it half PLACES_MM
+# or more from those. Fitting a LumenPnP survey's right locks 20 mm or more
+# apart, the board's middle came out 0.18 mm off (rms) from two places,
+# 0.11 from three and 0.08 from four; a check costs about a second.
+FINAL_PLACES = 3
 # A stop of a look that counts pcbv's searches (the posterior, with the
 # camera's scale known) ends on evidence before its clocks: with no lock
 # once pcbv ran this many searches on settled frames there, and with a
@@ -2064,6 +2070,22 @@ def search(
                 if record is not None:
                     record.event("check", result=outcome, estimate=best.to_dict(), place=_rounded(place))
                 if outcome == "agreed":
+                    # More places in the final fit: the found stop and the
+                    # check make two; each more check place, half PLACES_MM
+                    # or more from those taken, the farthest, cuts the error
+                    # (FINAL_PLACES). A look there that disagrees stays out
+                    # of the fit (placed_estimate).
+                    taken = [stop, place]
+                    while len(taken) < FINAL_PLACES and made < MAX_CHECKS:
+                        left = [point for point in places if all(math.dist(point, other) >= PLACES_MM / 2.0 for other in taken)]
+                        if not left:
+                            break
+                        more = max(left, key=lambda point: min(math.dist(point, other) for other in taken))
+                        made += 1
+                        extra = visit(len(stops) + made - 1, more, middle=True, check=look.consensus.best or best)
+                        if record is not None:
+                            record.event("check", result=extra, estimate=(look.consensus.best or best).to_dict(), place=_rounded(more), extra=True)
+                        taken.append(more)
                     final = placed_estimate(look.consensus, look.consensus.best or best)
                     if picture is not None:
                         look.mosaic.finish(final.to_dict())

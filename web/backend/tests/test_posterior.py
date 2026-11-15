@@ -354,6 +354,41 @@ def test_a_search_with_the_posterior_finds_and_checks_the_board(quick, steer):
     assert len(mover.places) < len(stops)
 
 
+def test_a_board_found_and_checked_is_fitted_from_a_third_place_far_from_both(quick, monkeypatch):
+    from spinny_web.boardlook import FINAL_PLACES, PLACES_MM, check_places
+
+    checked = []
+    looked = boardlook.look_at_stop
+
+    def look_at(look, frame, stopped, error, check=None, *args, **kwargs):
+        result = looked(look, frame, stopped, error, check, *args, **kwargs)
+        if check is not None:
+            checked.append((frame.center, result))
+        return result
+
+    monkeypatch.setattr(boardlook, "look_at_stop", look_at)
+    middle = truth_middle()
+    camera = SearchCamera(FakePcbv())
+    look_ = BoardLook(lambda: camera, publish=lambda: None, paused=lambda: True, options=lambda: {"method": "posterior", "scale": SCALE})
+    look_.start("j1", DESIGN.board_to_job, MIDDLE, lambda captured: "the watcher is held off", features=PADS, outline=OUTLINE)
+    box = (middle[0] - 30.0, middle[1] - 25.0, middle[0] + 30.0, middle[1] + 25.0)
+    stops = search_stops(box, (SIZE[0] * SCALE, SIZE[1] * SCALE), (box[0], box[1]))
+    mover = Mover(camera)
+    view = (SIZE[0] * SCALE, SIZE[1] * SCALE)
+    try:
+        found = search(
+            look_, mover, stops, (0.0, 0.0), lambda point: PictureFrame(point, 0.0, False), lambda: False, lambda index, count: None, RuntimeError,
+            checks=lambda place: check_places(place, MIDDLE, OUTLINE, PADS, view), box=box,
+        )
+    finally:
+        look_.stop()
+    assert math.dist(found.center, middle) < 0.1
+    # After the check that agreed, one more place 10 mm or more from the
+    # stop that found the board and from that check, which agreed too.
+    assert len(checked) == FINAL_PLACES - 1 and checked[0][1] == "agreed" and checked[1][1] == "agreed", checked
+    assert math.dist(checked[0][0], checked[1][0]) >= PLACES_MM / 2.0 - 1e-6
+
+
 def test_a_recorded_search_replays_through_the_posterior_and_the_sweep_sets_both_side_by_side(tmp_path, quick):
     from spinny_web import searchreport
     from spinny_web.boardlook import search_extra, settings_now
