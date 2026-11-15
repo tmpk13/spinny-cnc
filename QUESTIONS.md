@@ -253,3 +253,38 @@ Why it matters: each task (board look, spots, edges, Measure camera; nozzle, par
 - B. A circle about the picture's center, in mm, as the bottom camera's part crops are: simpler, but a task can only look at the middle.
 Applied: A, in 7bc130c and fdaa98c (pcbv d75f4c0).
 Answer:
+
+## Q43. Should the nine tabs become four areas on a rail: Home, Job, Run, Machines?
+Why it matters: it decides where everything on the page lives (docs/UI_REDESIGN.md, The areas); every later phase builds on it.
+- A. Four areas on a vertical rail, the tabs becoming groups inside them (recommended): TODO.md's side panel; a job's setup and run share one screen, and Plot, CAM and PNP stop repeating the jog and preview.
+- B. Keep the nine tabs and apply the other principles inside each page: less change, but four tabs keep making jobs and three keep their own jog.
+Applied: A, in 1599949 (docs/UI_REDESIGN.md).
+Answer:
+
+## Q44. Should color mean only a state?
+Why it matters: a stale height map or an alarm stands out only if little else is colored (docs/UI_PRINCIPLES.md, principle 6).
+- A. Color only for states (recommended): "Colors for tabs and panels" off by default, the next action's button dark, blue only while working, yellow needs you, red danger, green done.
+- B. Keep each page's color on its tab and panel edges by default, with the state colors on top.
+Applied: A, in 1599949 (docs/UI_REDESIGN.md).
+Answer:
+
+## Q45. Should Plot, CAM's profile pick and Auto become ways to make a job inside Job?
+Why it matters: four tabs make jobs today, each with its own preview, and Plot its own run.
+- A. One New job: Open a file, Draw it (the Plot operations), Describe it (the assistant); profiles edited in Machines; Auto a drawer on any screen (recommended).
+- B. Keep Plot, CAM and Auto as areas of their own on the rail.
+Applied: A, in 1599949 (docs/UI_REDESIGN.md).
+Answer:
+
+## Q46. One step level (Fine, Normal, Coarse) for every axis, mapped per axis in the machine file?
+Why it matters: the jog panel holds six step choosers today, one per axis, repeated on Plot and PNP.
+- A. One level for every axis, each axis's step for it set in [controls]; a custom step per axis in the dock's More (recommended).
+- B. Keep a chooser per axis, folded into the dock's More.
+Applied: A, in 1599949 (docs/UI_REDESIGN.md).
+Answer:
+
+## Q47. What should the panel layout layer become once each step shows only its own panels?
+Why it matters: folders, stacks, side by side, named layouts and peeking are code to keep and things to learn, built while every panel showed at once.
+- A. Keep it behind Edit panels in Settings, for arranging a step's panels by hand (recommended): nothing lost, out of the way.
+- B. Retire it once the screens fit their budget: less code, and every page looks as the docs say.
+Applied: A, in 1599949 (docs/UI_REDESIGN.md).
+Answer:
