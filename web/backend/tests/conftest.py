@@ -16,6 +16,18 @@ for extra in (HERE, REPO / "toolpath" / "tests"):
 
 
 @pytest.fixture(autouse=True)
+def no_host_ports(monkeypatch):
+    """The host's own serial ports are hidden: a LumenPnP plugged in at
+    /dev/ttyACM0 was claimed by its machine file in a test that connects
+    there, which then opened the real machine's port. A test that lists
+    ports gives its own."""
+    from serial.tools import list_ports
+
+    monkeypatch.setattr(list_ports, "comports", lambda: [])
+    monkeypatch.setattr("spinny_web.app._by_id_names", lambda: {})
+
+
+@pytest.fixture(autouse=True)
 def pictures_at_once(monkeypatch):
     """A look takes the fakes' picture at once: they show the head where it
     is the moment it is asked, so the wait for a picture taken after the

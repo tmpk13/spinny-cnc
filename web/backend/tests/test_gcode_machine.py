@@ -218,12 +218,9 @@ def test_the_ports_name_the_machine_that_claims_them(client, monkeypatch):
 
     from serial.tools import list_ports
 
-    import spinny_web.app
-
+    # The host's own /dev/serial/by-id links are hidden (conftest's
+    # no_host_ports): a real board at /dev/ttyACM0 renamed this fake port.
     monkeypatch.setattr(list_ports, "comports", lambda: [Port("/dev/ttyACM0", "spinny laser", 0x2E8A), Port("/dev/ttyACM1", "MARLIN_OPULO_LUMEN_REV5 CDC in FS Mode", 0x0483)])
-    # The host's own /dev/serial/by-id links would rename these fake ports
-    # (a real board plugged in at /dev/ttyACM0 did).
-    monkeypatch.setattr(spinny_web.app, "_by_id_names", lambda: {})
     client.backend.machine_store.patch("rig", ["port", "match"], ["lumen"])
     ports = client.get("/api/ports").json()["ports"]
     by_url = {port["url"]: port for port in ports}

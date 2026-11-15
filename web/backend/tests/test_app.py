@@ -716,6 +716,9 @@ def test_the_host_tolerance_is_stored_only_when_the_machine_part_went_through(cl
 def test_a_url_that_is_not_a_port_is_refused_before_pyserial_sees_it(tmp_path):
     from spinny_web.app import Backend, create_app
 
+    # The host's own ports are hidden (conftest's no_host_ports): with a
+    # LumenPnP plugged in at /dev/ttyACM0 its machine file claimed that
+    # url, and the connect went to the real port as a G-code machine.
     opened = []
 
     def opener(url):
