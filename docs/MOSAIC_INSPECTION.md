@@ -217,6 +217,36 @@ What works and what does not:
   elsewhere: C57 (lying turned about 60 deg) and R91 flagged by offset,
   R80 (0.35 mm off its pads) not; C10 has no placed part of its package.
 
+## On the machine, 2026-11-15
+
+The same grid surveyed again the next afternoon
+(`var/surveys/20261115-lumen-battery-grid2`: 169 pictures in 146 s, the
+board unmoved), after Measure camera had measured the camera with its
+lens ([CV_REVIEW.md](CV_REVIEW.md#on-the-machine-2026-11-15)). The frames
+pcbv serves are its camera's own: its lens correction works on what it
+detects, not on the picture, so the stitching model carries the lens.
+Seams counted as above, micrometers:
+
+| Model | Survey | Windows | rms | 90% | 99% | median |
+| --- | --- | --- | --- | --- | --- | --- |
+| (a) head places, 0.0161 mm a pixel, roll 180.4 | the afternoon's | 2814 | 82 | 132 | 223 | 55 |
+| Measure camera's: 16.06 um at the center, roll 180.33, lens +0.0257, axes 0.16 deg | the afternoon's | 3671 | 71 | 111 | 179 | 52 |
+| the same | the night's | 3562 | 71 | 112 | 178 | 53 |
+| (d1) the camera refitted, k1, k2, backlash | the afternoon's | 3719 | 57 | 91 | 163 | 38 |
+| (d2) d1 + tilt + the board's relief | the afternoon's | 3704 | 27 | 41 | 72 | 19 |
+
+- Measure camera's numbers, taken in 25 s at one place, do as well as
+  the lens the night's analysis fitted to its seams (68 um), and the
+  same on either survey.
+- The refit repeats the night's: 15.99 um a pixel, roll 180.345, the
+  axes 0.12 to 0.13 deg out of square, backlash 29.5 um (28.5), and the
+  relief brings the seams to a window's noise again.
+- The backend's own board scan (`POST /api/pnp/top/scan`: 84 pictures
+  over the board's outline, a stop each) ran on the machine: 197 s with the
+  vote, which waited the full lock time at the 49 stops pcbv could not
+  lock (bare board); 103 s once those stops end on pcbv's searches
+  (spinny 52275a1); 86 s with the posterior.
+
 ## What to build next
 
 1. Judge parts in single pictures against a golden board: the first

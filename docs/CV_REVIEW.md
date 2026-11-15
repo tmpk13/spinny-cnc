@@ -6,9 +6,14 @@ they buy. [CV_DIRECTION.md](CV_DIRECTION.md) judges the work so far and
 [CV_HARDWARE.md](CV_HARDWARE.md) holds the sessions' numbers; this file
 adds what replaying their pictures and records shows, and what the
 literature and other machines do. Every number here was measured for this
-review on those pictures and records (kept in `var/surveys/` and
-`var/lumen-home/var/searchlog/` on the machine that took them) unless it
-says "modeled" or cites a source. [Method](#method) says how.
+review on those pictures and records unless it says "modeled" or cites a
+source. [Method](#method) says how. The surveys are kept in `var/surveys/`
+on the machine that took them; the second session's search records were
+in `var/lumen-home/var/searchlog/` until the log's size cap pruned them on
+2026-11-15 (each record keeps a copy of the board's KiCad file, 6 MB here,
+and the log keeps 200 MB), so their replays cannot be run again. The
+afternoon's records are kept in
+`var/surveys/20261115-lumen-cv-review/searchlog/`.
 
 ## In short
 
@@ -34,35 +39,93 @@ want a GPU ([3](#sources)).
 ## Status, 2026-11-15
 
 Applied the same day and measured offline, on the survey's 169 pictures
-and the second session's 23 search records. Nothing of it has run on the
-machine yet.
+and the second session's 23 search records; then run on the machine the
+same afternoon ([on the machine](#on-the-machine-2026-11-15)).
 
 | Change | Where | Measured |
 | --- | --- | --- |
 | Scale window +-3% when the camera is measured (not +-2%: room for the board's height) | spinny ab5d015 | survey: 54 right, 44 wrong (+-20%: 52, 54) |
 | pcbv fits a similarity, its scale held to a window within +-5% | pcb-vision 69bde3b, 5605458 | survey at +-3% with the lens: 86 locked, 58 right, 28 wrong, right rms 0.048 mm, turn scatter 0.11 deg (the old shipped options: 106, 52, 54, 0.069 mm, 0.28 deg); kept as the survey baseline's `measured` case (1c10b03). The second session's 282 search pictures at +-3%: 55 right, 8 wrong (the old pcbv 54, 15); with the lens 55, 11, the right ones 0.028 mm (median) from where their search found the board |
 | Stops end on evidence; a lock agrees by its center point | spinny 4a31a7b | `spinny-search stops` on the 23 searches: 53.8 of 448.3 s saved, the slowest known-place search 17.3 to 5.9 s, no outcome lost |
+| The vote too ends a stop without a lock on pcbv's searches | spinny 52275a1 | on the machine, a board scan of 84 pictures with the vote: 197 s, 103 s after |
+| A search keeps a measured scale; rewrites the roll only past 0.3 deg | spinny 21792e2 | on the machine every search rewrote both, the scale once by 2% |
 | The posterior's match weight fitted to the graded locks | spinny d484d78 | 49 records of both sessions: 2 more boards found, one whole-bed search 50 s sooner, the wrong places of three searches held at a tenth of their old probability, none called found |
 | Checks centered on their pads | spinny c530934 | survey: right locks whose pads' middle lies within 1.5 mm of the picture's center err 0.030 mm (median), 3 to 5 mm off 0.057 |
 | The board crop in the posterior and the checks | spinny c530934 | tests only: the LumenPnP file sets no crop |
 | Measure camera measures the lens, and the scale at the picture's center | spinny 370726d | grid calibration pictures: k1 0.025 to 0.027, the tiles' residual 0.93 to 0.58 px; the survey with that lens (old pcbv): right rms 0.069 to 0.050 mm |
-| A stop's pictures trusted once two frames agree | spinny 882a65f | tests only; the fixed settle was 9.5 s of a 40 s whole-bed search |
+| A stop's pictures trusted once two frames agree | spinny 882a65f | on the machine, 497 stops at 100 and 200 mm/s: the frames agreed as the head arrived at 495 (the other two within 0.11 s); the first trusted frame 0.078 s after arrival (median, 90% within 0.156) against the fixed 0.25 |
 | A third place in the final fit | spinny 105727d | survey right locks 20 mm or more apart: the board's middle 0.18 mm off (rms) from two places, 0.11 from three, 0.08 from four |
 | Placed parts | not changed | the survey board is mostly bare (32 of its 229 front parts on their pads, [MOSAIC_INSPECTION.md](MOSAIC_INSPECTION.md)), so `--placed all` told pcbv bodies that are not there (14 right, 69 wrong against 56, 16 for none, +-1%): no grade of a board with parts placed yet. A change made on that misreading was reverted (ba97c58); the section below rests on it too |
 | Frames stamped with the V4L2 buffer's time | pcb-vision d88e201 | the LumenPnP's top camera: the stamp 32 ms (median) before the dequeue, a frame |
 | Axes 0.13 deg out of square | QUESTIONS.md Q48 | with the new pcbv the survey's leave-one-out error is 0.049 mm rigid, 0.033 affine: a third of what is left |
 | The survey stitched, and parts checked in it | spinny cbf1b4e, c6f2584: [MOSAIC_INSPECTION.md](MOSAIC_INSPECTION.md) | seams 81 um rms from the head's places, 25 with the lens, the backlash, a tilt and the board's relief fitted; the board's pads 22 um (median) off an affine refit, which finds the axes 0.121 deg out of square from the board alone; a bare footprint told by the color between its pads 96% of the time, a 0.2 mm offset 70 to 80%, 0.1 mm 20 to 40%, a passive's half turn not at all |
-| Travel at 200 mm/s | not done | needs the machine |
-| A truth from the same session | not done | a procedure for the next session: survey the board, then search it |
+| Travel at 200 mm/s | spinny c8cf980 | on the machine: a whole-bed search from nothing 33.5 s at 100 mm/s, 23.9 to 28.9 at 200 (its moves 27.6 to 17.9 s, as modeled); no step lost |
+| A truth from the same session | done on the machine | the afternoon's survey of the same grid graded the board 0.4 um and 0.003 deg from the night's truth: it had not moved |
 | A gate on the lock's rms and scale | not applied | at +-3% the logistic fit on match, rms and scale separates no better than match alone (cross-validated AUC 0.961 against 0.965) |
 
-Left for the machine: Measure camera over a flat surface (the lens and the
-center scale it keeps), a known-place and a whole-bed search on the new
-pcbv and stop rule against the second session's times, the settle by
-frames, travel at 200 mm/s, and the exposure-to-stamp delay (the ring light
-test). With pcbv's turn now scattering 0.11 deg a picture, the posterior's
-ROLL_DEG (0.3) and the vote's AGREE_DEG (1) can come down once a session's
-records show it.
+## On the machine, 2026-11-15
+
+The LumenPnP with the battery card the night's sessions left, through a
+backend of its own home (`var/lumen-home`), the head moved in X and Y at
+the safe height only. The board had not moved: the first whole-bed search
+found it 0.01 mm and 0.04 deg from the night's truth, and the afternoon's
+own survey of the same grid graded it 0.4 um and 0.003 deg from it
+(middle 151.833, 335.646 where the picture's center sees it, turned 0.168
+deg). Searches started from the night's head places, five a set.
+
+| | The night | The afternoon |
+| --- | --- | --- |
+| Measure camera | 15.94 to 16.10 um a pixel, roll 180.31 to 180.40 | 24.6 s: 16.06 um at the picture's center, roll 180.33, the axes 0.16 deg out of square, lens k1 +0.0257 (0.30 mm at the corners) |
+| Whole bed, nothing known, vote | 43.6 s | 33.5 s at 100 mm/s; 23.9 and 27.9 s at 200 |
+| Whole bed, nothing known, posterior | 39.8 s | 34.3 and 69.0 s at 100 mm/s; 24.6 to 28.9 s at 200 (four) |
+| Place known, vote | 3.1 to 4.2 s; 0.025 to 0.052 mm | 4.0 to 4.5 s (one set 2.9 to 6.3, one search 10.3); 0.015 to 0.046 mm, a set within 7 to 15 um |
+| Place known, posterior | 2.2 to 3.4 s, one 17.3; 0.07 to 0.09 mm | 3.6 to 5.0 s, 3.0 to 3.5 at 200 mm/s; 0.053 to 0.080 mm |
+| Board scan, 84 pictures | not run | vote 197 s, 103 s since 52275a1; posterior 86 s |
+
+- Known-place searches take a second longer than the night's typical
+  ones: the third final place costs about 1.1 s, and on this board the
+  farthest dense place often locks a repeated cell 39 mm off (3% over the
+  scale, its rival 0.86), so that check disagrees and stays out of the
+  fit. None waited out a clock (the night's slowest, 17.3 s, did).
+- The vote's places sit 0.015 to 0.046 mm from the truth, the
+  posterior's 0.053 to 0.080, about 0.04 mm lower in Y in every set. Both
+  fit their looks' points to the head's places (placed_estimate), but the
+  posterior's first stop brings one look where the vote's brings five, so
+  the check places weigh more in its fit. Not chased further.
+- The posterior missed the board once in six whole-bed searches (69.0
+  s): at the first stop over it pcbv locked the right place weakly (17 of
+  27 pads, rms 0.16 mm), which the fitted match weight counts as no
+  evidence (exp(15 (0.63 - 0.65)) = 0.74); the stop ended after its one
+  search and the scan came back to the board 30 s later. The vote called
+  the same lock found in 0.6 s.
+- 200 mm/s lost no step: the vote found the board within 0.02 mm at 100
+  mm/s after the fast runs as during them (a full step is 0.05 mm here).
+  Marlin allows far more (M203 1500 mm/s, M204 T3500) and Opulo's own
+  file travels at 283 mm/s; the LumenPnP file travels at 200 since
+  c8cf980.
+- Exposure to stamp (the ring light switched 40 times by `M150`, frames
+  read as luma with pcbv's age, each placed by its V4L2 stamp): a frame
+  stamped at s gathers light from about s - 6 ms (its top rows) to s + 27
+  ms (its bottom rows), one frame of rolling readout. A frame stamped 10 ms
+  or more after a move ended holds nothing of the move.
+- Every search that found the board rewrote the camera: the roll it read
+  from the head's moves (180.43 to 180.61 against Measure camera's 180.33:
+  it scatters 0.07 deg and carries the axes' skew), and with it pcbv's
+  newest lock's scale, which may be a wrong lock's (a measured 16.13 um
+  became 16.47 in two searches). Since 21792e2 a measured scale stays and
+  the roll is rewritten only past 0.3 deg.
+- The afternoon's survey stitches as the night's did: 82 um rms on the
+  head's places, 71 with Measure camera's numbers (the night's lens fitted
+  to its seams gave 68), 57 with the camera refitted and a 29.5 um
+  backlash, 27 with a tilt and the board's relief
+  ([MOSAIC_INSPECTION.md](MOSAIC_INSPECTION.md#on-the-machine-2026-11-15)).
+
+Left open: the posterior's weak first lock; check places on this board
+that repeat (pick ones whose pads have no twin within the scale window);
+the vote's and the posterior's final places apart; a board scan's stops
+still wait the fixed settle (look_scan_stop); the axes' skew (Q48); and,
+with pcbv's turn scattering 0.10 deg a picture on the afternoon's survey,
+the posterior's ROLL_DEG (0.3) and the vote's AGREE_DEG (1) can come down.
 
 ## Speed
 
