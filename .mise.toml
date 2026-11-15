@@ -46,6 +46,22 @@ run = "uv run spinny-cam"
 description = "The cameras' recorded looks for a board and searches: list them, show one (a record id or folder) as text, --json or an --html page, or sweep them all; --truth X,Y,DEG measures against a known place, --need and --agree try other consensus settings, --pcbv PROGRAM gives the pictures to a pcbv build: mise run search-report -- show 20261112-153012-000"
 run = "uv run spinny-search"
 
+[tasks.survey]
+description = "The top camera of the connected G-code machine over a grid of head places through the backend, a picture at each kept with the place read back, in var/surveys/NAME: mise run survey -- 80,225,176,315 --step 8,7.5 --name NAME --board board.kicad_pcb --url http://127.0.0.1:8000"
+run = "uv run spinny-survey sweep"
+
+[tasks.survey-grade]
+description = "pcbv locate on every picture of a survey, graded by one fit of the board to the head's places robust to wrong locks: locked, right, wrong, the right ones' rms; answers kept per pcbv build (--pcbv or PCBV, else ../pcb-vision's release build), pcbv's options after a second --: mise run survey-grade -- NAME -- --finish masked --scale 0.0129:0.0194"
+run = "uv run spinny-survey grade"
+
+[tasks.survey-baseline]
+description = "The 169-picture battery card sweep graded against the numbers every pcbv change has to beat (spinny_web/survey_baseline.json): fails when the pcbv build (--pcbv or PCBV, else ../pcb-vision's release build) has fewer right locks, more wrong ones or a worse rms; -- --case all adds the case without a scale, --write keeps a better result"
+run = "uv run spinny-survey baseline"
+
+[tasks.survey-searches]
+description = "The backend's board search from several head places, each run to its end, kept and graded against a survey's truth (or --truth X,Y,DEG); --from FILE grades searches kept: mise run survey-searches -- 80,225 176,315 --box 80,225,176,315 --survey NAME --url http://127.0.0.1:8000"
+run = "uv run spinny-survey searches"
+
 [tasks.mcp]
 description = "The backend's tools for an MCP client such as Claude Code, over stdio, calling a running backend (--url, default http://127.0.0.1:8000); none of them moves the machine. Claude Code takes them as: claude mcp add spinny -- uv run --directory <repository> spinny-mcp"
 run = "uv run spinny-mcp"

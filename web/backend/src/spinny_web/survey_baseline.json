@@ -1,0 +1,36 @@
+{
+ "about": "The numbers every pcbv change has to beat: spinny-survey baseline grades the survey below (169 pictures of an OreSat battery card, github.com/oresat/oresat-batteries oresat-battery-card at 031b458, under a LumenPnP's top camera on 2026-11-14, 8 by 7.5 mm apart over the board and a margin) with each case's pcbv options against the truth here, and fails when a case has fewer right locks, more wrong ones, or a right rms higher by more than rms_slack_mm. The pictures stay in var/surveys on the machine that took them.",
+ "survey": "20261114-lumen-battery-grid",
+ "pictures": 169,
+ "board_sha256": "079ed3fc2bbccbb1f71be77c9cba54464227953db315b3e41ef377fb56836eef",
+ "truth": {
+  "about": "head = R(turn_deg) (x, -y) + shift for a KiCad board point (x, y), the head's place over it in the LumenPnP's X and Y, mm: the robust fit of the scale case's 52 right locks",
+  "turn_deg": 0.17115740123761572,
+  "shift": [-20.524775321249706, 375.01771899463074]
+ },
+ "rms_slack_mm": 0.005,
+ "cases": {
+  "scale": {
+   "about": "pcbv told the scale within a fifth either way of the camera's 0.0161 mm a pixel",
+   "options": ["--finish", "masked", "--scale", "0.0129:0.0194"],
+   "pictures": 169,
+   "locked": 106,
+   "right": 52,
+   "wrong": 54,
+   "right_rms_mm": 0.0689,
+   "pcbv": "pcb-vision bf6c52b (the same at 1a2d4fb)",
+   "measured": "2026-11-14"
+  },
+  "noscale": {
+   "about": "no scale given: pcbv tries its whole range, then its scale windows",
+   "options": ["--finish", "masked"],
+   "pictures": 169,
+   "locked": 116,
+   "right": 48,
+   "wrong": 68,
+   "right_rms_mm": 0.07,
+   "pcbv": "pcb-vision bf6c52b (the same at 1a2d4fb)",
+   "measured": "2026-11-14"
+  }
+ }
+}
