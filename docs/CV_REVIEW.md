@@ -31,6 +31,39 @@ cross-modal kin). None is tested on a rendered layout against a photo, the
 CPU-fast ones say they are weak on repeated patterns, and the dense ones
 want a GPU ([3](#sources)).
 
+## Status, 2026-11-15
+
+Applied the same day and measured offline, on the survey's 169 pictures
+and the second session's 23 search records. Nothing of it has run on the
+machine yet.
+
+| Change | Where | Measured |
+| --- | --- | --- |
+| Scale window +-3% when the camera is measured (not +-2%: room for the board's height) | spinny ab5d015 | survey: 54 right, 44 wrong (+-20%: 52, 54) |
+| pcbv fits a similarity, its scale held to a window within +-5% | pcb-vision 69bde3b, 5605458 | survey at +-3% with the lens: 86 locked, 58 right, 28 wrong, right rms 0.048 mm, turn scatter 0.11 deg (the old shipped options: 106, 52, 54, 0.069 mm, 0.28 deg); kept as the survey baseline's `measured` case (1c10b03). The second session's 282 search pictures at +-3%: 55 right, 8 wrong (the old pcbv 54, 15); with the lens 55, 11, the right ones 0.028 mm (median) from where their search found the board |
+| Stops end on evidence; a lock agrees by its center point | spinny 4a31a7b | `spinny-search stops` on the 23 searches: 53.8 of 448.3 s saved, the slowest known-place search 17.3 to 5.9 s, no outcome lost |
+| The posterior's match weight fitted to the graded locks | spinny d484d78 | 49 records of both sessions: 2 more boards found, one whole-bed search 50 s sooner, the wrong places of three searches held at a tenth of their old probability, none called found |
+| Checks centered on their pads | spinny c530934 | survey: right locks whose pads' middle lies within 1.5 mm of the picture's center err 0.030 mm (median), 3 to 5 mm off 0.057 |
+| The board crop in the posterior and the checks | spinny c530934 | tests only: the LumenPnP file sets no crop |
+| Measure camera measures the lens, and the scale at the picture's center | spinny 370726d | grid calibration pictures: k1 0.025 to 0.027, the tiles' residual 0.93 to 0.58 px; the survey with that lens (old pcbv): right rms 0.069 to 0.050 mm |
+| A stop's pictures trusted once two frames agree | spinny 882a65f | tests only; the fixed settle was 9.5 s of a 40 s whole-bed search |
+| A third place in the final fit | spinny 105727d | survey right locks 20 mm or more apart: the board's middle 0.18 mm off (rms) from two places, 0.11 from three, 0.08 from four |
+| Placed parts | not changed | the survey board is mostly bare (32 of its 229 front parts on their pads, [MOSAIC_INSPECTION.md](MOSAIC_INSPECTION.md)), so `--placed all` told pcbv bodies that are not there (14 right, 69 wrong against 56, 16 for none, +-1%): no grade of a board with parts placed yet. A change made on that misreading was reverted (ba97c58); the section below rests on it too |
+| Frames stamped with the V4L2 buffer's time | pcb-vision d88e201 | the LumenPnP's top camera: the stamp 32 ms (median) before the dequeue, a frame |
+| Axes 0.13 deg out of square | QUESTIONS.md Q48 | with the new pcbv the survey's leave-one-out error is 0.049 mm rigid, 0.033 affine: a third of what is left |
+| The survey stitched, and parts checked in it | spinny cbf1b4e, c6f2584: [MOSAIC_INSPECTION.md](MOSAIC_INSPECTION.md) | seams 81 um rms from the head's places, 25 with the lens, the backlash, a tilt and the board's relief fitted; the board's pads 22 um (median) off an affine refit, which finds the axes 0.121 deg out of square from the board alone; a bare footprint told by the color between its pads 96% of the time, a 0.2 mm offset 70 to 80%, 0.1 mm 20 to 40%, a passive's half turn not at all |
+| Travel at 200 mm/s | not done | needs the machine |
+| A truth from the same session | not done | a procedure for the next session: survey the board, then search it |
+| A gate on the lock's rms and scale | not applied | at +-3% the logistic fit on match, rms and scale separates no better than match alone (cross-validated AUC 0.961 against 0.965) |
+
+Left for the machine: Measure camera over a flat surface (the lens and the
+center scale it keeps), a known-place and a whole-bed search on the new
+pcbv and stop rule against the second session's times, the settle by
+frames, travel at 200 mm/s, and the exposure-to-stamp delay (the ring light
+test). With pcbv's turn now scattering 0.11 deg a picture, the posterior's
+ROLL_DEG (0.3) and the vote's AGREE_DEG (1) can come down once a session's
+records show it.
+
 ## Speed
 
 Where the second session's searches spent their time:
@@ -153,8 +186,8 @@ Phase correlating 96 px tiles of the grid calibration's start picture
 against the same scene after its 3 mm head moves (235 tiles, 16 pairs)
 shows a local scale 2% smaller at the picture's left edge than in its
 middle; a radial fit puts the distortion near 0.2 mm in the corners
-(pcbv's lens term k1 about 0.017; a rough fit, since the populated
-board's parts stand at other heights). The survey graded with that lens,
+(pcbv's lens term k1 about 0.017; a rough fit, over a board partly
+under a clear film). The survey graded with that lens,
 on the 52 pictures every case locked right (scale +-1%, error against an
 affine fit, see [the axes](#square-the-machines-axes)):
 
@@ -309,7 +342,8 @@ The vote cannot represent this; the posterior can.
 
 The backend tells pcbv the parts a job has placed
 ([placing_part.py:468](../web/backend/src/spinny_web/placing_part.py#L468)).
-On the populated survey board, scale +-1%:
+On the survey board, scale +-1% (the board turned out mostly bare, so
+`all` told pcbv bodies that are not there: see the status above):
 
 | `--placed` | Right | Wrong | Right rms |
 | --- | --- | --- | --- |
@@ -435,5 +469,5 @@ of a search). Two things to change:
   survey graded with the fitted term and a wrong-sign control.
 
 Not verified: anything on the machine. The faster travel and shorter
-settle are models; the lens term is a rough fit on a populated board; the
+settle are models; the lens term is a rough fit; the
 sources were read by a research pass, some only in summary.

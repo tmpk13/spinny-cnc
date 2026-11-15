@@ -1,7 +1,8 @@
 # Board vision: where it stands, where it goes
 
 Written 2026-11-14, after the first session on real hardware (a
-LumenPnP's top camera over a populated OreSat battery card). The numbers
+LumenPnP's top camera over an OreSat battery card, mostly bare: 32 of its
+229 front parts on their pads, [MOSAIC_INSPECTION.md](MOSAIC_INSPECTION.md)). The numbers
 behind every claim are in [CV_HARDWARE.md](CV_HARDWARE.md); the design of
 the probability search is in
 [PROBABILISTIC_SEARCH.md](PROBABILISTIC_SEARCH.md). This file only judges
@@ -133,9 +134,11 @@ Freeze (keep the code, add nothing, until hardware data asks for it):
 - **Board stretch and machine skew.** A fab's 0.1% over a 50 mm board is
   0.05 mm, about one picture's own error; measuring it needs many boards
   at different turns.
-- **Lens correction, round checks, color picks, rival reporting.** Each
-  was built before any real picture. Grade each against the picture sets
-  (item 7) before giving it more work.
+- **Round checks, color picks, rival reporting.** Each was built before
+  any real picture. Grade each against the picture sets (item 7) before
+  giving it more work. Lens correction was graded on the survey and now
+  comes from Measure camera
+  ([CV_REVIEW.md](CV_REVIEW.md#status-2026-11-15)).
 
 ## Vote or posterior
 
