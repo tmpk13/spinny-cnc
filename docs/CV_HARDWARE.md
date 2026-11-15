@@ -57,7 +57,8 @@ This sweep is the baseline every pcbv change has to beat: `mise run
 survey-baseline` grades it against the truth and the numbers kept in
 `web/backend/src/spinny_web/survey_baseline.json` (right rms 0.069 and
 0.070 mm) and fails when a build has fewer right locks, more wrong ones
-or a worse rms; pcb-vision 1a2d4fb and bf6c52b give the same numbers.
+or a worse rms; the session's pcbv and pcb-vision bf6c52b give the same
+numbers.
 17 of its pictures (nine right, five wrong, three off the board) are a
 test fixture in pcb-vision (`fixtures/survey/battery`), run by its
 `cargo test`.

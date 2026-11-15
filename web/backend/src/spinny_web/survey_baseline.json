@@ -18,7 +18,7 @@
    "right": 52,
    "wrong": 54,
    "right_rms_mm": 0.0689,
-   "pcbv": "pcb-vision bf6c52b (the same at 1a2d4fb)",
+   "pcbv": "pcb-vision bf6c52b (the session's build gave the same)",
    "measured": "2026-11-14"
   },
   "noscale": {
@@ -29,7 +29,7 @@
    "right": 48,
    "wrong": 68,
    "right_rms_mm": 0.07,
-   "pcbv": "pcb-vision bf6c52b (the same at 1a2d4fb)",
+   "pcbv": "pcb-vision bf6c52b (the session's build gave the same)",
    "measured": "2026-11-14"
   }
  }
