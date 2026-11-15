@@ -66,6 +66,7 @@ describe("a G-code machine used like the other machines, in the mock", () => {
         expect(lumen.camera_position).toEqual([61.92, 219.82]);
         expect(lumen.top?.offset).toEqual([23.544, 65.188]);
         expect(lumen.top?.home_fiducial).toEqual([60.91, 175.23]);
+        expect([lumen.top?.roll, lumen.top?.mm_per_px]).toEqual([180, 0.0161]);
         expect(lumen.match).toEqual(["lumen"]);
         const ports = await new MockBackend().ports();
         expect(ports.find((port) => port.device === "/dev/ttyACM1")?.machine).toBe("opulo-lumen-rev5");

@@ -71,6 +71,12 @@ if TYPE_CHECKING:
 # roll it measured once that is this far from the roll in use, degrees, or
 # whenever the camera's scale was not measured.
 PICTURE_ROLL_DEG = 0.05
+# With only the file's scale as designed, pcbv's board search keeps within
+# this factor of it either way (a measured one: vision.SCALE_SPREAD). On the
+# LumenPnP's top camera the windows' search without any scale locked
+# pictures at half the true scale with a high share of their pads paired;
+# the design keeps those out while a camera somewhat off it still locks.
+DESIGN_SCALE_SPREAD = 1.5
 
 
 class PlacingPart:
@@ -344,10 +350,23 @@ class PlacingPart:
         range its search keeps to once the scale is measured, and the parts
         placed on the board now on the machine."""
         settings = self.top.settings()
+        scale = scale_range(settings.mm_per_px)
+        design = self._design_top_scale()
+        if scale is None and design:
+            scale = (design / DESIGN_SCALE_SPREAD, design * DESIGN_SCALE_SPREAD)
         return {
-            "side": settings.side, "finish": settings.finish, "scale": scale_range(settings.mm_per_px),
+            "side": settings.side, "finish": settings.finish, "scale": scale,
             "paste": settings.paste, "placed": list(self._board_placed.get(job_id, [])), "color": settings.colors.get("board"),
         }
+
+    def _design_top_scale(self) -> float | None:
+        """The top camera's scale as the placing machine's file designs it,
+        mm per full size pixel; None when it says none or no machine is known."""
+        try:
+            machine = self.placing_machine()
+        except (ValueError, LookupError, HTTPException):
+            return None
+        return machine.top.mm_per_px if machine.top is not None else None
 
     def _tell_assembly(self, job_id: str) -> None:
         """The top camera's pcbv, looking for the job's board, told the
@@ -406,7 +425,7 @@ class PlacingPart:
         offset = self._top_offset(machine)
         settings = self.top.settings()
         roll = self._top_roll(machine)
-        width, height, scale = self._look_scale(self.top.client, settings.mm_per_px, self.top_look.scale_seen)
+        width, height, scale = self._look_scale(self.top.client, settings.mm_per_px, self.top_look.scale_seen or self._design_top_scale())
         here = self._here(machine)
         center = (float(here["x"]) + offset[0], float(here["y"]) + offset[1])
         box = body.box if body.box is not None else self._corners_box(self.top_look, job, settings.corner_mm) or search_box(center, diagonal)
@@ -483,7 +502,7 @@ class PlacingPart:
         offset = self._top_offset(machine)
         settings = self.top.settings()
         roll = self._top_roll(machine)
-        width, height, scale = self._look_scale(self.top.client, settings.mm_per_px, self.top_look.scale_seen)
+        width, height, scale = self._look_scale(self.top.client, settings.mm_per_px, self.top_look.scale_seen or self._design_top_scale())
         known = self._top_known(job, settings.corner_mm)
         box, stops, outline = self._scan_plan(self.top_look, job, known, (width * scale, height * scale), body.margin)
         prior = self._top_known(job, settings.corner_mm, corners=False)

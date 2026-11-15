@@ -528,6 +528,7 @@ part_spot = "dark"       # and a part on the nozzle
 z = 0                    # the height the head looks from; left out, the safe height
 offset = [40.0, 0.0]     # its picture's center from the nozzle as designed; Measure offset finds it
 roll = 180               # degrees from the picture's x axis to +X, counterclockwise seen from above, as mounted (180: upside down); used until Measure offset measures the scale and roll; left out, the measured one or 0
+mm_per_px = 0.016        # its scale as designed, mm a pixel of the full size picture at the size it runs at: until a scale is measured or seen locked, a search plans its stops by it and pcbv's search keeps within 1.5 times of it either way; left out, none
 fiducial = "bright"      # how a fiducial looks to it
 within = 2.0             # mm from where it is expected that a fiducial, mark or part is looked for
 home_fiducial = [60.0, 170.0]  # a fiducial fixed on the bed, as the nozzle's place over it: Home by fiducial finds it with this camera; left out, none

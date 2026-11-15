@@ -1428,6 +1428,8 @@ export interface GcodeTopCamera {
     offset: [number, number] | null;
     /** The picture's turn as mounted, degrees from its x axis to the machine's +X, counterclockwise from above; used until Measure offset measures the scale and roll. Missing or null: none given. */
     roll?: number | null;
+    /** The picture's scale as designed, mm a pixel of the full size picture at the camera's size; searches plan by it until one is measured. Missing or null: none given. */
+    mm_per_px?: number | null;
     fiducial: SpotPolarity;
     within: number;
     /** A fiducial on the bed, as the nozzle's place over it, that Home by fiducial finds; missing or null: none. */

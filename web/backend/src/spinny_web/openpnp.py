@@ -206,12 +206,17 @@ class TopCameraProfile:
     the machine's +X, counterclockwise seen from above (180 for a camera
     upside down): a first guess too, until Measure offset measures the
     picture's scale and roll; None leaves the measured one alone.
+    `mm_per_px` is the picture's scale as designed, mm per pixel of the
+    full size picture at the size the camera runs at: until one is
+    measured, a search plans its stops by it and pcbv's search keeps
+    within a factor of DESIGN_SCALE_SPREAD of it; None for none.
     `settings` are the camera's own settings the file names (of
     TOP_CAMERA_SETTINGS), put into the camera as the machine connects."""
 
     z: float | None = None
     offset: tuple[float, float] | None = None
     roll: float | None = None
+    mm_per_px: float | None = None
     fiducial: str = "bright"
     within: float = 2.0
     home_fiducial: tuple[float, float] | None = None
@@ -412,6 +417,7 @@ class GcodeMachine:
                     "z": top.z,
                     "offset": list(top.offset) if top.offset is not None else None,
                     "roll": top.roll,
+                    "mm_per_px": top.mm_per_px,
                     "fiducial": top.fiducial,
                     "within": top.within,
                     "home_fiducial": list(top.home_fiducial) if top.home_fiducial is not None else None,
@@ -685,12 +691,13 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
             z=read.number(looking, "z", "top_camera", None) if "z" in looking else None,
             offset=read.point(looking, "offset", "top_camera", 2, None) if "offset" in looking else None,
             roll=read.number(looking, "roll", "top_camera", None, -360.0, 360.0) if "roll" in looking else None,
+            mm_per_px=read.number(looking, "mm_per_px", "top_camera", None, 1e-4, 1.0) if "mm_per_px" in looking else None,
             fiducial=read.shade(looking, "fiducial", "top_camera", "bright"),
             within=read.number(looking, "within", "top_camera", 2.0, 0.1, 50.0),
             home_fiducial=read.point(looking, "home_fiducial", "top_camera", 2, None) if "home_fiducial" in looking else None,
             settings=read.camera(looking, "top_camera", TOP_CAMERA_SETTINGS),
         )
-        read.done(looking, "top_camera", {"z", "offset", "roll", "fiducial", "within", "home_fiducial", *TOP_CAMERA_SETTINGS})
+        read.done(looking, "top_camera", {"z", "offset", "roll", "mm_per_px", "fiducial", "within", "home_fiducial", *TOP_CAMERA_SETTINGS})
 
     bus = None
     wire = read.table(top, "bus")

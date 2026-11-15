@@ -111,6 +111,8 @@ export interface MockTopProfile {
     offset: [number, number] | null;
     /** The picture's turn as mounted, degrees, until Measure offset measures it; null: none given. */
     roll: number | null;
+    /** The picture's scale as designed, mm a pixel at the camera's size; null: none given. */
+    mm_per_px: number | null;
     fiducial: SpotPolarity;
     within: number;
     /** A fiducial on the bed, as the nozzle's place over it: Home by fiducial finds it. */
@@ -444,12 +446,13 @@ export function parseGcodeTables(top: TomlTable, id: string, name: string, descr
             z: "z" in looking ? read.number(looking, "z", "top_camera", null) : null,
             offset: "offset" in looking ? (read.point(looking, "offset", "top_camera", 2, null) as [number, number]) : null,
             roll: "roll" in looking ? read.number(looking, "roll", "top_camera", null, -360, 360) : null,
+            mm_per_px: "mm_per_px" in looking ? read.number(looking, "mm_per_px", "top_camera", null, 1e-4, 1) : null,
             fiducial: read.shade(looking, "fiducial", "top_camera", "bright"),
             within: read.number(looking, "within", "top_camera", 2, 0.1, 50),
             home_fiducial: "home_fiducial" in looking ? (read.point(looking, "home_fiducial", "top_camera", 2, null) as [number, number]) : null,
             settings: read.camera(looking, "top_camera", TOP_CAMERA_SETTINGS),
         };
-        read.done(looking, "top_camera", ["z", "offset", "roll", "fiducial", "within", "home_fiducial", ...TOP_CAMERA_SETTINGS]);
+        read.done(looking, "top_camera", ["z", "offset", "roll", "mm_per_px", "fiducial", "within", "home_fiducial", ...TOP_CAMERA_SETTINGS]);
     }
     device.bus = null;
     const wire = read.table(top, "bus");

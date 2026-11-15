@@ -840,6 +840,26 @@ def test_a_search_from_places_far_apart_offers_the_top_camera_s_roll_and_scale_t
     assert settings["roll"] == pytest.approx(1.9, abs=0.01) and settings["mm_per_px"] == pytest.approx(0.0161) and settings["finding"] is None
 
 
+def test_a_top_camera_with_only_the_file_s_scale_searches_by_it(client, quick_search):
+    # The file says the camera's scale as designed; none was measured, and
+    # pcbv has not locked yet with the head off the board.
+    rig(client, profile(rest=TOP + "roll = 1.5\nmm_per_px = 0.02\n"))
+    job_id = outlined_job(client)
+    board = SeenBoard((0.0, 0.0, 40.0, 30.0), 2.0, (150.0, 80.0), design_shift=(-100.0, -70.0))
+    camera = BoardTopCamera(client.fake, (34.0, -9.0), board, roll=1.5)
+    client.backend.top.client = camera
+    client.put("/api/pnp/top", json={"offset": [34.0, -9.0], "mirror": False})
+    assert client.get("/api/pnp/placing").json()["top"]["mm_per_px"] == 0.0
+    assert client.post("/api/pnp/top/board", json={"job": job_id}).status_code == 200
+    # pcbv keeps within one and a half times the design either way.
+    assert camera.board_fields["scale"] == pytest.approx((0.02 / 1.5, 0.03))
+    response = client.post("/api/pnp/top/search", json={"box": [140.0, 70.0, 200.0, 125.0]})
+    assert response.status_code == 200, response.text
+    assert routine_done(client, "/api/pnp/placing")["state"] == "done"
+    look = client.get("/api/pnp/placing").json()["top"]["board_look"]
+    assert look["found"] is True and look["estimate"]["rotation"] == pytest.approx(2.0, abs=0.01)
+
+
 def test_the_top_camera_searches_with_the_posterior_when_its_look_method_says_so(client, quick_search):
     rig(client, profile(rest=TOP))
     job_id = outlined_job(client)

@@ -150,8 +150,13 @@ within = 2.0
 # z = 31.5         # the height the head looks from; left out, the safe height
 # The picture's turn as mounted, degrees: the stock top camera shows the bed
 # upside down (Opulo's OpenPnP flips its picture in X and in Y), measured
-# 180.2 on a LumenPnP; Measure offset measures it again with the scale.
+# 180.4 on a LumenPnP; Measure offset, or a search's finding, measures it
+# again with the scale.
 roll = 180
+# Its scale as designed, mm a pixel at 1280x720 (pcbv read 0.0161 off a
+# board on a LumenPnP; Opulo's 0.0130 is at its own capture size): searches
+# plan their stops by it until a scale is measured or seen locked.
+mm_per_px = 0.0161
 # The camera itself, taken by the top camera when the machine connects, as
 # the bottom camera's above.
 # device = "/dev/video4"
