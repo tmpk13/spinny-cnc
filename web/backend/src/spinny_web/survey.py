@@ -867,7 +867,7 @@ def main(argv: list[str] | None = None) -> int:
     base.add_argument("--pcbv", metavar="PROGRAM", help="the pcbv to grade (default: PCBV, else the sibling pcb-vision's release build)")
     base.add_argument("--jobs", type=int, default=default_jobs(), help="pictures located at once (default %(default)s)")
     base.add_argument("--file", type=Path, default=BASELINE, help="the baseline's numbers (default: survey_baseline.json beside this program)")
-    base.add_argument("--write", action="store_true", help="keep the numbers measured now as the baseline")
+    base.add_argument("--write", action="store_true", help="keep the numbers measured now as the baseline, worse ones too (a trade-off taken on purpose); the exit status is then 0")
     base.add_argument("--json", action="store_true", help="print the comparison as JSON")
 
     searching = commands.add_parser("searches", help="the backend's board search from several start places, graded against a survey's truth")
