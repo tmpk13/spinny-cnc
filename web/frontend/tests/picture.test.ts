@@ -341,16 +341,27 @@ describe("the picture view", () => {
         expect(localStorage.getItem(`spinny.picture.${key}.arrows`)).toBe("reversed");
         expect(press("ArrowRight").defaultPrevented).toBe(true);
         expect(clean(moves.at(-1)!)).toEqual([-1, 0]);
-        // On the machine's axes the key is left to the jog keys.
+        // On the machine's axes the key is left to the jog keys: it moves
+        // nothing here and goes on to the page (other tests' jog panels may
+        // take it there, so whether its default is prevented says nothing).
         choose("Arrow keys on the machine's axes");
         const count = moves.length;
-        expect(press("ArrowRight").defaultPrevented).toBe(false);
+        const reached: string[] = [];
+        const onward = (event: KeyboardEvent): void => {
+            reached.push(event.key);
+        };
+        document.body.addEventListener("keydown", onward);
+        press("ArrowRight");
         expect(moves).toHaveLength(count);
+        expect(reached).toEqual(["ArrowRight"]);
         view.stop();
         // The choice is kept for the camera: a picture mounted again has it.
         const again = mounted(true, undefined, key);
         (again.view.root.querySelector(".picture-box") as HTMLElement).dispatchEvent(new MouseEvent("pointerenter"));
-        expect(press("ArrowLeft").defaultPrevented).toBe(false);
+        press("ArrowLeft");
+        expect(again.moves).toHaveLength(0);
+        expect(reached).toEqual(["ArrowRight", "ArrowLeft"]);
+        document.body.removeEventListener("keydown", onward);
         again.view.stop();
         localStorage.removeItem(`spinny.picture.${key}.arrows`);
     });
