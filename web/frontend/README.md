@@ -37,7 +37,7 @@ the page with that painter, and the dev server always draws in the page.
 Drag orbits, or pans with *Lock rotation* pressed (kept between visits);
 shift or right drag pans, the wheel zooms about the cursor, *Reset view*
 and a double click return to the overview, tilted with the axis in the
-middle and everything in view. The DRO and the jog panel draw the
+middle and everything in view. The Machine panel's position and jog draw the
 machine's controls (`controls` in the settings the backend sends, picked
 as [MACHINES.md](../../docs/MACHINES.md#the-controls) says;
 `src/controls.ts` holds the page's copy of the defaults for the moment
@@ -45,9 +45,9 @@ before the settings arrive and for the mock): one readout cell and one
 bar per joint the file names, with its letter, label, step choices and a
 field for any other step, its two buttons, keys and zero button, the
 board's X and Y bars on the arrow keys when the file has a pad, a feed
-field, goto fields and Center. *Cancel* sits in the jog panel's head,
+field, goto fields and Center. *Cancel* sits in the Machine panel's head,
 away from every move; Escape does the same. On a machine with an endstop
-the panel's *Home* homes every axis that has a switch, and the readout's
+the jog's *Home* homes every axis that has a switch, and the readout's
 *Homed* names the joints homed since the position was last lost. The
 polar laser's defaults
 are the joint (`R` mm, `A` deg), the cross slide (`Z` mm) as a setup
@@ -57,9 +57,9 @@ are drawn again when the controls change.
 
 The page follows what the machine is (`profile` in the backend's state,
 from `$cartesian`, `$spindle` and `$dispenser`), with a badge in the
-status bar when it is not the polar laser. The Config tab's machine file
+status bar when it is not the polar laser. The Machines page's machine file
 panel lists the files in `machines/`, names the one the live settings are
-(or says they are no file's, and whose controls the jog panel draws),
+(or says they are no file's, and whose controls the jog draws),
 edits the picked one, and writes it to the board after a confirmation,
 every firmware setting from the file, saved to the board's flash in the
 same step. On a cartesian machine the cross slide is the Y
@@ -75,7 +75,8 @@ it mills a job the way the backend streams one (lift, spindle start,
 spin-up dwell, plunge, cuts at depth, lift, spindle off). The preview draws
 a cartesian machine's soft limits as a box turned with the table.
 
-The Height map panel (`src/views/heightmap.ts`) draws
+The Height panel (`src/views/heightmap.ts`, with the travel height the
+jog draws into it and the Run panel's choice of how a run follows the map) draws
 `AppState.heightMap` (the map, the probing under way and the probe
 settings, kept current by `heightmap` events) as cells colored about the
 mean height (`cellColor`), and puts the grid its fields describe in
@@ -93,23 +94,23 @@ the backend does.
 The preview draws a one-point path as a dot, a dispense import's the size
 of its pad (`dotRadius` in `src/preview.ts`), and on a dispenser machine
 (`isDispensing` in `src/profile.ts`) the Run panel names a group of paths
-it refuses (`dispenseRefusal` in `src/views/run.ts`, the Run panel the
-Jobs and Plot pages both mount); dispensing is in
+it refuses (`dispenseRefusal` in `src/views/run.ts`, the Run area's Run
+panel); dispensing is in
 [OPERATING.md](../../docs/OPERATING.md#dispensing-solder-paste).
 
-The Jobs page's *Camera* panel (`src/views/vision.ts`; `camera.ts` is
+The *Head camera* panel on the Setup side's Cameras page (`src/views/vision.ts`; `camera.ts` is
 the preview's camera) draws `AppState.camera`, asked for again while it or
 its picture shows, the cameras attached from `AppState.cameras`
 (`src/views/camerapick.ts`), the camera's V4L2 controls
 (`src/views/cameracontrols.ts`, asked for when unfolded) and the camera log
 from `AppState.camlog` (`src/views/camlog.ts`); its picture is the
-*Camera view* panel. Every camera picture is `src/views/picture.ts`: the
+*Head camera view* panel on Run, with Start and Stop on it (`pictureActions` in `src/dom.ts`). Every camera picture is `src/views/picture.ts`: the
 frame asked for at the width shown times the pixel ratio and the zoom,
 fitted in a box its grip sizes, the page's marks as SVG in the picture's
 pixels (`spotMarks`, the search box, the board where a look puts it),
 Ctrl+wheel zoom, drag to move with its line, Shift+drag for a search box
 (kept per camera in local storage). The board look (`board_look` of the
-camera and top camera states) is said by `lookText`. The *Align* panel (`src/views/align.ts`) draws
+camera and top camera states) is said by `lookText`. Board place (`src/views/boardplace.ts`) holds Find board, Align (`src/views/align.ts`, its By marks), the references and the selected job's offset and turn, one fold each. Align draws
 `AppState.align`, the marks and the fit `src/align.ts` gives them. Their
 use is in [the camera and its offset](../../docs/OPERATING.md#the-camera-and-its-offset) and
 [lining a job up](../../docs/OPERATING.md#lining-a-job-up-with-the-board). The mock has a
@@ -117,21 +118,20 @@ camera of its own: an SVG picture of the loaded board, lying a little off
 the job so alignment has something to find, the mark as a dark dot that
 follows the head, and the find routine stepped on the mock's clock.
 
-The *PNP* page (`src/views/pnp.ts`) draws the selected board job's parts
+The pick and place panels on Run (`src/views/pnp.ts`) draw the selected board job's parts
 (`AppState.components`, read by the backend from its `.kicad_pcb`), the
 one picked (`AppState.pnpPart`), what a looking camera's picture sees of
 the board (`placeLookView`; labels one size on the screen, crowded ones
-dropped: `fitLabels`) and the bottom camera (`AppState.pnp`); its pictures are
-the Bottom camera view and Top camera view panels (`src/views/camview.ts`). It
+dropped: `fitLabels`) and the bottom camera (`AppState.pnp`, its settings on the Cameras page); its pictures are
+the Bottom camera view and Top camera view panels (`src/views/camview.ts`), with Start, Stop and Look once. It
 works with the machine connected (`gcodePlacing` in
 `src/views/placing.ts`): with a G-code machine (or, disconnected, one to
-place with) the Head (`src/views/placing.ts`), Top camera, Board on the
-machine (`pnprefs.ts`), Feeders (`pnpfeeders.ts`) and Placing
-(`pnprun.ts`) panels, all on `AppState.placing`, take the nozzle panel's
-place. A G-code machine is connected from the Connection tab like any
+place with) the Head (`src/views/placing.ts`, on the Cameras page; its Light, Park and Vacuum in the Machine panel), Top camera, the references (`pnprefs.ts`, Board place's By references), Feeders (`pnpfeeders.ts`) and Placing
+(`pnprun.ts`, a part of the Run panel), all on `AppState.placing`, take the nozzle panel's
+place; `src/views/fit.ts` hides the Run area's panels the machine connected has no use for. A G-code machine is connected from the Connection panel like any
 other: the ports carry the G-code machine file that claims them, and
 Connect passes it on (`machineOfPort` in `src/views/statusbar.ts`, used by
-`src/views/connection.ts`); its Jog panel and
+`src/views/connection.ts`); its jog and
 readout are the file's `[controls]`. Their use is in
 [pick and place](../../docs/OPERATING.md#pick-and-place) and
 [placing with a G-code machine](../../docs/OPERATING.md#placing-with-a-g-code-machine-openpnp-compatible).
@@ -140,14 +140,16 @@ is against where the camera really sits, and makes a board job's pads its
 parts; the mock's board looks and searches (`src/mock/boardlook.ts`) see
 the board where the mock lays it, exactly, and its cameras answer a laptop
 camera's controls; the mock's twin of the backend's profile reader and planner is
-`src/mock/openpnp.ts`. The *Setup* panels (`src/views/steps.ts`, on the
-Jobs and PNP pages) fill their steps in from the page's state
+`src/mock/openpnp.ts`. The *Steps* panel (`src/views/steps.ts`, on Run)
+fills its steps in from the page's state
 ([setup steps](../../docs/OPERATING.md#setup-steps)). A panel's edits not applied yet are
 counted per panel in `AppState.pending` and on its page's tab
 (`PENDING_PAGES` in `src/views/tabs.ts`).
 
 The Jobs panel has *Save job* (the selected job's JSON) and *Delete all*
-beside its title. A `.kicad_pcb` picked or dropped opens a layer chooser
+beside its title, the drop area with a line saying the next import's
+settings, and the list; the settings themselves are in the import dialog
+(*Import settings*), and the selected job's groups are the Job panel. A `.kicad_pcb` picked or dropped opens that dialog with a layer chooser
 first (`src/kicad.ts` reads the board's layer table and counts what is
 drawn on each layer), and Board *on the lines* cuts a drawing where it
 lies. Paths picked in the preview (`AppState.selection`) are moved between
@@ -156,7 +158,7 @@ groups by `src/regroup.ts` and the job sent back whole with `PUT
 caret places in `src/jsontext.ts`) draws its edit as `AppState.jobDraft`
 and the caret's place as `AppState.highlight`. Under a run that stopped short a *Resume from line*
 row: the count of lines done, *from the start of its path*, *Plan* (what
-would go out first) and the button. The Jog panel's *Here is* row declares
+would go out first) and the button. The jog's *Here is* row declares
 the joints without moving them, *Last known* filling in the position the
 backend recorded during the last run. The status bar lists the controller
 first and polls the ports every 10 s while nothing is connected, with a
@@ -164,17 +166,23 @@ toggle that hides the built-in system ports; it marks a machine whose
 last report is old, as the Position panel does, before the backend gives
 the link up. The console's *Log* shows the backend's log, *Wire* the last lines over the wire with their times, polls included.
 
-The page's tabs are on two sides under the status bar (`PAGES` in
-`src/views/tabs.ts`; the design in `docs/UI_SPLIT.md`): *Use*, with
-*Overview*, *Jobs* (the panels above), *Plot*, *CAM*, *PNP* and *Auto*,
-and *Setup*, with the *Checklist* (`src/facts.ts`, `src/views/facts.ts`),
-*Config*, *Connection* and *Plugins*. A side swaps in by its name in the
-bar or `\`, both show side by side by the bar's button or `|`
+The page's areas and pages are on two sides, down a rail at the left of
+a wide window (a bar across the top of a narrow one; `PAGES` in
+`src/views/tabs.ts`; the designs in `docs/UI_SPLIT.md` and
+`docs/UI_PANELS.md`): *Use*, with the areas *Home*, *Job* (Jobs, Job,
+Preview, Job JSON, Draw, Machine, Assistant) and *Run* (Machine, Steps,
+the cameras' pictures, Board place, Console, Parts, Board, Height,
+Feeders, Run), and *Setup*, with the *Checklist* (`src/facts.ts`,
+`src/views/facts.ts`), *Machines*, *Cameras*, *CAM* and *Page*. The
+Machine panel (`src/views/machine.ts`) is the position, the jog, the
+laser's or spindle's buttons and the markers in one. A side swaps in by
+its name in the rail or `\`, both show side by side by the bar's button or `|`
 (`src/views/split.ts` holds the handle), and each pane lays its page out
 by its own width (container queries). The page each side shows is
-remembered per browser and set by the address: `?page=plot`,
+remembered per browser and set by the address: `?page=run`,
 `?side=setup`, `#panel/detail` for a target, `split=1` (`src/sides.ts`;
-the old names `machine` and `mill` still open their pages). Links
+the old page names, `jobs`, `plot`, `pnp`, `config` and the rest, open the
+area or page their panels went to). Links
 between the sides (`src/views/links.ts`) go to the other pane, to a tab
 already showing that side (`src/tabsync.ts`, a BroadcastChannel), or
 swap this tab with a history entry; Use panels that run on a Checklist
@@ -187,12 +195,11 @@ and shows what is wrong with a text that does not read, a drop zone that
 takes a design (a board with its outline and drill file in one drop, an
 SVG, a DXF, gcode, a job or an STL model) through the profile into a job, and
 *Export gcode*, which downloads the picked job as a program for the
-profile's controller with a report of what each axis reaches. The CAM
-page has a preview of its own. The mock reads the shipped profiles itself
+profile's controller with a report of what each axis reaches. The mock reads the shipped profiles itself
 (`src/toml.ts`, `src/mock/cam.ts`): copper geometry is the demo coupon's, and its gcode
 follows the backend's post for a cartesian profile.
 
-The Config page is where a machine is described: the machine file panel
+The Machines page is where a machine is described: the machine file panel
 (`src/views/config.ts`) picks a file from `machines/`
 (`docs/MACHINES.md`), shows it in the TOML editor, makes a new file from
 the text shown, deletes one, checks the text against the backend
@@ -211,27 +218,27 @@ read it with the page's own TOML reader (`src/toml.ts`) on every edit,
 naming the line that does not read before any save; the backend's check
 is the one that counts.
 
-Arrow keys jog when no field that uses them has focus and the jog panel's
-page (Jobs or Plot) is up; Escape cancels a jog
+Arrow keys jog when no field that uses them has focus and the jog's
+area (Run or Job) is up; Escape cancels a jog
 or goto from anywhere but a dialog while a machine is connected. The event feed is opened again when it
 goes silent for 5 s while a machine is connected, since a backend host that
 loses power sends no close. The page reads the settings again when the
 machine, or the profile in its state frames, changes, and after a setting
 typed at the console.
 
-The *Plot* page (`src/views/mill.ts`) builds a Plot job, a list of
+The *Draw* panel in the Job area (`src/views/mill.ts`) builds a Plot job, a list of
 operations cut in order: the operation in its fields is planned as it is
 typed (`POST /api/mill/plan`) into `AppState.millPlan` and drawn on the
-page's own preview with its sizes (`AppState.millDims`, from
+Job area's preview, while no job or a drawn one is selected, with its sizes (`AppState.millDims`, from
 `src/sketch.ts`); *New job* makes a job of it, *Add to job* appends it to
 the selected one, and on a laser the operations are burnt. The *Markers*
-panel (`src/views/markers.ts`, on the Jobs and Plot pages) lists
+fold (`src/views/markers.ts`, in each Machine panel) lists
 `AppState.markers`, which every preview draws, and *Grid* in a preview's
 head (`src/views/previewpanel.ts`) switches every preview at once. Their use is in [the Plot page](../../docs/OPERATING.md#the-plot-page),
 [markers](../../docs/OPERATING.md#markers), [another bit for a job](../../docs/OPERATING.md#another-bit-for-a-job)
 and [the preview's grid](../../docs/OPERATING.md#the-previews-grid).
 
-The *Auto* page (`src/views/auto.ts`) draws `AppState.auto`, the
+The *Assistant* panel in the Job area (`src/views/auto.ts`) draws `AppState.auto`, the
 conversation the backend sends as `auto` events, which the store keeps by
 entry id (`withEntry`, `mergeAuto` in `src/state.ts`), so an answer grows
 in place as it is written and an unfolded tool call stays open as it goes
@@ -273,7 +280,7 @@ classDiagram
         measuredBy(entries, target, name, now)  the routine result that still holds
     }
     class views {
-        context statusbar tabs split links setuplinks facts steps banner dro jog laser markers mill jobs jobjson calibrate center heightmap focushere previewpanel vision picture camview cameracontrols camerapick camlog align pnp device auto console settingslist cam config editor toasts
+        context statusbar tabs split links setuplinks facts steps fit banner machine dro jog laser markers mill jobs jobjson calibrate center heightmap focushere previewpanel vision picture camview cameracontrols camerapick camlog boardplace align pnp device auto console settingslist cam config editor toasts
     }
     class align {
         fitRigid(pairs) rotation, shift, scale, rms, residuals

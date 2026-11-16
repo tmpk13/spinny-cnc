@@ -1,7 +1,7 @@
 [
  {
-  "name": "budget-overview",
-  "page": "overview",
+  "name": "budget-home",
+  "page": "home",
   "width": 1440,
   "height": 900,
   "before": "[...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock laser'",
@@ -9,8 +9,8 @@
   "wait": 50
  },
  {
-  "name": "budget-jobs",
-  "page": "jobs",
+  "name": "budget-job",
+  "page": "job",
   "width": 1440,
   "height": 900,
   "before": "[...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock laser'",
@@ -18,11 +18,56 @@
   "wait": 50
  },
  {
-  "name": "budget-plot",
-  "page": "plot",
+  "name": "budget-run",
+  "page": "run",
   "width": 1440,
   "height": 900,
   "before": "[...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock laser'",
+  "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
+  "wait": 50
+ },
+ {
+  "name": "budget-run-lumen",
+  "page": "run",
+  "width": 1440,
+  "height": 900,
+  "before": "const sel = document.querySelector('#connection select'); const opt = [...sel.options].find((o) => /LUMEN/i.test(o.value + o.textContent)); sel.value = opt.value; sel.dispatchEvent(new Event('change', { bubbles: true })); [...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock LumenPnP'",
+  "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
+  "wait": 50
+ },
+ {
+  "name": "budget-facts",
+  "page": "facts",
+  "width": 1440,
+  "height": 900,
+  "before": "[...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock laser'",
+  "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
+  "wait": 50
+ },
+ {
+  "name": "budget-machines",
+  "page": "machines",
+  "width": 1440,
+  "height": 900,
+  "before": "[...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock laser'",
+  "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
+  "wait": 50
+ },
+ {
+  "name": "budget-cameras",
+  "page": "cameras",
+  "width": 1440,
+  "height": 900,
+  "before": "[...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock laser'",
+  "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
+  "wait": 50
+ },
+ {
+  "name": "budget-cameras-lumen",
+  "page": "cameras",
+  "width": 1440,
+  "height": 900,
+  "before": "const sel = document.querySelector('#connection select'); const opt = [...sel.options].find((o) => /LUMEN/i.test(o.value + o.textContent)); sel.value = opt.value; sel.dispatchEvent(new Event('change', { bubbles: true })); [...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock LumenPnP'",
   "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
   "wait": 50
  },
@@ -36,44 +81,8 @@
   "wait": 50
  },
  {
-  "name": "budget-pnp",
-  "page": "pnp",
-  "width": 1440,
-  "height": 900,
-  "before": "const sel = document.querySelector('#connection select'); const opt = [...sel.options].find((o) => /LUMEN/i.test(o.value + o.textContent)); sel.value = opt.value; sel.dispatchEvent(new Event('change', { bubbles: true })); [...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock LumenPnP'",
-  "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
-  "wait": 50
- },
- {
-  "name": "budget-auto",
-  "page": "auto",
-  "width": 1440,
-  "height": 900,
-  "before": "[...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock laser'",
-  "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
-  "wait": 50
- },
- {
-  "name": "budget-config",
-  "page": "config",
-  "width": 1440,
-  "height": 900,
-  "before": "[...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock laser'",
-  "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
-  "wait": 50
- },
- {
-  "name": "budget-connection",
-  "page": "connection",
-  "width": 1440,
-  "height": 900,
-  "before": "[...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock laser'",
-  "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
-  "wait": 50
- },
- {
-  "name": "budget-plugins",
-  "page": "plugins",
+  "name": "budget-ui",
+  "page": "ui",
   "width": 1440,
   "height": 900,
   "before": "[...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock laser'",

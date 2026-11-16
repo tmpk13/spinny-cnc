@@ -71,28 +71,29 @@ it. A Use panel never holds a setup value; it links to it.
 
 | Side | Pages now | Holds |
 |---|---|---|
-| Use | Overview, Jobs, Plot, CAM, PNP, Auto | jobs and how they are made, the preview, finding the board, probing, focus, runs, placing, the machine's position and jog |
-| Setup | Checklist, Config, Connection, Plugins | what the machine knows and where each value came from, the calibration tests, the machine files and firmware settings, the port, the page's plugins |
+| Use | Home, Job, Run (areas on a rail since 2026-11-16, [UI_PANELS.md](UI_PANELS.md)) | jobs and how they are made, the preview, finding the board, heights and focus, the cameras' pictures, runs, placing, the machine's position and jog |
+| Setup | Checklist, Machines, Cameras, CAM, Page | what the machine knows and where each value came from, the calibration tests, the machine files, the connection and firmware settings, each camera's settings and routines, a pick and place head and bed, the CAM profiles, the page's version, bug reports and plugins |
 
-Moved so far: the Config, Connection and Plugins pages, and the
-calibration Tests panel (off the Jobs page, onto the Checklist page).
-Proposed next, each with a link left where it was: the cameras' device,
-size, rate, lens and colors; the nozzle and up camera calibration; the
-CAM profiles' files; the page settings; and the routines that measure
-setup values (the camera offset steps, Center nozzle, runout).
+Moved so far: the machine files, connection and plugins; the calibration
+Tests panel; and since 2026-11-16 each camera's device, size, rate,
+spots, lens and colors, picture controls, changes and calibration
+routines (Find mark, Measure camera, Center nozzle, runout), the pick and
+place Head's moves and tuning, the Machine view, and the CAM profiles.
+Proposed next: the page settings beyond the gear's quick ones.
 
 ## Addresses
 
 An address names a side, a page and a target in it:
 
     /?side=setup&page=facts#facts/head.offset
-    /?side=setup&page=config#machine-file/polar-laser
-    /?page=jobs&split=1
+    /?side=setup&page=machines#machine-file/polar-laser
+    /?page=run&split=1
 
 - `side`: `use` or `setup`. Alone, the side opens on the page it showed
   last in this browser.
-- `page`: a page id. A page implies its side, so the old `?page=config`
-  addresses still open the Config page, now on the Setup side.
+- `page`: a page id. A page implies its side; an old page's name opens
+  where its panels went (`?page=config` the Machines page, `?page=pnp`
+  the Run area).
 - `#panel/detail`: a panel's id, and after the slash what that panel is
   asked to show in itself (a fact's id, a machine file's id, a setup in
   the steps panel). The view hears the detail as a `spinny:goto` event.
@@ -128,8 +129,9 @@ flowchart TD
   its source.
 - **Back.** Back (the browser's, or the other side's name in the bar)
   returns to the page shown before the link.
-- **The top bar.** The machine's state opens the Connection page, which
-  is on the Setup side: in view, in the tab that shows it, or here.
+- **The top bar.** The machine's state opens the Connection panel, on
+  the Setup side's Machines page: in view, in the tab that shows it, or
+  here.
 
 ## Both at once
 

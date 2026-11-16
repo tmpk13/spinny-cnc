@@ -2,12 +2,12 @@
 
 [UI_REDESIGN.md](UI_REDESIGN.md) says where each panel goes in a new frame
 (rail, steps, dock). This plan sorts what is inside the panels, so that each
-control has one home and a panel is about one thing. Every step below can
-ship inside today's tabs, before any of the frame, and is work the redesign
-needs anyway: once the contents are sorted, its phases mostly move finished
-panels. Nothing here is built; the open choices are in
-[QUESTIONS.md](../QUESTIONS.md) (Q51 to Q53), and the plan applies the
-recommended answer to each.
+control has one home and a panel is about one thing. It was built on
+2026-11-16 together with the rail and the Home, Job and Run areas (the
+user's answer to Q43 and Q51); [What was built](#what-was-built) says how
+the result differs from the plan below. Q53 (where the import settings
+go) is still open in [QUESTIONS.md](../QUESTIONS.md), built as its
+recommended answer.
 
 The contents were read on 2026-11-16 over the mock, connected to the polar
 laser (and to the LumenPnP for the PNP page), with
@@ -202,3 +202,61 @@ Machine.
   page, against the 40 controls and 200 words.
 - The page still works: `mise run test-layout` and the end to end tests
   after each step, since every move changes selectors they use.
+
+## What was built
+
+Built on 2026-11-16, a commit per step, in this order: the rail and the
+areas (ee2517a), the Machine panel (69f4c81), the cameras' settings to the
+Setup side (7c9704f), Board place (017b742), Height (e0b9102), Jobs, Job
+and the import dialog (ee9907c), one Steps panel and Placing in Run with
+Run following the machine (f2bd5c6), and the words (af91ad4). Decisions
+and traps are in [notes/areas.md](../notes/areas.md).
+
+Where it differs from the plan above:
+
+- **Areas, not tabs.** The Use side is three areas on a rail: Home (the
+  Overview), Job (Jobs, Job, Preview, Job JSON, Draw, Machine, Assistant)
+  and Run (Machine, Steps, the cameras' pictures, Board place, Console,
+  Parts, Board, Height, Feeders, Run). The Setup side's pages are the
+  Checklist, Machines (Connection, Machine file, Import from OpenPnP,
+  Settings), Cameras (each camera's settings, Nozzle, Head, Machine view),
+  CAM and Page (Version, Bug reports, Plugins).
+- **A picture per camera.** Run keeps the head, bottom and top camera's
+  pictures as panels of their own, each with Start, Stop and Look once,
+  rather than one Camera panel with a camera chooser. Each camera's
+  settings are a panel of its own on the Cameras page, not one Cameras
+  panel.
+- **The Machine panel on Job too**, for the Draw panel's Here; it has no
+  travel height there (that is Height's on Run).
+- **Run follows the machine.** Panels the machine connected cannot use
+  hide (src/views/fit.ts): the head camera's picture and Height with a
+  G-code pick and place machine, Parts, Board and the bottom camera's
+  picture with a laser or a mill.
+- **The import settings** sit in the import dialog a KiCad board opens,
+  also opened by Import settings; other files import on one press with
+  the settings a line under the drop area states (Q53).
+- **Not done:** the dock (one step level for every axis, Q46), so the jog
+  still has a bar of step choices per axis; the Assistant is a panel in
+  Job, not a drawer; the console keeps its Hold and Resume; CAM's Make a
+  job and Export gcode stay in its panel on the Setup side; page settings
+  beyond the gear's quick ones are not a page yet.
+
+What it measured, connected over the mock, before any press (`mise run
+shots -- docs/ui/budget.json var/ui-budget`), against the audit in
+[UI_REDESIGN.md](UI_REDESIGN.md#what-overloads-the-page-today):
+
+| Page | Controls | Words | Panels | Before |
+|---|---:|---:|---:|---|
+| Home | 23 | 91 | 1 | Overview: 27, 58, 1 |
+| Job | 153 | 391 | 7 | Jobs 264, 1,153, 15; Plot 143, 383, 7; Auto 27, 176, 2 |
+| Run, polar laser | 184 | 642 | 7 | (in Jobs above) |
+| Run, LumenPnP | 198 | 793 | 10 | PNP: 260, 1,292, 14 |
+| Machines | 372 | 3,589 | 4 | Config 374, 3,599, 5; Connection 25, 52, 1 |
+| Cameras, LumenPnP | 131 | 568 | 5 | (on PNP above) |
+| CAM | 65 | 489 | 2 | 79, 532, 3 |
+| Page | 30 | 120 | 3 | Plugins: 22, 62, 1 |
+
+The page holds 47 panels, 61 before; 21 on the Use side, 52 before. No
+screen is within the budget of 40 controls and 200 words yet: the jog's
+bars (about 60 controls) and the firmware settings list (over 300) are
+most of what is left.

@@ -14,8 +14,10 @@ more area among it. The rest of this proposal now applies to the Use
 side.
 
 [UI_PANELS.md](UI_PANELS.md) sorts what is inside the panels (one
-home per control, the panels after, new names) in steps that ship inside
-today's tabs before this frame.
+home per control, the panels after, new names). It was built on
+2026-11-16 with the rail and the three areas Home, Job and Run below
+(phase 4's frame, in part); its last section says what was built and
+what of this proposal is still open (the steps as the spine, the dock).
 
 The figures are drawn by [ui/figures.py](ui/figures.py) (`mise run
 ui-figures`). Magenta numbers on a figure are notes, explained under it;

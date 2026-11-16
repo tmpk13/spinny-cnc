@@ -850,3 +850,9 @@
 - Corner by edges is kept in the camera log with its picture, edges and corner, and in the search record.
 - Arrow and dragging controls follow a flipped or turned camera picture: drags follow the pointer, and with the pointer over a picture the arrow keys move the head the way they point on the picture as shown (the jog panel keeps the machine's axes).
 - From dist/todo.png: the part's shape from the KiCad board on the top camera's overlay (Parts to align to); where a made machine file goes (the Config tab names the folder); the wheel zooms a camera picture about the pointer; Stop search (the guesses and the place they predict stay); a search box drawn in the room around a zoomed-out picture; a map of where a search looked (its stops' pictures in the mosaic, as a full scan's); Clear guesses (the predicted place forgotten, the board still loaded); pan on a camera picture (middle or Alt drag); movement lined up with the camera (the arrows above).
+- Panels rearranged by docs/UI_PANELS.md: one home per control; the Use side's tabs became the areas Home, Job and Run on a vertical rail (Setup: Checklist, Machines, Cameras, CAM, Page).
+- One Machine panel (position, jog, laser, markers); one Board place (by hand, camera, marks, references); one Height (travel height, map, how a run follows it); one Steps; Placing inside Run.
+- Camera settings and calibration on the Setup side's Cameras page; Start, Stop and Look once on each camera's picture.
+- The Jobs panel is the list; the next import's settings in the import dialog (Import settings), stated in a line; the selected job its own Job panel.
+- Word meanings kept on hover, the "What the words mean" folds gone; Find board's long text folded under How it works.
+- Run shows only the panels the connected machine can use.

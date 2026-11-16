@@ -18,7 +18,7 @@ nozzle and sees where a part sits on it, and a board job's parts are read
 from its KiCad file. A pick and place machine whose own controller takes
 the G-code OpenPnP's GcodeDriver sends (Marlin, Smoothieware,
 RepRapFirmware, Grbl) is a machine file with `controller = "gcode"`,
-connected in this one's place from the Connection tab: the backend talks to it a
+connected in this one's place from the Connection panel: the backend talks to it a
 line at a time and serves the page's jog, readout, goto, home, stop and
 console with it, its X, Y, Z and turn as the cartesian machine's joints,
 and places a board's parts with it, each next line made from what the up
@@ -33,10 +33,10 @@ its controller before each pick.
 | `firmware/rp2040` | the SKR Pico firmware | `mise run flash` |
 | `firmware/virtual` | the core on a TCP socket with a virtual clock | `mise run virtual` |
 | `web/backend` `virtual_pnp` | a virtual LumenPnP: its Marlin on a TCP socket (moves in time, M400, M410, the vacuum sensor, Photon feeders, axes out of square and M852 when built with it) and its two cameras drawn from the head's place, served as JPEG snapshots | `mise run virtual-pnp` |
-| `web/backend` | serial link (this project's firmware, or a G-code machine's controller), job import (and again for another bit), the Plot page's operations, markers, streaming, probing (grid or pads), dispensing, the cameras through pcbv and the list of those attached, alignment, the parts of a board, the tools a language model gets (the Auto tab's agent, and `spinny-mcp` for any MCP client), an installed release's update from GitHub's releases and its machine files offered against the operator's copies, API, serves the page | `uv run spinny-web`, `uv run spinny-mcp` |
+| `web/backend` | serial link (this project's firmware, or a G-code machine's controller), job import (and again for another bit), the Draw panel's operations, markers, streaming, probing (grid or pads), dispensing, the cameras through pcbv and the list of those attached, alignment, the parts of a board, the tools a language model gets (the assistant's agent, and `spinny-mcp` for any MCP client), an installed release's update from GitHub's releases and its machine files offered against the operator's copies, API, serves the page | `uv run spinny-web`, `uv run spinny-mcp` |
 | `web/frontend` | the page | `cd web/frontend && bun run build` |
 | `toolpath` | `spinny_laser`: polar kinematics, copper clearing and deposition, paste stencils, centering patterns, pads and holes of a layer, the alignment fit, simple milling operations, machine configs, gcode tools | `uv run pytest toolpath/tests` |
-| `machines` | machine configurations in TOML, one per axis setup, with the pins and the page's controls; or a G-code machine's port, dialect, heights, vacuum sensor, cameras and feeders; edited on the page's Config tab | `docs/MACHINES.md` |
+| `machines` | machine configurations in TOML, one per axis setup, with the pins and the page's controls; or a G-code machine's port, dialect, heights, vacuum sensor, cameras and feeders; edited on the page's Machines page | `docs/MACHINES.md` |
 | `cam` | CAM profiles in TOML: axes, tools with their cutting settings, materials, operations, the gcode post | `docs/CAM.md`, `uv run spinny-cam` |
 | `carve` | `spinny-carve`: the 3D kernel the CAM runs for an STL model: slicing, offsets, drop cutter, rough, waterline and parallel toolpaths over a stock map, every move checked against the model | `mise run build-carve`, `mise run test-carve` |
 | `sim` | plays gcode back on a model of the machine | `cd sim && cargo run -- ../var/out/board.gcode` |
@@ -55,7 +55,7 @@ flowchart LR
         BE --> LS[laser_sweep: gerber, isolation]
         BE --> PROBE[probing_part: Backend's probing methods: the map probed, a touch, focus here, the compensation a run follows]
         PROBE --> HM[height map: probing a grid or the pads, focus or power compensation, spindle depth, a dispenser's gap]
-        BE --> GCP[gcode_part: Backend's G-code machine: connected from the Connection tab, its jog, goto, position, home, stop, motors and console, its place read once a second]
+        BE --> GCP[gcode_part: Backend's G-code machine: connected from the Connection panel, its jog, goto, position, home, stop, motors and console, its place read once a second]
         GCP --> GD
         BE --> PLP[placing_part: Backend's placing with the G-code machine: references, the cameras' places, lights and vacuum, feeders, a run, kept per machine]
         PLP --> OPNP
@@ -63,7 +63,7 @@ flowchart LR
         SHIP[shipped: a release's machine files merged into the operator's copies, three-way from var/shipped/machines] --> BE
         BE --> CAM[spinny_laser.cam, camjob, post: a design through a profile's operations, gcode for another controller]
         BE --> AL[alignment: marks from the tool or the camera, a turn and a shift fitted and applied to the job]
-        BE --> MILL[mill: the Plot page's jobs of operations, drill, holes, line, face, pocket, profile with square or rounded corners, applied in place, and a job made again for another width]
+        BE --> MILL[mill: the Draw panel's jobs of operations, drill, holes, line, face, pocket, profile with square or rounded corners, applied in place, and a job made again for another width]
         BE --> TH[thumbs: a job drawn small as SVG for the job list]
         BE --> MK[markers: named board positions in config.json]
         BE --> TODO[todo: the top bar's to-do list in var/todo.json, put whole on the revision it was changed from]
@@ -71,7 +71,7 @@ flowchart LR
         REP -->|HTTP POST, JSON| HOOK[the report link: any address that takes reports]
         BE --> PLUG[plugins: page modules in var/plugins, on only as the text the operator turned on]
         FE -->|imports the modules turned on| PLUG
-        BE --> AUTO[auto: the Auto tab's agent, one conversation, a turn at a time, at most 25 tool calls]
+        BE --> AUTO[auto: the assistant's agent, one conversation, a turn at a time, at most 25 tool calls]
         AUTO --> TOOLS[tools: what a model may call, thin calls on the API, only routes that move nothing]
         TOOLS -->|in-process ASGI, no port| BE
         AUTO <-->|HTTPS, Messages API with tools, streamed| ANT[Anthropic API]
@@ -165,6 +165,9 @@ sequenceDiagram
 
 The page is two sides, Use and Setup ([UI_SPLIT.md](UI_SPLIT.md)),
 shown one at a time, side by side in one tab, or in tabs of their own.
+The Use side's areas Home, Job and Run and the Setup side's pages are
+listed down a rail; what goes in which panel is
+[UI_PANELS.md](UI_PANELS.md).
 Each tab has its own store and event feed from the backend; the tabs tell
 each other which side they show, and pass on a link's target, over a
 BroadcastChannel; the backend's `changed` event has every tab read again
