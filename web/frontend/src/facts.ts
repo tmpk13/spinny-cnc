@@ -229,7 +229,7 @@ export const FACT_RULES: FactRule[] = [
     {
         id: "head.offset",
         group: "Camera on the head",
-        uses: ["camera-view", "find", "align"],
+        uses: ["camera-view", "place"],
         fits: hasHeadCamera,
         read: (state) => {
             const offset = state.camera!.offset;
@@ -392,7 +392,7 @@ export const FACT_RULES: FactRule[] = [
     {
         id: "pnp.top.offset",
         group: "Pick and place",
-        uses: ["find", "pnp-refs"],
+        uses: ["place"],
         fits: (state) => placingFits(state) && state.placing!.top !== undefined,
         read: (state) => {
             const offset = state.placing!.top!.offset;

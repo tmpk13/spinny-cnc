@@ -11,6 +11,7 @@ import { stopPageScroll } from "./pagekeys.ts";
 import { mountTooltips } from "./tooltip.ts";
 import { EventSocket, wsUrl, type EventFeed } from "./ws.ts";
 import { mountAlign } from "./views/align.ts";
+import { mountBoardPlace } from "./views/boardplace.ts";
 import { mountAuto } from "./views/auto.ts";
 import { mountBugReport } from "./views/bugreport.ts";
 import { mountFocusBanner } from "./views/banner.ts";
@@ -342,7 +343,10 @@ function main(): void {
     // The Machine panel: where the head is, the jog, the tool's quick
     // buttons and the markers, in one panel.
     const machine = mountMachine(panel("machine"), ctx, "run", { dro: "dro", jog: "jog", laser: "laser", markers: "markers" });
-    mountJobs(panel("jobs"), ctx, panel("run"));
+    // Board place: every way of saying where the board sits, one panel;
+    // its ways are filled below by the views that always did.
+    const place = mountBoardPlace(panel("place"), ctx);
+    mountJobs(panel("jobs"), ctx, panel("run"), place.parts.hand);
     mountHeightMap(panel("heightmap"), ctx);
     // The Job area's one preview: the job selected, or while a job drawn by
     // hand (or none) is selected, the Draw panel's operation as planned.
@@ -350,7 +354,7 @@ function main(): void {
     mountPreviewPanel(panel("preview"), ctx, (state) => (drawing(state) ? state.millPlan ?? state.job : state.job), (state) => (drawing(state) ? state.millDims : []));
     mountJobJson(panel("jobjson"), ctx);
     const vision = mountVision(panel("camera"), ctx, panel("camera-view"), { controls: panel("camera-controls"), sight: panel("camera-sight"), changes: panel("camera-changes") });
-    mountAlign(panel("align"), ctx);
+    mountAlign(place.parts.align, ctx);
     // The Setup side's Checklist: what the machine knows, where each value
     // came from; the calibration tests beside it.
     mountFacts(panel("facts"), ctx);
@@ -365,7 +369,7 @@ function main(): void {
     // The look for the board, one panel for every camera; the pick and
     // place board drawing follows the camera and threshold it shows.
     let pnpPanels: PnpPanels | null = null;
-    const find = mountFindBoard(panel("find"), ctx, {
+    const find = mountFindBoard(place.parts.find, ctx, {
         page: "run",
         boxes: { head: () => vision.view.box(), top: () => pnpPanels?.topBox() ?? null },
         onChange: () => pnpPanels?.boardChanged(),
@@ -383,13 +387,14 @@ function main(): void {
         view: panel("pnp-view"),
         topView: panel("pnp-top-view"),
         top: panel("pnp-top"),
-        refs: panel("pnp-refs"),
+        refs: place.parts.refs,
         feeders: panel("pnp-feeders"),
         machineView: panel("pnp-machine-view"),
         run: panel("pnp-run"),
         cameraFolds: { controls: panel("pnp-camera-controls"), sight: panel("pnp-camera-sight"), changes: panel("pnp-camera-changes") },
         topFolds: { controls: panel("pnp-top-controls"), sight: panel("pnp-top-sight"), changes: panel("pnp-top-changes") },
     }, ctx, () => vision.view.box(), find);
+    place.finish();
     // The assistant: the conversation with a model that makes jobs and
     // other data through the backend's tools, and which model it is.
     mountAuto({ chat: panel("auto-chat"), about: panel("auto-about") }, ctx);

@@ -120,7 +120,12 @@ export function jobLabels(milling: boolean): { power: string; speed: string; spo
  * own at the foot of the column, so Run stays in reach however long the
  * list and the groups grow.
  */
-export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): void {
+/**
+ * The Jobs panel in `root`, the Run panel in `runRoot`, and the selected
+ * job's offset and turn in `placeRoot` (the Board place panel's By hand)
+ * when there is one, else among the job's details.
+ */
+export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, placeRoot?: HTMLElement): void {
     const fileInput = el("input", { type: "file", accept: ACCEPT, multiple: true, class: "file-input", "aria-label": "Job file" });
     const powerField = numberField({ value: 500, min: 0, step: 1 });
     const speedField = numberField({ value: 400, min: 1, step: 1 });
@@ -837,6 +842,9 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
                 detailsFor = null;
                 detailsJob = null;
                 replace(details, el("p", { class: "muted" }, "select a job to see its groups"));
+                if (placeRoot) {
+                    replace(placeRoot, el("p", { class: "muted" }, "select a job to place it"));
+                }
             }
             renderForm(state);
             return;
@@ -851,12 +859,15 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement): vo
             detailsMilling = milling;
             detailsFocus = focusColumn;
             statsEl = statsBlock(job);
+            if (placeRoot) {
+                replace(placeRoot, offsetRow(job));
+            }
             replace(details,
                 el("h3", {}, job.name),
                 groupsTable(job, milling, focusColumn),
                 pickedRow,
                 statsEl,
-                offsetRow(job),
+                placeRoot ? null : offsetRow(job),
                 widthRow(job, milling),
                 marginRow(job),
             );

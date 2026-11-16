@@ -530,12 +530,13 @@ describe("folders", () => {
 });
 
 describe("the page's own markup", () => {
-    test("stacks each camera's settings on the Cameras page, and groups the ways to place the board on Run", async () => {
+    test("stacks each camera's settings on the Cameras page; Run has one Board place panel", async () => {
         const html = await Bun.file(new URL("../index.html", import.meta.url)).text();
         const doc = new DOMParser().parseFromString(html, "text/html");
         const defaults = (page: string) => markupDefaults(Array.from(doc.querySelectorAll<HTMLElement>(`#page-${page} > .column`)));
-        expect(defaults("run").folders).toEqual({ find: "Board place" });
-        expect(defaults("run").stuck).toEqual({ align: "find", "pnp-refs": "find" });
+        expect(defaults("run").folders).toEqual({});
+        expect(defaults("run").stuck).toEqual({});
+        expect(doc.querySelector("#pane-use #page-run section#place")).not.toBeNull();
         expect(defaults("cameras").stacked).toEqual({
             "camera-controls": "camera", "camera-sight": "camera", "camera-changes": "camera",
             "pnp-camera-controls": "pnp-camera", "pnp-camera-sight": "pnp-camera", "pnp-camera-changes": "pnp-camera",

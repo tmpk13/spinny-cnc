@@ -1953,6 +1953,45 @@ button.badge.state {
     color: var(--muted);
 }
 
+/* The Board place panel (src/views/boardplace.ts): each way a fold, ruled
+   off from the one above it; a way whose view hides its box goes. */
+.place-way ~ .place-way:not(.hidden) {
+    padding-top: var(--flow);
+    border-top: thin solid var(--border);
+}
+
+.place-way:has(> .place-part.hidden) {
+    display: none;
+}
+
+.place-way > summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+}
+
+.place-way > summary > h3 {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    font-size: 0.95rem;
+}
+
+.place-extras {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-left: auto;
+}
+
+.place-line {
+    margin-left: auto;
+    font-size: 0.85rem;
+}
+
 /* DRO */
 
 /* The beam on: the panel holding the position glows. */

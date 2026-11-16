@@ -90,3 +90,19 @@ while building them and what was not obvious.
   fiducial with Find home fiducial (mountTopCamera's `places.home`) go in
   the Run Machine panel's box for a pick and place head, shown only with a
   G-code machine.
+
+## Board place
+
+- One panel (src/views/boardplace.ts) with a fold per way, rough to
+  exact: By hand (the selected job's offset and turn, which jobs.ts draws
+  into the box it is handed), By camera (Find board), By marks (Align), By
+  references (the pick and place references, shown with a G-code machine
+  only). The boxes keep the old panels' ids, so `find`, `align` and
+  `pnp-refs` in steps, facts and links still land; the Checklist's links
+  name the panel, `place`.
+- The views draw their own heads; `finish()`, called in main.ts once the
+  last of them is mounted, moves what else a head held into the fold's
+  summary and removes the title. Align's own fold is unwrapped: a fold in
+  a fold folded twice. A way whose view hides its box hides its fold by
+  `:has` in the stylesheet, so no store subscription has to run after the
+  view's own (subscribers run in the order they subscribed).
