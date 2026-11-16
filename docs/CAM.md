@@ -14,7 +14,7 @@ value at a time without touching the rest of the text.
 
 | Where | How |
 | --- | --- |
-| Web page | the *CAM* tab: pick a profile, read its axes, tools and operations, change a cutting setting in the table or the whole file in the editor, pick the block's material, drop a design or an STL model to make a job, *Export gcode* to download the program for the profile's controller |
+| Web page | the *CAM* page on the Setup side: pick a profile, read its axes, tools and operations, change a cutting setting in the table or the whole file in the editor, pick the block's material, drop a design or an STL model to make a job, *Export gcode* to download the program for the profile's controller |
 | Backend | `GET /api/cam`, `GET/PUT/PATCH/DELETE /api/cam/{id}`, `POST /api/cam/{id}/jobs`, `POST /api/cam/{id}/gcode` ([WEB_API.md](WEB_API.md)); `spinny-web --cam DIR` reads another directory |
 | Command line | `uv run spinny-cam cam/mill-3axis.toml board.kicad_pcb` writes `var/out/board.nc` and a report beside it; `uv run spinny-cam cam/mill-3d.toml part.stl` for a model; `mise run cam -- PROFILE DESIGN` |
 | Code | `spinny_laser.cam` (the schema and the text patch), `spinny_laser.camjob` (a design through the operations), `spinny_laser.post` (the gcode), `spinny_laser.carve` (runs the 3D kernel in `carve/`); the page's mock reads the same files with `web/frontend/src/toml.ts` |
@@ -38,14 +38,15 @@ the page and press *New*, which saves the text shown under that id.
    is milled outside the board's edge, so the end mill goes about its
    radius past X 0 and Y 0 (the shipped axes' `min = 0` warns of it):
    leave stock there.
-2. Drop the KiCad board on the CAM tab, or the copper gerber together with
+2. Drop the KiCad board on the CAM page, or the copper gerber together with
    its `Edge.Cuts` gerber and its drill files, the plated and unplated
    holes' (`-PTH.drl` and `-NPTH.drl`), or the one `.drl` (one drop,
    several files). Every `.drl` whose name starts as the board's does is
    read. The notes under the drop say what was left out: no drill file,
    another board's drill file, no outline, holes narrower than the drill.
-3. Read the job in the preview, and in the *Jobs* panel switch off what
-   should not run this time (the clearing is off in the shipped file).
+3. Read the job in the Job area's preview (*Show in Jobs* opens it), and
+   in its *Job* panel switch off what should not run this time (the
+   clearing is off in the shipped file).
 4. *Export gcode*. The report gives the lines, the cut length, the time
    and what each axis reaches; a reach past an axis' `min` or `max` is a
    warning, and so is a feed over an axis' `rate`, which is written at the
@@ -68,7 +69,7 @@ the page and press *New*, which saves the text shown under that id.
 
 1. Export the part as an STL from the CAD program, in mm (a model drawn in
    inches takes `[model] scale = 25.4`). The face to be cut looks up:
-   *Model* on the CAM tab (or `[model] turn`) stands it otherwise. A part
+   *Model* on the CAM page (or `[model] turn`) stands it otherwise. A part
    needing both faces is two jobs, the second with the part turned over.
 2. Pick `mill-3d`, and in the *Stock* row the block's material, how much
    bigger than the model it is round the sides (*Margin*) and over the top
@@ -79,16 +80,16 @@ the page and press *New*, which saves the text shown under that id.
    feeds each operation took, the material's note, and what to look at: an
    undercut (faces looking down above the bottom, which a tool from above
    cannot reach), an open mesh, a cut deeper than a tool's `length`. The
-   preview draws the paths at their depth under the block's top.
+   Job area's preview draws the paths at their depth under the block's top.
 4. Clamp the block outside the band the rough clears round the part (half a
    tool past the finish, or `band`), zero X and Y at the block's lower left
    (`anchor = "corner"`) and touch the tool off on the block's top: Z 0 is
    the block's top. For an air cut first, touch off a few mm above it.
-5. Run it on the mill from the *Jobs* tab, or *Export gcode* for another
+5. Run it on the mill from the Run area, or *Export gcode* for another
    controller. The operations were planned in order, each over what the one
    before left, so run them in that order and skip none; one switched off
    in the profile is planned alone on the whole block, which is safe to
-   turn on later. A run from the *Jobs* tab cannot stop to change the bit,
+   turn on later. A run from the Run area cannot stop to change the bit,
    so operations of several bits (the surfaces' ball end mill between the
    end mill's rough and walls) are run a bit at a time, the others
    switched off; the exported gcode stops for each change.

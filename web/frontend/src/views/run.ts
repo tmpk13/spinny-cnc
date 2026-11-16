@@ -1,10 +1,10 @@
-// The Run panel, one for the Jobs and the Plot pages: the selected job's
-// name, how the run follows the height map, Run, Hold, Resume and Stop,
-// the run's progress and why it ended, and picking a stopped run up at a
-// line. Each page mounts a copy in its own panel. The height map choice
-// the operator makes is the store's (`mapPick`), so both copies show the
-// same one, and the panel puts the choice it settles on in `mapChoice`
-// for the other panels to describe.
+// The Run panel, on the Run area: the selected job's name, how the run
+// follows the height map (in the Height panel when it is handed a place
+// there), Run, Hold, Resume and Stop, the run's progress and why it ended,
+// and picking a stopped run up at a line. The height map choice the
+// operator makes is the store's (`mapPick`), so any copy shows the same
+// one, and the panel puts the choice it settles on in `mapChoice` for the
+// other panels to describe.
 
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, lockFor, numberField } from "../dom.ts";

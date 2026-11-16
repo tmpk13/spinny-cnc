@@ -4,24 +4,24 @@ From the first connection to a probed, compensated run. The wiring and the bring
 
 ## Connecting and first moves
 
-Open `http://localhost:8000`, connect to the board on the *Connection*
-tab (or to `socket://127.0.0.1:2323` for the virtual firmware, or to
+Open `http://localhost:8000`, connect to the board in the *Connection*
+panel, on the Setup side's *Machines* page (or to `socket://127.0.0.1:2323` for the virtual firmware, or to
 `socket://127.0.0.1:2324` for a controller on a Pi forwarded by `mise run
 relay-pi -- user@host`). The top bar shows only the machine's state (a
-press on it opens the Connection tab), the firmware's version (a G-code
+press on it opens the Connection panel), the firmware's version (a G-code
 machine's says its first word and version, Marlin 2.1.2, its whole answer
 to M115 on hover) and the big *Stop*, always in view:
 it stops a run or probing the way their own Stop does, else ends a camera
 routine, cancels a jog or goto and turns the beam or spindle off; on a
 G-code machine it sends the file's stop. One machine is connected at a
-time; the Connection tab keeps a button for each machine connected lately
+time; the Connection panel keeps a button for each machine connected lately
 (up to four), which switches to it in one press, letting the one
 connected go first. Then jog the beam over the
 axis with the radius buttons, press "Set R=0 here", then turn the table
 with the turn buttons: a positive turn must swing the point under the beam
 counterclockwise seen from above, otherwise set `$dir_invert`. Check steps
 per unit at low speed before the first job. Every axis is a bar in the
-jog panel, with where the axis is now at its right, its step choices and
+Machine panel (Run area), with where the axis is now at its right, its step choices and
 a field for any other step. On a machine with a board pad the pad comes
 first: eight arrows around the head's X and Y on the board, the corners
 moving X and Y together, X by the X bar's step and Y by the Y bar's (the
@@ -34,12 +34,19 @@ its smallest step, as Shift held with a jog key does. Under *Hold to
 move* a jog button or key held moves the axis until it is let go, the
 step read as the distance per second: the page sends a piece of the move
 every tenth of a second, and at the release this project's firmware
-cancels the jog at once, while a G-code machine runs out the last piece. The *Config* tab holds the
-machine files, where the pins are set too (the laser output, the probe
-and an optional tool output), and beside them the list of every key a
+cancels the jog at once, while a G-code machine runs out the last piece. The Setup side's
+*Machines* page holds the machine files (the *Machine file* panel), where the pins are set too (the laser output, the probe
+and an optional tool output), and beside them the *Settings* panel, the list of every key a
 file can set with the board's value next to the file's.
 
 ### Jobs, the preview and the Run panel
+
+The *Jobs* panel in the Job area imports a file dropped on it or picked.
+*Import settings* under its drop area opens the import dialog with what
+the next import is made with (the power, speed and spot, the anchor and
+offset, the layer, mirror, Board and the fields its mode takes), and the
+line under the drop area says them. The selected job's groups, stats,
+width and margin are its own *Job* panel.
 
 A board upload isolates its copper by default; with Board set to deposit,
 for a process that lays copper down, it burns the copper itself and
@@ -48,27 +55,28 @@ stencil out of a film laid where the board would be: once round the
 inside of every paste opening, shrunk first by Margin mm on every side,
 so each piece drops out and leaves its hole; picking stencil turns a
 Layer of F.Cu into F.Paste. The preview draws every pad with its cut
-inside it, the margin being the band between them, and the job's margin
+inside it, the margin being the band between them, and the Job panel's margin
 row cuts the stencil again for another margin where it lies. With Board
 set to on the lines it cuts the layer where it is drawn: every line along
 its middle and every filled shape round its edge, so Edge.Cuts cuts a part
 out on its outline, a silk screen or a user layer is burnt as drawn. The
-Layer field picks the layer a KiCad board is read from: a copper layer,
+dialog's Layer field picks the layer a KiCad board is read from: a copper layer,
 F.Paste, or any layer to cut on its lines. A `.kicad_pcb` picked or
-dropped is not sent at once: its own layers are offered first, each with
-what is drawn on it, and picking a drawing (Edge.Cuts, a silk screen, a
+dropped is not sent at once: the import dialog offers its own layers first, each with
+what is drawn on it, with the settings under them, and picking a drawing (Edge.Cuts, a silk screen, a
 fab or user layer) sets Board to on the lines; Import sends it, Cancel or
-Escape leaves it. A gerber is its own layer.
+Escape leaves it. A gerber is its own layer. Any other file is imported
+at once, with the settings as the line under the drop area says them.
 
 A drawing is cut on its lines: an SVG a group per stroke color, a DXF a
 group per layer (its lines joined where their ends meet, blocks inserted,
 curves flattened, in the unit its header gives, millimeters when it gives
-none). Save a DXF as ASCII: a binary one is refused. The CAM page takes
-a DXF too, its layers being what a paths operation's `match` picks.
+none). Save a DXF as ASCII: a binary one is refused. The Setup side's
+CAM page takes a DXF too, its layers being what a paths operation's `match` picks.
 
 A click on a path in the preview picks it (shift or ctrl adds one or takes
 it back, *Box select* picks every path inside a dragged box, a click on a
-group's name in the Jobs panel all of its paths); the Jobs panel then moves
+group's name in the Job panel all of its paths); the Job panel then moves
 the picked paths into a group of their own, which takes the first one's
 settings (switched off if any group they come from is) and can be given
 its own power, speed, passes or focus, or into a
@@ -78,7 +86,7 @@ the picked paths, the *Origin*, or typed) through a sweep, a whole turn
 spreading them evenly; the count takes the picked paths in, the copies are
 drawn on the preview as the fields change, and *Make array* keeps them,
 each at the end of its path's group, picked, so *Delete paths* takes them
-back. A job made from a file or on the Plot page whose paths are moved,
+back. A job made from a file or in the Draw panel whose paths are moved,
 deleted or copied (the page asks first), or changed in the *Job JSON*
 panel, is no longer made again from it for another width, which would put
 its paths back as the file or the operations make them. Each job in the list carries a
@@ -92,7 +100,7 @@ do not combine). The *Job JSON* panel under the preview
 shows the job with a path a line: the path and point under the caret are
 drawn on the preview, a picked path brings the caret to its line, an edit
 is drawn as it is typed and kept with *Apply*. A path picked on an edit
-not yet applied is only found in the text: the Jobs panel moves, deletes
+not yet applied is only found in the text: the Job panel moves, deletes
 and copies the paths of the job as it is kept.
 
 The preview's *Top view* looks straight down, the board square to the
@@ -115,23 +123,24 @@ gets the plain 2D canvas, also in the background. Should a graphics driver
 draw the preview wrong, `?preview=2d` at the end of the page's address
 draws it with the 2D canvas in the page, as before.
 
-The run controls (Run, the height map choice, Hold, Resume, Stop, the
-progress and the pickup of a stopped run) are the Run panel at the foot
-of the right column, kept in view while the jobs and their groups scroll
-under it. Every number field takes arithmetic (`25.4/2`, `1/8 in`; see
-the Plot page below).
+The run controls (Run, Hold, Resume, Stop, the progress and the pickup
+of a stopped run) are the Run panel at the foot of the Run area's right
+column, kept in view while the panels above it scroll under it; how a
+run follows the height map is picked in the Height panel (*Runs follow*).
+Every number field takes arithmetic (`25.4/2`, `1/8 in`; see the Draw
+panel below).
 
 ### Probing and the height map
 
 An optional focus axis (`H`, the E driver socket unless `$sockets` moves
 it, `$h_axis=1`) carries a
-touch probe on the Z-STOP input. The Height map panel probes a grid over
+touch probe on the Z-STOP input. The Height panel (Run area) probes a grid over
 the board, and a run can then follow it: the focus axis tracks the board
 under the beam, or, without a focus axis, the power is raised where the
 board sits out of focus.
 
 1. Jog the head up until the probe clears the board, or type a *Travel H*
-   in the Jog panel: probing travels at the higher of the two, and the
+   in the Height panel: probing travels at the higher of the two, and the
    probe's depth counts down from there. Set the probe's offset from the
    beam under *Probe*.
 2. *Fit to job* (the preview shows the grid), then *Probe*. The panel
@@ -140,12 +149,13 @@ board sits out of focus.
 3. Jog the beam over the board, focus it by eye with the focus axis, and
    press *Focus here*; or type the offset into *Focus offset mm*, where it
    holds until *Set*.
-4. Run with *height map: auto*, which the choice turns to by itself while
+4. Run with *height map: auto* in the Height panel's *Runs follow*, which
+   the choice turns to by itself while
    a map is usable and back to off when none is, until it is changed by
-   hand. The chip beside the choice says what Run will do with the map
+   hand. The chip beside Run in the Run panel says what Run will do with the map
    before it is pressed (*map on: focus axis*, *map off*, or why the run
    would be refused, such as *focus not set* or *map short of job*); the
-   Height map panel's head says the same for the selected job, and while a
+   Height panel's head says the same for the selected job, and while a
    run lasts the status bar shows what it follows.
 
 The focus offset is dropped whenever the focus axis may count from other
@@ -161,7 +171,7 @@ Wiring and bring-up are in `firmware/rp2040/README.md`.
 
 Two optional modes use the same machine; both are firmware settings, off
 by default, and the page follows them. The quickest way between them is
-the *Config* tab, which edits and loads a whole file from
+the Setup side's *Machines* page, which edits and loads a whole file from
 `machines/` ([MACHINES.md](MACHINES.md)): `cartesian-laser` and
 `cartesian-mill` are the two modes below, the slide's travel either side
 being their `[slide] limit` (30 mm in the one, 40 in the other); copy one
@@ -198,19 +208,20 @@ turns, and the spindle's start while probing.
 FAN3 is a low side switch on the fan rail, not a logic output: see the
 spindle note in `firmware/rp2040/README.md` before connecting one.
 
-### The Plot page
+### The Draw panel
 
-The *Plot* tab is the machine used like a manual mill: the position, the
-jog panel (its keys jog while the tab shows), the spindle, the markers
-and a preview beside simple operations, one or several in a job. On a
+The *Draw* panel in the Job area is the machine used like a manual mill:
+simple operations, one or several in a job, drawn on the Job area's
+preview, with the Machine panel beside it for the position, the jog (its
+keys jog while the Job area shows), the spindle and the markers. On a
 laser machine the same operations are burnt instead: the fields are the
 spot, the power and the passes (each the whole path again), a point is
 marked with a ring the spot across, and a board hole is cut along its
 inside edge so the plug drops out, or with *clear* on burnt away in rings.
 Focus the beam instead of zeroing a depth.
 
-1. Zero the depth on the surface (touch off, *Set H=0 here* or the jog
-   panel's zero), as for any milled job.
+1. Zero the depth on the surface (touch off, *Set H=0 here* or the
+   zero on the Machine panel's depth bar), as for any milled job.
 2. Pick the operation: *Drill* points, *Holes* of a board job, *Line*
    through points, *Face* a rectangle, or a *Pocket* or *Profile* of a
    rectangle or a circle.
@@ -230,22 +241,20 @@ Focus the beam instead of zeroing a depth.
    corner radius, a circle's diameter, the points and the legs of a line),
    its notes and any problem below the fields.
 5. *New job* makes a job of the operation, selected; *Add to job* puts it
-   at the end of the selected Plot job, so one job can hold a pocket, the
+   at the end of the selected drawn job, so one job can hold a pocket, the
    holes beside it and the outline round both. The job's operations are
    listed over the fields: a click puts one in the fields, *Apply* puts the
    fields back in its place, *Up* cuts one before the one above it and
-   *Remove* takes it out. The groups keep what the Jobs page set on them
+   *Remove* takes it out. The groups keep what the Job panel set on them
    (turned off, a focus, a slower feed) unless the fields change that
    number. The mark beside the job's name says whether the fields are one
    of its operations as kept (*applied*), changed since (*changed*, also
-   counted on the tab), or not in it. All of a job's operations cut with
+   counted on the Job area's tab), or not in it. All of a job's operations cut with
    one bit or spot.
-6. *Run* in the Run panel under the preview cuts the selected job. It is
-   the Jobs page's Run panel (the height map choice is the same on both
-   pages, and a stopped run is picked up the same way), with the job's
-   length and time over the buttons.
+6. *Run* in the Run area's Run panel cuts the selected job, as it cuts
+   any job, and a stopped run is picked up the same way.
 
-A job moved or turned on the Jobs page keeps its place when its
+A job moved or turned (Board place, *By hand*) keeps its place when its
 operations change: they are typed where they were before the move, and
 the plan, the sizes and the job are put where the job now is. *Here* and
 the markers are taken into that frame, so they land where the head or the
@@ -264,7 +273,8 @@ leave the corners between them standing.
 
 ### Markers
 
-The *Markers* panel (Jobs and Plot tabs) keeps named positions:
+The *Markers* fold at the foot of the Machine panel (in the Run area,
+and in its copy in the Job area) keeps named positions:
 *Mark here* saves where the head is, under the name typed or the next M
 number, *Add* a typed x and y; a name used again moves that marker. *Go*
 rises to the travel height and goes there, *Here* moves the marker to the
@@ -273,11 +283,11 @@ for every page and browser.
 
 ### Another bit for a job
 
-The job details have the width the job is cut for (*Tool mm* on a mill,
+The Job panel has the width the job is cut for (*Tool mm* on a mill,
 *Spot mm* on a laser). *Re-cut* makes a board job again from its kept
 file for the new width and puts it where the job is now, alignment and
 moves included, so a second bit's isolation lands on the copper the
-first cut; a Plot page job is built again with the new bit. The groups
+first cut; a job drawn in the Draw panel is built again with the new bit. The groups
 keep their settings. A drawing's paths stay as they are and *Set* only
 changes the number. A board imported before its file was kept, a CAM job
 or a job loaded from JSON cannot be cut again: import it again.
@@ -295,12 +305,12 @@ A paste dispenser is a syringe whose plunger a stepper pushes, on the
 table's driver socket: load `cartesian-dispenser` (or your copy of it,
 [MACHINES.md](MACHINES.md)), which makes the machine an X/Y machine with
 the focus axis as the needle's height and the plunger as `E` in mm. The
-jog panel's *Extrude* and *Retract* push and pull the plunger by its step,
+Machine panel's *Extrude* and *Retract* push and pull the plunger by its step,
 for priming the needle and checking the flow.
 
-1. Upload the board with mode *dispense*: a dot on every pad of its paste
+1. Upload the board with Board set to *dispense* in the import dialog: a dot on every pad of its paste
    layer (`F.Paste`; a copper layer's pads are its flashes), the paste
-   thickness over a pad (0.12 mm by default) in the upload form and in the
+   thickness over a pad (0.12 mm by default) in the dialog's *Paste mm* and in the
    group's *thickness* afterwards; the preview draws each dot the size of
    its pad. A dot's volume is the pad's area times the thickness, and the
    plunger pushes it out over `output`, mm^3 of paste per mm of plunger,
@@ -320,10 +330,11 @@ for priming the needle and checking the flow.
 
 ### Setup steps
 
-The Setup panel at the top of the Jobs page shows a common setup as a
-row of numbered circles: *Probe and follow a height map*, *Mill a board*
-or *Measure the camera offset* (only the ones the machine has what for,
-once it is connected). A step fills in when the page sees it done (a job
+The Steps panel in the Run area shows a common setup as a
+row of numbered circles: *Probe and follow a height map*, *Mill a board*,
+*Measure the camera offset* or *Place parts* (only the ones the machine has what for,
+once it is connected), or with a G-code pick and place machine
+connected, *Place parts with a G-code machine*. A step fills in when the page sees it done (a job
 picked, a travel height set, the map probed, the focus taken, the map on
 for the run), the next one is ringed and said in words under the row,
 and a press on any step goes to the panel that does it.
@@ -340,10 +351,11 @@ leaving the page with any asks first.
 
 ### The Use and Setup sides
 
-The tabs are on two sides. *Use* (Overview, Jobs, Plot, CAM, PNP, Auto)
-is what is done on every run; *Setup* (Checklist, Config, Connection,
-Plugins) is what the machine is and knows. The other side's name in the
-bar, or the `\` key, swaps to it, on the page it showed last; the
+The page's tabs run down a rail at the window's left (a bar across the
+top on a narrow window), on two sides. *Use* (the areas Home, Job and
+Run) is what is done on every run; *Setup* (Checklist, Machines,
+Cameras, CAM and Page) is what the machine is and knows. The other side's name in the
+rail, or the `\` key, swaps to it, on the page it showed last; the
 button after the tabs, or `|`, shows both side by side with a handle
 between them (on a window at least about 1000 px wide). Each side also
 opens in a tab of its own: `/?side=setup` (keep `?mock=1` or `?api=` as
@@ -361,13 +373,13 @@ here*), and otherwise here, with Back to return. How it works and why:
 
 ### Panels, tabs and the page settings
 
-The Overview tab has a card for every other page: a small drawing of
+*Home* has a card for every other area and Setup page: a small drawing of
 what it is for, and a line on what it holds now (the jobs kept and a run
 under way, the parts of the board picked, the machine connected, edits
 not applied). A press on a card shows its page.
 
-Every page has a color of its own (Jobs orange, Plot green, CAM cyan,
-PNP violet, Auto magenta, Config yellow, Connection blue, Plugins red):
+Every page has a color of its own (Job orange, Run green, Machines
+yellow, Cameras violet, CAM cyan, Page red; Home and the Checklist grey):
 its tab is underlined in it and its panels wear it along their top edge.
 
 Every panel's head has a fold button (the chevron before its name) and a
@@ -383,7 +395,9 @@ off the row to take its panel
 out of the stack to where it is let go (another place, or onto another
 panel to stack it there), or press the button at the row's end (or
 *Take the stack apart* in the menu) to lay all of them out one above
-another. Some panels start stacked. Panels stuck together are drawn as
+another. Some panels start stacked: each camera's picture controls,
+lens and colors and changes with its panel on the Cameras page, and
+*What it can do* with the Assistant. Panels stuck together are drawn as
 one block and move together, one above another or side by side (a phone
 shows them in one column either way); side by side, a folded panel
 stands on its side as a narrow strip and gives its width to the others.
@@ -392,10 +406,7 @@ fold (shut, the head names the panels it holds), its name (double click
 to rename), how many panels it holds, and a menu that folds, renames and
 moves the folder as one, or takes it apart. *New folder* in a panel's
 menu makes one named after the panel, its name up for typing; a panel in
-a folder moves *Up* and *Down in the folder*. Some panels start in
-folders: the Jobs page's camera panels in *Camera*, the PNP page's in
-*Bottom camera* and *Top camera*, and a G-code machine's head, board
-place and feeders in *Machine*. A phone shows a folder's panels in the
+a folder moves *Up* and *Down in the folder*. A phone shows a folder's panels in the
 one column, without the box. Content out of sight says so: a panel held
 at a height, or a column with panels below its foot, fades there under a
 *more below* press that scrolls on; a held panel's head casts a shadow
@@ -406,12 +417,13 @@ its column unless it is stuck or stacked. On the wide layout a handle
 under each panel holds it at a height (it then scrolls inside, with
 buttons in its head to its top and its end), and a handle between two
 columns sets their widths; a double click on either gives the size back.
-*Fit to screen* holds a panel at the height its column shows. The PNP
-parts list sizes by its lower right corner.
+*Fit to screen* holds a panel at the height its column shows. The Parts
+panel's list sizes by its lower right corner.
 
-The gear at the right end of the tab bar opens the page settings: the
-tab the page opens on, the tab bar folded to a thin strip that opens on
-hover or a press, tabs kept out of the bar (they open from *More* at its
+The gear among the tools at the rail's foot (at the bar's right end on a
+narrow window) opens the page settings: the
+tab the page opens on, the rail folded to a thin strip that opens on
+hover or a press, tabs kept out of the rail (they open from *More* at its
 end), the panel layouts kept by name, *Edit panels*, a reset of the page
 shown, the hidden panels to show again, and the look: the page's own
 fonts (Inter and JetBrains Mono, served with the page, so it reads the
@@ -422,15 +434,15 @@ or with the system's reduced motion, everything simply appears), and
 menu) puts a grip in every head: drag a panel to another place, onto
 another panel to stack them, or onto a folder's head to put it in (a
 panel in a folder goes alone; the folder's own grip drags the folder),
-then press *Done editing* in the tab bar. While a panel is
+then press *Done editing* in the rail. While a panel is
 hidden an eye shows beside the gear, counting them: pressed, the hidden
 panels show for a while with a dashed edge (their menu has *Show for
 good*), and pressed again they hide. The two arrows beside it scroll the column last pointed
 at to its top or its end. A layout kept by name
 covers every page; *Default* is the page as shipped and cannot be saved
 over. Once one is kept, a pick beside the gear swaps layouts in one
-step. The Setup, Align, Camera and Job JSON panels keep their own fold,
-which a layout does not carry. All of this is kept in the browser, not
+step. The Steps, Head camera and Job JSON panels, and the Board place
+panel's folds, keep their own fold, which a layout does not carry. All of this is kept in the browser, not
 on the machine; a phone keeps the one-column order until its panels are
 moved, and has no size handles.
 
@@ -443,12 +455,12 @@ Stop spindle): they always take the press. The red buttons that start
 something (Test beam, Start spindle, Make mark) do not.
 
 Every button shows on hover what it does, a disabled one also why it is
-off ("connect first"), and a key in the Config tab's machine file shows
+off ("connect first"), and a key in the Machines page's machine file shows
 what it sets. The small "i" beside some settings opens a drawing of what
 they mean when pressed (not on hover), until pressed again, anything else
-is pressed, or Escape. The magnifier in the tab bar (or "/" or Ctrl+K
+is pressed, or Escape. The magnifier among the rail's tools (or "/" or Ctrl+K
 with no field in use) finds a feature by a few letters of its name, in
-order ("hmprb" finds the Height map's Probe), among every page, panel and
+order ("hprb" finds the Height panel's Probe), among every page, panel and
 button: Enter or a press shows its page and panel, unfolded and pulsing,
 and gives a button the focus without pressing it.
 
@@ -459,24 +471,24 @@ or a press anywhere else closes it, and the button counts what is left.
 The backend keeps the list (`var/todo.json`), so every browser shows the
 same one.
 
-The bug in the tab bar reports a bug. It takes a screenshot of the page
+The bug among the rail's tools reports a bug. It takes a screenshot of the page
 as it is when pressed (made in the browser from the page itself; the
 preview is asked for its picture), shown small in the dialog, and lists
 what was done lately: the last 200 buttons pressed, pages shown,
 requests to the backend (method, path, status and time, never what they
 carried), toasts and errors. Say what happened (the first line is the
 title), untick either to leave it out, and *Save*: the backend keeps the
-report under `var/reports/<time>/`. The *Bug reports* panel on the Config
-tab sets where else it goes: nowhere (the default); a GitHub repository's
+report under `var/reports/<time>/`. The *Bug reports* panel on the Setup
+side's *Page* page sets where else it goes: nowhere (the default); a GitHub repository's
 address, whose new-issue page then opens filled in (attach the
 screenshot from the folder the dialog names, since a picture cannot ride
 in an address); or any other address, which gets the report posted as
 JSON, the dialog saying whether it was taken. Closed without saving, the
 words typed wait for the next report.
 
-The *Plugins* tab lists the page's plugins: JavaScript modules in
+The *Plugins* panel, on the Setup side's *Page* page, lists the page's plugins: JavaScript modules in
 `var/plugins` that add a panel, a readout or a button to the page,
-written by the Auto tab or put there by hand ([PLUGINS.md](PLUGINS.md)
+written by the Assistant or put there by hand ([PLUGINS.md](PLUGINS.md)
 says how one is made). Each has a switch, what it does, who made it,
 its source in a fold, and *Delete*. A plugin runs with the page's whole
 power, moving the machine and firing the laser included, so each is off
@@ -487,7 +499,7 @@ anything else it left goes with a reload.
 
 ### The travel height
 
-*Travel H* in the Jog panel (on a machine with a focus axis) is an H the
+*Travel H* in the Height panel (on a machine with a focus axis) is an H the
 head rises to before the page moves it across the board: a goto of the
 board or of a joint across it, probing, *Probe nearest* and the camera
 routines. A head already higher stays where it is, a goto that names its
@@ -523,7 +535,7 @@ map.
 
 A probe that has to land on copper, the tool itself touching grounded
 copper or a conductive tip, finds nothing on the bare board between the
-pads. *Probe pads* in the Height map panel probes the selected job's pads
+pads. *Probe pads* in the Height panel probes the selected job's pads
 instead of a grid: every pad of at least the least area given (half a
 square millimeter by default, so a tip has room), and when the board has
 more pads than the most points asked for, the most spread out of them, in
@@ -546,13 +558,14 @@ cross-builds it for a Raspberry Pi that runs the backend and installs it
 there ([ARCHITECTURE.md](ARCHITECTURE.md#controller-on-a-raspberry-pi)),
 and a release built beside pcb-vision carries it as `bin/pcbv`
 ([RELEASE.md](RELEASE.md#the-other-programs)). The
-Camera panel on the Jobs page starts it and holds its settings; its
-picture is the Camera view panel beside it, and with *Look for board* (the
-Find board panel) on a job imported from a KiCad file the panels say where
+*Head camera* panel on the Setup side's *Cameras* page holds its settings; its
+picture is the *Head camera view* panel in the Run area, whose *Start* and
+*Stop* start and stop it, and with *Look for board* (the Board place
+panel's *By camera*) on a job imported from a KiCad file the panels say where
 on the board the picture is and how well it is locked (below).
 
-Every camera picture (the head camera's, and the PNP page's bottom and top
-cameras') works the same way. It is asked for at the size it is shown, so
+Every camera picture (the head camera's, and the bottom and top
+cameras' in the Run area) works the same way. It is asked for at the size it is shown, so
 it stays sharp when zoomed: *+* and *-* under it zoom on its middle by
 steps, and Ctrl and the wheel over the picture (or a pinch on a
 touchpad) zoom about the point under the pointer, which stays under it
@@ -571,8 +584,8 @@ the head looks further that way and the fixed bottom camera sees the
 nozzle go that way; *Arrow keys the other way* moves it against that (a
 camera on the head then sees the picture's content go the way the arrow
 points, as a drag moves it); *Arrow keys on the machine's axes* leaves
-them to the jog keys, which keep the machine's axes and the jog panel's
-step, as the jog panel's keys and pad always do. A drag moves the head
+them to the jog keys, which keep the machine's axes and the Machine panel's
+step, as the Machine panel's keys and pad always do. A drag moves the head
 so what the camera sees follows the pointer, a line showing the move; a
 double-click brings a point to the crosshair (both once the camera's
 scale is measured). The grip under the picture makes its box taller or
@@ -627,7 +640,7 @@ Blue rings mark the points whose place on the machine is known, where
 they fall in the picture, so a glance says whether what the page holds
 sits on what the camera sees. The head camera's picture rings the
 selected job's alignment marks where they were found (*A1*, *A2*, in
-the Align table's order), its fiducials where a look that found the
+the *By marks* table's order), its fiducials where a look that found the
 board puts them (else where the job lies, which is where it is cut),
 the corners taken by hand, the mark *Find mark* centers on, and the
 markers. The top camera's rings the fiducials *Find fiducials* found
@@ -640,13 +653,11 @@ label shows only where it has room.
 The cameras' own words (spot, shade, lens, roll, mm per px, offset, pose,
 inliers, rms, look, lock, guess, threshold, rival and the like) are
 underlined with dots where the panels use them: the pointer over one
-says what it means, and each camera panel, its Lens and colors and the
-Find board panel end with *What the words mean*, a fold listing the
-ones they use (one list in `src/terms.ts`).
+says what it means (one list in `src/terms.ts`).
 
-*Picture controls*, a panel stacked with each camera's panel (a tab
-beside it; *Bottom picture controls* and *Top picture controls* on the
-PNP page), lists what the
+*Picture controls*, a panel stacked with each camera's panel on the
+Cameras page (a tab beside it: *Head picture controls*, *Bottom picture
+controls* and *Top picture controls*), lists what the
 camera lets be set (exposure, gain, focus, white balance, brightness and
 the like, as v4l2-ctl lists them): a slider, a box or a list each. A value
 set goes to the camera at once and is kept, so it is set again whenever
@@ -672,22 +683,24 @@ away; with a board loaded and *Overlay* on, pcbv's own marks are drawn
 into that JPEG and count as edges, so *Overlay* off measures the camera
 alone.
 
-The panel's *Camera* list holds the cameras attached: the ones on the
+The Head camera panel's *Camera* list holds the cameras attached: the ones on the
 backend's computer, under their stable `/dev/v4l/by-id` names, and the
 streams of a Pi forwarded here (below). They are listed when the panel
 comes into view; *Detect* lists them again after one is plugged in.
 Picking one fills *Device*, *Size* and *fps* (the size kept when the
 camera has it, else 1280x720 or the nearest below; the fps lowered only
-past what the camera gives), and *Start* sends what the fields show
+past what the camera gives), and *Start* (on the camera's view) sends what the fields show
 before starting. A device can still be typed into *Device* by hand.
 *Apply* on a running camera with another device, size or fps starts it
-again on them. The Bottom camera panel on the PNP page has the same list,
+again on them. The Bottom camera panel beside it has the same list,
 and each list says which camera the other one is set to. A pcbv that
 leaves a request unanswered for 6 s (a stalled link to a Pi, a hung
 program) or whose connection fails is closed, and the panel shows the
 camera stopped: start it again once the link is back.
 
-The camera is useful once the machine knows where it looks from the tool:
+The camera is useful once the machine knows where it looks from the tool
+(the Head camera panel's routines, or *Measure the camera offset* in the
+Steps panel):
 
 1. Put a piece of scrap, or a board edge, under the tool and press *Make
    mark* (a spindle machine: a short plunge at the depth and plunge rate
@@ -707,9 +720,9 @@ The camera is useful once the machine knows where it looks from the tool:
 
 #### Looking for the board
 
-The Find board panel (on the Jobs page and the PNP page, each keeping its
-own pick) looks with one camera: the head camera, or a G-code machine's
-top camera, picked from the running ones in its Camera list.
+The Board place panel's *By camera* fold (Run area) looks with one
+camera: the head camera, or a G-code machine's top camera, picked from
+the running ones in its Camera list.
 
 *Look for board* loads the selected job's board into pcbv, which looks for
 it in every picture until *Unload*. The backend reads its pose about five
@@ -733,10 +746,10 @@ with the board, so pcbv never locks at another scale. The badge turns from
 *looking* to *found*, the line under the buttons says how many looks agree
 and why a look was not used (the head moving, say), and the table under
 the graph gives each guess's numbers. A column under the line is grey,
-one ruled out by the corners hatched. The PNP page's Board drawing shows
+one ruled out by the corners hatched. The Board panel's drawing (Run area) shows
 where each guess at or over the line (and the most likely one) says the
-camera's picture lies on the board, labeled with its share. The Jobs
-preview draws the board's outline dashed where the most likely guess puts
+camera's picture lies on the board, labeled with its share. The Job
+area's preview draws the board's outline dashed where the most likely guess puts
 it, and the camera pictures draw it over what they show.
 
 *Method* picks how the board is called found, for the camera picked:
@@ -771,7 +784,7 @@ mosaic, each where the head took it, with the board's outline dashed where
 the scan found it.
 
 Each board found with its stretch measured (a probability look with
-*Board stretch* on, or Align applied with three marks or more) is kept
+*Board stretch* on, or *By marks* applied with three marks or more) is kept
 for the machine it lies on: a board's stretch turns with the board, the
 machine's skew does not, so averaged over boards found at different turns
 it is the machine's own: its X and Y scale and how far its axes are out of
@@ -803,7 +816,7 @@ out under the panel as a map of where it looked, like a full scan's.
 
 *Use as board place* keeps where the found board lies: with the top camera
 as the job's references (two parts far apart; *Find fiducials* then makes
-them exact), with the head camera as marks in the Align panel.
+them exact), with the head camera as marks under *By marks*.
 
 *Search* moves the camera over a box in steps of its picture until the
 board is found, then checks it: the picture's center goes over the
@@ -834,14 +847,14 @@ has nothing pcbv can match, but its edges show against the bed: put the
 picture about one of its corners, the bed around it in view, pick the
 corner and press *Corner by edges*. The two edges found give the corner
 exactly and the board's turn, so one corner is a whole place (*Use as
-board place*, then *Apply* in Align puts the job on the blank). When the
+board place*, then *Apply* under *By marks* puts the job on the blank). When the
 board and the bed are close in shade, pick the edges' color (below).
 
 *Center features* (head camera, once the board is found or its corners
 taken) centers the camera on three features far apart where the place
 puts them: fiducials, else drilled holes, else pads (or the kind picked),
 only ones standing clear of every other. They become the job's camera
-marks in Align, so the board's turn comes from a long baseline rather
+marks under *By marks*, so the board's turn comes from a long baseline rather
 than from the camera's roll over one picture's few millimeters. A round
 feature must look round and of its size: a ring, a square pad or a spot
 of the wrong size stops it with why.
@@ -906,7 +919,7 @@ how, and why a picture at a time): deploy with
 picture; `<name>@640x480@15` picks another mode than 1280x720 at 30 fps;
 a second `--camera`, the bottom camera, gets the next port), keep
 `mise run relay-pi -- user@host` running, and pick `stream on port 2325`
-in the Camera list (the backend looks at the ports relay-pi forwards, the
+in the Head camera panel's Camera list (the backend looks at the ports relay-pi forwards, the
 ones in `SPINNY_CAMERA_PORTS` when that is set where the backend runs).
 The size is the one deployed. An fps of 10 in the camera settings leaves
 a Pi Zero's WiFi room for the controller's lines, and `<name>@640x480`
@@ -916,27 +929,30 @@ the picture is ustreamer's NO SIGNAL card.
 
 ### Pick and place
 
-The PNP tab works with the machine connected. On an X/Y machine on this
-project's firmware it serves a nozzle on the head and a camera fixed to
+The pick and place panels (Parts, Board and the Bottom camera view in
+the Run area; Bottom camera and Nozzle on the Setup side's Cameras page)
+work with the machine connected. On an X/Y machine on this
+project's firmware they serve a nozzle on the head and a camera fixed to
 the machine, looking up at the nozzle (the bottom camera, as OpenPnP and
 Opulo call it; a machine file's `[up_camera]`); a G-code pick and place machine
-(next section) gets its own panels for placing. Its Setup panel leads
-through it:
+(next section) gets its own panels for placing. *Place parts* in the
+Steps panel leads through it:
 
-1. Start the bottom camera (picked in the Bottom camera panel's list, or its device typed in;
-   the spots say whether the finder looks for something dark or bright).
-   *Look once* finds the nozzle's (or a part's) spot with no move and
+1. Start the bottom camera: pick it in the Bottom camera panel's list (or type its device;
+   the spots say whether the finder looks for something dark or bright),
+   then *Start* on the Bottom camera view.
+   *Look once* there finds the nozzle's (or a part's) spot with no move and
    draws it over the picture: a red circle at the center says nothing was
    found, so check the polarity, the light and the focus before a routine
    relies on it.
 2. Jog the nozzle over the camera until it shows in the picture and press
-   *Center nozzle*: the head rises to the travel height, comes down to
+   *Center nozzle* (Nozzle panel): the head rises to the travel height, comes down to
    *Sharp at H* when that is set, moves the step along X and along Y to
    measure how the picture scales, turns and mirrors, and centers the
    nozzle. The head's R and Z there are the camera's place, kept for the
    next time, when the routine goes there by itself.
 3. Pick a board job uploaded as a `.kicad_pcb`: its footprints are listed
-   and drawn on the board with the head and the bottom camera; a press on a
+   in the Parts panel and drawn on the board in the Board panel with the head and the bottom camera; a press on a
    row or a dot picks one. The search above the drawing finds a part by a
    few letters of its reference or, with *Value*, its value: the matches
    are lit and the rest dimmed, and Enter (Shift+Enter back) or the arrow
@@ -949,8 +965,8 @@ through it:
    value, the footprint or any of them: *Apply* keeps it on the backend,
    the parts it matches leave the list, the drawing and every placing run,
    and the line under it counts them, or says why an expression is refused.
-4. With a part on the nozzle, *Look at part* reads where its center sits
-   against the nozzle's. *Go to part* takes the nozzle over the picked
+4. With a part on the nozzle, *Look at part* (Nozzle panel) reads where its center sits
+   against the nozzle's. *Go to part* (Parts panel) takes the nozzle over the picked
    part's place at the travel height, or, ticked, the part's center.
 
 The routines need `$cartesian=1`; the vacuum and the nozzle's turn are not
@@ -961,37 +977,39 @@ driven yet.
 A pick and place machine whose own controller takes the G-code OpenPnP's
 GcodeDriver sends (Marlin, Smoothieware, RepRapFirmware, Grbl) is a
 machine file with `controller = "gcode"` ([MACHINES.md](MACHINES.md#g-code-machines)),
-used like the other machines: connected from the Connection tab, jogged and
-homed in the Jog panel, read in the readout, sent lines in the Console,
+used like the other machines: connected from the Connection panel, jogged and
+homed in the Machine panel, read in its readout, sent lines in the Console,
 stopped with *Reset* or the jog cancel. `machines/opulo-lumen-rev5.toml`
 is an Opulo LumenPnP (Rev05 board, Opulo's Marlin) as Opulo's stock
 OpenPnP setup drives it; `machines/openpnp-marlin.toml` is a plain Marlin
-start to copy. A file is edited on the Config page like any machine file
+start to copy. A file is edited on the Machines page like any machine file
 (*Write to board* is locked for it: its controller keeps its own
 settings), where *Import from OpenPnP* reads OpenPnP's `machine.xml` (and
 a `.job.xml` with its `.board.xml` files, and its `parts.xml` and
 `packages.xml`) into a new one: every value read has a box to keep or
 leave it, and the file shows as it will be saved. A job's placements
-become references for the board job picked on the PNP page. A feeder's
+become references for the board job picked in the Parts panel. A feeder's
 part, by its part id in `parts.xml`, gives it its package's body as its
 `size` (the bottom camera's check) and, with a job's board height, its
 `place_z`: the board's top plus the part's height. The parts themselves
-come from the board's KiCad file, not from OpenPnP. Its setup steps:
+come from the board's KiCad file, not from OpenPnP. Its steps (the
+Steps panel's *Place parts with a G-code machine*):
 
-1. Connect: the Connection tab names the machine's port after its file (the
+1. Connect: the Connection panel names the machine's port after its file (the
    LumenPnP's `MARLIN_OPULO_LUMEN_REV5 ... CDC in FS Mode` port by its
    `[port] match = ["lumen"]`, another machine by its file's `url` or
    words); pick it and press *Connect*. The status bar shows the
    firmware's name (M115) and the machine's.
-2. Home, in the Jog panel.
+2. Home, in the Machine panel (*Home* under its fold *Go to, set
+   position, motors*).
 3. Pick or upload the board (a `.kicad_pcb`) in the Parts panel, pick a
-   part, put the nozzle over it with the Jog panel (or the top camera,
+   part, put the nozzle over it with the Machine panel's jog (or the top camera,
    *with the top camera* on *Go to part*), and press *Nozzle here* or
-   *Camera here* in Board on the machine. The references are kept per job
+   *Camera here* in the Board place panel's *By references*. The references are kept per job
    and map the whole board: one gives the shift (with *Turned deg*), two
    or more the turn too, and the panel says how far each one sits off the
    fit. A corner of the board taken with the top camera (*Corner here* or
-   *Corner by edges* in the Find board panel) is a reference too, listed
+   *Corner by edges* under *By camera*) is a reference too, listed
    as "corner bottom left", so *Go to part* works from it at once; one
    found by its edges also gives the board's turn. *Clear corners*
    forgets them. *Parts to align to*: *Choose* picks that many parts
@@ -1003,7 +1021,7 @@ come from the board's KiCad file, not from OpenPnP. Its setup steps:
    the top camera* ticked, the picked part's pads and body (as its
    footprint draws them, turned as it lies) are drawn about the top
    camera's crosshair: jog until the part fills them, then *Camera here*.
-4. *Plan* makes the placement program from the references and the
+4. *Plan*, in the Placing part of the Run panel, makes the placement program from the references and the
    feeders and shows it; nothing moves (it works with the machine
    disconnected too, for the one last connected). *Run* places the
    parts; a run window shows its progress and its steps (each pick,
@@ -1011,10 +1029,11 @@ come from the board's KiCad file, not from OpenPnP. Its setup steps:
    at once. With *repeat* ticked, a run that finished asks for the next
    board and places it again; the boards are counted until *Reset*.
 
-Moving it by hand: the Jog panel draws the file's bars (X, Y, the
+Moving it by hand: the Machine panel draws the file's bars (X, Y, the
 nozzle's height Z and its turn A; the LumenPnP's say which way N1 goes on
 its seesaw); a jog reads where the head is (M114) and moves by the step
-from there, so jogs pressed quickly add up. A goto in the Jog panel moves
+from there, so jogs pressed quickly add up. A goto (the Machine panel's
+fold *Go to, set position, motors*) moves
 only the axes given: it goes up to the file's safe height only to go
 across and only from below it (a nozzle above it stays there; a seesaw
 comes down to it from above too), turns the nozzle on the way, and puts
@@ -1023,20 +1042,22 @@ line under the goto rows says what Go will move, from where to where, as
 soon as a field is typed in. With `leave` in the file's `[up_camera]`, a
 jog that takes the nozzle away from over the bottom camera with its tip off
 the safe height goes up to it first, while small jogs over the lens stay
-at the height they are at. The
-Head panel on the PNP tab has *Light*, *Park*, *Nozzle over camera* (the
+at the height they are at. A row in the Machine panel has the head's
+*Light*, *Park*, *Vacuum on* and *Vacuum off*, with *Home by fiducial*
+and *Find home fiducial*. The Head panel on the Setup side's Cameras
+page has *Nozzle over camera* (the
 nozzle over the bottom camera at the height it is sharp at), *Nozzle to
 camera spot* and *Camera to nozzle spot* (the head moved by the top
-camera's offset), the vacuum, and *Tune the machine file*. *Go to part*
+camera's offset), *Read vacuum*, and *Tune the machine file*. *Go to part*
 moves X and Y only: it rises to the safe height first when the nozzle is
 below it and never brings it down. The Bottom camera view and Top
-camera view panels show the two pictures (stack them, or put them side
+camera view panels in the Run area show the two pictures (stack them, or put them side
 by side, from the panels' menus); a drag on a picture moves the head so
 the picture follows the pointer, a double-click brings a point to the
 crosshair, and Ctrl and the wheel zoom. With part classes in the
 machine file (`[[part_class]]`, MACHINES.md), *Crop* under the bottom
 camera's picture picks the class whose crop the dashed circle shows and
-the bottom camera panel's *Look once* at a part keeps to, so a class's
+the Bottom camera view's *Look once* at a part keeps to, so a class's
 crop can be tried on a part held over the camera before a run uses it.
 *Nozzle box* under the top
 camera's picture, then a drag on it, draws a box where the nozzle
@@ -1068,8 +1089,8 @@ Measure *place_z* before the first run (the file's 20 keeps the tip well
 above a board): jog the tip down onto the board's top, read its Z in the
 readout, and set it to that Z plus the parts' height under *Tune the
 machine file* in the Head panel, where the heights, feeds, dwells and the
-vacuum's ranges are set a value at a time. *Vacuum on*, *Vacuum off* and
-*Read vacuum* find the sensor's readings with the nozzle open and blocked
+vacuum's ranges are set a value at a time. *Vacuum on* and *Vacuum off*
+in the Machine panel and *Read vacuum* in the Head panel find the sensor's readings with the nozzle open and blocked
 before `part_on`/`part_off` are set.
 
 Feeders can be tape strips, trays (`columns`, `row_pitch`) or feeders
@@ -1086,11 +1107,13 @@ angle they go down at: their offset, size and angle are checked, the
 angle corrected, and they are placed where their center lands.
 
 The top camera (on the machine's head, looking down, `[top_camera]` in its
-file) is set up in its panel: pick it and Start, jog the nozzle's tip
+file) is set up in its Top camera panel on the Cameras page: pick it
+and press *Start* on the Top camera view (Run), jog the nozzle's tip
 onto a mark it can see (a dot on paper, a hole) and press *Nozzle on
 mark*, then *Measure offset*: the head moves so the camera should see the
 mark (by the file's `offset`, or from where it stands when there is
 none), measures the picture and centers the mark. *Home by fiducial*
+in the Machine panel
 (with `home_fiducial` in the file's `[top_camera]`, which the OpenPnP
 import reads from the head's homing fiducial) homes the machine, then
 finds that fiducial on the bed with the top camera, centers it, and
@@ -1098,23 +1121,24 @@ declares where the head is (G92) so the numbers put the fiducial where
 the file says: the switches find home to a few hundredths, the fiducial
 ties the numbers to the bed itself. *Find home fiducial* does the same
 with no home first, from where the numbers put the fiducial now: a check
-after a long run or a knock, quicker than a home. The setup's Home step
-offers it on a machine whose file names the fiducial. *Find fiducials* (or
+after a long run or a knock, quicker than a home. The Steps panel's Home step
+offers it on a machine whose file names the fiducial. *Find fiducials*
+under *By references* (or
 *find fiducials first* on a run) fits the board on its fiducials,
 footprints FID* or named Fiducial, from where the references put them.
-A board with no references at all is found with the Find board panel
-and the top camera picked (Looking for the board, above): *Look for
+A board with no references at all is found under the Board place panel's
+*By camera* with the top camera picked (Looking for the board, above): *Look for
 board* with the board's job picked, *Search* (over a box drawn on the top
 camera's picture, or where corners taken put the board), then *Use as
 board place* keeps where the looks put the board (else where the corners
 put it) as two references (the two parts furthest apart), which *Find
-fiducials* then makes exact. The Board drawing shows where each guess
+fiducials* then makes exact. The Board panel's drawing shows where each guess
 says the camera's picture lies on the board, green once found. A
 feeder with `pocket` has each pocket looked at before its pick (an empty
 one is passed over), one with `marks` has its marks found once a run and
 its places moved to follow them.
 
-The *Machine view* panel (in the Machine folder) draws the machine from
+The *Machine view* panel (Setup side, Cameras page) draws the machine from
 above in its file's X and Y: the head's reach (`[motion] travel`), the
 bed boards lie on (`[top_camera] bed`), the board area, the head with
 what the top camera sees, the board where its look put it and the stops
@@ -1163,7 +1187,7 @@ run on a LumenPnP yet: try *Scan bus* and *Feed* before a run.
 ### A virtual LumenPnP
 
 `mise run virtual-pnp` (`bin/spinny-virtual-pnp` in a release) plays a
-LumenPnP with nothing attached, so the PNP tab can be tried end to end.
+LumenPnP with nothing attached, so placing parts can be tried end to end.
 It takes G-code on `socket://127.0.0.1:2327` as Opulo's Marlin does:
 moves take the time their feed gives them (`--fast 4` four times
 quicker), M400 waits for them, M410 stops the head where it is, M114
@@ -1172,7 +1196,7 @@ the I2C mux reads as a LumenPnP's: about 254 with the pump off, 251 with
 the nozzle open, 231 with a part on it. Three Photon feeders answer on
 the bus (addresses 1 to 3; the program prints their ids for `bus_id`).
 
-Connect *Virtual LumenPnP* (`machines/virtual-pnp.toml`) on the Connection tab.
+Connect *Virtual LumenPnP* (`machines/virtual-pnp.toml`) in the Connection panel.
 Its file gives the bottom (up) camera the device
 `http://127.0.0.1:2328/snapshot` and the top camera
 `http://127.0.0.1:2329/snapshot`, size 640x480, which the cameras take as
@@ -1210,16 +1234,16 @@ A spot is read from a picture taken after it was asked for: a snapshot
 camera asked a few times a second would otherwise show the head where it
 was before the move.
 
-### The Auto tab
+### The Assistant
 
-The *Auto* tab is a conversation with a language model that works through
+The *Assistant* panel in the Job area is a conversation with a language model that works through
 the backend's own tools. Ask for a job ("a 20 mm square with a 5 mm hole
-in the middle, three passes at 300"), a Plot operation (drill these
+in the middle, three passes at 300"), a Draw operation (drill these
 points, face this rectangle), markers, a placement plan, or about what is
 there ("which jobs are for the mill?"). The answer comes in as it is
 written; each tool call is a folded line with its name, its arguments and
 a short result (*running* until the call is done), and unfolds to the
-whole. A job it makes or changes shows in the Jobs and Plot tabs at once.
+whole. A job it makes or changes shows in the Job area at once.
 Enter sends, Shift+Enter starts a new line, and *Send* is locked while a
 turn runs; *Stop* ends the turn under way (what it made so far stays; a
 tool call already running finishes in the backend all the same, and its
@@ -1249,10 +1273,10 @@ trust.
 
 ### What the tools can and cannot do
 
-The Auto tab's model, and any MCP client given `spinny-mcp`, works
+The Assistant's model, and any MCP client given `spinny-mcp`, works
 through one set of tools. They make, change and read data, and nothing
-else: jobs (combined jobs among them), Plot jobs (one operation, or a
-list of them, a Plot job's list replaced in place), markers, the pick and
+else: jobs (combined jobs among them), jobs of Draw operations (one operation, or a
+list of them, such a job's list replaced in place), markers, the pick and
 place machine's references and plans, and CAM jobs are made and changed;
 `delete_job` takes a job out, which its description keeps to a job the
 operator asks to delete or one the model made by mistake; the state, the machine
@@ -1260,7 +1284,7 @@ files (G-code machines' among them), the CAM profiles and the cameras'
 recorded board searches are read, so a model can say where a search went
 wrong. Plugins for the page are listed, read, written and deleted, and a
 plugin written is always off: no tool turns one on, which only the
-Plugins tab does. No tool
+Plugins panel does. No tool
 connects or disconnects the machine, jogs it or sends it anywhere, homes
 it, runs, holds, resumes or stops a job, lights the laser, starts the
 spindle, probes, starts a camera routine, moves the pick and place
@@ -1290,7 +1314,8 @@ make you a job, and you run it. `mise run mcp` starts the server by hand.
 ### Lining a job up with the board
 
 A job imported from a board is placed about the axis; the board on the
-table is wherever it was clamped. The Align panel pairs points of the job
+table is wherever it was clamped. The Board place panel's *By marks*
+fold (Run area) pairs points of the job
 with where the machine finds them, and turns and shifts the job to match
 (its paths, outline, pads and holes move; the job's *rotation* and
 *offset* record it):
@@ -1331,8 +1356,8 @@ in. The backend writes `var/resume.json` as a run goes, so the count
 survives the host as well as the controller.
 
 1. If the controller lost its position (it was powered down, or reset
-   while moving), tell it where the head is first: *Here is* in the Jog
-   panel declares the joints without moving them, and *Last known* fills
+   while moving), tell it where the head is first: *Here is* in the
+   Machine panel (under *Go to, set position, motors*) declares the joints without moving them, and *Last known* fills
    in the last position the machine reported before the link closed,
    run or no run. A board that comes back counting from zero does not
    overwrite it: the position is held (the toast says so) until it is
@@ -1343,8 +1368,8 @@ survives the host as well as the controller.
    or *Probe here: tie map* over copper the map covers (the map's offset
    is taken back by every position set, as a safeguard). Tying again in
    the same frame changes nothing: the map keeps the gap over the
-   contact and a tie only remeasures the frame. The *Height map* select
-   in the run row says how the pickup follows the board; untouched, it
+   contact and a tie only remeasures the frame. The Height panel's
+   *Runs follow* says how the pickup follows the board; untouched, it
    is the way the stopped run did.
    Without the map (the stopped run was *off*), the run takes H 0 for the
    copper, so set that first: *Probe here: set Z 0* on the copper. A
@@ -1404,7 +1429,8 @@ axis's and the probe's first, by what the machine does:
 
 An axis with a switch at one end or both (`endstop` under its section in
 the machine file, with `endstop_pin`; [MACHINES.md](MACHINES.md#pins))
-can be homed: *Home* in the jog panel, or `home`, `home R` or `home R+`
+can be homed: *Home* in the Machine panel (under *Go to, set position,
+motors*), or `home`, `home R` or `home R+`
 in the console, finds the switch and declares the axis to read
 `home_pos` there. The cycle, and the halt `endstop_halt` asks for, are
 in [PROTOCOL.md](PROTOCOL.md#endstops-and-homing). The readout's *Homed*
@@ -1428,7 +1454,7 @@ back as it is by a position set: tie the map again (*Probe here* or
 
 A servo the machine file fits (`[servo.1]` to `[servo.4]`, on a pin of
 the board or a channel of a PCA9685; [MACHINES.md](MACHINES.md#servos))
-gets a bar in the jog panel, below the axes: its number and name with
+gets a bar in the Machine panel, below the axes: its number and name with
 the angle it holds, or *off* while it has no pulse; a button for each of
 its named positions; a field for any angle in its range with *Go*; and
 *Off*, which takes its pulse away so it stops holding and can be turned

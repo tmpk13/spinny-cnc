@@ -10,11 +10,11 @@ writes every firmware setting, so swapping files swaps machines. The same
 files start the virtual firmware, and give the gcode tools their defaults.
 A machine whose own controller takes G-code, a pick and place machine's
 Marlin, is a file here too ([G-code machines](#g-code-machines)): it is
-connected from the Connection tab and jogged, homed and stopped like the others.
+connected from the Connection panel and jogged, homed and stopped like the others.
 
 | Where | How |
 | --- | --- |
-| Web page | The *Config* tab: pick a file (the one in use is named under the pick, and marked in it; the Connection tab and the top bar name it too), *Use this machine* to make it the machine in use (a G-code machine's file connects it on the port its file claims, the machine connected let go first; another is written to the board, the board connected first when its port is listed; with nothing to connect, it is remembered as the one in use), edit it in the TOML editor (read as it is typed, and whole by *Check*), *Save* it and press *Write to board*, which writes every setting and saves it to the board's flash in one step (saving an edited text first). *Read from board* writes the board's values into the text where they differ, for a look before *Save*. A line says what the board runs and whether its flash has it; *Save to flash* shows only when something written past the file (the console, a page control) left flash behind. Beside the editor, *Settings* lists every key a file can set (a G-code machine's file: its own tables) with the file's value next to the board's, or a camera's for its keys, the differences marked, a fuzzy search over key, firmware setting, help and the other words a key goes by (a camera's `roll` is found as rotation, turn or angle; the vacuum's keys as suction); a click goes to the key in the editor, adding it with the file's value when the file leaves it out. A row's *Insert* writes the board's (or the camera's) value into the text at its key, and *Copy* puts the key on the clipboard as TOML under its table; *Copy all* does that for the rows shown. The find over the editor (Ctrl+F in it) marks a word in the file and steps through it; *all files* lists the lines of every machine file that hold it, a press opening that file there. |
+| Web page | The Setup side's *Machines* page: in its *Machine file* panel pick a file (the one in use is named under the pick, and marked in it; the Connection panel and the top bar name it too), *Use this machine* to make it the machine in use (a G-code machine's file connects it on the port its file claims, the machine connected let go first; another is written to the board, the board connected first when its port is listed; with nothing to connect, it is remembered as the one in use), edit it in the TOML editor (read as it is typed, and whole by *Check*), *Save* it and press *Write to board*, which writes every setting and saves it to the board's flash in one step (saving an edited text first). *Read from board* writes the board's values into the text where they differ, for a look before *Save*. A line says what the board runs and whether its flash has it; *Save to flash* shows only when something written past the file (the console, a page control) left flash behind. Beside the editor, the *Settings* panel lists every key a file can set (a G-code machine's file: its own tables) with the file's value next to the board's, or a camera's for its keys, the differences marked, a fuzzy search over key, firmware setting, help and the other words a key goes by (a camera's `roll` is found as rotation, turn or angle; the vacuum's keys as suction); a click goes to the key in the editor, adding it with the file's value when the file leaves it out. A row's *Insert* writes the board's (or the camera's) value into the text at its key, and *Copy* puts the key on the clipboard as TOML under its table; *Copy all* does that for the rows shown. The find over the editor (Ctrl+F in it) marks a word in the file and steps through it; *all files* lists the lines of every machine file that hold it, a press opening that file there. |
 | Backend | `GET /api/machines`, `GET`, `PUT`, `PATCH` and `DELETE /api/machines/{id}`, `POST /api/machines/{id}/check`, `POST /api/machines/{id}/apply` ([WEB_API.md](WEB_API.md)); `spinny-web --machines DIR` reads another directory |
 | Virtual firmware | `spinny-virtual --machine machines/cartesian-mill.toml`; `--settings` after it overrides single values |
 | Gcode tools | `spinny-iso --machine machines/polar-laser.toml ...`: the axis rates, the power scale and the chord tolerance stand in for the defaults; a flag given still wins |
@@ -199,7 +199,7 @@ offset = [0.0, 0.0]             # the picture's center from the tool, board mm a
 roll = 0.0                      # degrees from the picture's x axis to board +X, counterclockwise seen from above; measured with the offset
 mm_per_px = 0.0                 # mm per picture pixel at the board; 0 until measured, or taken from a lock
 
-[controls]                      # the page's jog panel and readout; left out: the defaults below
+[controls]                      # the Machine panel's jog and readout; left out: the defaults below
 pad = true                      # a board X/Y pad, on the arrow keys when no field has the focus
 pad_steps = [0.1, 1, 10]        # mm, 1 to 8 steps; an axis without steps of its own uses the pad's
 pad_step = 1                    # picked at the start; left out: the middle one
@@ -335,7 +335,7 @@ millimeters: `full_steps_per_mm` for the screw behind it (200 steps on a 2
 mm lead is 100, 1600 at 16 microsteps), `max_rate` for the retract and the
 ceiling of a plunger jog, `jog_rate` for the page's *Extrude* and
 *Retract* buttons. `[table]` and `[dispenser]` do not go in one file. The
-page's readout and jog panel show the plunger as `E` in mm (the defaults;
+Machine panel's readout and jog show the plunger as `E` in mm (the defaults;
 `[controls]` may say otherwise), and a board imported with mode `dispense`
 lays a dot of paste on every pad of a layer. What a dot is made of is the
 host's, under `[host]`: `gap`, `retract`, `output`, `extrude_rate` and
@@ -352,7 +352,7 @@ Up to four servos, `[servo.1]` to `[servo.4]`, each on a pin of the board
 a PCA9685 PWM driver on the board's I2C bus (`channel`), never both. A
 servo the file leaves out has no output (`servoN_out` 0), so a file with
 none takes them all off, and the file says how many the machine has by
-the sections it gives: the jog panel draws a bar for those only. The
+the sections it gives: the Machine panel draws a bar for those only. The
 slots are fixed because the firmware keeps each one's seven settings in
 its stored settings record, whose layout is fixed; four were picked as
 enough for a pen, a shutter, a probe and a gate while keeping that record
@@ -361,7 +361,7 @@ and the settings list short (a slot no file fits costs only its settings). The p
 other way gets the longer pulse as `min_us`. `start` is the angle the
 board drives it to at power on; left out, it gets no pulse until it is
 moved, and hangs loose meanwhile. `name` and `positions` are the page's:
-a bar per servo in the jog panel with its angle, a field to move it to
+a bar per servo in the Machine panel with its angle, a field to move it to
 any angle in its range, a button per named position and *Off*, which lets
 it go. The firmware's side, the `servo` line and how a servo rides through
 holds and resets, is [PROTOCOL.md](PROTOCOL.md#servos); the wiring and the
@@ -404,7 +404,7 @@ measured again.
 
 ## The controls
 
-The jog panel and the position readout draw what `[controls]` says, so
+The Machine panel's jog and position readout draw what `[controls]` says, so
 a machine with other joints, names, steps or keys needs no change to the
 page. The backend sends the controls with the settings (`GET
 /api/settings`): the file's whose settings the live ones are, every one
@@ -413,7 +413,7 @@ firmware older than the file's newest keys), the file last loaded from
 this host when it describes this kind of machine (kinematics, tool, focus
 axis), else the one file that does, else the defaults for what the
 settings say the machine is. `controls_from` names the file, and the
-Config tab says under the file whose controls the jog panel draws. A file
+Machine file panel says under the file whose controls the Machine panel draws. A file
 edited by hand shows after *Reload* there, or a page reload. Every
 control is a bar: its letter and title, a note, the step choices with a
 field for any other step, the minus and plus buttons and the zero button.
@@ -433,7 +433,7 @@ An entry fills in what it leaves out from the default for its joint; an
 entry given a `letter` or a `label` but no `buttons` is labeled
 `<letter>-` and `<letter>+` rather than with the default's words. The
 step picked with a control is kept while the page is up; the keys of an
-axis jog it by that step, and `Escape` or the jog panel's *Cancel*
+axis jog it by that step, and `Escape` or the Machine panel's *Cancel*
 stops whatever the controls are. `place`, which older files say, is
 still taken and means nothing now. The virtual firmware checks only that
 `[controls]` is a table: the controls are the page's, not the machine's.
@@ -449,7 +449,7 @@ and *Read from board* are locked for it); it is connected instead. Its
 tool is a vacuum nozzle (`tool = "nozzle"`, the only one it takes, as
 `kinematics = "cartesian"`), and its joints are the cartesian machine's:
 `r` is X, `z` is Y, `h` is Z (the nozzle's height) and `a` the rotation
-axis as the controller counts it, so the jog panel, the readout and the
+axis as the controller counts it, so the Machine panel's jog, readout and
 goto rows draw and drive it as any machine, its `[controls]` (left out:
 X and Y on the pad and as bars, the nozzle's height and its turn, with no
 Center and no zero button on Z or the turn) naming the bars. Its own
@@ -481,10 +481,10 @@ wait = "M400"            # answered once the moves queued have run: after a goto
 pick = "M106"            # vacuum on: a line or a list (a pump and a valve take one each)
 place = "M107"           # vacuum off
 dwell = "G4 P{ms}"       # {ms} or {s} for the time; empty for none
-home = "G28"             # the jog panel's Home, with the axes' letters when it names some
+home = "G28"             # the Machine panel's Home, with the axes' letters when it names some
 position = "M114"        # answered with X:... Y:... Z:... (A:...): read at the connect, once a second, before a jog
 stop = "M410"            # the Stop and jog cancel, sent ahead of anything in flight; empty sends nothing
-motors_on = "M17"        # the jog panel's Motors; empty: refused
+motors_on = "M17"        # the Machine panel's Motors; empty: refused
 motors_off = "M18"
 light_on = []            # the cameras' lights, a line or a list; the cameras' routines switch them on first
 light_off = []
@@ -500,7 +500,7 @@ pick_dwell_ms = 200
 place_dwell_ms = 150
 pick_tries = 3           # pockets tried for one part before it is left out, 1 to 20
 park = [40.0, 400.0]     # X Y where Park takes the head
-travel = [0.0, 0.0, 433.0, 487.0]  # how far the head reaches, x0 y0 x1 y1 as places of the nozzle (the controller's soft limits): the PNP tab's Machine view draws the machine as this box; nothing moves by it; left out, the view boxes the places the file names
+travel = [0.0, 0.0, 433.0, 487.0]  # how far the head reaches, x0 y0 x1 y1 as places of the nozzle (the controller's soft limits): the Machine view panel (Cameras page) draws the machine as this box; nothing moves by it; left out, the view boxes the places the file names
 discard = [10.0, 10.0, -15.0]  # X Y Z where a part that failed a check is let go; left out, back in its pocket
 skew = 0.0023            # the axes out of square (below): the head's Y travel leans this many mm toward +X a mm, -0.02 to 0.02; left out, 0 (square)
 skew_by = "link"         # who takes it out: "link", this backend on every move and place read; "firmware", the controller told by [gcode] skew at the connect
@@ -511,7 +511,7 @@ pattern = "T:\\s*(-?[0-9]+(?:\\.[0-9]+)?)"  # a group around the reading; OpenPn
 part_on = [40.0, 100.0]  # low and high with a part held; left out, read by hand only
 part_off = [0.0, 10.0]   # with the nozzle empty
 
-[up_camera]              # the PNP tab's bottom camera, when it is fixed to this machine
+[up_camera]              # the bottom camera, when it is fixed to this machine
 position = [150.0, 30.0] # the head's place with the nozzle over its picture's center, as designed; Center nozzle measures it
 z = -15                  # the height the nozzle tip is seen sharp at over it; left out, the safe height
 crop = 3.0               # mm from the picture's center a part is looked for; left out, pcbv's own reach
@@ -537,7 +537,7 @@ z = 0                    # the height the head looks from; left out, the safe he
 offset = [40.0, 0.0]     # its picture's center from the nozzle as designed; Measure offset finds it
 roll = 180               # degrees from the picture's x axis to +X, counterclockwise seen from above, as mounted (180: upside down); used until Measure offset measures the scale and roll; left out, the measured one or 0
 bed = [20.0, 60.0, 450.0, 550.0]  # where boards lie, x0 y0 x1 y1 of the places the picture's center goes over: a search with no place known and no box drawn scans it on a lattice spaced by the board's size, then halfway between; left out, a square the board's diagonal on a side about the head
-board_area = [40.0, 80.0, 200.0, 200.0]  # where a board is expected, x0 y0 x1 y1 in the frame of bed and inside it: a search with nothing known looks there first, then the rest of the bed; drawn and set on the PNP tab's Machine view; left out, the whole bed
+board_area = [40.0, 80.0, 200.0, 200.0]  # where a board is expected, x0 y0 x1 y1 in the frame of bed and inside it: a search with nothing known looks there first, then the rest of the bed; drawn and set on the Machine view panel; left out, the whole bed
 board_area_only = false  # true: boards are only ever placed inside board_area, so a search never looks outside it
 mm_per_px = 0.016        # its scale as designed, mm a pixel of the full size picture at the size it runs at: until a scale is measured or seen locked, a search plans its stops by it and pcbv's search keeps within 1.5 times of it either way; left out, none
 fiducial = "bright"      # how a fiducial looks to it
@@ -572,7 +572,7 @@ crop = 1.0               # mm from the picture's center its parts are looked for
 The cameras' own keys (`device`, `size`, `fps`, `pcbv` and the shades
 their routines look for) are put into the bottom and top cameras' settings
 when the machine is connected, as a load puts a `[camera]` table into the
-head camera's: what the file leaves out keeps what the PNP tab set, and a
+head camera's: what the file leaves out keeps what the Cameras page set, and a
 camera given a new device starts again on it. The places, rolls and
 mirror are first guesses instead, which the cameras' routines measure and
 keep. So a machine's cameras come with it: the virtual LumenPnP's file
@@ -635,7 +635,7 @@ packets to smart feeders through the controller: its keys, and what a
 run does with them, are in [WEB_API.md](WEB_API.md#placing-with-a-g-code-machine),
 the LumenPnP file spelling out Opulo's Photon feeders.
 
-The Connection tab lists every serial port with the G-code machine whose file
+The Connection panel lists every serial port with the G-code machine whose file
 claims it (its `url` is the port's, or one of its `match` words is in
 the port's USB names), and a G-code machine whose `url` no port is
 listed under (a socket) as an entry of its own; Connect opens a claimed
@@ -650,8 +650,8 @@ the cameras' routines go across by the same rule, and a seesaw's Z jog
 stops at `safe_z`, both nozzles up, rather than go past it. The console sends lines as typed; Stop sends `stop`. What
 needs this project's firmware (the laser, the spindle, runs, probing,
 settings, the head camera's routines) answers that the machine is a G-code
-one. The PNP tab places with it (see OPERATING.md), and the Config page
-imports one from OpenPnP's `machine.xml`, its feeders' parts' sizes and
+one. The page places parts with it (see OPERATING.md), and the Machines page's
+*Import from OpenPnP* makes one from OpenPnP's `machine.xml`, its feeders' parts' sizes and
 heights from its `parts.xml` and `packages.xml`.
 
 ## A release's machine files
@@ -659,7 +659,7 @@ heights from its `parts.xml` and `packages.xml`.
 A release ships these files inside its package, and its first start copies
 them into your machines directory, which from then on is yours: nothing
 writes it unasked. When a later release ships a file changed (a key added,
-a value corrected) or a file you have no copy of, the Config tab offers it
+a value corrected) or a file you have no copy of, the Machine file panel offers it
 under the file pick: each offer lists its changes and shows the
 difference it makes to your copy; *Take* writes it, *Keep mine* leaves your
 copy as it is, and neither is offered again for that release.

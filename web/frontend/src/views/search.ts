@@ -1,7 +1,7 @@
 // Finding a feature by a few letters of its name: a magnifier in the tab
 // bar (or "/" or Ctrl+K with no field in use) opens a box; what is typed
 // is matched loosely against every page, every panel and every button the
-// page has, in the order of the letters (so "hmprb" finds "Height map:
+// page has, in the order of the letters (so "hprb" finds "Height:
 // Probe"), and the best matches are listed. Picking one shows its page and
 // panel (unhidden, unfolded, in front of its stack, pulsing); a button is
 // given the focus, not pressed, so a search never moves the machine.

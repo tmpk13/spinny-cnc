@@ -43,29 +43,29 @@ stencils, but it does not ablate bare copper.
 
 ## What carries over
 
-The CAM tab's built job (`camjob.BuiltJob`: groups of polylines in mm with
+The CAM page's built job (`camjob.BuiltJob`: groups of polylines in mm with
 speed, passes and power) holds everything a K40 needs, so isolation, vector
 clearing, outlines and the F.Paste stencil carry over. The machine side
-does not: the line protocol, the Jobs page's Run panel, the runner and
+does not: the line protocol, the Run panel, the runner and
 link, the height map,
 probing, focus and power compensation, speed-tied power, endstop settings
-and the `[controls]` jog panel all assume this repo's firmware.
+and the `[controls]` jog in the Machine panel all assume this repo's firmware.
 
 ```mermaid
 flowchart LR
-    CAM[CAM tab: BuiltJob] --> GC[post: gcode]
+    CAM[CAM page: BuiltJob] --> GC[post: gcode]
     CAM --> EGV[post: egv, route 2]
     GC -->|route 1| MK[MeerK40t] -->|USB| M2[M2 Nano]
     EGV --> MK
     EGV --> ND[nano_device, route 3] -->|pyusb, CH341 EPP| M2
-    JOB[Jobs page: jobs, runner, link] -->|route 4, line protocol| PICO[SKR Pico in the K40]
+    JOB[Job and Run areas: jobs, runner, link] -->|route 4, line protocol| PICO[SKR Pico in the K40]
 ```
 
 ## Routes
 
 | | Route | Code | Result |
 | --- | --- | --- | --- |
-| 1 | MeerK40t runs the CAM tab's gcode | a `cam/k40.toml` | jobs on the stock board now; power only as PPI; the page does not drive it |
+| 1 | MeerK40t runs the CAM page's gcode | a `cam/k40.toml` | jobs on the stock board now; power only as PPI; the page does not drive it |
 | 2 | An EGV post | about 800 to 1000 lines with tests | `.egv` files that MeerK40t or K40 Whisperer send as written |
 | 3 | The backend drives the board over USB | route 2 and about 2000 to 2500 more | the page connects, homes, jogs, runs, pauses and stops the K40 |
 | 4 | Replace the M2 with an SKR Pico | a `machines/k40.toml` and wiring | every feature with real power; the stock software no longer works |

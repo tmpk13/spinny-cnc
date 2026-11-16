@@ -1,4 +1,6 @@
-// The Plot page: simple cuts made by hand, the way a manual mill is used.
+// The Draw panel (the Plot page before the areas, so its jobs are still
+// called Plot jobs in the code): simple cuts made by hand, the way a
+// manual mill is used.
 // Pick what to cut (points drilled, a board job's holes, a line through
 // points, a face, or a pocket or a profile of a rectangle, its corners
 // square or rounded, or of a circle), give its corners, or its center and

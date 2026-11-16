@@ -1,6 +1,6 @@
-// The top bar: the machine's state (a press opens the Connection tab, where
+// The top bar: the machine's state (a press opens the Connection panel, where
 // the port is picked), the machine file in use (else the kind of machine),
-// its firmware, the event link, and the big Stop. Also the port helpers the Connection tab uses: a port
+// its firmware, the event link, and the big Stop. Also the port helpers the Connection panel uses: a port
 // a G-code machine file claims (its url, or words in the port's USB names)
 // is named after that machine and opens as it, so the same Connect serves
 // this project's board and a pick and place machine's own Marlin.
@@ -95,7 +95,7 @@ export function firmwareLabel(firmware: Firmware | null): { text: string; title:
 }
 
 export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
-    // The state, a press away from the Connection tab where the port is picked.
+    // The state, a press away from the Connection panel where the port is picked.
     const stateBadge = el("button", { type: "button", class: "badge state", "data-state": "none", title: "the machine's state; press for the Connection page (Setup side)" }, "No link");
     // On the Setup side: here, or in the tab that shows that side.
     stateBadge.addEventListener("click", () => void goTo({ panel: "connection", detail: null }));

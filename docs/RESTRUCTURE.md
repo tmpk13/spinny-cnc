@@ -102,8 +102,8 @@ to `cam/cartesian-laser.toml` that a page test reads (problem 8 below).
      backend's `jobs.py` rather than in the library.
 8. **Tests read the files the operator edits.** `cam.test.ts` reads the
    live `cam/cartesian-laser.toml`, and the toolpath and backend CAM and
-   machine tests read `cam/` and `machines/`. A change made on the Config
-   tab can therefore fail a test.
+   machine tests read `cam/` and `machines/`. A change made on the Machines
+   page can therefore fail a test.
 9. **The docs restate the code.**
    - `WEB_API.md` lists every field by hand.
    - The main diagram in `ARCHITECTURE.md` has about 70 nodes, each
@@ -200,7 +200,7 @@ work can land between steps; nothing is frozen.
    `machines.py`, `app.py`, `fake_serial.py` and the page read it, and the
    settings table in `PROTOCOL.md` is generated from it.
 2. A new route serves the machine keys and the default controls, which
-   already live in `spinny_laser`. The Config tab, the settings list and
+   already live in `spinny_laser`. The Machines page, the settings list and
    the servo bars read them from it instead of from `machinekeys.ts`.
    The page's copies then serve only the mock, and they go with it in
    phase 3.

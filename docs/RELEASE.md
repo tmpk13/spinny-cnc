@@ -32,7 +32,7 @@ again.
 - KiCad. A `.kicad_pcb` upload is turned into gerbers by KiCad's
   `kicad-cli`, which has to be installed and on `PATH`; without it,
   upload the gerber and drill files exported from KiCad instead.
-- The `claude` program, for the Auto tab's Claude Code provider.
+- The `claude` program, for the Assistant's Claude Code provider.
 
 ### Where the files are
 
@@ -41,14 +41,14 @@ directory `SPINNY_HOME` names), with:
 
 | Directory | Holds |
 | --- | --- |
-| `machines/` | machine files, edited on the Config tab |
+| `machines/` | machine files, edited on the Machines page (Setup side) |
 | `cam/` | CAM profiles |
 | `var/` | jobs, settings, the height map, logs |
 
 `machines/` (a G-code pick and place machine's files among them) and
 `cam/` start as copies of the ones the release
 ships; once a directory exists it is yours and a later release leaves it
-alone. A newer release's machine files are offered on the Config tab
+alone. A newer release's machine files are offered on the Machines page
 instead ([MACHINES.md](MACHINES.md#a-releases-machine-files)): each of your
 copies with the release's changes merged in, your values kept, to take or
 leave. CAM profiles are not offered: to pick up a newer release's, copy
@@ -63,7 +63,7 @@ the home directory carries over. Or let the release update itself:
 
 An installed release asks GitHub for the latest release of
 [tmpk13/spinny-cnc](https://github.com/tmpk13/spinny-cnc/releases) and
-installs it beside itself: on the Config page's *Version* panel (*Check*,
+installs it beside itself: in the *Version* panel on the Setup side's *Page* page (*Check*,
 then *Update*), or from the command line:
 
 ```sh
@@ -116,7 +116,7 @@ bin/spinny-virtual --machine ~/.local/share/spinny/machines/cartesian-mill.toml
 ```
 
 `bin/spinny-virtual-pnp` is a LumenPnP pick and place machine the same
-way: connect *Virtual LumenPnP* on the Connection tab (its machine file,
+way: connect *Virtual LumenPnP* in the Connection panel (its machine file,
 `virtual-pnp.toml`, is among the shipped ones) and give the cameras
 `http://127.0.0.1:2328/snapshot` and `http://127.0.0.1:2329/snapshot`
 ([OPERATING.md](OPERATING.md#a-virtual-lumenpnp) in the repository).
@@ -141,7 +141,7 @@ from elsewhere (`ln -s $PWD/bin/spinny-web ~/.local/bin/`) still works.
 
 ### Parts a plain release leaves out
 
-The Auto tab's Anthropic provider needs the `anthropic` package, and its
+The Assistant's Anthropic provider needs the `anthropic` package, and its
 Claude Code provider and `spinny-mcp` need `mcp`. A release built with
 `--extras auto,mcp` has them; into one without them they install with
 the release's own Python (this needs the internet):

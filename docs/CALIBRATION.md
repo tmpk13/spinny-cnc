@@ -1,6 +1,6 @@
 # Finding the axis and placing the board
 
-How a burnt coupon shows where the rotation axis really is, how the fine pattern amplifies what is left, and where to put the board. The same patterns are built as jobs from *Centering test* in the web page's Tests panel (stacked with Align on the Jobs page), shown when the machine file's `[controls] centering` is on (a polar machine's default).
+How a burnt coupon shows where the rotation axis really is, how the fine pattern amplifies what is left, and where to put the board. The same patterns are built as jobs from *Centering test* in the web page's Tests panel (beside the Checklist on the Setup side), shown when the machine file's `[controls] centering` is on (a polar machine's default).
 
 ## Finding the axis
 
@@ -124,7 +124,7 @@ was cut with and one can be switched off or cut again alone.
   focus by eye first: without a height map the steps count from the
   height the run starts at, with one from its focus height, and the head
   goes back after the last line. The thinnest, sharpest line is at focus;
-  move H by its number (or *Focus here* in the Height map panel) and run a
+  move H by its number (or *Focus here* in the Height panel) and run a
   finer ladder round it. Each line is a group whose *Focus* is its step.
 
 Every laser group may carry a focus of its own (the groups table's *Focus*
@@ -152,7 +152,7 @@ not draw it yet.
 
 To measure the lens, put the camera over the pattern so the dots fill
 its picture and press *Measure lens* in the camera's *Lens and colors*
-panel, a tab beside the camera's own (dark dots for the printed sheet, bright for the laser's): pcbv finds
+panel (Setup side, Cameras page), a tab beside the camera's own (dark dots for the printed sheet, bright for the laser's): pcbv finds
 the dots, indexes them into the grid, and fits two radial terms (k1, k2)
 that straighten it; the message gives how far the dots lie from a
 straight grid with and without them. The terms are kept per camera and

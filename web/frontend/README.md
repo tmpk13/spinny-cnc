@@ -234,7 +234,7 @@ Job area's preview, while no job or a drawn one is selected, with its sizes (`Ap
 the selected one, and on a laser the operations are burnt. The *Markers*
 fold (`src/views/markers.ts`, in each Machine panel) lists
 `AppState.markers`, which every preview draws, and *Grid* in a preview's
-head (`src/views/previewpanel.ts`) switches every preview at once. Their use is in [the Plot page](../../docs/OPERATING.md#the-plot-page),
+head (`src/views/previewpanel.ts`) switches every preview at once. Their use is in [the Draw panel](../../docs/OPERATING.md#the-draw-panel),
 [markers](../../docs/OPERATING.md#markers), [another bit for a job](../../docs/OPERATING.md#another-bit-for-a-job)
 and [the preview's grid](../../docs/OPERATING.md#the-previews-grid).
 
@@ -244,7 +244,7 @@ entry id (`withEntry`, `mergeAuto` in `src/state.ts`), so an answer grows
 in place as it is written and an unfolded tool call stays open as it goes
 from running to done; a tool that changed a job has the page list the
 jobs again. The provider row draws `AppState.autoSettings`. Its use is in
-[the Auto tab](../../docs/OPERATING.md#the-auto-tab). With `?mock=1` a scripted provider,
+[the Assistant](../../docs/OPERATING.md#the-assistant). With `?mock=1` a scripted provider,
 `mock` (`src/mock/auto.ts`), lists the jobs with the backend's `list_jobs`
 tool on the mock's clock and says what it found, so the page can be tried
 without a model.
