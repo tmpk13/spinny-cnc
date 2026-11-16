@@ -13,6 +13,10 @@ Setup side, a press, a pane or a tab away from the work rather than one
 more area among it. The rest of this proposal now applies to the Use
 side.
 
+[UI_PANELS.md](UI_PANELS.md) sorts what is inside the panels (one
+home per control, the panels after, new names) in steps that ship inside
+today's tabs before this frame.
+
 The figures are drawn by [ui/figures.py](ui/figures.py) (`mise run
 ui-figures`). Magenta numbers on a figure are notes, explained under it;
 they are not part of the page.

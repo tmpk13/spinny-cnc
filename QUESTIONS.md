@@ -303,3 +303,24 @@ Why it matters: keeping values checked is the last step to a machine that sets i
 - C. Each value's own setting, in its machine file.
 Applied: none yet; nothing built re-measures by itself, and a moving check waits for an answer.
 Answer:
+
+## Q51. Should the panels' contents be sorted inside today's tabs before the rail (Q43) is built?
+Why it matters: it decides what gets built next for TODO.md's "rearrange scattered controls" (docs/UI_PANELS.md, Order of work).
+- A. Contents first, in the plan's eight steps, each shipping inside today's tabs (recommended): the page improves step by step, and the rail later moves finished panels.
+- B. Build the rail and areas first and sort each panel as it moves: one upheaval instead of eight, but nothing improves until it lands.
+Applied: A, in the plan (docs/UI_PANELS.md); nothing built yet.
+Answer:
+
+## Q52. Should every way of saying where the board sits be one panel, Board place?
+Why it matters: six panels set or measure the board's place today (Find board, Align, Board on the machine, Machine view, and the job's anchor and offset in two places), and none says which one the run will use.
+- A. One Board place panel: its state line says where the board is and by what, sections from rough to exact (by hand, camera, corners, features, marks, references) (recommended).
+- B. Merge only the copies (Find board on Jobs and PNP) and keep Align and Board on the machine as panels of their own.
+Applied: A, in the plan (docs/UI_PANELS.md); nothing built yet.
+Answer:
+
+## Q53. Where should the next import's settings (power, speed, spot, anchor, offset, layer, mirror, board mode, clear copper) go?
+Why it matters: they sit above the job list and look like the selected job's settings, but only an upload reads them; the selected job's own power, speed and offset are further down under other names.
+- A. Into the dialog a dropped file opens (the layer chooser), filled from the last import, so the Jobs panel is only the list (recommended).
+- B. Keep them in the Jobs panel under a heading "For the next import".
+Applied: A, in the plan (docs/UI_PANELS.md); nothing built yet.
+Answer:
