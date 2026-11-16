@@ -41,11 +41,11 @@ export function stepStates(steps: Step[]): StepState[] {
 // --- the steps the setups share ---------------------------------------------
 
 export function connectStep(state: AppState): Step {
-    return { label: "Connect", done: state.snapshot.connected, hint: "Pick the port on the Connection tab and press Connect.", panel: "connection" };
+    return { label: "Connect", done: state.snapshot.connected, hint: "Pick the port in the Connection panel (Setup, Machines) and press Connect.", panel: "connection" };
 }
 
 export function jobStep(state: AppState): Step {
-    return { label: "Job", done: state.job !== null, hint: "Upload or pick a job in the Jobs panel.", panel: "jobs" };
+    return { label: "Job", done: state.job !== null, hint: "Upload or pick a job in the Job area.", panel: "jobs" };
 }
 
 function travelStep(state: AppState): Step {

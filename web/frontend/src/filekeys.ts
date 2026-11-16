@@ -54,7 +54,7 @@ function cameraKeys(section: string, machine: FileMachine, device: string): File
 
 function servoKeys(n: number): FileKey[] {
     return keys(`servo.${n}`, "spinny", "page", [
-        ["name", `the jog panel's bar title; left out, Servo ${n}`, "label title", `Servo ${n}`],
+        ["name", `the jog's bar title; left out, Servo ${n}`, "label title", `Servo ${n}`],
         ["positions", "the page's buttons, name = angle, at most 8", "presets buttons angles", null],
     ]);
 }
@@ -124,11 +124,11 @@ export const FILE_KEYS: FileKey[] = [
         ["pick", "vacuum on: a line or a list (a pump and a valve)", "vacuum suction pump valve on", "M106"],
         ["place", "vacuum off: a line or a list", "vacuum suction pump valve off release", "M107"],
         ["dwell", "a wait, {ms} or {s} for the time; empty for none", "pause delay G4", "G4 P{ms}"],
-        ["home", "the jog panel's Home", "homing G28", "G28"],
+        ["home", "the jog's Home", "homing G28", "G28"],
         ["position", "answered with X: Y: Z: (A:)", "report where M114", "M114"],
         ["stop", "the Stop and a jog's cancel, sent ahead of anything queued; empty sends nothing", "halt emergency quickstop M410", "M410"],
-        ["motors_on", "the jog panel's Motors on; empty: no button", "enable steppers M17", "M17"],
-        ["motors_off", "the jog panel's Motors off", "disable steppers M18", "M18"],
+        ["motors_on", "the jog's Motors on; empty: no button", "enable steppers M17", "M17"],
+        ["motors_off", "the jog's Motors off", "disable steppers M18", "M18"],
         ["light_on", "the cameras' lights on: a line or a list", "lamp ring led light", []],
         ["light_off", "the cameras' lights off", "lamp ring led light", []],
         ["skew", "tells the firmware the axes' skew when [motion] skew_by is firmware, {skew} for the factor; empty for a build with the factor in it", "skew correction out of square squareness non-squareness M852", "M852 I{skew}"],

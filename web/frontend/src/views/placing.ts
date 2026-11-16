@@ -94,7 +94,7 @@ export function nothingText(plan: PlacingPlan): string {
     }
     const reasons = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([reason, count]) => `${count} ${count === 1 ? "part" : "parts"} ${reason}`);
     const feeders = plan.skipped.some((entry) => entry.reason === "no feeder holds it")
-        ? " Feeders are [[feeder]] tables in the machine file (Config page): one holds the parts whose value and footprint hold its match words, or that its refs name."
+        ? " Feeders are [[feeder]] tables in the machine file (Machines page): one holds the parts whose value and footprint hold its match words, or that its refs name."
         : "";
     return `Nothing to place: ${reasons.join("; ")}.${feeders}`;
 }
@@ -188,15 +188,15 @@ export const PLACING_SETUP: Setup = {
                 label: "Home",
                 done: placing?.homed === true,
                 hint: placing?.document?.top?.home_fiducial
-                    ? "Press Home in the Jog panel, or Home by fiducial in the Top camera panel: it homes, then ties the numbers to the bed's homing fiducial."
-                    : "Press Home in the Jog panel.",
+                    ? "Press Home by fiducial in the Machine panel: it homes, then ties the numbers to the bed's homing fiducial; or Home, under the jog's Go to, set position, motors."
+                    : "Press Home in the Machine panel, under the jog's Go to, set position, motors.",
                 panel: "pnp-jog",
             },
             { label: "Board", done: parts > 0, hint: "Pick or upload a board (.kicad_pcb) in the Parts panel.", panel: "pnp-parts" },
             {
                 label: "Reference",
                 done: referencesOf(placing, jobId).length > 0,
-                hint: "Pick a part, put the nozzle or the top camera over it, and press Nozzle here or Camera here; or take a corner of the board with the top camera (Corner here in the Find board panel).",
+                hint: "Pick a part, put the nozzle or the top camera over it, and press Nozzle here or Camera here; or take a corner of the board with the top camera (Corner here, Board place, By camera).",
                 panel: "pnp-refs",
             },
             { label: "Place", done: placing?.progress?.state === "done", hint: "Press Plan, check it, then Run.", panel: "pnp-run" },
@@ -348,7 +348,7 @@ export function mountHead(root: HTMLElement, ctx: Ctx, quick?: HTMLElement): voi
             return;
         }
         if (!ctx.store.get().placing?.document?.vacuum) {
-            ctx.toast("error", "the machine file has no [vacuum] read lines: add them on the Config page first");
+            ctx.toast("error", "the machine file has no [vacuum] read lines: add them on the Machines page first");
             return;
         }
         await patch(["vacuum", key], [Math.min(a, b), Math.max(a, b)]);
@@ -380,7 +380,7 @@ export function mountHead(root: HTMLElement, ctx: Ctx, quick?: HTMLElement): voi
         badge.setAttribute("data-device", placingBadge(placing));
         nameLine.textContent = placing?.machine
             ? `${placing.name ?? placing.machine} (machines/${placing.machine}.toml)${placing.connected ? "" : ": connect it from the top bar"}`
-            : 'No G-code machine: add a machine file with controller = "gcode" on the Config page, or import one from OpenPnP.';
+            : 'No G-code machine: add a machine file with controller = "gcode" on the Machines page, or import one from OpenPnP.';
         const connected = placing?.connected === true;
         const running = placing?.running === true;
         const routine = state.pnp?.routine;

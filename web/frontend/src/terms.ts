@@ -1,10 +1,8 @@
 // What the cameras' words mean, said once here: a word on the page marked
-// as a term gets a dotted underline and its meaning as its tooltip, and a
-// panel can list the words it uses in a fold of their own. The words are
-// the ones the camera panels, the Find board panel and the routines' lines
-// use without saying what they are.
+// as a term gets a dotted underline and its meaning as its tooltip. The
+// words are the ones the camera panels, Board place and the routines'
+// lines use without saying what they are.
 
-import { el } from "./dom.ts";
 
 export const TERMS = {
     spot: ["spot", "a small blob the finder looks for in a picture, darker or brighter than what is around it (or of a color picked): a mark, a fiducial, a pad, the nozzle's bore, a part on the nozzle"],
@@ -61,12 +59,4 @@ export function explain<T extends HTMLElement>(node: T, term: Term): T {
 function labelText(node: HTMLElement): HTMLElement | null {
     const first = node.firstElementChild;
     return node.tagName === "LABEL" && first instanceof HTMLElement && first.classList.contains("labeled-text") ? first : null;
-}
-
-/** A fold listing the meaning of each of `terms`, in the order given. */
-export function termsFold(terms: Term[], summary = "What the words mean"): HTMLDetailsElement {
-    return el("details", { class: "camera-controls terms-fold" },
-        el("summary", { title: "the words these panels use, and what each means" }, summary),
-        el("dl", { class: "terms-list" }, ...terms.flatMap((term) => [el("dt", {}, TERMS[term][0]), el("dd", {}, TERMS[term][1])])),
-    ) as HTMLDetailsElement;
 }

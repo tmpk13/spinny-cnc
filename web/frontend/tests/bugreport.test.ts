@@ -292,7 +292,7 @@ describe("the bug report dialog", () => {
         expect(dialog.querySelector(".bug-shot img")).not.toBeNull();
         expect(dialog.textContent).toContain("Include what was done lately (2)");
         expect(dialog.querySelector(".bug-actions-list")!.textContent).toContain('press "Run" (Run, jobs)');
-        expect(dialog.textContent).toContain("No report link is set (Config tab).");
+        expect(dialog.textContent).toContain("No report link is set (Page, Bug reports).");
     });
 
     test("Save asks for words first, then keeps the report and says where", async () => {
@@ -352,7 +352,7 @@ describe("the bug report dialog", () => {
     });
 
     test("what the dialog and the Config panel say of the link", () => {
-        expect(whereReportsGo({ link: "", kind: null })).toBe("Kept on the backend in var/reports. No report link is set (Config tab).");
+        expect(whereReportsGo({ link: "", kind: null })).toBe("Kept on the backend in var/reports. No report link is set (Page, Bug reports).");
         expect(whereReportsGo({ link: "https://hooks.example/b", kind: "post" })).toBe("Kept on the backend in var/reports, and posted to https://hooks.example/b.");
         expect(linkSays({ link: "", kind: null })).toBe("Off: reports are only kept on the backend.");
         expect(linkSays({ link: "https://github.com/o/r", kind: "github" })).toBe("A report opens a new issue in o/r on GitHub, filled in.");

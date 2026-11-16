@@ -124,7 +124,7 @@ export function mountConnection(root: HTMLElement, ctx: Ctx): void {
     const recentRow = el("div", { class: "button-row connection-recent" });
     const recentHead = el("h3", {}, "Switch to");
     const detail = el("p", { class: "muted connection-detail" });
-    const inUse = el("p", { class: "muted connection-machine", title: "the Config tab picks and edits the machine files" });
+    const inUse = el("p", { class: "muted connection-machine", title: "the Machine file panel picks and edits the machine files" });
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Connection")),
         el("div", { class: "panel-body" },

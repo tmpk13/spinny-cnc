@@ -111,7 +111,7 @@ export function mountOpenPnpImport(root: HTMLElement, ctx: Ctx, made: (id: strin
             ...found.warnings,
             ...(reading.job?.warnings ?? []),
             ...(reading.parts?.warnings ?? []),
-            ...(reading.job && parts.length === 0 ? ["pick the board job on the PNP page for the job's references"] : []),
+            ...(reading.job && parts.length === 0 ? ["pick the board job in the Parts panel for the job's references"] : []),
             ...(fromParts.length > 0 && !reading.job ? ["the parts' heights give their place Z with the job's board height: pick the .job.xml too"] : []),
         ]);
     }

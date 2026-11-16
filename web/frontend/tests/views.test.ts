@@ -1366,7 +1366,7 @@ describe("machine files", () => {
         await settle();
         const board = root.querySelector(".config-board")?.textContent ?? "";
         expect(board).toContain("runs settings no file has; 1 not saved to flash (a_rate)");
-        expect(board).toContain("the jog panel draws this file's controls");
+        expect(board).toContain("the jog draws this file's controls");
         expect(flash.classList.contains("hidden")).toBe(false);
         // Read from board writes the board's value into the text, not saved.
         click(root, "Read from board");
@@ -1634,7 +1634,7 @@ describe("controls from the machine file", () => {
         expect(anyOf(["r", "a", "h"])).toBe("r, a and/or h");
     });
 
-    test("the jog panel draws what the file says, and again when it changes", async () => {
+    test("the jog draws what the file says, and again when it changes", async () => {
         const { store, ctx, root, calls, api } = setup();
         await api.connect("/dev/ttyACM0");
         store.set({ snapshot: connected() });

@@ -30,7 +30,7 @@ describe("the machine file in use", () => {
         expect(inUseText(machineInUse(state({ connected: true }, { machine: "k40" })))).toBe("K40: the board runs it");
         const loose = machineInUse(state({ connected: true }, { machine: null, controls_from: "k40" }));
         expect([loose.id, loose.how]).toEqual([null, "no-file"]);
-        expect(inUseText(loose)).toBe("none: the board runs settings no file has; the jog panel draws K40's controls");
+        expect(inUseText(loose)).toBe("none: the board runs settings no file has; the jog draws K40's controls");
         expect(inUseText(machineInUse(state({ connected: false }, null)))).toBe("K40, last used here; not connected");
         expect(inUseText(machineInUse({ ...state({ connected: false }, null), machines: { ...machines, used: null } }))).toBe("none yet");
     });

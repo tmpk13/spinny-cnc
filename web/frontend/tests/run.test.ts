@@ -94,7 +94,7 @@ describe("the height map choice", () => {
 describe("what each page's copy shows", () => {
     test("the Plot page's says the job's length, time and groups on, and its hint", () => {
         const { store, jobs, plot } = mountBoth();
-        expect(plot.querySelector(".run-stats")?.textContent).toBe("make a job, or select one in the Jobs panel");
+        expect(plot.querySelector(".run-stats")?.textContent).toBe("make a job, or select one in the Job area");
         store.set({ job: job() });
         expect(plot.querySelector(".run-stats")?.textContent).toBe(runStatsText(job()));
         expect(runStatsText(job())).toContain("1 of 2 groups on");

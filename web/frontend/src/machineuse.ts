@@ -60,7 +60,7 @@ export function inUseText(use: MachineInUse): string {
         case "board":
             return `${use.name}: the board runs it`;
         case "no-file":
-            return `none: the board runs settings no file has${use.controls ? `; the jog panel draws ${use.controls}'s controls` : ""}`;
+            return `none: the board runs settings no file has${use.controls ? `; the jog draws ${use.controls}'s controls` : ""}`;
         case "reading":
             return "reading the board's settings";
         case "last":

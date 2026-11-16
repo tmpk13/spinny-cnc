@@ -718,7 +718,7 @@ export function feederId(name: string, taken: Set<string>): string {
 /** The machine file's TOML text: every section, with a line on where its values came from. */
 export function profileText(data: ProfileData): string {
     const lines: string[] = [
-        "# Read from an OpenPnP machine.xml by the Config page's import. Places are",
+        "# Read from an OpenPnP machine.xml by the Machines page's import. Places are",
         "# the head's X and Y with the nozzle over a point. The machine's port is",
         "# named by url, or by words its USB names hold (match).",
         `name = ${quote(data.name)}`,

@@ -109,7 +109,7 @@ export function mountPnpRefs(root: HTMLElement, ctx: Ctx, onShape: () => void = 
         el("div", { class: "panel-head" }, el("h2", {}, "Board on the machine"), infoTip("references")),
         el("div", { class: "panel-body" },
             el("p", { class: "muted hint" }, "Pick a part, put the nozzle or the top camera over it, and press Here. The references are kept and map the whole board;"
-                + " a corner taken with the top camera (Corner here, Find board panel) is a reference too."),
+                + " a corner taken with the top camera (Corner here, Board place) is a reference too."),
             el("div", { class: "button-row" }, nozzleHere, cameraHere, shapeLabel),
             el("div", { class: "stack align-parts" },
                 el("h3", {}, "Parts to align to"),

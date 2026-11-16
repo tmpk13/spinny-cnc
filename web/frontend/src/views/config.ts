@@ -471,7 +471,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         let text = boardText(connected, picked, current, unsaved);
         if (connected && current === null) {
             const drawn = state.settings?.controls_from ?? null;
-            text += `; the jog panel draws ${drawn === null ? "the defaults" : drawn === picked ? "this file's controls" : `the controls of ${drawn}`}`;
+            text += `; the jog draws ${drawn === null ? "the defaults" : drawn === picked ? "this file's controls" : `the controls of ${drawn}`}`;
         }
         const gcodeFile = shown?.document?.controller === "gcode";
         if (gcodeFile) {
@@ -829,7 +829,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         if (document.controller === "gcode") {
             const port = state.ports.find((entry) => entry.machine === id);
             if (!port) {
-                await remember(id, `no port is ${document.name}'s now: give its [port] a url or match words, or connect it on the Connection tab`);
+                await remember(id, `no port is ${document.name}'s now: give its [port] a url or match words, or connect it in the Connection panel`);
                 return;
             }
             if (snapshot.connected && !(await askConfirm(`Let ${current} go and connect ${document.name} on ${port.url}?`, "Connect"))) {
@@ -844,7 +844,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         if (!snapshot.connected || isGcode(snapshot)) {
             const url = boardPort(state.ports);
             if (url === null) {
-                await remember(id, `connect the board on the Connection tab, then Use writes ${document.name} to it`);
+                await remember(id, `connect the board in the Connection panel, then Use writes ${document.name} to it`);
                 return;
             }
             if (snapshot.connected && !(await askConfirm(`Let ${current} go and connect the board on ${url}?`, "Connect"))) {

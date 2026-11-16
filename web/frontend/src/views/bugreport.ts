@@ -43,7 +43,7 @@ function openInTab(url: string): boolean {
 /** What the dialog says of where a report goes. */
 export function whereReportsGo(settings: ReportSettings | null): string {
     if (settings === null || settings.link === "") {
-        return "Kept on the backend in var/reports. No report link is set (Config tab).";
+        return "Kept on the backend in var/reports. No report link is set (Page, Bug reports).";
     }
     const repository = githubRepository(settings.link);
     if (repository) {

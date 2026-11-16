@@ -63,9 +63,9 @@ it, home it, run, hold or stop a job, light the laser, start the spindle,
 probe, start a camera routine, move a pick and place machine, change the
 firmware's settings or a machine or CAM file, or turn a plugin on. When
 one of these is wanted, make what it needs and tell the operator what to
-press on the page: a job runs from the Jobs tab (a Plot job from the Plot
-tab too), a placement from the PNP tab, a plugin is turned on in the
-Plugins tab.
+press on the page: a job runs from the Run area (its Run panel), a
+placement from the Run panel's Placing, a plugin is turned on in the
+Plugins panel (Setup side, Page).
 
 Units: lengths in mm in the board frame (on the polar machine the origin
 is the table's rotation axis; on an X/Y machine it is where the operator
@@ -708,7 +708,7 @@ def _tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "get_placement",
-            "The pick and place state of the G-code machine the PNP tab places with (a machine file with"
+            "The pick and place state of the G-code machine the page places with (a machine file with"
             ' controller = "gcode"): which machine, its file read (feeders, heights), the board\'s turn on it,'
             " the references (a part's place in a job paired with where it is on the machine), the feeders'"
             " counts, and whether it is connected.",
@@ -746,7 +746,7 @@ def _tools() -> tuple[Tool, ...]:
             "make_job",
             "Make a job from a file you write: an SVG or DXF drawing, absolute X/Y G-code, or a job as JSON. Use this"
             " for shapes, text outlines, test patterns and anything drawn. The job is stored and shows in the"
-            " Jobs tab; nothing is cut until the operator runs it there.",
+            " Job area's list; nothing is cut until the operator runs it from the Run area.",
             MAKE_JOB,
             (Route(post, "/api/jobs"),),
             _make_job,
@@ -813,7 +813,7 @@ def _tools() -> tuple[Tool, ...]:
             "make_plot_job",
             "Make a Plot page operation into a stored job: drill points, a board job's holes, a line through"
             " points, a face, or a pocket or profile of a rectangle or a circle, cut with a spindle or burnt"
-            " with a laser. It shows in the Jobs and Plot tabs; nothing is cut until the operator runs it.",
+            " with a laser. It shows in the Job area (the list, and the Draw panel); nothing is cut until the operator runs it.",
             PLOT_OPERATION,
             (Route(post, "/api/mill"),),
             _make_plot_job,

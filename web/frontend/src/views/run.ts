@@ -114,7 +114,7 @@ export function mapChoiceOf(pick: Compensate | null, map: HeightMap | null, mill
 /** The job's length, time and groups on, in a line; what to do with no job. */
 export function runStatsText(job: Job | null): string {
     if (!job) {
-        return "make a job, or select one in the Jobs panel";
+        return "make a job, or select one in the Job area";
     }
     const on = job.groups.filter((group) => group.enabled).length;
     return `${formatLength(job.stats.length_mm)}, about ${formatDuration(job.stats.seconds)}, ${on} of ${job.groups.length} groups on`;

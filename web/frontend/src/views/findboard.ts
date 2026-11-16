@@ -23,7 +23,7 @@ import { button, el, labeled, lockFor, numberField, readStored, setLocked, Track
 import { formatFixed, formatPercent as percent, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { BoardCorners, BoardGuess, BoardKnown, BoardLook, BoardStretch, CornerName, LookMethod, RefineUse, ScanMosaic, SkewState } from "../types.ts";
-import { explain, termsFold } from "../terms.ts";
+import { explain } from "../terms.ts";
 import { into, type Ctx } from "./context.ts";
 import type { MachineBox } from "./picture.ts";
 import { gcodePlacing } from "./placing.ts";
@@ -481,15 +481,15 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             mosaic.root,
             skewLine,
             skewRow,
-            el("p", { class: "muted hint" },
+            // How it all works, folded: the panel's words in view are what the buttons say.
+            el("details", { class: "stack find-how" }, el("summary", { title: "fold or unfold" }, "How it works"), el("p", { class: "muted hint" },
                 "Each column is a place the looks put the board, as tall as its share of the evidence (looks weighed by how well they matched);"
                 + " the most likely is found once it has enough looks and reaches the threshold line. Put the picture's center on a corner of the board"
                 + " (jog, or double-click it in the camera's picture), pick which corner it is and press Corner here: two give the board's place and turn,"
                 + " Search keeps to it, and a guess putting a corner further than Within is ruled out. With the top camera a corner is also one of the"
                 + " board's references, so Go to part and Find fiducials work from it at once; Use as board place takes a place found instead."
                 + " With Probability over the pose each column is a place's probability, the last (?) what no place holds yet, where nothing has looked;"
-                + " Full scan, once a rough place is known, covers the whole board and lays its pictures out below."),
-            termsFold(["look", "lock", "guess", "threshold", "method", "rival", "stretch", "corner", "edges", "features", "pose", "locked"]),
+                + " Full scan, once a rough place is known, covers the whole board and lays its pictures out below.")),
         ),
     );
 
@@ -774,7 +774,7 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
         const badgeText = src.searching(state) ? "searching" : src.scanning(state) ? "scanning" : busy ? "routine" : !running ? "stopped" : look?.found ? "found" : look?.job ? "looking" : "running";
         badge.textContent = badgeText;
         badge.setAttribute("data-camera", badgeText === "routine" ? "finding mark" : badgeText);
-        note.textContent = running ? "" : `The ${src.label.toLowerCase()} is not running: start it in its panel.`;
+        note.textContent = running ? "" : `The ${src.label.toLowerCase()} is not running: Start is on its picture.`;
         note.classList.toggle("hidden", running);
 
         // What may be done now, and why not.

@@ -4466,7 +4466,7 @@ export class MockBackend implements Api, EventFeed {
                 throw new ApiError(404, `no job '${body.job}'`);
             }
             if (recipeOps(target.recipe).length === 0) {
-                throw new ApiError(400, `${target.name} was not made on the Plot page: its operations cannot be changed there`);
+                throw new ApiError(400, `${target.name} was not drawn in the Draw panel: its operations cannot be changed there`);
             }
             if (keep && this.session && this.session.job.id === target.id) {
                 throw new ApiError(409, "the job is running");

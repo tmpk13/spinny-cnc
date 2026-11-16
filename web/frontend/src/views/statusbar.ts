@@ -150,7 +150,7 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
         const named = use.how === "board" || use.how === "connected" ? use.name : null;
         const badgeName = !snapshot.connected ? "" : named ?? profileBadge(profileOf(snapshot));
         profile.textContent = badgeName;
-        profile.title = named !== null && use.id !== null ? `the machine file in use: ${use.id}.toml; the Config tab edits it` : "the kind of machine: its settings are no machine file's";
+        profile.title = named !== null && use.id !== null ? `the machine file in use: ${use.id}.toml; the Machines page edits it` : "the kind of machine: its settings are no machine file's";
         profile.classList.toggle("hidden", badgeName === "");
         link.setAttribute("data-link", state.link);
         link.textContent = state.link === "open" ? "live" : state.link === "connecting" ? "connecting" : "disconnected";

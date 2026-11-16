@@ -4,7 +4,7 @@
 // routine, which finds a mark made with the tool in the picture and centers
 // the picture on it. The look for a board and its search are the Find
 // board panel's (findboard.ts).
-// Its picture is a panel of its own (Camera view), refreshed while it
+// Its picture is a panel of its own (Head camera view), refreshed while it
 // shows and the camera runs, with the routine's spot, the search box, the
 // board where the looks put it and the points whose place is known
 // (known.ts) drawn over it. The file is vision.ts:
@@ -23,7 +23,7 @@ import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
 import { boardMarks, frameSize, roughOf, shownSpots } from "./camview.ts";
 import { into, type Ctx } from "./context.ts";
-import { explain, termsFold } from "../terms.ts";
+import { explain } from "../terms.ts";
 import { headKnown, knownMarks } from "./known.ts";
 import { type Calibration, mountPicture, type PictureView } from "./picture.ts";
 
@@ -192,7 +192,7 @@ export function mountVisionView(root: HTMLElement, ctx: Ctx, visible: () => bool
     const empty = el("p", { class: "muted camera-view-empty" }, "The camera is not running.");
     const lookLine = el("p", { class: "muted vision-look" });
     root.append(
-        el("div", { class: "panel-head" }, el("h2", {}, "Camera view")),
+        el("div", { class: "panel-head" }, el("h2", {}, "Head camera view")),
         el("div", { class: "panel-body" },
             picture.root,
             empty,
@@ -331,13 +331,12 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
         el("p", { class: "muted hint" },
             "Make mark drills a mark at the tool; Mark is here uses a mark or hole already under it."
             + " Find mark lifts the head, centers the camera on the mark and measures the offset, scale and roll."),
-        termsFold(["offset", "roll", "scale", "side", "finish", "spot", "pose", "locked", "inliers", "rms"]),
     );
     // Unfolded, the picture (when it is in this panel) is asked for at once rather than at the next tick.
     if (viewRoot) {
         pictureActions(viewRoot, start, stop);
     }
-    const fold = foldPanel("spinny.camera.open", el("summary", { class: "panel-head" }, el("h2", {}, "Camera"), badge), body, () => view.refresh(true));
+    const fold = foldPanel("spinny.camera.open", el("summary", { class: "panel-head" }, el("h2", {}, "Head camera"), badge), body, () => view.refresh(true));
     root.append(fold);
     folded = fold;
 

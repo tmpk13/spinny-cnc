@@ -105,7 +105,7 @@ export function widthMode(job: Job): "remake" | "width" | "refused" {
  * they were, which would `undo` the change. Empty for a job with no recipe.
  */
 export function recipeLost(job: Job, undo: string): string {
-    return job.recipe ? ` It is no longer remade from its ${job.recipe.file ? "file" : "operations"} (new width, Plot page), which would ${undo}.` : "";
+    return job.recipe ? ` It is no longer remade from its ${job.recipe.file ? "file" : "operations"} (new width, Draw panel), which would ${undo}.` : "";
 }
 
 /** The labels a milling machine gives the job's numbers, and a laser's. */

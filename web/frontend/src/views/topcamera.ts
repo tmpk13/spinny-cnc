@@ -21,7 +21,7 @@ import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
 import { into, type Ctx } from "./context.ts";
 import { topCameraText, topRoutineText } from "./placing.ts";
-import { explain, termsFold } from "../terms.ts";
+import { explain } from "../terms.ts";
 import { infoTip } from "./infotip.ts";
 import { lookOnceText, polaritySelect } from "./pnp.ts";
 
@@ -109,7 +109,6 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
             el("div", { class: "button-row" }, places.home ? null : homeFiducial, places.home ? null : findFiducial, fiducialLine),
             routineLine,
             log,
-            termsFold(["offset", "roll", "scale", "mirror", "spot", "shade", "within", "side", "finish", "paste"]),
         ),
     );
 

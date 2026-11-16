@@ -253,7 +253,7 @@ def test_operations_are_applied_to_a_job_in_place_where_it_was_moved(client):
     board = Job(name="board", source="gerber", groups=[Group(label="copper pass 1", paths=[[(0, 0), (1, 0)]])])
     other = client.post("/api/jobs", files={"file": ("board.json", board.model_dump_json().encode(), "application/json")}).json()
     refused = client.post("/api/mill", json={"ops": [POCKET], "job": other["id"]})
-    assert refused.status_code == 400 and "not made on the Plot page" in refused.json()["detail"]
+    assert refused.status_code == 400 and "not drawn in the Draw panel" in refused.json()["detail"]
     assert client.post("/api/mill", json={"ops": [POCKET], "job": "none"}).status_code == 404
     assert client.post("/api/mill", json={"ops": []}).status_code == 422
 

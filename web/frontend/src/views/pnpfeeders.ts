@@ -263,7 +263,7 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
                 })),
             );
         }
-        note.textContent = !doc ? "No G-code machine to place with: connect one from the top bar." : feeders.length === 0 ? "Its machine file has no feeders: add [[feeder]] tables on the Config page." : "";
+        note.textContent = !doc ? "No G-code machine to place with: connect one from the top bar." : feeders.length === 0 ? "Its machine file has no feeders: add [[feeder]] tables on the Machines page." : "";
         note.classList.toggle("hidden", note.textContent === "");
         listBox.classList.toggle("hidden", feeders.length === 0);
         busBox.classList.toggle("hidden", doc?.bus !== true);

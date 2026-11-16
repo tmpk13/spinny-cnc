@@ -3176,7 +3176,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             if target is None:
                 raise NotFound(f"no job {body.job!r}")
             if not mill.recipe_ops(target.recipe):
-                raise ValueError(f"{target.name} was not made on the Plot page: its operations cannot be changed there")
+                raise ValueError(f"{target.name} was not drawn in the Draw panel: its operations cannot be changed there")
             if keep and self.runner.active and self.runner.progress.job == target.id:
                 raise RunnerError("the job is running")
         # The job whose frame the operations are typed in: the one they

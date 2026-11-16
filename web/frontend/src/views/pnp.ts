@@ -517,7 +517,7 @@ export const PNP_SETUP: Setup = {
             {
                 label: "X/Y machine",
                 done: state.snapshot.connected && isCartesian(state.snapshot),
-                hint: "The bottom camera needs an X/Y machine ($cartesian=1): pick one on the Config page and Write to board.",
+                hint: "The bottom camera needs an X/Y machine ($cartesian=1): pick one on the Machines page and Write to board.",
                 panel: "machine-file",
             },
             { label: "Bottom camera on", done: pnp?.running === true, hint: "Press Start on the bottom camera's picture; its device is set on the Setup side's Cameras page.", panel: "pnp-view" },
@@ -713,8 +713,8 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     });
     roots.board.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Board"), fit),
-        el("div", { class: "panel-body" }, boardSearch.root, drawing, el("p", { class: "muted hint" }, "Click a part to pick it; Ctrl and the wheel zoom, a drag pans, a double-click fits. Hollow dots are on the back, grey ones dnp or kept out of the position files."
-            + " An outline is where a guess of the Find board panel says the camera's picture lies on the board, labeled with its share (dashed: the most likely, under the threshold); a ring is a corner taken.")),
+        el("div", { class: "panel-body" }, boardSearch.root, drawing, el("details", { class: "stack pnp-board-how" }, el("summary", { title: "fold or unfold" }, "How to read it"), el("p", { class: "muted hint" }, "Click a part to pick it; Ctrl and the wheel zoom, a drag pans, a double-click fits. Hollow dots are on the back, grey ones dnp or kept out of the position files."
+            + " An outline is where a guess of the Board place panel says the camera's picture lies on the board, labeled with its share (dashed: the most likely, under the threshold); a ring is a corner taken."))),
     );
 
     // --- the up camera ---

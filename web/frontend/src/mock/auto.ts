@@ -38,13 +38,13 @@ export function toolText(value: unknown): string {
 /** What the scripted provider says about the jobs it found. */
 export function summarize(jobs: JobSummary[]): string {
     if (jobs.length === 0) {
-        return "There are no jobs yet. Upload a drawing or a board on the Jobs tab, or ask for one to be made.";
+        return "There are no jobs yet. Upload a drawing or a board in the Job area, or ask for one to be made.";
     }
     const parts = jobs.map((job) => {
         const paths = job.groups.reduce((sum, group) => sum + group.paths, 0);
         return `${job.name} (${job.id}): ${job.groups.length} group${job.groups.length === 1 ? "" : "s"}, ${paths} path${paths === 1 ? "" : "s"}`;
     });
-    return `There ${jobs.length === 1 ? "is one job" : `are ${jobs.length} jobs`}: ${parts.join("; ")}. Nothing has been cut: a job runs when you run it on the Jobs tab.`;
+    return `There ${jobs.length === 1 ? "is one job" : `are ${jobs.length} jobs`}: ${parts.join("; ")}. Nothing has been cut: a job runs when you run it from the Run area.`;
 }
 
 /** What the backend says when a provider cannot answer, as its providers word it. */

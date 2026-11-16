@@ -1947,7 +1947,9 @@ button.badge.state {
 }
 
 .machine-markers > summary,
-.jog-more > summary {
+.jog-more > summary,
+.find-how > summary,
+.pnp-board-how > summary {
     cursor: pointer;
     font-weight: 600;
     color: var(--muted);
@@ -4342,24 +4344,6 @@ table.pnp-parts tr.dnp td {
     text-decoration: underline dotted;
     text-underline-offset: 0.2em;
     cursor: help;
-}
-
-/* The words a panel uses and what each means, in a fold of their own. */
-.terms-list {
-    display: grid;
-    grid-template-columns: minmax(6rem, max-content) 1fr;
-    gap: 0.3rem 0.8rem;
-    margin: 0;
-    font-size: 0.85rem;
-}
-
-.terms-list dt {
-    font-weight: 600;
-}
-
-.terms-list dd {
-    margin: 0;
-    color: var(--muted);
 }
 
 .camera-control {

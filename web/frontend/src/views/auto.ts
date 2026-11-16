@@ -126,7 +126,7 @@ export function mountAuto(roots: { chat: HTMLElement; about: HTMLElement }, ctx:
     const log = el("div", { class: "auto-log", role: "log", "aria-live": "polite", "aria-label": "Conversation" });
     const empty = el("p", { class: "auto-empty muted" },
         "Ask for a job (drawing, test pattern, engraved text), a Plot operation, markers or a placement plan. "
-        + "Nothing here moves the machine; run its jobs from the Jobs or Plot tab.");
+        + "Nothing here moves the machine; run its jobs from the Run area.");
     const working = el("p", { class: "auto-working muted" }, "working");
     const input = el("textarea", {
         class: "field auto-input",

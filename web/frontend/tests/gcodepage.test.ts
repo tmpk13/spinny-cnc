@@ -62,7 +62,7 @@ describe("the firmware in the top bar", () => {
 });
 
 describe("a G-code machine's controls", () => {
-    test("the jog panel draws its file's bars, homes it, and has no travel height or unlock", async () => {
+    test("the jog draws its file's bars, homes it, and has no travel height or unlock", async () => {
         const { store, ctx, root, api } = setup();
         store.set({ snapshot: await api.connect("/dev/ttyACM1", "opulo-lumen-rev5") });
         await ctx.refreshSettings();

@@ -12,7 +12,7 @@ import { formatFixed, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { CameraColors, CameraLens, ColorItem, ControlledCamera, SpotPolarity } from "../types.ts";
 import type { Ctx } from "./context.ts";
-import { explain, type Term, termsFold } from "../terms.ts";
+import { explain, type Term } from "../terms.ts";
 import { armPick, armedPick, disarmPick } from "./picture.ts";
 
 /** What each color is for, in words. */
@@ -72,7 +72,6 @@ export function mountCameraSight(ctx: Ctx, options: CameraSightOptions): { root:
         el("div", { class: "button-row" }, explain(labeled("Dots", polarity, "labeled inline"), "dots"), explain(labeled("Pitch mm", pitch, "labeled inline"), "dots"), measure, clear),
         ...colorRows.map((row) => row.row),
         el("p", { class: "muted hint" }, "A color picked is looked for in place of light or dark: copper on bare FR4, a fiducial under odd light, the board against the bed."),
-        termsFold(["lens", "dots", "spot", "shade", "color", "edges"]),
     ) as HTMLDetailsElement;
 
     async function measureLens(): Promise<void> {

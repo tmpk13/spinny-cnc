@@ -912,7 +912,7 @@ export function mountMill(roots: { operation: HTMLElement; run?: HTMLElement }, 
             return;
         }
         if (ops.length === 1) {
-            ctx.toast("error", "a job needs at least one operation; delete the job on the Jobs page");
+            ctx.toast("error", "a job needs at least one operation; delete the job in the Jobs panel");
             return;
         }
         if (!(await askConfirm(`Remove operation ${index + 1} (${operationSummary(ops[index]!)}) from ${plotJob.name}?`, "Remove"))) {
