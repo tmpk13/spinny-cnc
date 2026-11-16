@@ -89,12 +89,12 @@ const RENAMED: Record<string, PageId> = {
 /** The page of each panel that holds edits until they are applied. */
 export const PENDING_PAGES: Record<string, PageId> = {
     "machine-file": "machines",
-    camera: "run",
+    camera: "cameras",
     "job-json": "job",
     plot: "job",
     "cam-profile": "cam",
-    pnp: "run",
-    "pnp-head": "run",
+    pnp: "cameras",
+    "pnp-head": "cameras",
 };
 
 /** The count of edits not applied yet on a page. */

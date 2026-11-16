@@ -11,7 +11,7 @@
 // camera.ts is the 3D preview's camera.
 
 import { askConfirm } from "../confirm.ts";
-import { activePage, button, el, foldPanel, labeled, lockFor, numberField, setLocked, Tracked } from "../dom.ts";
+import { button, el, foldPanel, labeled, lockFor, numberField, onShownPage, pictureActions, setLocked, Tracked } from "../dom.ts";
 import { formatFixed, formatPercent, parseNumber } from "../format.ts";
 import { isMilling } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
@@ -189,7 +189,7 @@ export function mountVisionView(root: HTMLElement, ctx: Ctx, visible: () => bool
         visible,
         boxes: true,
     }, ctx);
-    const empty = el("p", { class: "muted camera-view-empty" }, "The camera is not running: start it in the Camera panel.");
+    const empty = el("p", { class: "muted camera-view-empty" }, "The camera is not running.");
     const lookLine = el("p", { class: "muted vision-look" });
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Camera view")),
@@ -294,7 +294,8 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
     mountCameraLog(logBox, ctx, "head");
     const body = el("fieldset", { class: "panel-body" },
         ...(viewRoot ? [] : [pictureRoot]),
-        el("div", { class: "button-row" }, start, stop, poseLine),
+        // Start and Stop go with the picture when it has a panel of its own.
+        viewRoot ? poseLine : el("div", { class: "button-row" }, start, stop, poseLine),
         pick.row,
         pick.note,
         el("div", { class: "field-grid" },
@@ -333,6 +334,9 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
         termsFold(["offset", "roll", "scale", "side", "finish", "spot", "pose", "locked", "inliers", "rms"]),
     );
     // Unfolded, the picture (when it is in this panel) is asked for at once rather than at the next tick.
+    if (viewRoot) {
+        pictureActions(viewRoot, start, stop);
+    }
     const fold = foldPanel("spinny.camera.open", el("summary", { class: "panel-head" }, el("h2", {}, "Camera"), badge), body, () => view.refresh(true));
     root.append(fold);
     folded = fold;
@@ -440,12 +444,12 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
 
     /** The panel is in view: the Run area is up, the fold open and the tab shown. */
     function visible(): boolean {
-        return fold.open && activePage() === "run" && document.visibilityState !== "hidden";
+        return fold.open && onShownPage(root) && document.visibilityState !== "hidden";
     }
 
-    /** The picture is in view: on the Run area in its own panel, or in this one while it is open. */
+    /** The picture is in view: its own panel's page up, or in this one while it is open. */
     function visibleView(): boolean {
-        if (activePage() !== "run" || document.visibilityState === "hidden") {
+        if (!onShownPage(viewRoot ?? root) || document.visibilityState === "hidden") {
             return false;
         }
         return viewRoot ? !viewRoot.hasAttribute("data-collapsed") && !viewRoot.classList.contains("hidden") : folded?.open === true;

@@ -250,7 +250,8 @@ describe("the placing panels' words", () => {
         const deviceField = roots.top.querySelector('input[aria-label="Top camera device"]') as HTMLInputElement;
         deviceField.value = "/dev/video6";
         deviceField.dispatchEvent(new Event("input"));
-        const start = Array.from(roots.top.querySelectorAll("button")).filter((each) => each.textContent === "Start").pop()!;
+        // Start is on the picture; the device it starts with is the panel's field.
+        const start = Array.from(roots.topView.querySelectorAll("button")).filter((each) => each.textContent === "Start").pop()!;
         start.click();
         await settle();
         await settle();

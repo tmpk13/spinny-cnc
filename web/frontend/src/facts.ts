@@ -229,7 +229,7 @@ export const FACT_RULES: FactRule[] = [
     {
         id: "head.offset",
         group: "Camera on the head",
-        uses: ["camera", "find", "align"],
+        uses: ["camera-view", "find", "align"],
         fits: hasHeadCamera,
         read: (state) => {
             const offset = state.camera!.offset;

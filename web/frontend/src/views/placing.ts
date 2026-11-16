@@ -228,8 +228,13 @@ const RANGES: { label: string; key: "part_on" | "part_off"; tip: string }[] = [
     { label: "Empty", key: "part_off", tip: "the readings with the nozzle open; blank checks nothing" },
 ];
 
-/** The Head panel in `root`: lights, vacuum, the head's places, and the file's values tuned. */
-export function mountHead(root: HTMLElement, ctx: Ctx): void {
+/**
+ * The Head panel in `root`: lights, vacuum, the head's places, and the
+ * file's values tuned. With `quick`, the buttons used while working
+ * (Light, Park, Vacuum on and off) go there, with the machine's own, and
+ * the panel keeps the moves and values a setup uses.
+ */
+export function mountHead(root: HTMLElement, ctx: Ctx, quick?: HTMLElement): void {
     const badge = el("span", { class: "badge device-badge" }, "no G-code machine");
     const nameLine = el("p", { class: "muted" });
     const light = button("Light", () => toggleLight(), "btn btn-quiet btn-toggle");
@@ -282,12 +287,14 @@ export function mountHead(root: HTMLElement, ctx: Ctx): void {
         el("div", { class: "panel-head" }, el("h2", {}, "Head"), badge),
         el("div", { class: "panel-body" },
             nameLine,
-            el("div", { class: "button-row" }, light, park, overCamera),
+            el("div", { class: "button-row" }, quick ? null : light, quick ? null : park, overCamera),
             el("div", { class: "button-row" }, toNozzle, toCamera),
-            el("div", { class: "button-row" }, vacuumOn, vacuumOff, vacuumRead, vacuumLine),
+            el("div", { class: "button-row" }, quick ? null : vacuumOn, quick ? null : vacuumOff, vacuumRead, vacuumLine),
             tuneFold,
         ),
     );
+
+    quick?.append(el("div", { class: "button-row" }, light, park, vacuumOn, vacuumOff));
 
     async function toggleLight(): Promise<void> {
         await into(ctx, "placing", ctx.api.pnpLight(ctx.store.get().placing?.light !== true));

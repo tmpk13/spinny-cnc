@@ -230,7 +230,9 @@ describe("the mock camera", () => {
             expect(root.querySelector("img.picture-img")).toBeNull();
             const img = viewRoot.querySelector("img.picture-img") as HTMLImageElement;
             expect(img.getAttribute("src")).toBeNull();
-            click(root, "Start");
+            // Start and Stop are on the picture.
+            expect(Array.from(root.querySelectorAll("button")).some((b) => b.textContent === "Start")).toBe(false);
+            click(viewRoot, "Start");
             await settle();
             await settle();
             expect(store.get().camera?.running).toBe(true);
@@ -273,7 +275,7 @@ describe("the mock camera", () => {
             await ctx.refreshCamera();
             expect(root.querySelector(".vision-routine")?.textContent).toContain("done: done, 6 of 6");
             expect(findButton(root, "Make mark").disabled).toBe(true);
-            click(root, "Stop");
+            click(viewRoot, "Stop");
             await settle();
             await settle();
             expect(root.querySelector(".vision-pose")?.textContent).toBe("camera stopped");

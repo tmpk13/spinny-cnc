@@ -302,7 +302,7 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
         // The LumenPnP connected on the Connection panel by the port its file
         // claims, its cameras running, the top one looking for the board
         // with a look taken once by each, and the controls unfolded.
-        name: "placing with a G-code machine, its cameras looking", pages: ["run", "machines"], enter: async (page) => {
+        name: "placing with a G-code machine, its cameras looking", pages: ["run", "machines", "cameras"], enter: async (page) => {
             await tab(page, "machines");
             await page.click("#connection button:has-text('Disconnect')");
             await page.waitForTimeout(300);
@@ -311,18 +311,18 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
             await page.click("#connection button:has-text('Connect')");
             await page.waitForTimeout(500);
             await tab(page, "run");
-            await page.click("#pnp-camera button:has-text('Start')");
-            await page.click("#pnp-top button:has-text('Start')");
+            await page.click("#pnp-view button:has-text('Start')");
+            await page.click("#pnp-top-view button:has-text('Start')");
             await page.waitForTimeout(300);
-            await page.click("#pnp-camera button:has-text('Look once')");
-            await page.click("#pnp-top button:has-text('Look once')");
+            await page.click("#pnp-view button:has-text('Look once')");
+            await page.click("#pnp-top-view button:has-text('Look once')");
             // A job without its board file leaves the button locked.
             await page.click("#find button:has-text('Look for board')", { timeout: 1000 }).catch(() => undefined);
             await page.waitForTimeout(800);
         },
     },
     {
-        name: "the head camera's picture and look", pages: ["run"], enter: async (page) => {
+        name: "the head camera's picture and look", pages: ["run", "cameras"], enter: async (page) => {
             await tab(page, "machines");
             await page.click("#connection button:has-text('Disconnect')");
             await page.waitForTimeout(300);
@@ -331,7 +331,7 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
             await page.click("#connection button:has-text('Connect')");
             await page.waitForTimeout(500);
             await tab(page, "run");
-            await page.click("#camera button:has-text('Start')");
+            await page.click("#camera-view button:has-text('Start')");
             await page.waitForTimeout(300);
             await page.click("#find button:has-text('Look for board')", { timeout: 1000 }).catch(() => undefined);
             await page.waitForTimeout(800);

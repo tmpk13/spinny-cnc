@@ -204,7 +204,7 @@ describe("the pnp page", () => {
         // The setup: connected, X/Y, then the camera is next.
         const states = Array.from(roots.steps.querySelectorAll(".roadmap-step")).map((item) => item.getAttribute("data-step"));
         expect(states.slice(0, 3)).toEqual(["done", "done", "next"]);
-        click(roots.camera, "Start");
+        click(roots.view, "Start");
         await settle();
         expect(store.get().pnp?.running).toBe(true);
         // A field typed in is counted for the page's tab until applied.
@@ -330,7 +330,7 @@ describe("the pnp page", () => {
         list.value = MOCK_CAMERAS[1]!.device;
         list.dispatchEvent(new Event("change"));
         expect(store.get().pending["pnp"]).toBe(1);
-        click(roots.camera, "Start");
+        click(roots.view, "Start");
         await settle();
         await settle();
         await settle();

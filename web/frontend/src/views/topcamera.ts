@@ -4,11 +4,13 @@
 // measured from a mark the nozzle's tip was put on, and Home by fiducial
 // (or Find home fiducial, no home first) on a machine whose file names the
 // homing fiducial on its bed.
-// Its picture shows in the Top camera view panel; the looks of its routines
-// are kept in its camera log. The look for a board, its search and the
-// place found are the Find board panel's (findboard.ts).
+// Its picture shows in the Top camera view panel, with Start, Stop and
+// Look once on it when that panel is handed in; Home by fiducial goes with
+// the machine's own buttons when a place for them is handed in. The looks
+// of its routines are kept in its camera log. The look for a board, its
+// search and the place found are the Find board panel's (findboard.ts).
 
-import { button, el, labeled, lockFor, numberField, setLocked, Tracked, type TrackedField } from "../dom.ts";
+import { button, el, labeled, lockFor, numberField, pictureActions, setLocked, Tracked, type TrackedField } from "../dom.ts";
 import { parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { CameraFinish, CameraSide, SpotPolarity, TopSettings } from "../types.ts";
@@ -23,7 +25,13 @@ import { explain, termsFold } from "../terms.ts";
 import { infoTip } from "./infotip.ts";
 import { lookOnceText, polaritySelect } from "./pnp.ts";
 
-export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boolean, folds?: CameraFolds): void {
+/** Where the top camera's buttons used while working go, apart from its settings: its picture's panel, and the box of the machine's own buttons. */
+export interface TopPlaces {
+    picture?: HTMLElement;
+    home?: HTMLElement;
+}
+
+export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boolean, folds?: CameraFolds, places: TopPlaces = {}): void {
     const badge = el("span", { class: "badge" }, "stopped");
     const start = button("Start", () => startTop(), "btn btn-primary");
     start.title = "start the top camera with these settings";
@@ -80,7 +88,7 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Top camera"), badge),
         el("fieldset", { class: "panel-body" },
-            el("div", { class: "button-row" }, start, stop),
+            places.picture ? null : el("div", { class: "button-row" }, start, stop),
             pick.row,
             pick.note,
             el("div", { class: "field-grid" },
@@ -92,18 +100,25 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
                 explain(labeled("Finish", finish), "finish"),
                 explain(labeled("Paste", paste), "paste"),
             ),
-            el("div", { class: "button-row" }, apply, lookOnce),
+            el("div", { class: "button-row" }, apply, places.picture ? null : lookOnce),
             lookLine,
             ...placeFolds(folds, "top", controls.root, sight.root, changes.root),
             el("div", { class: "button-row" }, offsetLine, infoTip("offset")),
             el("div", { class: "button-row" }, measureCamera),
             el("div", { class: "button-row" }, markHere, labeled("Step mm", step, "labeled inline"), measure, abort),
-            el("div", { class: "button-row" }, homeFiducial, findFiducial, fiducialLine),
+            el("div", { class: "button-row" }, places.home ? null : homeFiducial, places.home ? null : findFiducial, fiducialLine),
             routineLine,
             log,
             termsFold(["offset", "roll", "scale", "mirror", "spot", "shade", "within", "side", "finish", "paste"]),
         ),
     );
+
+    if (places.picture) {
+        pictureActions(places.picture, start, stop, lookOnce);
+    }
+    if (places.home) {
+        places.home.append(el("div", { class: "button-row" }, homeFiducial, findFiducial));
+    }
 
     // The fields: filled from the state unless edited since.
     const fields: [TrackedField, keyof TopSettings][] = [[device, "device"], [size, "size"], [fps, "fps"], [markSpot, "mark_spot"], [side, "side"], [finish, "finish"], [paste, "paste"]];

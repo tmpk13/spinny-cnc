@@ -393,6 +393,29 @@ export function activePage(): string {
     return document.getElementById("app")?.getAttribute("data-page") ?? "run";
 }
 
+/** Whether the page `node` is on shows now, alone or side by side; a node on no page (a view mounted alone) counts as shown. */
+export function onShownPage(node: Element): boolean {
+    const page = node.closest("main.page");
+    return page === null || page.hasAttribute("data-up");
+}
+
+/**
+ * Puts a row of a camera's own buttons (Start, Stop, Look once) at the top
+ * of its picture's panel, under the head, where the picture is used; the
+ * settings they start the camera with stay in the camera's panel on the
+ * Setup side.
+ */
+export function pictureActions(picture: HTMLElement, ...nodes: (Node | null)[]): HTMLElement {
+    const row = el("div", { class: "button-row picture-actions" }, ...nodes);
+    const head = Array.from(picture.children).find((child) => child.classList.contains("panel-head"));
+    if (head) {
+        head.after(row);
+    } else {
+        picture.prepend(row);
+    }
+    return row;
+}
+
 /** What this browser remembers under `key`; null when it remembers nothing there, or its storage is blocked. */
 export function readStored(key: string): string | null {
     try {

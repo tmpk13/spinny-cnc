@@ -132,7 +132,7 @@ describe("what the machine knows", () => {
 function frame(): void {
     const page = (id: string, panels: string): string => `<main id="page-${id}" class="page"><div class="column">${panels}</div></main>`;
     const use = pagesOf("use").map((id) => page(id, id === "run"
-        ? `<section id="camera" class="panel"><div class="panel-head"><h2>Camera</h2></div></section><section id="machine" class="panel"><div class="panel-head"><h2>Machine</h2></div></section><section id="steps" class="panel"></section>`
+        ? `<section id="camera-view" class="panel"><div class="panel-head"><h2>Camera view</h2></div></section><section id="machine" class="panel"><div class="panel-head"><h2>Machine</h2></div></section><section id="steps" class="panel"></section>`
         : "")).join("");
     const setupPages = pagesOf("setup").map((id) => page(id, id === "facts" ? `<section id="facts" class="panel"></section>` : id === "machines" ? `<section id="connection" class="panel"></section>` : "")).join("");
     document.body.innerHTML = `<div id="app"><nav id="tabs" class="tabs"></nav><div id="pane-use" class="pane" data-side="use">${use}</div><div id="pane-setup" class="pane" data-side="setup">${setupPages}</div><div id="toasts"></div></div>`;
@@ -180,7 +180,7 @@ describe("the Checklist and the links to it", () => {
         store.set({ camera: camera() });
         mountTabs(document.getElementById("tabs")!, store);
         mountSetupLinks(ctx);
-        const link = document.querySelector<HTMLAnchorElement>("#camera .setup-link")!;
+        const link = document.querySelector<HTMLAnchorElement>("#camera-view .setup-link")!;
         expect(link.textContent).toBe("Setup: 1 to do");
         expect(link.hasAttribute("data-need")).toBe(true);
         expect(link.getAttribute("href")).toBe("/?mock=1&side=setup&page=facts#facts/head.offset");

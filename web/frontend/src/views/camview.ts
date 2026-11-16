@@ -11,7 +11,7 @@
 // to line the part up with (partshape.ts). A drag moves the head
 // (picture.ts). The pictures are asked for only while the page shows.
 
-import { activePage, button, el, labeled, lockFor, readStored, writeStored } from "../dom.ts";
+import { button, el, labeled, lockFor, onShownPage, readStored, writeStored } from "../dom.ts";
 import { formatFixed } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { BoardCorners, BoardEstimate, Job, RoutineSpot, SpotLook } from "../types.ts";
@@ -233,8 +233,8 @@ export interface CameraViews {
 }
 
 export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement }, ctx: Ctx): CameraViews {
-    // The pictures are on the Run area.
-    const visible = (): boolean => activePage() === "run" && document.visibilityState !== "hidden";
+    // The pictures show while their page does.
+    const visible = (): boolean => onShownPage(roots.bottom) && document.visibilityState !== "hidden";
     const jog = async (mm: [number, number]): Promise<void> => {
         if (Math.hypot(mm[0], mm[1]) < 0.001) {
             return;
@@ -276,7 +276,7 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
         visible,
         crops: machineCrops(ctx, "up_camera", UP_TASKS, (state) => state.placing?.document?.camera_crops, (state) => state.pnp?.routine),
     }, ctx);
-    const bottomEmpty = el("p", { class: "muted camera-view-empty" }, "The bottom camera is not running: start it in its panel.");
+    const bottomEmpty = el("p", { class: "muted camera-view-empty" }, "The bottom camera is not running.");
     // The part class whose crop the picture rings and a Look once at a
     // part keeps to: the machine file's [[part_class]] tables.
     const cropPick = el("select", { class: "field", "aria-label": "Bottom camera crop" }) as HTMLSelectElement;
@@ -362,7 +362,7 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
         boxes: true,
         crops: machineCrops(ctx, "top_camera", TOP_TASKS, (state) => state.placing?.document?.top?.crops, (state) => state.placing?.top?.routine),
     }, ctx);
-    const topEmpty = el("p", { class: "muted camera-view-empty" }, "The top camera is not running: start it in its panel.");
+    const topEmpty = el("p", { class: "muted camera-view-empty" }, "The top camera is not running.");
     // The nozzle's place in the top camera's picture, drawn by hand: the
     // nozzle rides on the head with the camera, so it stays put there.
     const nozzleBox = button("Nozzle box", () => armBox("top", "the nozzle", (box) => void keepNozzleBox(box)), "btn btn-quiet btn-small",

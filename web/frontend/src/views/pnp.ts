@@ -8,7 +8,7 @@
 // machine's bed from above (the Machine view), and the run. Its own setup
 // steps lead through all of it.
 
-import { activePage, button, el, labeled, lockFor, numberField, readStored, replace, resizableBox, setLocked, Tracked, writeStored } from "../dom.ts";
+import { button, el, labeled, lockFor, numberField, onShownPage, pictureActions, readStored, replace, resizableBox, setLocked, Tracked, writeStored } from "../dom.ts";
 import { formatFixed, formatPercent, parseNumber } from "../format.ts";
 import { isCartesian } from "../profile.ts";
 import { setPending, type AppState } from "../state.ts";
@@ -520,7 +520,7 @@ export const PNP_SETUP: Setup = {
                 hint: "The bottom camera needs an X/Y machine ($cartesian=1): pick one on the Config page and Write to board.",
                 panel: "machine-file",
             },
-            { label: "Bottom camera on", done: pnp?.running === true, hint: "Pick or type the camera in the Bottom camera panel, then press Start.", panel: "pnp-camera" },
+            { label: "Bottom camera on", done: pnp?.running === true, hint: "Press Start on the bottom camera's picture; its device is set on the Setup side's Cameras page.", panel: "pnp-view" },
             {
                 label: "Nozzle centered",
                 done: pnp?.position !== null && pnp?.position !== undefined && (pnp?.mm_per_px ?? 0) > 0,
@@ -551,6 +551,8 @@ export interface PnpRoots {
     nozzle: HTMLElement;
     /** A G-code machine's head: lights, vacuum, its places, its file's values. */
     head: HTMLElement;
+    /** Where a G-code machine's buttons used while working go (Light, Park, Vacuum, Home by fiducial): the Machine panel's box for them; without it they stay in their panels. */
+    quick?: HTMLElement;
     /** The jog of the machine connected, when the page has one of its own here (the Run area's serves). */
     jog?: HTMLElement;
     /** The bottom camera's picture. */
@@ -600,7 +602,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
 
     // The steps follow the machine the parts are placed with.
     mountSteps(roots.steps, ctx, (state) => [gcodePlacing(state) ? PLACING_SETUP : PNP_SETUP], "spinny.steps.pnp");
-    mountHead(roots.head, ctx);
+    mountHead(roots.head, ctx, roots.quick);
     // The top camera's picture is drawn again when the part's shape is turned on or off.
     mountPnpRefs(roots.refs, ctx, () => views.top.render(ctx.store.get()));
     mountPnpFeeders(roots.feeders, ctx);
@@ -609,7 +611,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     }
     mountPnpRun(roots.run, ctx);
     const views = mountCameraViews({ bottom: roots.view, top: roots.topView }, ctx);
-    mountTopCamera(roots.top, ctx, () => visible() && gcodePlacing(ctx.store.get()), roots.topFolds);
+    mountTopCamera(roots.top, ctx, () => visible() && gcodePlacing(ctx.store.get()), roots.topFolds, { picture: roots.topView, home: roots.quick });
     // The board drawing shows the look of the camera this panel picks.
     if (shared === null && roots.find === undefined) {
         throw new Error("mountPnp needs a Find board panel or a root for one");
@@ -775,10 +777,11 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         deviceRoutineLine,
         el("p", { class: "muted hint" }, "Center nozzle moves the nozzle over the camera's place, finds it in the picture, measures the picture against two small moves, and moves the nozzle onto the crosshair: that place is the camera's."),
     );
+    // Start, Stop and a look once go on the picture, where they are used.
+    pictureActions(roots.view, startButton, stopButton, explain(labeled("Look for", lookSpot, "labeled inline"), "spot"), lookOnce);
     roots.camera.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Bottom camera"), cameraBadge),
         el("fieldset", { class: "panel-body" },
-            el("div", { class: "button-row" }, startButton, stopButton),
             cameraPick.row,
             cameraPick.note,
             el("div", { class: "field-grid" },
@@ -789,7 +792,6 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
                 explain(labeled("Part spot", partSpot), "shade"),
             ),
             el("div", { class: "button-row" }, cameraApply, cameraChip),
-            el("div", { class: "button-row" }, explain(labeled("Look for", lookSpot, "labeled inline"), "spot"), lookOnce),
             lookLine,
             ...placeFolds(roots.cameraFolds, "up", upControls.root, upSight.root, upChanges.root),
             el("p", { class: "muted hint" }, "A fixed camera looking up at the nozzle. Set Nozzle spot and Part spot to how the bore and a held part look against their background."),
@@ -1447,8 +1449,8 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     }
 
     function visible(): boolean {
-        // The pick and place panels are on the Run area.
-        return activePage() === "run" && document.visibilityState !== "hidden";
+        // Its picture's page or its settings' page shows.
+        return (onShownPage(roots.view) || onShownPage(roots.camera)) && document.visibilityState !== "hidden";
     }
 
     // The state is polled while the page shows, for the picture's age and a
@@ -1498,7 +1500,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         shownGcode = onDevice;
         // The up camera serves either machine; the nozzle panel is this project's machine's.
         roots.nozzle.classList.toggle("hidden", onDevice);
-        for (const root of [roots.head, roots.refs, roots.feeders, roots.machineView, roots.run, roots.top, roots.topFolds?.controls, roots.topFolds?.sight, roots.topFolds?.changes]) {
+        for (const root of [roots.head, roots.quick, roots.refs, roots.feeders, roots.machineView, roots.run, roots.top, roots.topFolds?.controls, roots.topFolds?.sight, roots.topFolds?.changes]) {
             if (!root) {
                 continue;
             }

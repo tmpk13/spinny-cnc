@@ -71,3 +71,22 @@ while building them and what was not obvious.
   (`machine`, `job-machine`), so nested heads would be neither.
 - The jog's go-to rows, Here is, the feed and Motors, Home and Unlock fold
   under More, open as last left across redraws.
+
+## Cameras on two sides
+
+- Each camera's picture is on Run (`camera-view`, `pnp-view`,
+  `pnp-top-view`) with Start, Stop and Look once in a row under its head
+  (`pictureActions` in src/dom.ts); everything else of a camera (device,
+  size, spots, lens and colors, picture controls, changes, calibration and
+  its routines, the log) is on the Cameras page, as are the pick and place
+  Head panel's moves and tuning and the Machine view. The buttons are the
+  same nodes the settings views made, handed to the picture's panel, so
+  Start still sends the device typed on the Setup side first.
+- A view polls while its own page shows, alone or side by side
+  (`onShownPage`: the node's `main.page` has `data-up`; a node on no page,
+  as in the unit tests, counts as shown). Asking `activePage()` would stop
+  the Setup side's camera panel polling while Run is the page in front.
+- Light, Park and Vacuum on and off (mountHead's `quick`) and Home by
+  fiducial with Find home fiducial (mountTopCamera's `places.home`) go in
+  the Run Machine panel's box for a pick and place head, shown only with a
+  G-code machine.

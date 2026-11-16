@@ -41,26 +41,13 @@
         <main id="page-run" class="grid page">
             <div class="column">
                 <section id="machine" class="panel machine" aria-label="Machine"></section>
-                <section id="pnp-head" class="panel hidden" aria-label="Head"></section>
             </div>
             <div class="column">
                 <section id="steps" class="panel" aria-label="Setup steps"></section>
                 <section id="pnp-steps" class="panel" aria-label="PNP steps"></section>
-                <section id="camera-view" class="panel" data-folder="Camera" aria-label="Camera view"></section>
-                <section id="camera" class="panel" data-folder="Camera" aria-label="Camera"></section>
-                <section id="camera-controls" class="panel" data-stack data-folder="Camera" aria-label="Picture controls"></section>
-                <section id="camera-sight" class="panel" data-stack data-folder="Camera" aria-label="Lens and colors"></section>
-                <section id="camera-changes" class="panel" data-stack data-folder="Camera" aria-label="Camera changes"></section>
-                <section id="pnp-view" class="panel" data-folder="Bottom camera" aria-label="Bottom camera view"></section>
-                <section id="pnp-camera" class="panel" data-folder="Bottom camera" aria-label="Bottom camera"></section>
-                <section id="pnp-camera-controls" class="panel" data-stack data-folder="Bottom camera" aria-label="Bottom picture controls"></section>
-                <section id="pnp-camera-sight" class="panel" data-stack data-folder="Bottom camera" aria-label="Bottom lens and colors"></section>
-                <section id="pnp-camera-changes" class="panel" data-stack data-folder="Bottom camera" aria-label="Bottom camera changes"></section>
-                <section id="pnp-top-view" class="panel hidden" data-folder="Top camera" aria-label="Top camera view"></section>
-                <section id="pnp-top" class="panel hidden" data-folder="Top camera" aria-label="Top camera"></section>
-                <section id="pnp-top-controls" class="panel hidden" data-stack data-folder="Top camera" aria-label="Top picture controls"></section>
-                <section id="pnp-top-sight" class="panel hidden" data-stack data-folder="Top camera" aria-label="Top lens and colors"></section>
-                <section id="pnp-top-changes" class="panel hidden" data-stack data-folder="Top camera" aria-label="Top camera changes"></section>
+                <section id="camera-view" class="panel" aria-label="Camera view"></section>
+                <section id="pnp-view" class="panel" aria-label="Bottom camera view"></section>
+                <section id="pnp-top-view" class="panel hidden" aria-label="Top camera view"></section>
                 <section id="find" class="panel" data-folder="Board place" aria-label="Find board"></section>
                 <section id="align" class="panel" data-folder="Board place" aria-label="Align"></section>
                 <section id="pnp-refs" class="panel hidden" data-folder="Board place" aria-label="Board on the machine"></section>
@@ -71,8 +58,6 @@
                 <section id="pnp-board" class="panel" aria-label="Board"></section>
                 <section id="heightmap" class="panel" aria-label="Height map"></section>
                 <section id="pnp-feeders" class="panel hidden" aria-label="Feeders"></section>
-                <section id="pnp-machine-view" class="panel hidden" aria-label="Machine view"></section>
-                <section id="pnp-nozzle" class="panel" aria-label="Nozzle"></section>
                 <section id="pnp-run" class="panel hidden" aria-label="Placing"></section>
                 <section id="run" class="panel" data-dock aria-label="Run"></section>
             </div>
@@ -98,10 +83,29 @@
                 <section id="settings" class="panel" aria-label="Settings"></section>
             </div>
         </main>
-        <main id="page-cameras" class="grid config-grid page">
+        <!-- Each camera's settings, calibration and routines; a pick and
+             place machine's head and bed. Their pictures are on Run. -->
+        <main id="page-cameras" class="grid page">
             <div class="column">
+                <section id="camera" class="panel" aria-label="Camera"></section>
+                <section id="camera-controls" class="panel" data-stack aria-label="Picture controls"></section>
+                <section id="camera-sight" class="panel" data-stack aria-label="Lens and colors"></section>
+                <section id="camera-changes" class="panel" data-stack aria-label="Camera changes"></section>
+                <section id="pnp-nozzle" class="panel" aria-label="Nozzle"></section>
             </div>
             <div class="column">
+                <section id="pnp-camera" class="panel" aria-label="Bottom camera"></section>
+                <section id="pnp-camera-controls" class="panel" data-stack aria-label="Bottom picture controls"></section>
+                <section id="pnp-camera-sight" class="panel" data-stack aria-label="Bottom lens and colors"></section>
+                <section id="pnp-camera-changes" class="panel" data-stack aria-label="Bottom camera changes"></section>
+                <section id="pnp-top" class="panel hidden" aria-label="Top camera"></section>
+                <section id="pnp-top-controls" class="panel hidden" data-stack aria-label="Top picture controls"></section>
+                <section id="pnp-top-sight" class="panel hidden" data-stack aria-label="Top lens and colors"></section>
+                <section id="pnp-top-changes" class="panel hidden" data-stack aria-label="Top camera changes"></section>
+            </div>
+            <div class="column">
+                <section id="pnp-head" class="panel hidden" aria-label="Head"></section>
+                <section id="pnp-machine-view" class="panel hidden" aria-label="Machine view"></section>
             </div>
         </main>
         <main id="page-cam" class="grid cam-grid page">

@@ -530,19 +530,25 @@ describe("folders", () => {
 });
 
 describe("the page's own markup", () => {
-    test("groups the Run area's camera panels by camera and the ways to place the board in folders", async () => {
+    test("stacks each camera's settings on the Cameras page, and groups the ways to place the board on Run", async () => {
         const html = await Bun.file(new URL("../index.html", import.meta.url)).text();
         const doc = new DOMParser().parseFromString(html, "text/html");
         const defaults = (page: string) => markupDefaults(Array.from(doc.querySelectorAll<HTMLElement>(`#page-${page} > .column`)));
-        expect(defaults("run").folders).toEqual({ "camera-view": "Camera", "pnp-view": "Bottom camera", "pnp-top-view": "Top camera", find: "Board place" });
-        expect(defaults("run").stuck).toEqual({ camera: "camera-view", "pnp-camera": "pnp-view", "pnp-top": "pnp-top-view", align: "find", "pnp-refs": "find" });
-        expect(defaults("run").stacked).toEqual({
+        expect(defaults("run").folders).toEqual({ find: "Board place" });
+        expect(defaults("run").stuck).toEqual({ align: "find", "pnp-refs": "find" });
+        expect(defaults("cameras").stacked).toEqual({
             "camera-controls": "camera", "camera-sight": "camera", "camera-changes": "camera",
             "pnp-camera-controls": "pnp-camera", "pnp-camera-sight": "pnp-camera", "pnp-camera-changes": "pnp-camera",
             "pnp-top-controls": "pnp-top", "pnp-top-sight": "pnp-top", "pnp-top-changes": "pnp-top",
         });
-        expect(defaults("job").folders).toEqual({});
         expect(defaults("job").stacked).toEqual({ "auto-about": "auto-chat" });
+        // The pictures are on Run, each camera's settings on the Setup side.
+        for (const id of ["camera-view", "pnp-view", "pnp-top-view"]) {
+            expect(doc.querySelector(`#pane-use #page-run #${id}`)).not.toBeNull();
+        }
+        for (const id of ["camera", "pnp-camera", "pnp-top", "pnp-nozzle", "pnp-head", "pnp-machine-view"]) {
+            expect(doc.querySelector(`#pane-setup #page-cameras #${id}`)).not.toBeNull();
+        }
         // The calibration tests are setup: the Checklist's page has them.
         expect(doc.querySelector("#pane-setup #page-facts #tests")).not.toBeNull();
         expect(doc.querySelector("#pane-use #tests")).toBeNull();

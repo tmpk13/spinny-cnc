@@ -341,7 +341,7 @@ function main(): void {
     mountSteps(panel("steps"), ctx);
     // The Machine panel: where the head is, the jog, the tool's quick
     // buttons and the markers, in one panel.
-    mountMachine(panel("machine"), ctx, "run", { dro: "dro", jog: "jog", laser: "laser", markers: "markers" });
+    const machine = mountMachine(panel("machine"), ctx, "run", { dro: "dro", jog: "jog", laser: "laser", markers: "markers" });
     mountJobs(panel("jobs"), ctx, panel("run"));
     mountHeightMap(panel("heightmap"), ctx);
     // The Job area's one preview: the job selected, or while a job drawn by
@@ -379,6 +379,7 @@ function main(): void {
         camera: panel("pnp-camera"),
         nozzle: panel("pnp-nozzle"),
         head: panel("pnp-head"),
+        quick: machine.head,
         view: panel("pnp-view"),
         topView: panel("pnp-top-view"),
         top: panel("pnp-top"),

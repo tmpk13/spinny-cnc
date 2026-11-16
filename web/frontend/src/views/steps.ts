@@ -122,7 +122,7 @@ export const SETUPS: Setup[] = [
             const camera = state.camera;
             return [
                 connectStep(state),
-                { label: "Camera on", done: camera?.running === true, hint: "In the Camera panel pick the camera (Detect lists them) or type its device, then press Start.", panel: "camera" },
+                { label: "Camera on", done: camera?.running === true, hint: "Press Start on the camera's picture; its device is picked on the Setup side's Cameras page (Detect lists them).", panel: "camera-view" },
                 {
                     label: "Mark",
                     done: camera?.mark !== null && camera?.mark !== undefined,
