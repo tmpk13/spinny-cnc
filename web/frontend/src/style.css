@@ -1154,7 +1154,7 @@ table.settings-list td {
     /* The jog pad, the preview and the job list take the height their
        column has left, so the short panels beside them never stretch; a
        panel folded or held at a height keeps its own. */
-    .column > :is(#jog, #preview, #jobs, #cam, #cam-file, #machine-file):not([data-collapsed], [data-height]) {
+    .column > :is(#machine, #preview, #jobs, #cam, #cam-file, #machine-file):not([data-collapsed], [data-height]) {
         flex: 1 0 auto;
     }
 
@@ -1235,16 +1235,12 @@ table.settings-list td {
 #page-run.grid:not([data-arranged]) {
     grid-template-areas:
         "steps"
-        "dro"
-        "jog"
-        "laser"
+        "machine"
         "run";
 }
 
 #page-run:not([data-arranged]) #steps { grid-area: steps; }
-#page-run:not([data-arranged]) #dro { grid-area: dro; }
-#page-run:not([data-arranged]) #jog { grid-area: jog; }
-#page-run:not([data-arranged]) #laser { grid-area: laser; }
+#page-run:not([data-arranged]) #machine { grid-area: machine; }
 #page-run:not([data-arranged]) #run { grid-area: run; }
 
 .panel {
@@ -1943,9 +1939,25 @@ button.badge.state {
     filter: saturate(0.5);
 }
 
+/* The Machine panel (src/views/machine.ts): its parts stacked, each after
+   the first ruled off from the one above it. */
+.machine-part ~ :is(.machine-part, .machine-markers):not(.hidden) {
+    padding-top: var(--flow);
+    border-top: thin solid var(--border);
+}
+
+.machine-markers > summary,
+.jog-more > summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--muted);
+}
+
 /* DRO */
 
-.dro.laser-on {
+/* The beam on: the panel holding the position glows. */
+.dro.laser-on,
+.panel:has(> .dro.laser-on) {
     border-color: var(--laser);
     box-shadow: 0 0 0 0.15rem color-mix(in oklab, var(--laser) 35%, transparent), var(--shadow);
 }

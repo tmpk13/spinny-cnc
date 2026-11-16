@@ -149,29 +149,37 @@ function pageOf(node: Element): PageId | null {
 }
 
 /**
- * Takes the page to a panel: its tab, the panel shown (unhidden, unfolded,
- * in front of its stack) and scrolled into view, and its border pulsing
- * until a press inside it (or another step's panel taking over), so the
- * eye finds it however the page is laid out.
+ * Takes the page to a panel, or to a part of one (the Machine panel's jog
+ * or markers, which were panels of their own): its tab, the panel shown
+ * (unhidden, unfolded, in front of its stack), a fold of the panel the
+ * part is in opened, the part scrolled into view, and the panel's border
+ * pulsing until a press inside it (or another step's panel taking over),
+ * so the eye finds it however the page is laid out.
  */
 export function goToPanel(id: string): void {
     const node = document.getElementById(id);
     if (!node) {
         return;
     }
+    const panel = node.closest<HTMLElement>("section.panel") ?? node;
     const page = pageOf(node);
     if (page !== null) {
         showPage(page);
     }
-    revealPanel(id);
+    revealPanel(panel.id);
+    for (let at = node.parentElement; at && at !== panel; at = at.parentElement) {
+        if (at instanceof HTMLDetailsElement) {
+            at.open = true;
+        }
+    }
     if (typeof node.scrollIntoView === "function") {
         node.scrollIntoView({ behavior: "smooth", block: "start" });
     }
     for (const other of Array.from(document.querySelectorAll(".panel.pulse"))) {
         other.classList.remove("pulse");
     }
-    node.classList.add("pulse");
-    node.addEventListener("pointerdown", () => node.classList.remove("pulse"), { once: true });
+    panel.classList.add("pulse");
+    panel.addEventListener("pointerdown", () => panel.classList.remove("pulse"), { once: true });
 }
 
 /** The setups that fit the machine; every one before a machine is connected, since which it is is not known yet. */

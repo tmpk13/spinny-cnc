@@ -54,3 +54,20 @@ while building them and what was not obvious.
 - The layout check skips a code editor's colored layer: its lines end
   wherever the file's do, and one ending within a few pixels of the edge
   at some width was reported as text against a wall.
+
+## The Machine panel
+
+- Position, Jog, Laser and Markers are one panel (src/views/machine.ts),
+  mounted on Run (`#machine`) and on Job (`#job-machine`, for the Draw
+  panel's Here). Each part is the old view in a box carrying the old
+  panel's id (`dro`, `jog`, `laser`, `markers`; on Job the `mill-` ones),
+  so a step, a fact or a link naming `jog` still finds it. goToPanel
+  reveals the section a part is in, opens a fold holding it and pulses the
+  section.
+- The parts' heads are taken apart after mounting: their titles go, the
+  position's age and the jog's Fine, Hold to move and Cancel join the
+  panel's head. The panel layer only takes a section's direct
+  `.panel-head`, and setup links go to the section named in FACT_RULES
+  (`machine`, `job-machine`), so nested heads would be neither.
+- The jog's go-to rows, Here is, the feed and Motors, Home and Unlock fold
+  under More, open as last left across redraws.

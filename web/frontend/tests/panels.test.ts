@@ -530,7 +530,7 @@ describe("folders", () => {
 });
 
 describe("the page's own markup", () => {
-    test("groups the Run area's camera panels by camera, the ways to place the board, and the Job area's machine panels, in folders", async () => {
+    test("groups the Run area's camera panels by camera and the ways to place the board in folders", async () => {
         const html = await Bun.file(new URL("../index.html", import.meta.url)).text();
         const doc = new DOMParser().parseFromString(html, "text/html");
         const defaults = (page: string) => markupDefaults(Array.from(doc.querySelectorAll<HTMLElement>(`#page-${page} > .column`)));
@@ -541,7 +541,7 @@ describe("the page's own markup", () => {
             "pnp-camera-controls": "pnp-camera", "pnp-camera-sight": "pnp-camera", "pnp-camera-changes": "pnp-camera",
             "pnp-top-controls": "pnp-top", "pnp-top-sight": "pnp-top", "pnp-top-changes": "pnp-top",
         });
-        expect(defaults("job").folders).toEqual({ "mill-dro": "Machine" });
+        expect(defaults("job").folders).toEqual({});
         expect(defaults("job").stacked).toEqual({ "auto-about": "auto-chat" });
         // The calibration tests are setup: the Checklist's page has them.
         expect(doc.querySelector("#pane-setup #page-facts #tests")).not.toBeNull();

@@ -176,7 +176,7 @@ export const FACT_RULES: FactRule[] = [
     {
         id: "motion.controls",
         group: "Motion",
-        uses: ["jog", "mill-jog", "pnp-jog"],
+        uses: ["machine", "job-machine"],
         fits: (state) => state.settings !== null && state.snapshot.connected,
         read: (state) => {
             const from = state.settings?.controls_from ?? null;
@@ -322,7 +322,7 @@ export const FACT_RULES: FactRule[] = [
     {
         id: "pnp.homed",
         group: "Pick and place",
-        uses: ["pnp-jog", "pnp-run"],
+        uses: ["machine", "pnp-run"],
         fits: (state) => placingFits(state) && state.placing!.connected,
         read: (state) => {
             const homed = state.placing!.homed;
@@ -392,7 +392,7 @@ export const FACT_RULES: FactRule[] = [
     {
         id: "pnp.top.offset",
         group: "Pick and place",
-        uses: ["pnp-find", "pnp-refs"],
+        uses: ["find", "pnp-refs"],
         fits: (state) => placingFits(state) && state.placing!.top !== undefined,
         read: (state) => {
             const offset = state.placing!.top!.offset;
@@ -424,7 +424,7 @@ export const FACT_RULES: FactRule[] = [
                 when: entry?.time ?? null,
                 fill: "routine",
                 need: null,
-                where: "pnp-find",
+                where: "find",
                 action: "Find board",
             };
         },

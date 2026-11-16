@@ -21,13 +21,10 @@ import { mountConsole } from "./views/console.ts";
 import { into, type Ctx } from "./views/context.ts";
 import { mountOpenPnpImport } from "./views/openpnpimport.ts";
 import { mountOverview } from "./views/overview.ts";
-import { mountDro } from "./views/dro.ts";
 import { mountHeightMap } from "./views/heightmap.ts";
 import { mountJobJson } from "./views/jobjson.ts";
 import { mountJobs } from "./views/jobs.ts";
-import { mountJog } from "./views/jog.ts";
-import { mountLaser } from "./views/laser.ts";
-import { mountMarkers } from "./views/markers.ts";
+import { mountMachine } from "./views/machine.ts";
 import { mountMill, plotJobOf } from "./views/mill.ts";
 import { mountConnection } from "./views/connection.ts";
 import { mountPageSettings } from "./views/pagesettings.ts";
@@ -342,10 +339,9 @@ function main(): void {
     const tabTools = mountTabs(panel("tabs"), store);
     mountOverview(panel("overview"), ctx);
     mountSteps(panel("steps"), ctx);
-    mountDro(panel("dro"), ctx);
-    mountJog(panel("jog"), ctx, "run");
-    mountLaser(panel("laser"), ctx);
-    mountMarkers(panel("markers"), ctx);
+    // The Machine panel: where the head is, the jog, the tool's quick
+    // buttons and the markers, in one panel.
+    mountMachine(panel("machine"), ctx, "run", { dro: "dro", jog: "jog", laser: "laser", markers: "markers" });
     mountJobs(panel("jobs"), ctx, panel("run"));
     mountHeightMap(panel("heightmap"), ctx);
     // The Job area's one preview: the job selected, or while a job drawn by
@@ -360,12 +356,9 @@ function main(): void {
     mountFacts(panel("facts"), ctx);
     mountTests(panel("tests"), ctx);
     mountConsole(panel("console"), ctx);
-    // The Job area: the position, the jog and the laser beside the Draw
-    // panel, for its Here; the markers it draws to.
-    mountDro(panel("mill-dro"), ctx);
-    mountJog(panel("mill-jog"), ctx, "job");
-    mountLaser(panel("mill-spindle"), ctx);
-    mountMarkers(panel("mill-markers"), ctx);
+    // The Job area has the Machine panel too, beside the Draw panel, for
+    // its Here and the markers it draws to.
+    mountMachine(panel("job-machine"), ctx, "job", { dro: "mill-dro", jog: "mill-jog", laser: "mill-spindle", markers: "mill-markers" });
     mountMill({ operation: panel("mill-operation") }, ctx);
     // The Setup side's CAM page: the profiles and their files.
     mountCam(panel("cam"), ctx, panel("cam-file"));

@@ -348,9 +348,9 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
     {
         name: "panels folded, stacked, stuck, one held at a height", pages: ["run", "job"], enter: async (page) => {
             await tab(page, "run");
-            await menu(page, "dro", "Fold");
+            await menu(page, "machine", "Fold");
             await menu(page, "console", "Stack with above");
-            await menu(page, "laser", "Stick to above");
+            await menu(page, "heightmap", "Stick to above");
             // The height handle under the job list, on the wide layout only.
             await tab(page, "job");
             const at = await page.evaluate(() => {

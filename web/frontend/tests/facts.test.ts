@@ -132,7 +132,7 @@ describe("what the machine knows", () => {
 function frame(): void {
     const page = (id: string, panels: string): string => `<main id="page-${id}" class="page"><div class="column">${panels}</div></main>`;
     const use = pagesOf("use").map((id) => page(id, id === "run"
-        ? `<section id="camera" class="panel"><div class="panel-head"><h2>Camera</h2></div></section><section id="jog" class="panel"><div class="panel-head"><h2>Jog</h2></div></section><section id="steps" class="panel"></section>`
+        ? `<section id="camera" class="panel"><div class="panel-head"><h2>Camera</h2></div></section><section id="machine" class="panel"><div class="panel-head"><h2>Machine</h2></div></section><section id="steps" class="panel"></section>`
         : "")).join("");
     const setupPages = pagesOf("setup").map((id) => page(id, id === "facts" ? `<section id="facts" class="panel"></section>` : id === "machines" ? `<section id="connection" class="panel"></section>` : "")).join("");
     document.body.innerHTML = `<div id="app"><nav id="tabs" class="tabs"></nav><div id="pane-use" class="pane" data-side="use">${use}</div><div id="pane-setup" class="pane" data-side="setup">${setupPages}</div><div id="toasts"></div></div>`;
@@ -189,8 +189,8 @@ describe("the Checklist and the links to it", () => {
         expect(link.textContent).toBe("Setup");
         expect(link.hasAttribute("data-need")).toBe(false);
         expect(link.title).toContain("Offset from the tool: 2.00, 3.00 mm (measured");
-        // The jog panel runs on no fact while nothing is connected: no link.
-        expect(document.querySelector<HTMLAnchorElement>("#jog .setup-link")!.hidden).toBe(true);
+        // The Machine panel runs on no fact while nothing is connected: no link.
+        expect(document.querySelector<HTMLAnchorElement>("#machine .setup-link")!.hidden).toBe(true);
     });
 
     test("with no other tab, a link to the other side swaps this tab, and Back returns", async () => {

@@ -682,6 +682,9 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
         );
     }
 
+    // Whether More is open, kept across the redraws a new machine file makes.
+    let moreOpen = false;
+
     function draw(): void {
         drawn = controls;
         const profile = profileOf(ctx.store.get().snapshot);
@@ -742,7 +745,14 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
             home,
             gcode ? null : button("Unlock", () => ctx.call(ctx.api.unlock()), "btn btn-quiet", "clear an alarm so the machine moves again"),
         );
-        replace(body, bars, ...rows, bottom);
+        // The pad and the bars in view; going to a place, naming one,
+        // the feed and the motors under More, open as it was left.
+        const fold = el("details", { class: "jog-more stack" }, el("summary", { title: "fold or unfold" }, "Go to, set position, motors"), ...rows, bottom);
+        fold.open = moreOpen;
+        fold.addEventListener("toggle", () => {
+            moreOpen = fold.open;
+        });
+        replace(body, bars, fold);
         show(ctx.store.get());
     }
 
