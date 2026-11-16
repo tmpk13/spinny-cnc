@@ -10,7 +10,7 @@
 import { el } from "../dom.ts";
 import type { Ctx } from "./context.ts";
 import { mountDro } from "./dro.ts";
-import { mountJog } from "./jog.ts";
+import { mountJog, type JogOptions } from "./jog.ts";
 import { mountLaser } from "./laser.ts";
 import { mountMarkers } from "./markers.ts";
 
@@ -36,9 +36,10 @@ function childrenWith(node: Element, name: string): HTMLElement[] {
 
 /**
  * Mounts the Machine panel in `root` for the page `page`, whose arrow keys
- * the jog answers while that page shows. `ids` names the parts' boxes.
+ * the jog answers while that page shows. `ids` names the parts' boxes;
+ * `jogOptions` says where the jog's travel height goes.
  */
-export function mountMachine(root: HTMLElement, ctx: Ctx, page: string, ids: MachineParts): MachinePanel {
+export function mountMachine(root: HTMLElement, ctx: Ctx, page: string, ids: MachineParts, jogOptions: JogOptions = {}): MachinePanel {
     const part = (id: string, name: string): HTMLElement => el("div", { id, class: "machine-part stack", "data-part": name });
     const dro = part(ids.dro, "position");
     // The position's styles, and its glow while the beam is on, hang on this class.
@@ -51,7 +52,7 @@ export function mountMachine(root: HTMLElement, ctx: Ctx, page: string, ids: Mac
     const title = el("div", { class: "panel-head" }, el("h2", {}, "Machine"));
     root.append(title, dro, jog, tool, head, markersFold);
     mountDro(dro, ctx);
-    mountJog(jog, ctx, page);
+    mountJog(jog, ctx, page, () => true, jogOptions);
     mountLaser(tool, ctx);
     mountMarkers(markers, ctx);
 

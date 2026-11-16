@@ -146,13 +146,22 @@ export function travelText(travel: number | null | undefined): string {
 }
 
 /** `page` is the page whose panel this is: its keys jog only while that page shows. */
+
+export interface JogOptions {
+    /**
+     * Where the travel height's row goes: left out, among the jog's rows;
+     * a box (the Height panel's), there; null, nowhere, for a second jog
+     * panel whose page has the Height panel's elsewhere.
+     */
+    travel?: HTMLElement | null;
+}
 /**
  * Mounts the jog panel in `root` for the page `page`, whose arrow keys it
  * answers; `active` says when they are its at all. The panel jogs the
  * machine connected, whichever it is: a G-code machine's file draws its
  * bars as any other machine file does.
  */
-export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () => boolean = () => true): void {
+export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () => boolean = () => true, options: JogOptions = {}): void {
     // The step of each bar, kept across a redraw: the choice pressed, and
     // a step typed in, which is the step while it is there.
     const picks = new Map<BarId, number>();
@@ -731,8 +740,13 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
         // A G-code machine goes across at its file's safe height, not the
         // travel height, and has no alarm to unlock.
         const gcode = profile.controller === "gcode";
-        if (profile.h_axis && !gcode) {
-            rows.push(travelRow());
+        const travelShown = profile.h_axis && !gcode;
+        if (options.travel === undefined) {
+            if (travelShown) {
+                rows.push(travelRow());
+            }
+        } else if (options.travel !== null) {
+            replace(options.travel, travelShown ? travelRow() : null);
         }
 
         motors = button("Motors", () => toggleMotors(), "btn btn-quiet", "power the motors on or off");

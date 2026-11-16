@@ -53,8 +53,8 @@ function travelStep(state: AppState): Step {
     return {
         label: "Travel height",
         done: travel !== null && travel !== undefined,
-        hint: "Set a Travel H in the Jog panel that clears the board and clamps; probing and gotos rise to it.",
-        panel: "jog",
+        hint: "Set a Travel H in the Height panel that clears the board and clamps; probing and gotos rise to it.",
+        panel: "heightmap",
     };
 }
 

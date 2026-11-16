@@ -106,3 +106,15 @@ while building them and what was not obvious.
   a fold folded twice. A way whose view hides its box hides its fold by
   `:has` in the stylesheet, so no store subscription has to run after the
   view's own (subscribers run in the order they subscribed).
+
+## Height
+
+- The Height panel (the height map's, renamed) holds the travel height and
+  how a run follows the map, above the map. The jog draws its travel row
+  into the box `mountJog`'s `travel` option names (the Run Machine
+  panel's), and none on the Job area's Machine panel (`travel: null`):
+  one home. The Run panel lends its map choice through `mapHost` and keeps
+  the chip saying the map's use in words. The two boxes are separate
+  because the jog redraws its row with `replace`, which would empty a box
+  shared with the map choice.
+- The Travel height step and its Checklist fact point at `heightmap`.

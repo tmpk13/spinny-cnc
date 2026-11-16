@@ -18,6 +18,8 @@ import { focusAgainText, mapUsable, mapUse, runActive, runMapUse, showMapUse } f
 
 /** What a page adds to its copy of the panel. */
 export interface RunOptions {
+    /** Where the choice of how a run follows the height map goes (the Height panel); left out, in the Run panel's row. */
+    mapHost?: HTMLElement;
     /** A line under the title with the job's length, time and groups on, for a page with no job details of its own. */
     stats?: boolean;
     /** A hint at the panel's foot. */
@@ -147,7 +149,10 @@ export function mountRun(root: HTMLElement, ctx: Ctx, options: RunOptions = {}):
     const stopButton = button("Stop", () => ctx.call(ctx.api.runStop()), "btn btn-danger urgent", "stop the job");
     // Why a dispenser would refuse the job, beside the run button.
     const runNote = el("span", { class: "muted run-note hidden" });
-    const runRow = el("div", { class: "run-row" }, runButton, compensate, mapChip, holdButton, resumeButton, stopButton, runNote);
+    // The map's use is chosen with the map, in the Height panel, when the
+    // page hands a place there; the chip says it here in words.
+    const runRow = el("div", { class: "run-row" }, runButton, options.mapHost ? null : compensate, mapChip, holdButton, resumeButton, stopButton, runNote);
+    options.mapHost?.append(el("div", { class: "button-row" }, labeled("Runs follow", compensate, "labeled inline")));
     // A map that lost its offset is not followed until it is taken again.
     const compensateNote = el("p", { class: "muted hint hidden" });
     const progressBar = el("div", { class: "progress-fill" });

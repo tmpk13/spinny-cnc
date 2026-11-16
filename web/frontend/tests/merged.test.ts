@@ -1,5 +1,6 @@
 // The panels made of others: the Machine panel (position, jog, laser,
-// markers) and Board place (by hand, camera, marks, references). Each
+// markers), Board place (by hand, camera, marks, references) and the
+// Height panel's rows lent by the jog and the Run panel. Each
 // part keeps the id of the panel it was, the parts' titles give way to
 // the panel's, and what else their heads held joins the panel's head or
 // the way's summary.
@@ -7,7 +8,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { el } from "../src/dom.ts";
 import { mountBoardPlace, placeLine, PLACE_WAYS } from "../src/views/boardplace.ts";
+import { mountJog } from "../src/views/jog.ts";
 import { mountMachine } from "../src/views/machine.ts";
+import { mountRun } from "../src/views/run.ts";
 import { connected, findButton, setup } from "./harness.ts";
 
 afterEach(() => {
@@ -86,5 +89,28 @@ describe("Board place", () => {
         const again = setup();
         mountBoardPlace(again.root, again.ctx);
         expect(again.root.querySelectorAll<HTMLDetailsElement>(".place-way")[2]!.open).toBe(true);
+    });
+});
+
+describe("the Height panel's rows from other views", () => {
+    test("the jog draws the travel height where it is handed a box, and nowhere when handed none", () => {
+        const { ctx, root, store } = setup();
+        store.set({ snapshot: connected() });
+        const box = document.createElement("div");
+        mountJog(root, ctx, "run", () => true, { travel: box });
+        expect(box.querySelector('input[aria-label="Travel height H"]')).not.toBeNull();
+        expect(root.querySelector('input[aria-label="Travel height H"]')).toBeNull();
+        const other = document.createElement("section");
+        mountJog(other, ctx, "job", () => true, { travel: null });
+        expect(other.querySelector('input[aria-label="Travel height H"]')).toBeNull();
+    });
+
+    test("the Run panel lends its choice of how a run follows the map, and keeps the chip that says it", () => {
+        const { ctx, root } = setup();
+        const host = document.createElement("div");
+        mountRun(root, ctx, { mapHost: host });
+        expect(host.querySelector('select[aria-label="Height map"]')).not.toBeNull();
+        expect(root.querySelector('select[aria-label="Height map"]')).toBeNull();
+        expect(root.querySelector(".map-use")).not.toBeNull();
     });
 });

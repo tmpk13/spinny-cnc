@@ -207,7 +207,7 @@ export const FACT_RULES: FactRule[] = [
                 when: null,
                 fill: "hand",
                 need: travel === null ? "set one that clears the clamps before probing" : null,
-                where: "jog",
+                where: "heightmap",
                 action: "Set",
             };
         },

@@ -273,7 +273,7 @@ export function freshTravel(travel: number | null | undefined): string {
 /** What the probe note says before probing: the height the head travels at, the travel height's or the head's. */
 export function probeTravelText(travel: number | null | undefined): string {
     if (travel === null || travel === undefined) {
-        return "Raise the head so the probe clears the board, or set Travel H in the jog panel.";
+        return "Raise the head so the probe clears the board, or set a Travel H above.";
     }
     return `Probing travels at H ${formatFixed(travel, 3)} (the travel height) or above. Depth counts down from there.`;
 }
@@ -440,12 +440,28 @@ export function showMapUse(chip: HTMLElement, use: MapUse | null, prefix = ""): 
     chip.setAttribute("data-use", use.kind);
 }
 
-export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
+export interface HeightPanel {
+    /** The box over the map for the travel height, which the jog draws. */
+    travel: HTMLElement;
+    /** The box under it for how a run follows the map, which the Run panel lends. */
+    map: HTMLElement;
+}
+
+/**
+ * The Height panel in `root`: the heights a job runs at. The map probed
+ * over the board, its tie and focus, and above them the travel height (the
+ * jog draws it in `travel`) and how the run follows the map (the Run panel
+ * lends it in `map`).
+ */
+export function mountHeightMap(root: HTMLElement, ctx: Ctx): HeightPanel {
     const badge = el("span", { class: "badge hm-badge" }, "no map");
     // Whether the run under way, or the next one, follows this map.
     const useChip = el("span", { class: "badge map-use hidden" });
+    const travel = el("div", { class: "hm-travel" });
+    const map = el("div", { class: "hm-map-use" });
+    const uses = el("div", { class: "stack hm-uses" }, travel, map);
     const body = el("fieldset", { class: "panel-body" });
-    root.append(el("div", { class: "panel-head" }, el("h2", {}, "Height map"), el("div", { class: "button-row" }, useChip, badge)), body);
+    root.append(el("div", { class: "panel-head" }, el("h2", {}, "Height"), el("div", { class: "button-row" }, useChip, badge)), uses, body);
 
     // --- where to probe ---
     const gridFields = {
@@ -1085,4 +1101,5 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): void {
     showQueue(ctx.store.get());
     renderData(ctx.store.get());
     render(ctx.store.get());
+    return { travel, map };
 }

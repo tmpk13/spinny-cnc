@@ -342,12 +342,14 @@ function main(): void {
     mountSteps(panel("steps"), ctx);
     // The Machine panel: where the head is, the jog, the tool's quick
     // buttons and the markers, in one panel.
-    const machine = mountMachine(panel("machine"), ctx, "run", { dro: "dro", jog: "jog", laser: "laser", markers: "markers" });
+    // The Height panel: the travel height and how a run follows the map
+    // are its own, lent by the jog and the Run panel.
+    const height = mountHeightMap(panel("heightmap"), ctx);
+    const machine = mountMachine(panel("machine"), ctx, "run", { dro: "dro", jog: "jog", laser: "laser", markers: "markers" }, { travel: height.travel });
     // Board place: every way of saying where the board sits, one panel;
     // its ways are filled below by the views that always did.
     const place = mountBoardPlace(panel("place"), ctx);
-    mountJobs(panel("jobs"), ctx, panel("run"), place.parts.hand);
-    mountHeightMap(panel("heightmap"), ctx);
+    mountJobs(panel("jobs"), ctx, panel("run"), { place: place.parts.hand, mapHost: height.map });
     // The Job area's one preview: the job selected, or while a job drawn by
     // hand (or none) is selected, the Draw panel's operation as planned.
     const drawing = (state: AppState): boolean => state.job === null || plotJobOf(state) !== null;
@@ -362,7 +364,7 @@ function main(): void {
     mountConsole(panel("console"), ctx);
     // The Job area has the Machine panel too, beside the Draw panel, for
     // its Here and the markers it draws to.
-    mountMachine(panel("job-machine"), ctx, "job", { dro: "mill-dro", jog: "mill-jog", laser: "mill-spindle", markers: "mill-markers" });
+    mountMachine(panel("job-machine"), ctx, "job", { dro: "mill-dro", jog: "mill-jog", laser: "mill-spindle", markers: "mill-markers" }, { travel: null });
     mountMill({ operation: panel("mill-operation") }, ctx);
     // The Setup side's CAM page: the profiles and their files.
     mountCam(panel("cam"), ctx, panel("cam-file"));

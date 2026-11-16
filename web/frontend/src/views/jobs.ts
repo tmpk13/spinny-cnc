@@ -120,12 +120,17 @@ export function jobLabels(milling: boolean): { power: string; speed: string; spo
  * own at the foot of the column, so Run stays in reach however long the
  * list and the groups grow.
  */
-/**
- * The Jobs panel in `root`, the Run panel in `runRoot`, and the selected
- * job's offset and turn in `placeRoot` (the Board place panel's By hand)
- * when there is one, else among the job's details.
- */
-export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, placeRoot?: HTMLElement): void {
+/** Where parts of the Jobs and Run panels go when the page has panels for them. */
+export interface JobsPlaces {
+    /** The selected job's offset and turn: the Board place panel's By hand; left out, among the job's details. */
+    place?: HTMLElement;
+    /** How a run follows the height map: the Height panel's; left out, the Run panel's row. */
+    mapHost?: HTMLElement;
+}
+
+/** The Jobs panel in `root` and the Run panel in `runRoot`. */
+export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, places: JobsPlaces = {}): void {
+    const placeRoot = places.place;
     const fileInput = el("input", { type: "file", accept: ACCEPT, multiple: true, class: "file-input", "aria-label": "Job file" });
     const powerField = numberField({ value: 500, min: 0, step: 1 });
     const speedField = numberField({ value: 400, min: 1, step: 1 });
@@ -833,7 +838,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
         ctx.toast("info", `${count} deleted from ${job.name}`);
     }
 
-    mountRun(runRoot, ctx);
+    mountRun(runRoot, ctx, { mapHost: places.mapHost });
 
     function renderDetails(state: AppState): void {
         const job = state.job;
