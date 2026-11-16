@@ -126,6 +126,8 @@ export interface JobsPlaces {
     place?: HTMLElement;
     /** How a run follows the height map: the Height panel's; left out, the Run panel's row. */
     mapHost?: HTMLElement;
+    /** The selected job's groups, widths and stats: the Job panel; left out, under the list. */
+    details?: HTMLElement;
 }
 
 /** The Jobs panel in `root` and the Run panel in `runRoot`. */
@@ -200,21 +202,31 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
         el("option", { value: "rings" }, "rings"),
         el("option", { value: "lines" }, "lines"),
     );
-    const drop = el("div", { class: "drop" },
+    // The settings the next import is made with, in words, and the button
+    // that opens them: they are the import's, not the selected job's, so
+    // they stay out of the panel until asked for.
+    const importLine = el("p", { class: "muted import-line" });
+    const settingsButton = button("Import settings", () => openSettings(), "btn btn-quiet btn-small", "the power, speed, place and board choices the next import is made with");
+    const drop = el("div", { class: "drop stack" },
         el("p", {}, "Drop a file here (svg, dxf, json, gerber, kicad_pcb, gcode) or"),
-        el("label", { class: "btn btn-quiet" }, "pick a file", fileInput),
+        el("div", { class: "button-row" }, el("label", { class: "btn btn-quiet" }, "pick a file", fileInput), settingsButton),
+        importLine,
     );
-    // A KiCad board is cut from one of its layers: the board's own, read
-    // from the file, are offered before anything is sent.
+    // The import dialog. A KiCad board is cut from one of its layers: the
+    // board's own, read from the file, are offered before anything is
+    // sent, with the import's settings under them. Opened by Import
+    // settings, it holds the settings alone, with Done.
     const chooserTitle = el("p", { class: "layer-chooser-title" });
     const chooserSelect = el("select", { class: "field", "aria-label": "Layer to import" }) as HTMLSelectElement;
     const chooserImport = el("button", { type: "button", class: "btn btn-primary btn-small" }, "Import");
     const chooserCancel = el("button", { type: "button", class: "btn btn-quiet btn-small" }, "Cancel");
     const chooserNote = el("p", { class: "muted hint" });
-    const chooser = el("div", { class: "layer-chooser hidden", role: "dialog", "aria-label": "Layer to import" },
+    const chooserRow = el("div", { class: "layer-chooser-row" }, chooserSelect, chooserImport, chooserCancel);
+    const settingsDone = button("Done", () => closeSettings(), "btn btn-primary btn-small", "keep these settings for the next import");
+    const doneRow = el("div", { class: "button-row hidden" }, settingsDone);
+    const chooser = el("div", { class: "layer-chooser hidden", role: "dialog", "aria-label": "Import" },
         chooserTitle,
-        el("div", { class: "layer-chooser-row" }, chooserSelect, chooserImport, chooserCancel),
-        chooserNote,
+        chooserRow,
     );
     const powerLabel = labeled("Power S", powerField);
     const speedLabel = labeled("Speed mm/min", speedField);
@@ -225,7 +237,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
     thicknessLabel.title = "Paste height over each pad, mm; dot volume is pad area times this";
     const marginLabel = labeled("Margin mm", marginField);
     marginLabel.title = "mm each paste opening shrinks on every side";
-    const options = el("div", { class: "field-grid" },
+    const options = el("div", { class: "field-grid import-settings" },
         powerLabel,
         speedLabel,
         spotLabel,
@@ -273,10 +285,47 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
     let iconFor: string | null = null;
     const combineButton = button("Combine", () => combine(), "btn btn-quiet btn-small");
     combineButton.title = "join the checked jobs into one, in the order checked";
+    chooser.append(options, doneRow, chooserNote);
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Jobs"), el("div", { class: "button-row" }, combineButton, saveButton, deleteAllButton)),
-        drop, chooser, options, list, details,
+        drop, chooser, list,
     );
+    // The selected job's groups, place and widths: a panel of their own when
+    // the page has one, else under the list.
+    (places.details ?? root).append(details);
+
+    /** The import dialog with the settings alone, to change them before an import. */
+    function openSettings(): void {
+        if (!chooser.classList.contains("hidden")) {
+            return;
+        }
+        chooserTitle.textContent = "Settings for the next import";
+        chooserRow.classList.add("hidden");
+        doneRow.classList.remove("hidden");
+        chooserNote.textContent = "";
+        chooser.classList.remove("hidden");
+        powerField.focus();
+    }
+
+    function closeSettings(): void {
+        chooser.classList.add("hidden");
+        doneRow.classList.add("hidden");
+        chooserRow.classList.remove("hidden");
+        showImportLine();
+    }
+
+    /** The next import's settings in words, under the drop area. */
+    function showImportLine(): void {
+        const mode = Array.from(modeField.options).find((option) => option.value === modeField.value)?.textContent ?? modeField.value;
+        const anchor = anchorField.value === "center" ? "centered on the axis" : "at its own origin";
+        const ox = parseNumber(offsetX.value) ?? 0;
+        const oy = parseNumber(offsetY.value) ?? 0;
+        const moved = ox !== 0 || oy !== 0 ? `, moved ${ox}, ${oy} mm` : "";
+        importLine.textContent = `Next import: S${powerField.value}, ${speedField.value} mm/min, spot ${spotField.value} mm, ${anchor}${moved}; a board's ${layerField.value.trim() || "layer"} ${mode}.`;
+    }
+    options.addEventListener("input", () => showImportLine());
+    options.addEventListener("change", () => showImportLine());
+    showImportLine();
 
     /** The selected job as the file it is kept in, to put back with an upload. */
     function saveJob(): void {
@@ -408,9 +457,11 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
             // The option of the value, looked up rather than read from
             // selectedOptions: happy-dom's live list of it can go stale.
             const how = Array.from(modeField.options).find((option) => option.value === modeField.value)?.textContent ?? modeField.value;
-            chooserNote.textContent = `${empty}Board: ${how} (set below).`;
+            chooserNote.textContent = `${empty}Board: ${how} (set above).`;
         };
         follow();
+        chooserRow.classList.remove("hidden");
+        doneRow.classList.add("hidden");
         chooser.classList.remove("hidden");
         chooserSelect.focus();
         return await new Promise<string | null>((resolve) => {
@@ -421,6 +472,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
             };
             const finish = (value: string | null): void => {
                 chooser.classList.add("hidden");
+                showImportLine();
                 chooserSelect.removeEventListener("change", follow);
                 chooserSelect.removeEventListener("keydown", keys);
                 modeField.removeEventListener("change", manual);

@@ -349,7 +349,7 @@ function main(): void {
     // Board place: every way of saying where the board sits, one panel;
     // its ways are filled below by the views that always did.
     const place = mountBoardPlace(panel("place"), ctx);
-    mountJobs(panel("jobs"), ctx, panel("run"), { place: place.parts.hand, mapHost: height.map });
+    mountJobs(panel("jobs"), ctx, panel("run"), { place: place.parts.hand, mapHost: height.map, details: panel("job") });
     // The Job area's one preview: the job selected, or while a job drawn by
     // hand (or none) is selected, the Draw panel's operation as planned.
     const drawing = (state: AppState): boolean => state.job === null || plotJobOf(state) !== null;

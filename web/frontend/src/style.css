@@ -2297,10 +2297,14 @@ button.badge.state {
     min-width: 0;
 }
 
+/* Its lines and the row of buttons are spaced by the flow (a stack). */
 .drop p {
-    margin: 0 0 0.6rem;
     color: var(--muted);
     font-size: 0.875rem;
+}
+
+.drop .button-row {
+    justify-content: center;
 }
 
 .drop label.btn {

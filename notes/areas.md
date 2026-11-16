@@ -118,3 +118,18 @@ while building them and what was not obvious.
   because the jog redraws its row with `replace`, which would empty a box
   shared with the map choice.
 - The Travel height step and its Checklist fact point at `heightmap`.
+
+## Jobs, Job and the import dialog (Q53 A, applied, open)
+
+- The Jobs panel is the drop area, a line saying the next import's
+  settings in words, and the list. The settings themselves (power, speed,
+  spot, anchor, offset, layer, mirror, board mode, clear or fill copper,
+  margin, paste) are in the import dialog: the layer chooser a KiCad board
+  opens, or Import settings with Done. Every other file still imports on
+  one press with the settings the line states; asking for every file was
+  one press more on each import for settings that rarely change.
+- The selected job's groups, picked paths, stats, width and margin rows
+  are the Job panel (`places.details`); its offset and turn are Board
+  place's By hand.
+- The drop area is a `stack`: its old `.drop p` bottom margin left the
+  new line's foot against the box (the layout check's tail finding).

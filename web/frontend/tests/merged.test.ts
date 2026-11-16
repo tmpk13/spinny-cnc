@@ -8,10 +8,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { el } from "../src/dom.ts";
 import { mountBoardPlace, placeLine, PLACE_WAYS } from "../src/views/boardplace.ts";
+import { mountJobs } from "../src/views/jobs.ts";
 import { mountJog } from "../src/views/jog.ts";
 import { mountMachine } from "../src/views/machine.ts";
 import { mountRun } from "../src/views/run.ts";
-import { connected, findButton, setup } from "./harness.ts";
+import { connected, findButton, settle, setup } from "./harness.ts";
 
 afterEach(() => {
     document.body.replaceChildren();
@@ -112,5 +113,51 @@ describe("the Height panel's rows from other views", () => {
         expect(host.querySelector('select[aria-label="Height map"]')).not.toBeNull();
         expect(root.querySelector('select[aria-label="Height map"]')).toBeNull();
         expect(root.querySelector(".map-use")).not.toBeNull();
+    });
+});
+
+describe("the Jobs panel and the Job panel", () => {
+    test("the next import's settings sit in the import dialog, said in words under the drop area", () => {
+        const { ctx, root } = setup();
+        const run = document.createElement("section");
+        mountJobs(root, ctx, run);
+        const dialog = root.querySelector(".layer-chooser") as HTMLElement;
+        const power = root.querySelector(".import-settings input") as HTMLInputElement;
+        expect(dialog.contains(power)).toBe(true);
+        expect(dialog.classList.contains("hidden")).toBe(true);
+        const line = root.querySelector(".import-line")!;
+        expect(line.textContent).toBe("Next import: S500, 400 mm/min, spot 0.1 mm, centered on the axis; a board's F.Cu isolate.");
+        findButton(root, "Import settings").click();
+        expect(dialog.classList.contains("hidden")).toBe(false);
+        // Opened for the settings alone: no layer to pick, Done to close.
+        expect(dialog.querySelector(".layer-chooser-row")!.classList.contains("hidden")).toBe(true);
+        power.value = "300";
+        power.dispatchEvent(new Event("input", { bubbles: true }));
+        expect(line.textContent).toContain("S300,");
+        findButton(dialog, "Done").click();
+        expect(dialog.classList.contains("hidden")).toBe(true);
+    });
+
+    test("a file other than a board goes at once, with the settings shown", async () => {
+        const { ctx, root, calls } = setup();
+        mountJobs(root, ctx, document.createElement("section"));
+        const event = new Event("drop", { cancelable: true });
+        Object.defineProperty(event, "dataTransfer", { value: { files: [new File(['<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0 L10 0"/></svg>'], "line.svg")] } });
+        root.querySelector(".drop")!.dispatchEvent(event);
+        for (let i = 0; i < 5; i++) {
+            await settle();
+        }
+        expect(calls.filter((call) => call.name === "uploadJob")[0]?.args[1]).toMatchObject({ power: 500, speed: 400, spot: 0.1 });
+        expect((root.querySelector(".layer-chooser") as HTMLElement).classList.contains("hidden")).toBe(true);
+    });
+
+    test("the selected job's groups go to the Job panel when there is one", async () => {
+        const { ctx, root, store } = setup();
+        const job = document.createElement("section");
+        mountJobs(root, ctx, document.createElement("section"), { details: job });
+        await ctx.refreshJobs();
+        await ctx.selectJob(store.get().jobs[0]!.id);
+        expect(root.querySelector(".job-details")).toBeNull();
+        expect(job.querySelector(".job-details h3")?.textContent).toBe(store.get().job!.name);
     });
 });
