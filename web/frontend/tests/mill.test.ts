@@ -12,7 +12,7 @@ import { defaultOperation, recipeOps } from "../src/sketch.ts";
 import { GRID_KEY, Preview } from "../src/preview.ts";
 import { formatTick, gridLinesIn } from "../src/render/scene.ts";
 import type { HolePoint, Job, MillOperation, MillResponse, Path } from "../src/types.ts";
-import { PAGES } from "../src/views/tabs.ts";
+import { pageNamed, PAGES } from "../src/views/tabs.ts";
 import { headPosition, mountMarkers, nextMarkerName, withMarker } from "../src/views/markers.ts";
 import { MILL_KEY, PLAN_DELAY_MS, fieldText, holeSizes, millNeeds, mountMill, parsePoints, pointsText } from "../src/views/mill.ts";
 import { mountJobs, widthMode } from "../src/views/jobs.ts";
@@ -599,6 +599,7 @@ describe("another width for a job", () => {
     });
 });
 
-test("the Plot page has a tab", () => {
-    expect(PAGES.map((page) => page.id)).toEqual(["overview", "jobs", "plot", "cam", "pnp", "auto", "facts", "config", "connection", "plugins"]);
+test("the pages are the areas and the Setup pages; the Plot page's panels are the Job area's", () => {
+    expect(PAGES.map((page) => page.id)).toEqual(["home", "job", "run", "facts", "machines", "cameras", "cam", "ui"]);
+    expect(pageNamed("plot")).toBe("job");
 });

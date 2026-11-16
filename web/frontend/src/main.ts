@@ -28,13 +28,13 @@ import { mountJobs } from "./views/jobs.ts";
 import { mountJog } from "./views/jog.ts";
 import { mountLaser } from "./views/laser.ts";
 import { mountMarkers } from "./views/markers.ts";
-import { mountMill } from "./views/mill.ts";
+import { mountMill, plotJobOf } from "./views/mill.ts";
 import { mountConnection } from "./views/connection.ts";
 import { mountPageSettings } from "./views/pagesettings.ts";
 import { mountSearch } from "./views/search.ts";
 import { mountPanels } from "./views/panels.ts";
 import { mountPlugins } from "./views/plugins.ts";
-import { mountPnp } from "./views/pnp.ts";
+import { mountPnp, type PnpPanels } from "./views/pnp.ts";
 import { mountFindBoard } from "./views/findboard.ts";
 import { mountPreviewPanel } from "./views/previewpanel.ts";
 import { mountReportLink } from "./views/reportlink.ts";
@@ -343,12 +343,15 @@ function main(): void {
     mountOverview(panel("overview"), ctx);
     mountSteps(panel("steps"), ctx);
     mountDro(panel("dro"), ctx);
-    mountJog(panel("jog"), ctx);
+    mountJog(panel("jog"), ctx, "run");
     mountLaser(panel("laser"), ctx);
     mountMarkers(panel("markers"), ctx);
     mountJobs(panel("jobs"), ctx, panel("run"));
     mountHeightMap(panel("heightmap"), ctx);
-    mountPreviewPanel(panel("preview"), ctx);
+    // The Job area's one preview: the job selected, or while a job drawn by
+    // hand (or none) is selected, the Draw panel's operation as planned.
+    const drawing = (state: AppState): boolean => state.job === null || plotJobOf(state) !== null;
+    mountPreviewPanel(panel("preview"), ctx, (state) => (drawing(state) ? state.millPlan ?? state.job : state.job), (state) => (drawing(state) ? state.millDims : []));
     mountJobJson(panel("jobjson"), ctx);
     const vision = mountVision(panel("camera"), ctx, panel("camera-view"), { controls: panel("camera-controls"), sight: panel("camera-sight"), changes: panel("camera-changes") });
     mountAlign(panel("align"), ctx);
@@ -357,28 +360,32 @@ function main(): void {
     mountFacts(panel("facts"), ctx);
     mountTests(panel("tests"), ctx);
     mountConsole(panel("console"), ctx);
-    // The Plot page: the position, the jog and the spindle again beside
-    // its operations, the markers, and a preview of the operation planned.
+    // The Job area: the position, the jog and the laser beside the Draw
+    // panel, for its Here; the markers it draws to.
     mountDro(panel("mill-dro"), ctx);
-    mountJog(panel("mill-jog"), ctx, "plot");
+    mountJog(panel("mill-jog"), ctx, "job");
     mountLaser(panel("mill-spindle"), ctx);
     mountMarkers(panel("mill-markers"), ctx);
-    mountPreviewPanel(panel("mill-preview"), ctx, (state) => state.millPlan ?? state.job, (state) => state.millDims);
-    mountMill({ operation: panel("mill-operation"), run: panel("mill-run") }, ctx);
-    // The CAM page has a preview of its own, since the panels of the
-    // Jobs page are not shown beside it.
+    mountMill({ operation: panel("mill-operation") }, ctx);
+    // The Setup side's CAM page: the profiles and their files.
     mountCam(panel("cam"), ctx, panel("cam-file"));
-    mountPreviewPanel(panel("cam-preview"), ctx);
-    // The PNP page: the parts, the board, the jog, the cameras, the nozzle,
-    // and a G-code machine's panels.
-    const pnpPanels = mountPnp({
+    // The look for the board, one panel for every camera; the pick and
+    // place board drawing follows the camera and threshold it shows.
+    let pnpPanels: PnpPanels | null = null;
+    const find = mountFindBoard(panel("find"), ctx, {
+        page: "run",
+        boxes: { head: () => vision.view.box(), top: () => pnpPanels?.topBox() ?? null },
+        onChange: () => pnpPanels?.boardChanged(),
+    });
+    // The pick and place panels: the parts, the board, the cameras, the
+    // nozzle, and a G-code machine's own.
+    pnpPanels = mountPnp({
         steps: panel("pnp-steps"),
         parts: panel("pnp-parts"),
         board: panel("pnp-board"),
         camera: panel("pnp-camera"),
         nozzle: panel("pnp-nozzle"),
         head: panel("pnp-head"),
-        jog: panel("pnp-jog"),
         view: panel("pnp-view"),
         topView: panel("pnp-top-view"),
         top: panel("pnp-top"),
@@ -386,17 +393,13 @@ function main(): void {
         feeders: panel("pnp-feeders"),
         machineView: panel("pnp-machine-view"),
         run: panel("pnp-run"),
-        find: panel("pnp-find"),
         cameraFolds: { controls: panel("pnp-camera-controls"), sight: panel("pnp-camera-sight"), changes: panel("pnp-camera-changes") },
         topFolds: { controls: panel("pnp-top-controls"), sight: panel("pnp-top-sight"), changes: panel("pnp-top-changes") },
-    }, ctx, () => vision.view.box());
-    // The look for a board on the Jobs page too, its camera picked apart
-    // from the PNP page's.
-    mountFindBoard(panel("find"), ctx, { page: "jobs", boxes: { head: () => vision.view.box(), top: () => pnpPanels.topBox() } });
-    // The Auto page: the conversation with a model that makes jobs and
+    }, ctx, () => vision.view.box(), find);
+    // The assistant: the conversation with a model that makes jobs and
     // other data through the backend's tools, and which model it is.
     mountAuto({ chat: panel("auto-chat"), about: panel("auto-about") }, ctx);
-    // The Config page: the machine files beside the list of every key a
+    // The Machines page: the machine files beside the list of every key a
     // file can set, the file's value next to the board's.
     const config = mountConfig(panel("machine-file"), ctx, panel("settings"));
     // A link to `machine-file/<id>` opens that file.
@@ -406,7 +409,7 @@ function main(): void {
     mountVersion(panel("version"), ctx);
     mountReportLink(panel("reports"), ctx);
     mountToasts(panel("toasts"), ctx);
-    // The Plugins page, and the plugins turned on started: after the
+    // The Plugins panel, and the plugins turned on started: after the
     // other views, so a plugin finds every page to put a panel on.
     mountPlugins(panel("plugins"), ctx);
     // Last, once every view has drawn its panel's head: the layout layer

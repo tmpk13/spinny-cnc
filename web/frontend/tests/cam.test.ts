@@ -523,24 +523,24 @@ describe("the tabs", () => {
         document.body.append(app);
         mountTabs(nav, new Store<AppState>(initialState(true)));
         expect(Array.from(nav.querySelectorAll(".tab")).map((tab) => tab.textContent)).toEqual(PAGES.map((page) => page.label));
-        expect(activePage()).toBe("jobs");
+        expect(activePage()).toBe("job");
         click(nav, "CAM");
         expect(app.getAttribute("data-page")).toBe("cam");
         expect(activePage()).toBe("cam");
         expect(readPage()).toBe("cam");
         expect(nav.querySelector('[data-page="cam"]')?.getAttribute("aria-selected")).toBe("true");
-        showPage("jobs");
-        expect(readPage()).toBe("jobs");
+        showPage("job");
+        expect(readPage()).toBe("job");
         app.remove();
     });
 
     test("a page remembered by its old name opens under its new one", () => {
         localStorage.setItem("spinny.page", "mill");
-        expect(readPage()).toBe("plot");
-        localStorage.setItem("spinny.page", "machine");
-        expect(readPage()).toBe("jobs");
+        expect(readPage()).toBe("job");
+        localStorage.setItem("spinny.page", "pnp");
+        expect(readPage()).toBe("run");
         localStorage.setItem("spinny.page", "nonsense");
-        expect(readPage()).toBe("jobs");
+        expect(readPage()).toBe("job");
         localStorage.removeItem("spinny.page");
     });
 });

@@ -13,11 +13,12 @@ describe("what the panels hold unapplied", () => {
         setPending(store, "cam-profile", 2);
         setPending(store, "camera", 3);
         setPending(store, "job-json", 1);
-        expect(pendingOn(store.get().pending, "config")).toBe(1);
+        expect(pendingOn(store.get().pending, "machines")).toBe(1);
         expect(pendingOn(store.get().pending, "cam")).toBe(2);
-        // Two panels of one page add up on its tab.
-        expect(pendingOn(store.get().pending, "jobs")).toBe(4);
-        expect(pendingOn(store.get().pending, "plot")).toBe(0);
+        // Panels of one area add up on its tab.
+        expect(pendingOn(store.get().pending, "run")).toBe(3);
+        expect(pendingOn(store.get().pending, "job")).toBe(1);
+        expect(pendingOn(store.get().pending, "home")).toBe(0);
         expect(pendingTotal(store.get().pending)).toBe(7);
         setPending(store, "cam-profile", 0);
         expect(store.get().pending).toEqual({ "machine-file": 1, camera: 3, "job-json": 1 });

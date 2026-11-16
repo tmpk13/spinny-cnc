@@ -438,14 +438,14 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
         await into(ctx, "camera", ctx.api.cameraFind(s));
     }
 
-    /** The panel is in view: the Jobs page is up, the fold open and the tab shown. */
+    /** The panel is in view: the Run area is up, the fold open and the tab shown. */
     function visible(): boolean {
-        return fold.open && activePage() === "jobs" && document.visibilityState !== "hidden";
+        return fold.open && activePage() === "run" && document.visibilityState !== "hidden";
     }
 
-    /** The picture is in view: on the Jobs page in its own panel, or in this one while it is open. */
+    /** The picture is in view: on the Run area in its own panel, or in this one while it is open. */
     function visibleView(): boolean {
-        if (activePage() !== "jobs" || document.visibilityState === "hidden") {
+        if (activePage() !== "run" || document.visibilityState === "hidden") {
             return false;
         }
         return viewRoot ? !viewRoot.hasAttribute("data-collapsed") && !viewRoot.classList.contains("hidden") : folded?.open === true;

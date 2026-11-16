@@ -16,13 +16,13 @@ test("a card for every other page, each with a drawing and a tooltip, showing it
     document.body.append(app);
     mountOverview(root, ctx);
     const cards = Array.from(root.querySelectorAll<HTMLButtonElement>(".overview-card"));
-    expect(cards.map((card) => card.dataset["page"])).toEqual(PAGES.map((page) => page.id).filter((id) => id !== "overview"));
+    expect(cards.map((card) => card.dataset["page"])).toEqual(PAGES.map((page) => page.id).filter((id) => id !== "home"));
     for (const card of cards) {
         expect(card.title).not.toBe("");
         expect(card.querySelector("svg.overview-drawing path, svg.overview-drawing rect, svg.overview-drawing circle")).not.toBeNull();
     }
-    cards.find((card) => card.dataset["page"] === "pnp")!.click();
-    expect(app.getAttribute("data-page")).toBe("pnp");
+    cards.find((card) => card.dataset["page"] === "run")!.click();
+    expect(app.getAttribute("data-page")).toBe("run");
     app.remove();
 });
 
@@ -31,15 +31,14 @@ test("a card says what its page holds now, and follows the store", () => {
     mountOverview(root, ctx);
     const note = (page: string): string => root.querySelector(`.overview-card[data-page="${page}"] .overview-note`)!.textContent ?? "";
     store.set({ jobs: [], snapshot: { ...store.get().snapshot, connected: false } });
-    expect(note("jobs")).toBe("0 jobs");
-    expect(note("connection")).toBe("nothing connected");
+    expect(note("job")).toBe("0 jobs");
+    expect(note("machines")).toBe("nothing connected");
     store.set({ snapshot: connected({}, { url: "socket://127.0.0.1:2323" }), pending: { "machine-file": 2 } });
-    expect(note("connection")).toBe("connected: socket://127.0.0.1:2323");
+    expect(note("machines")).toBe("connected: socket://127.0.0.1:2323; 2 edits not applied");
     // A port the list names goes by that name, not its long path.
     const port = { url: "/dev/serial/by-id/usb-spinny_spinny_laser_controller-if00", device: "/dev/ttyACM0", description: "spinny laser controller", product: "spinny laser controller", kind: "usb" as const, spinny: true };
     store.set({ ports: [port], snapshot: connected({}, { url: port.url }) });
-    expect(note("connection")).toBe("connected: spinny laser controller (/dev/ttyACM0)");
-    expect(note("config")).toBe("2 edits not applied");
+    expect(note("machines")).toBe("connected: spinny laser controller (/dev/ttyACM0); 2 edits not applied");
     // A page with nothing to say shows no note.
     expect((root.querySelector(`.overview-card[data-page="cam"] .overview-note`) as HTMLElement).hidden).toBe(true);
 });
@@ -49,14 +48,15 @@ test("a run under way is named with how far it got", () => {
     const state = store.get();
     const jobs = [{ ...({} as typeof state.jobs[number]), id: "a1", name: "board" }];
     const progress = { job: "a1", state: "running" as const, sent: 60, acked: 50, total: 200, seconds: 3, estimate: 9, group: 0 };
-    expect(pageNote("jobs", { ...state, jobs, progress })).toBe("1 job; running board, 25%");
-    expect(pageNote("jobs", { ...state, jobs, progress: { ...progress, state: "hold" } })).toBe("1 job; holding board, 25%");
-    expect(pageNote("jobs", { ...state, jobs, progress: { ...progress, state: "done" } })).toBe("1 job");
+    expect(pageNote("run", { ...state, jobs, progress })).toBe("running board, 25%");
+    expect(pageNote("run", { ...state, jobs, progress: { ...progress, state: "hold" } })).toBe("holding board, 25%");
+    expect(pageNote("run", { ...state, jobs, progress: { ...progress, state: "done" } })).toBe("");
+    expect(pageNote("job", { ...state, jobs, progress })).toBe("1 job");
 });
 
 test("the plugins card counts the plugins on", () => {
     const { store } = setup();
     const plugin = { id: "a", name: "a", description: "", made_by: "auto" as const, enabled: true, changed: false, hash: "", size: 1, modified: "" };
-    expect(pageNote("plugins", { ...store.get(), plugins: [] })).toBe("");
-    expect(pageNote("plugins", { ...store.get(), plugins: [plugin, { ...plugin, id: "b", enabled: false }] })).toBe("1 of 2 plugins on");
+    expect(pageNote("ui", { ...store.get(), plugins: [] })).toBe("");
+    expect(pageNote("ui", { ...store.get(), plugins: [plugin, { ...plugin, id: "b", enabled: false }] })).toBe("1 of 2 plugins on");
 });

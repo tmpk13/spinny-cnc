@@ -10,13 +10,13 @@ import { ApiError } from "../api.ts";
 import type { PluginInfo, PluginWithSource } from "../plugins.ts";
 
 /** The example of docs/PLUGINS.md, word for word (a test holds the two together). */
-export const EXAMPLE_PLUGIN = `// A panel on the Jobs page with the head's place on the board in large
+export const EXAMPLE_PLUGIN = `// A panel on the Run area with the head's place on the board in large
 // digits, drawn again whenever the machine reports.
 export const name = "Big position";
-export const description = "The head's place on the board in large digits, in a panel on the Jobs page.";
+export const description = "The head's place on the board in large digits, in a panel on the Run area.";
 
 export function activate(host) {
-    const body = host.panel({ title: "Big position", page: "jobs" });
+    const body = host.panel({ title: "Big position", page: "run" });
     const readout = document.createElement("div");
     readout.style.font = "600 2.5rem/1.2 var(--mono)";
     readout.style.color = "var(--strong)";

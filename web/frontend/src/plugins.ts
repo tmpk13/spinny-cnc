@@ -17,7 +17,7 @@ import { activePage, el } from "./dom.ts";
 import type { AppState, Store } from "./state.ts";
 import type { MessageLevel } from "./types.ts";
 import { adoptPanel, dropPanel } from "./views/panels.ts";
-import { onPage, PAGES } from "./views/tabs.ts";
+import { onPage, pageNamed } from "./views/tabs.ts";
 
 /** A plugin as the backend lists it. */
 export interface PluginInfo {
@@ -169,7 +169,8 @@ export class PluginRuntime {
             id: info.id,
             api: this.ctx.api,
             panel: (options = {}) => {
-                const page = PAGES.some((entry) => entry.id === options.page) ? options.page! : "jobs";
+                // An old page name asks for the area its panels went to.
+                const page = pageNamed(options.page ?? null) ?? "run";
                 const column = lastColumn(page);
                 if (!column) {
                     throw new Error(`no page ${page} to put a panel on`);

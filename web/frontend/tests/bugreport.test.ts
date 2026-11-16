@@ -108,10 +108,10 @@ describe("what was done lately", () => {
         recordActions(store, log);
         pushToast(store, "error", "connect first");
         store.set({ toasts: [...store.get().toasts] });
-        showPage("plot");
+        showPage("run");
         expect(log.list().filter((action) => action.kind !== "press").map(({ kind, text, page }) => [kind, text ?? page])).toEqual([
             ["toast", "connect first"],
-            ["page", "plot"],
+            ["page", "run"],
         ]);
     });
 });

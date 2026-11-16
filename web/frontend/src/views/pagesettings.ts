@@ -109,7 +109,7 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
 
     function currentPage(): PageId {
         const id = document.getElementById("app")?.getAttribute("data-page");
-        return PAGES.find((page) => page.id === id)?.id ?? "jobs";
+        return PAGES.find((page) => page.id === id)?.id ?? "job";
     }
 
     /** The sheet's content, drawn again from the settings whenever it opens or they change. */

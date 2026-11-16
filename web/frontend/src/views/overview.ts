@@ -1,8 +1,8 @@
-// The Overview page: a card for each of the other pages, with a small
-// drawing of what the page is for, its name, what it is for in words, and
-// a line on what it holds now (the jobs kept and a run under way, the
-// parts of the board picked, the conversation, the machine connected, the
-// plugins on, edits not applied); a press on a card shows its page. The drawings are
+// The Home area: a card for each of the other areas and Setup pages, with
+// a small drawing of what it is for, its name, what it is for in words,
+// and a line on what it holds now (the jobs kept, a run under way, the
+// parts of the board picked, the machine connected, the plugins on, edits
+// not applied); a press on a card shows its page. The drawings are
 // inline SVG drawn with the page's text color and the page's own color
 // (tabs.ts PAGES), so they follow the light and dark themes.
 
@@ -29,18 +29,24 @@ function shape([tag, attrs]: Shape): SVGElement {
 /** Each page's drawing, in a box 120 by 72; `class: "accent"` marks the parts drawn in the card's accent color. */
 const DRAWINGS: Record<string, Shape[]> = {
     // A board with a track between two pads, the beam's spot on it.
-    jobs: [
+    job: [
         ["rect", { x: 14, y: 10, width: 92, height: 52, rx: 5 }],
         ["path", { d: "M32 46 H54 L64 28 H88", class: "accent" }],
         ["circle", { cx: 32, cy: 46, r: 5 }],
         ["circle", { cx: 88, cy: 28, r: 5 }],
         ["circle", { cx: 64, cy: 28, r: 2.5, class: "accent fill" }],
     ],
-    // A grid, a rectangle drawn over it and the pencil drawing it.
-    plot: [
-        ["path", { d: "M14 18 H106 M14 36 H106 M14 54 H106 M32 8 V64 M60 8 V64 M88 8 V64", class: "faint" }],
-        ["rect", { x: 32, y: 18, width: 56, height: 36, class: "accent" }],
-        ["path", { d: "M88 54 L104 38 L110 44 L94 60 Z M88 54 L86 62 L94 60" }],
+    // A play mark beside a progress bar partly filled.
+    run: [
+        ["path", { d: "M18 18 L42 36 L18 54 Z", class: "accent fill" }],
+        ["rect", { x: 54, y: 30, width: 52, height: 12, rx: 3 }],
+        ["path", { d: "M58 36 H84", class: "accent" }],
+    ],
+    // A camera's body and lens.
+    cameras: [
+        ["rect", { x: 28, y: 22, width: 64, height: 40, rx: 5 }],
+        ["path", { d: "M46 22 L52 14 H68 L74 22" }],
+        ["circle", { cx: 60, cy: 42, r: 11, class: "accent" }],
     ],
     // A gear beside the zigzag of a toolpath.
     cam: [
@@ -48,38 +54,15 @@ const DRAWINGS: Record<string, Shape[]> = {
         ["circle", { cx: 34, cy: 36, r: 4.5 }],
         ["path", { d: "M68 14 H106 V24 H68 V34 H106 V44 H68 V54 H106", class: "accent" }],
     ],
-    // A nozzle over a part with its pins, set on the board.
-    pnp: [
-        ["path", { d: "M54 6 H66 V24 L62 32 H58 L54 24 Z" }],
-        ["rect", { x: 46, y: 40, width: 28, height: 14, rx: 2, class: "accent" }],
-        ["path", { d: "M50 40 V36 M56 40 V36 M62 40 V36 M68 40 V36 M50 54 V58 M56 54 V58 M62 54 V58 M68 54 V58", class: "accent" }],
-        ["path", { d: "M14 62 H106" }],
-    ],
-    // A speech bubble with three dots, and a spark.
-    auto: [
-        ["path", { d: "M18 14 H86 Q92 14 92 20 V44 Q92 50 86 50 H44 L32 60 V50 H18 Q12 50 12 44 V20 Q12 14 18 14 Z" }],
-        ["circle", { cx: 36, cy: 32, r: 3, class: "accent fill" }],
-        ["circle", { cx: 52, cy: 32, r: 3, class: "accent fill" }],
-        ["circle", { cx: 68, cy: 32, r: 3, class: "accent fill" }],
-        ["path", { d: "M104 18 V34 M96 26 H112 M99 21 L109 31 M109 21 L99 31", class: "accent" }],
-    ],
     // Three sliders, each at its own setting.
-    config: [
+    machines: [
         ["path", { d: "M16 18 H104 M16 36 H104 M16 54 H104" }],
         ["circle", { cx: 40, cy: 18, r: 5, class: "accent fill" }],
         ["circle", { cx: 80, cy: 36, r: 5, class: "accent fill" }],
         ["circle", { cx: 56, cy: 54, r: 5, class: "accent fill" }],
     ],
-    // A plug on its cable, reaching for a socket.
-    connection: [
-        ["path", { d: "M8 36 H34" }],
-        ["rect", { x: 34, y: 26, width: 18, height: 20, rx: 3 }],
-        ["path", { d: "M52 30 H62 M52 42 H62", class: "accent" }],
-        ["rect", { x: 74, y: 22, width: 30, height: 28, rx: 4 }],
-        ["path", { d: "M84 30 V42 M94 30 V42", class: "accent" }],
-    ],
     // A puzzle piece.
-    plugins: [
+    ui: [
         ["path", { d: "M30 20 H50 Q50 10 58 10 Q66 10 66 20 H86 V38 Q96 38 96 46 Q96 54 86 54 V62 H30 V48 Q40 48 40 40 Q40 32 30 32 Z", class: "accent" }],
     ],
 };
@@ -102,39 +85,34 @@ export function drawingOf(page: string): SVGSVGElement {
 export function pageNote(page: PageId | string, state: AppState): string {
     const notes: string[] = [];
     switch (page) {
-        case "jobs": {
+        case "job":
             notes.push(countText(state.jobs.length, "job", "jobs"));
+            if (state.auto?.busy) {
+                notes.push("the assistant at work");
+            }
+            break;
+        case "run": {
             const run = state.progress;
             if (run && (run.state === "running" || run.state === "hold")) {
                 const name = state.jobs.find((job) => job.id === run.job)?.name ?? run.job;
                 const share = run.total > 0 ? Math.round((100 * run.acked) / run.total) : 0;
                 notes.push(`${run.state === "hold" ? "holding" : "running"} ${name}, ${share}%`);
             }
-            break;
-        }
-        case "pnp": {
             const parts = state.components?.components.length ?? 0;
             if (parts > 0) {
                 notes.push(`${countText(parts, "part", "parts")} on the board picked`);
             }
             break;
         }
-        case "auto":
-            if (state.auto?.busy) {
-                notes.push("a turn under way");
-            } else if ((state.auto?.entries.length ?? 0) > 0) {
-                notes.push(countText(state.auto!.entries.length, "line", "lines"));
-            }
-            break;
-        case "connection": {
-            // The port by the name the Connection tab gives it, shorter
+        case "machines": {
+            // The port by the name the Connection panel gives it, shorter
             // than its path (a by-id path runs to sixty letters).
             const url = state.snapshot.url;
             const port = url ? state.ports.find((entry) => entry.url === url || entry.device === url) : undefined;
             notes.push(state.snapshot.connected ? `connected: ${port ? portLabel(port) : url ?? "a machine"}` : "nothing connected");
             break;
         }
-        case "plugins": {
+        case "ui": {
             const plugins = state.plugins ?? [];
             if (plugins.length > 0) {
                 notes.push(`${plugins.filter((plugin) => plugin.enabled).length} of ${countText(plugins.length, "plugin", "plugins")} on`);
@@ -153,8 +131,8 @@ export function pageNote(page: PageId | string, state: AppState): string {
 
 export function mountOverview(root: HTMLElement, ctx: Ctx): void {
     const grid = el("div", { class: "overview-cards" });
-    root.append(el("div", { class: "panel-head" }, el("h2", {}, "Overview")), grid);
-    const cards = PAGES.filter((page) => page.id !== "overview").map((page) => {
+    root.append(el("div", { class: "panel-head" }, el("h2", {}, "Home")), grid);
+    const cards = PAGES.filter((page) => page.id !== "home").map((page) => {
         const note = el("span", { class: "overview-note muted" });
         const card = el("button", {
             type: "button",

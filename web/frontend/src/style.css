@@ -464,12 +464,13 @@ input[type="checkbox"] {
 
 .tabs .tab,
 .tabs .tabs-more {
+    --tab-line: transparent;
     font: inherit;
     font-weight: 600;
     letter-spacing: 0.04em;
     background: transparent;
     border: 0;
-    border-bottom: 0.2rem solid transparent;
+    border-bottom: 0.2rem solid var(--tab-line);
     color: var(--muted);
     padding: 0.55rem 1.1rem 0.4rem;
     min-height: var(--touch);
@@ -484,9 +485,9 @@ input[type="checkbox"] {
 
 .tabs .tab[aria-selected="true"],
 .tabs .tabs-more[aria-current="page"] {
+    --tab-line: var(--accent);
     color: var(--strong);
     background: var(--panel);
-    border-bottom-color: var(--accent);
 }
 
 /* The More folder: its name and a chevron drawn under it. */
@@ -751,6 +752,153 @@ input[type="checkbox"] {
     background: color-mix(in oklab, var(--hold) 85%, var(--base03));
 }
 
+/* The rail (src/views/tabs.ts): on a wide window the tab bar runs down
+   the window's left side under the status bar, each side's name over its
+   areas and the tools at the foot, and the panes take the rest of the
+   width. Folded, it is a thin strip at the left edge that opens over the
+   page on hover or a press. A narrow window keeps the bar across the top. */
+@media (min-width: 64rem) {
+    :root {
+        --rail: 9.5rem;
+        --rail-folded: 1.5rem;
+    }
+
+    #app {
+        grid-template-columns: var(--rail) minmax(0, 1fr);
+        grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    #app:has(> .tabs[data-fold]) {
+        grid-template-columns: var(--rail-folded) minmax(0, 1fr);
+    }
+
+    #app > .tabs {
+        grid-column: 1;
+        grid-row: 2;
+        min-height: 0;
+        border-bottom: 0;
+        border-right: thin solid var(--border-strong);
+    }
+
+    .pane {
+        grid-row: 2;
+        grid-column: 2;
+    }
+
+    #app[data-split] {
+        grid-template-columns: var(--rail) var(--split-cols, minmax(0, 3fr) var(--divider) minmax(0, 2fr));
+    }
+
+    #app[data-split]:has(> .tabs[data-fold]) {
+        grid-template-columns: var(--rail-folded) var(--split-cols, minmax(0, 3fr) var(--divider) minmax(0, 2fr));
+    }
+
+    #app[data-split] > #pane-use {
+        grid-column: 2;
+    }
+
+    #app[data-split] > #pane-setup {
+        grid-column: 4;
+    }
+
+    #app[data-split] > .pane-divider {
+        grid-row: 2;
+        grid-column: 3;
+    }
+
+    .tabs-bar,
+    .tabs[data-split] .tabs-bar {
+        display: flex;
+        flex-direction: column;
+        flex-wrap: nowrap;
+        align-items: stretch;
+        gap: 0.15rem;
+        height: 100%;
+        padding: var(--gap) 0.5rem;
+        overflow-y: auto;
+    }
+
+    .tabs-group,
+    .tabs-list,
+    .tabs-right,
+    .tabs[data-split] .tabs-group[data-side="use"],
+    .tabs[data-split] .tabs-right {
+        display: flex;
+        flex-direction: column;
+        flex-wrap: nowrap;
+        align-items: stretch;
+        gap: 0.15rem;
+        padding: 0;
+    }
+
+    .tabs-list[hidden] {
+        display: none;
+    }
+
+    .tabs-right {
+        flex: 1 0 auto;
+    }
+
+    .tabs .tabs-side {
+        align-self: flex-start;
+        margin: 0.5rem 0 0.35rem;
+    }
+
+    .tabs .tab,
+    .tabs .tabs-more {
+        text-align: left;
+        border-bottom: 0;
+        border-left: 0.2rem solid var(--tab-line);
+        border-radius: 0 var(--radius) var(--radius) 0;
+        padding: 0.45rem 0.75rem;
+    }
+
+    .tabs .tabs-more {
+        justify-content: space-between;
+    }
+
+    /* The tools at the rail's foot, wrapping in rows of icons; their
+       sheets open beside the rail, their foot on the window's. */
+    .tabs-tools {
+        margin: auto 0 0;
+        padding-top: var(--gap);
+        justify-content: flex-start;
+        gap: 0.25rem;
+    }
+
+    .tabs-tools .page-settings.panel,
+    .tabs-tools .search-sheet.panel {
+        position: fixed;
+        top: auto;
+        right: auto;
+        bottom: var(--gap);
+        left: calc(var(--rail) + 0.5rem);
+        max-height: calc(100vh - 6rem);
+    }
+
+    .tabs-layouts.field {
+        max-width: 100%;
+    }
+
+    .tabs[data-fold] {
+        height: auto;
+    }
+
+    .tabs[data-fold] .tabs-strip {
+        writing-mode: vertical-rl;
+        justify-content: flex-start;
+        padding: var(--gap) 0;
+    }
+
+    .tabs[data-fold] .tabs-bar {
+        right: auto;
+        bottom: 0;
+        width: var(--rail);
+        border-bottom: 0;
+        border-right: thin solid var(--border-strong);
+    }
+}
+
 /* A chip beside a panel's Apply counting its fields typed in and not
    applied yet. */
 .apply-state {
@@ -928,16 +1076,6 @@ table.settings-list td {
     gap: var(--gap);
     padding: var(--gap);
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas:
-        "steps"
-        "dro"
-        "preview"
-        "jog"
-        "laser"
-        "jobs"
-        "run"
-        "heightmap"
-        "console";
     align-content: start;
     transition: opacity 0.2s, filter 0.2s;
 }
@@ -973,6 +1111,10 @@ table.settings-list td {
         gap: 0;
         padding: 0 calc(var(--gap) / 2);
         min-height: 0;
+    }
+
+    #page-run.grid:not([data-arranged]) {
+        grid-template-areas: none;
     }
 
     /* No padding at the foot either: a box stuck to the bottom of a padded
@@ -1086,18 +1228,24 @@ table.settings-list td {
     }
 }
 
-/* The one-column order on a narrow screen; a page whose panels the
-   operator rearranged (data-arranged) shows them in their columns' order
-   instead, column after column. */
-.page:not([data-arranged]) #steps { grid-area: steps; }
-.page:not([data-arranged]) #dro { grid-area: dro; }
-.page:not([data-arranged]) #preview { grid-area: preview; }
-.page:not([data-arranged]) #jog { grid-area: jog; }
-.page:not([data-arranged]) #laser { grid-area: laser; }
-.page:not([data-arranged]) #jobs { grid-area: jobs; }
-.page:not([data-arranged]) #run { grid-area: run; }
-.page:not([data-arranged]) #heightmap { grid-area: heightmap; }
-.page:not([data-arranged]) #console { grid-area: console; }
+/* The Run area's one-column order on a narrow screen: the steps, the
+   machine, the run, then the rest in the markup's order. A page whose
+   panels the operator rearranged (data-arranged) shows them in their
+   columns' order instead, column after column; the other pages always do. */
+#page-run.grid:not([data-arranged]) {
+    grid-template-areas:
+        "steps"
+        "dro"
+        "jog"
+        "laser"
+        "run";
+}
+
+#page-run:not([data-arranged]) #steps { grid-area: steps; }
+#page-run:not([data-arranged]) #dro { grid-area: dro; }
+#page-run:not([data-arranged]) #jog { grid-area: jog; }
+#page-run:not([data-arranged]) #laser { grid-area: laser; }
+#page-run:not([data-arranged]) #run { grid-area: run; }
 
 .panel {
     background: var(--panel);
@@ -5887,16 +6035,16 @@ table.find-guesses tr.elsewhere td {
    only the page shown is underlined, in the page's accent, and panels
    wear none. */
 :root:not([data-colors="off"]) .tabs .tab {
-    border-bottom-color: color-mix(in oklab, var(--page-accent) 35%, transparent);
+    --tab-line: color-mix(in oklab, var(--page-accent) 35%, transparent);
 }
 
 :root:not([data-colors="off"]) .tabs .tab:hover {
-    border-bottom-color: color-mix(in oklab, var(--page-accent) 70%, transparent);
+    --tab-line: color-mix(in oklab, var(--page-accent) 70%, transparent);
 }
 
 :root:not([data-colors="off"]) .tabs .tab[aria-selected="true"],
 :root:not([data-colors="off"]) .tabs .tabs-more[aria-current="page"] {
-    border-bottom-color: var(--page-accent);
+    --tab-line: var(--page-accent);
 }
 
 :root:not([data-colors="off"]) .page .panel:not([data-join-up], [data-stacked]),

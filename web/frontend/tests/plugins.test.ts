@@ -22,12 +22,12 @@ const settle = async (): Promise<void> => {
 function makePages(): HTMLElement {
     const app = document.createElement("div");
     app.id = "app";
-    app.setAttribute("data-page", "jobs");
+    app.setAttribute("data-page", "run");
     app.innerHTML = `
-        <main id="page-jobs" class="grid page"><div class="column"><section id="dro" class="panel" aria-label="Position"><div class="panel-head"><h2>Position</h2></div></section></div>
+        <main id="page-run" class="grid page"><div class="column"><section id="dro" class="panel" aria-label="Position"><div class="panel-head"><h2>Position</h2></div></section></div>
             <div class="column"><section id="jobs" class="panel" aria-label="Jobs"><div class="panel-head"><h2>Jobs</h2></div></section>
                 <section id="run" class="panel" data-dock aria-label="Run"><div class="panel-head"><h2>Run</h2></div></section></div></main>
-        <main id="page-plugins" class="grid page"><div class="column"><section id="plugins" class="panel" aria-label="Plugins"></section></div></main>`;
+        <main id="page-ui" class="grid page"><div class="column"><section id="plugins" class="panel" aria-label="Plugins"></section></div></main>`;
     document.body.append(app);
     return app;
 }
@@ -62,7 +62,7 @@ describe("the mock's plugins", () => {
         const shelf = new MockPlugins();
         const [example] = shelf.list();
         expect(example).toMatchObject({ id: "big-position", name: "Big position", made_by: "file", enabled: false, changed: false });
-        expect(example!.description).toBe("The head's place on the board in large digits, in a panel on the Jobs page.");
+        expect(example!.description).toBe("The head's place on the board in large digits, in a panel on the Run area.");
         const written = shelf.write("clock", 'export const name = "Clock";\nexport function activate(host) {}\n');
         expect(written).toMatchObject({ id: "clock", name: "Clock", made_by: "auto", enabled: false });
         expect(() => shelf.moduleUrl(written)).toThrow("not turned on as that text");
@@ -167,20 +167,20 @@ describe("the plugin runtime", () => {
             },
         });
         expect(await runtime.start(info("clock"))).toBeNull();
-        const panel = app.querySelector<HTMLElement>("#page-jobs .column:last-child #plugin-clock")!;
+        const panel = app.querySelector<HTMLElement>("#page-run .column:last-child #plugin-clock")!;
         expect(panel.getAttribute("aria-label")).toBe("Clock");
         expect(panel.querySelector(".plugin-body")!.textContent).toBe("tick");
         expect(host!.state()).toBe(store.get());
-        expect(host!.page()).toBe("jobs");
+        expect(host!.page()).toBe("run");
         store.set({ link: "open" });
-        showPage("plugins");
-        expect(heard).toEqual(["open", "page plugins"]);
+        showPage("ui");
+        expect(heard).toEqual(["open", "page ui"]);
         expect(runtime.isRunning("clock")).toBe(true);
         runtime.stop("clock");
         expect(app.querySelector("#plugin-clock")).toBeNull();
         store.set({ link: "closed" });
-        showPage("jobs");
-        expect(heard).toEqual(["open", "page plugins", "undone"]);
+        showPage("job");
+        expect(heard).toEqual(["open", "page ui", "undone"]);
         expect(runtime.isRunning("clock")).toBe(false);
     });
 
@@ -253,7 +253,7 @@ describe("the plugin runtime", () => {
         const example = backend.pluginShelf.list()[0]!;
         const on = backend.pluginShelf.setEnabled(example.id, true, example.hash);
         expect(await runtime.start(on)).toBeNull();
-        const readout = document.querySelector("#page-jobs #plugin-big-position .plugin-body div")!;
+        const readout = document.querySelector("#page-run #plugin-big-position .plugin-body div")!;
         expect(readout.textContent).toBe("no machine");
         store.set({ snapshot: connected({ board: { x: 1, y: -2.5 } }) });
         expect(readout.textContent).toBe("X 1.00\nY -2.50");
@@ -329,7 +329,7 @@ describe("the Plugins page", () => {
         press(ask, "Turn on");
         await settle();
         expect((await backend.plugins())[0]!.enabled).toBe(true);
-        expect(document.querySelector("#page-jobs #plugin-big-position")).not.toBeNull();
+        expect(document.querySelector("#page-run #plugin-big-position")).not.toBeNull();
         expect(root.querySelector(".plugin-state")!.textContent).toBe("On: running in this page.");
         toggle.checked = false;
         toggle.dispatchEvent(new Event("change"));
@@ -363,7 +363,7 @@ describe("the Plugins page", () => {
         const example = (await backend.plugins())[0]!;
         await backend.setPluginEnabled(example.id, true, example.hash);
         await view.settled();
-        expect(document.querySelector("#page-jobs #plugin-big-position")).not.toBeNull();
+        expect(document.querySelector("#page-run #plugin-big-position")).not.toBeNull();
         await backend.setPluginEnabled(example.id, false, null);
         await view.settled();
         expect(document.querySelector("#plugin-big-position")).toBeNull();

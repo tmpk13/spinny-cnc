@@ -138,7 +138,7 @@ export function mountAuto(roots: { chat: HTMLElement; about: HTMLElement }, ctx:
     const stop = button("Stop", () => stopTurn(), "btn btn-danger urgent");
     stop.title = "stop this turn; what it made stays";
     chat.append(
-        el("div", { class: "panel-head" }, el("h2", {}, "Auto"), el("div", { class: "button-row" }, fresh)),
+        el("div", { class: "panel-head" }, el("h2", {}, "Assistant"), el("div", { class: "button-row" }, fresh)),
         settingsRow,
         log,
         el("div", { class: "auto-compose" }, input, el("div", { class: "button-row" }, send, stop)),

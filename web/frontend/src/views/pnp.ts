@@ -21,7 +21,7 @@ import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
 import { mountCameraViews, partLookRadius } from "./camview.ts";
 import { into, type Ctx } from "./context.ts";
-import { mountFindBoard, shownGuesses } from "./findboard.ts";
+import { mountFindBoard, shownGuesses, type FindBoardPanel } from "./findboard.ts";
 import { PLACING_SETUP, gcodePlacing, mountHead, upCameraText } from "./placing.ts";
 import { keptOut, mountPartsFilter, pickedToPlace, readShowKeptOut, setPickedToPlace, shownParts, writeShowKeptOut } from "./partsfilter.ts";
 import { mountBoardSearch } from "./partsearch.ts";
@@ -551,8 +551,8 @@ export interface PnpRoots {
     nozzle: HTMLElement;
     /** A G-code machine's head: lights, vacuum, its places, its file's values. */
     head: HTMLElement;
-    /** The jog of the machine connected. */
-    jog: HTMLElement;
+    /** The jog of the machine connected, when the page has one of its own here (the Run area's serves). */
+    jog?: HTMLElement;
     /** The bottom camera's picture. */
     view: HTMLElement;
     /** A G-code machine's top camera's picture. */
@@ -567,8 +567,8 @@ export interface PnpRoots {
     machineView?: HTMLElement;
     /** Placing with a G-code machine. */
     run: HTMLElement;
-    /** The look for the board with a camera picked. */
-    find: HTMLElement;
+    /** The look for the board with a camera picked, mounted here when no panel is shared in. */
+    find?: HTMLElement;
     /** The bottom camera's picture controls and its lens and colors, panels of their own; without them they fold inside its panel. */
     cameraFolds?: CameraFolds;
     /** The top camera's, the same; shown with the top camera's panel. */
@@ -578,12 +578,20 @@ export interface PnpRoots {
 export interface PnpPanels {
     /** The box the top camera's search keeps to, drawn on its picture. */
     topBox(): MachineBox | null;
+    /** Draws the board again: the Find board panel's camera or threshold moved. */
+    boardChanged(): void;
 }
 
 const COLUMNS: [SortKey, string][] = [["ref", "Ref"], ["value", "Value"], ["footprint", "Footprint"], ["x", "X"], ["y", "Y"], ["rotation", "Rot"], ["side", "Side"]];
 
-/** The PNP page in `roots`; `headBox` is the box the head camera's search keeps to, drawn on its picture on the Jobs page. */
-export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | null = () => null): PnpPanels {
+/**
+ * The pick and place panels in `roots`; `headBox` is the box the head
+ * camera's search keeps to, drawn on its picture. `shared` is the Find
+ * board panel mounted elsewhere on the same page, whose camera and
+ * threshold the board drawing follows; without it one is mounted in
+ * `roots.find`.
+ */
+export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | null = () => null, shared: FindBoardPanel | null = null): PnpPanels {
     let selected: string | null = null;
     // The job, and where it lay, the parts were asked for: a reply for
     // another is dropped, and a job moved, turned or aligned is asked again.
@@ -603,7 +611,10 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     const views = mountCameraViews({ bottom: roots.view, top: roots.topView }, ctx);
     mountTopCamera(roots.top, ctx, () => visible() && gcodePlacing(ctx.store.get()), roots.topFolds);
     // The board drawing shows the look of the camera this panel picks.
-    const find = mountFindBoard(roots.find, ctx, {
+    if (shared === null && roots.find === undefined) {
+        throw new Error("mountPnp needs a Find board panel or a root for one");
+    }
+    const find = shared ?? mountFindBoard(roots.find!, ctx, {
         page: "pnp",
         boxes: { head: headBox, top: () => views.top.box() },
         onChange: () => renderBoard(ctx.store.get()),
@@ -611,7 +622,9 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
 
     // --- the jog: the machine connected's, whichever it is; the panel is
     // the jog panel itself, one head and its buttons, as on the Jobs page ---
-    mountJog(roots.jog, ctx, "pnp", () => true);
+    if (roots.jog) {
+        mountJog(roots.jog, ctx, "run", () => true);
+    }
 
     // --- the parts ---
     const jobPick = el("select", { class: "field", "aria-label": "Board job" }) as HTMLSelectElement;
@@ -1434,7 +1447,8 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     }
 
     function visible(): boolean {
-        return activePage() === "pnp" && document.visibilityState !== "hidden";
+        // The pick and place panels are on the Run area.
+        return activePage() === "run" && document.visibilityState !== "hidden";
     }
 
     // The state is polled while the page shows, for the picture's age and a
@@ -1502,5 +1516,5 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     renderBoard(now);
     renderCamera(now);
     void loadParts(now);
-    return { topBox: () => views.top.box() };
+    return { topBox: () => views.top.box(), boardChanged: () => renderBoard(ctx.store.get()) };
 }

@@ -1,12 +1,13 @@
-// The page's two sides. The Use side runs the machine (jobs, plots, pick
-// and place); the Setup side is what the machine is and knows (its
-// checklist, its files, its connection, the plugins). Each page belongs to
+// The page's two sides. The Use side runs the machine (its areas Home,
+// Job and Run); the Setup side is what the machine is and knows (its
+// checklist, its files and connection, its cameras, the CAM profiles,
+// this page's own settings). Each page belongs to
 // one side. A browser tab shows one side at a time, or both side by side
 // (split), and each side has an address of its own, so it can be open in a
 // tab or a window of its own beside the other.
 //
 // An address names a side, a page and a target in it:
-// `?side=setup&page=config#machine-file/controls`. The target is a panel's
+// `?side=setup&page=machines#machine-file/controls`. The target is a panel's
 // id, then after a slash what the panel is asked to show in itself (a
 // fact, a key); its view hears it as a `spinny:goto` event. The other
 // parameters (`mock`, `api`) are kept, so a link reaches the same backend.
@@ -14,8 +15,8 @@
 export type Side = "use" | "setup";
 
 export const SIDES: readonly { id: Side; label: string; tip: string }[] = [
-    { id: "use", label: "Use", tip: "run the machine: jobs, plots, pick and place" },
-    { id: "setup", label: "Setup", tip: "what the machine is and knows: its checklist, files, connection and plugins" },
+    { id: "use", label: "Use", tip: "run the machine: make jobs and run them" },
+    { id: "setup", label: "Setup", tip: "what the machine is and knows: its checklist, files, connection, cameras and CAM profiles" },
 ];
 
 export function isSide(value: unknown): value is Side {

@@ -254,7 +254,8 @@ const DEFAULTS = {
     spindle: 10000,
 };
 
-export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, ctx: Ctx): void {
+/** The Draw panel in `roots.operation`; a Run panel of its own in `roots.run` when the page has none beside it. */
+export function mountMill(roots: { operation: HTMLElement; run?: HTMLElement }, ctx: Ctx): void {
     const stored = readStoredOperation();
     let kind: MillKind = MILL_KINDS.some((entry) => entry.kind === stored.kind) ? stored.kind! : "drill";
     let shape: MillShape = stored.shape === "circle" ? "circle" : "rect";
@@ -446,7 +447,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     const hint = el("p", { class: "muted hint" });
 
     roots.operation.append(
-        el("div", { class: "panel-head" }, el("h2", {}, "Operation"), el("div", { class: "button-row" }, applyButton, addButton, newButton)),
+        el("div", { class: "panel-head" }, el("h2", {}, "Draw"), el("div", { class: "button-row" }, applyButton, addButton, newButton)),
         el("div", { class: "plot-job" }, el("div", { class: "plot-job-head" }, jobTitle, stateBadge), opList),
         kinds,
         shapes,
@@ -1016,5 +1017,7 @@ export function mountMill(roots: { operation: HTMLElement; run: HTMLElement }, c
     renderJob();
     void plan();
 
-    mountRun(roots.run, ctx, { stats: true, hint: "before a run: zero the depth on the surface (mill) or focus the beam (laser)" });
+    if (roots.run) {
+        mountRun(roots.run, ctx, { stats: true, hint: "before a run: zero the depth on the surface (mill) or focus the beam (laser)" });
+    }
 }

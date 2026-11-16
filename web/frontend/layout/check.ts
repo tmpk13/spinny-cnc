@@ -213,8 +213,10 @@ function wallFindings(): Finding[] {
     for (let text = walker.nextNode(); text; text = walker.nextNode()) {
         const words = (text.textContent ?? "").trim();
         const parent = text.parentElement;
-        // Badges are pills: their words sit close to the rim on purpose.
-        if (!words || !parent || parent.closest("svg, select, option, textarea, script, style, .badge")) {
+        // Badges are pills: their words sit close to the rim on purpose. A
+        // code editor's colored layer mirrors its textarea's lines, which
+        // end wherever the file's lines do, as the textarea's own text does.
+        if (!words || !parent || parent.closest("svg, select, option, textarea, script, style, .badge, .code-layer")) {
             continue;
         }
         const range = document.createRange();
@@ -256,7 +258,7 @@ function wallFindings(): Finding[] {
     return findings;
 }
 
-const PAGES = ["overview", "jobs", "plot", "cam", "pnp", "auto", "facts", "config", "connection", "plugins"];
+const PAGES = ["home", "job", "run", "facts", "machines", "cameras", "cam", "ui"];
 
 async function openDetails(page: Page): Promise<void> {
     await page.evaluate(() => document.querySelectorAll("details").forEach((d) => d.setAttribute("open", "")));
@@ -288,47 +290,47 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
     { name: "empty", pages: PAGES, enter: async () => {} },
     {
         name: "connected, job picked, folds open", pages: PAGES, enter: async (page) => {
-            await tab(page, "connection");
+            await tab(page, "machines");
             await page.click("#connection button:has-text('Connect')");
             await page.waitForTimeout(500);
-            await tab(page, "jobs");
+            await tab(page, "job");
             await page.locator(".job-list li .job-pick").first().click();
             await page.waitForTimeout(500);
         },
     },
     {
-        // The LumenPnP connected on the Connection tab by the port its file
+        // The LumenPnP connected on the Connection panel by the port its file
         // claims, its cameras running, the top one looking for the board
         // with a look taken once by each, and the controls unfolded.
-        name: "placing with a G-code machine, its cameras looking", pages: ["pnp", "connection"], enter: async (page) => {
-            await tab(page, "connection");
+        name: "placing with a G-code machine, its cameras looking", pages: ["run", "machines"], enter: async (page) => {
+            await tab(page, "machines");
             await page.click("#connection button:has-text('Disconnect')");
             await page.waitForTimeout(300);
             await page.locator("#connection select").selectOption({ index: await page.evaluate(() =>
                 Array.from(document.querySelectorAll("#connection select option")).findIndex((option) => option.textContent?.includes("LumenPnP"))) });
             await page.click("#connection button:has-text('Connect')");
             await page.waitForTimeout(500);
-            await tab(page, "pnp");
+            await tab(page, "run");
             await page.click("#pnp-camera button:has-text('Start')");
             await page.click("#pnp-top button:has-text('Start')");
             await page.waitForTimeout(300);
             await page.click("#pnp-camera button:has-text('Look once')");
             await page.click("#pnp-top button:has-text('Look once')");
             // A job without its board file leaves the button locked.
-            await page.click("#pnp-find button:has-text('Look for board')", { timeout: 1000 }).catch(() => undefined);
+            await page.click("#find button:has-text('Look for board')", { timeout: 1000 }).catch(() => undefined);
             await page.waitForTimeout(800);
         },
     },
     {
-        name: "the head camera's picture and look", pages: ["jobs"], enter: async (page) => {
-            await tab(page, "connection");
+        name: "the head camera's picture and look", pages: ["run"], enter: async (page) => {
+            await tab(page, "machines");
             await page.click("#connection button:has-text('Disconnect')");
             await page.waitForTimeout(300);
             await page.locator("#connection select").selectOption({ index: await page.evaluate(() =>
                 Array.from(document.querySelectorAll("#connection select option")).findIndex((option) => /spinny/i.test(option.textContent ?? ""))) });
             await page.click("#connection button:has-text('Connect')");
             await page.waitForTimeout(500);
-            await tab(page, "jobs");
+            await tab(page, "run");
             await page.click("#camera button:has-text('Start')");
             await page.waitForTimeout(300);
             await page.click("#find button:has-text('Look for board')", { timeout: 1000 }).catch(() => undefined);
@@ -336,20 +338,21 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
         },
     },
     {
-        name: "a conversation", pages: ["auto"], enter: async (page) => {
-            await tab(page, "auto");
+        name: "a conversation", pages: ["job"], enter: async (page) => {
+            await tab(page, "job");
             await page.fill("#auto-chat textarea", "list the jobs");
             await page.click("#auto-chat button:has-text('Send')");
             await page.waitForTimeout(800);
         },
     },
     {
-        name: "panels folded, stacked, stuck, one held at a height", pages: ["jobs"], enter: async (page) => {
-            await tab(page, "jobs");
+        name: "panels folded, stacked, stuck, one held at a height", pages: ["run", "job"], enter: async (page) => {
+            await tab(page, "run");
             await menu(page, "dro", "Fold");
             await menu(page, "console", "Stack with above");
             await menu(page, "laser", "Stick to above");
             // The height handle under the job list, on the wide layout only.
+            await tab(page, "job");
             const at = await page.evaluate(() => {
                 const jobs = document.getElementById("jobs")!;
                 const bottom = jobs.offsetTop + jobs.offsetHeight;
@@ -369,7 +372,7 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
         },
     },
     {
-        name: "edit mode, the page settings open", pages: ["jobs", "config"], enter: async (page) => {
+        name: "edit mode, the page settings open", pages: ["run", "machines"], enter: async (page) => {
             await page.click(".tabs-gear");
             await page.click(".page-settings button:has-text('Edit panels')");
             await page.click(".tabs-gear");
@@ -377,7 +380,7 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
         },
     },
     {
-        name: "a tab kept out of the bar, the bar folded", pages: ["jobs", "cam"], enter: async (page) => {
+        name: "a tab kept out of the bar, the bar folded", pages: ["run", "cam"], enter: async (page) => {
             await page.click(".page-settings .page-settings-tabs label:has-text('CAM')");
             await page.click(".page-settings label:has-text('Fold the tab bar')");
             await page.keyboard.press("Escape");
@@ -387,16 +390,16 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
         },
     },
     ...["Holes", "Line", "Face", "Pocket", "Profile"].map((label) => ({
-        name: `plot ${label}`, pages: ["plot"], enter: async (page: Page) => {
-            await tab(page, "plot");
+        name: `draw ${label}`, pages: ["job"], enter: async (page: Page) => {
+            await tab(page, "job");
             await page.click(`#mill-operation button:has-text('${label}')`);
             await page.waitForTimeout(300);
         },
     })),
     {
         // The drawer stays open across the tab switches the check makes by script.
-        name: "the to-do drawer open with items, one done", pages: ["jobs"], enter: async (page) => {
-            await tab(page, "jobs");
+        name: "the to-do drawer open with items, one done", pages: ["job"], enter: async (page) => {
+            await tab(page, "job");
             await page.click(".todo-toggle");
             for (const text of ["clean the lens", "check the belt tension on the cross slide"]) {
                 await page.fill(".todo-input", text);
@@ -409,7 +412,7 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
     },
     {
         // The bar is folded by now: the bug is pressed by script.
-        name: "the bug report dialog", pages: ["jobs"], enter: async (page) => {
+        name: "the bug report dialog", pages: ["job"], enter: async (page) => {
             await page.keyboard.press("Escape");
             await page.evaluate(() => document.querySelector<HTMLElement>(".tabs-bug")?.click());
             await page.waitForTimeout(3000);
@@ -420,16 +423,16 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
     {
         // The Use and Setup sides side by side (a narrow window shows one):
         // each page laid out by its pane's width.
-        name: "side by side", pages: ["jobs", "facts", "pnp", "config"], enter: async (page) => {
+        name: "side by side", pages: ["job", "facts", "run", "machines"], enter: async (page) => {
             await page.evaluate(() => document.querySelector<HTMLElement>(".tabs-split")?.click());
             await page.waitForTimeout(300);
         },
     },
     {
-        // The example plugin turned on: its panel on the Jobs page.
-        name: "a plugin turned on", pages: ["plugins", "jobs"], enter: async (page) => {
+        // The example plugin turned on: its panel on the Run area.
+        name: "a plugin turned on", pages: ["ui", "run"], enter: async (page) => {
             await page.keyboard.press("Escape");
-            await tab(page, "plugins");
+            await tab(page, "ui");
             await page.evaluate(() => document.querySelector<HTMLInputElement>("#plugins input[role=switch]")?.click());
             await page.waitForTimeout(400);
             await page.click("dialog.confirm button:has-text('Turn on')");

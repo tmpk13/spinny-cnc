@@ -1,16 +1,19 @@
-// The page's tabs, on two sides (src/sides.ts). The Use side: the
-// Overview page (a card for each page, with what it holds now), the Jobs
-// page (the dashboard: position, jogging, the jobs and their preview), the
-// Plot page (simple cuts made by hand, a board's holes drilled), the CAM
-// page, the PNP page (parts, the board and the up camera) and the Auto page
-// (a conversation with a language model that makes jobs and other data).
-// The Setup side: the Checklist (what the machine knows, where each value
-// came from, what is missing), the Config page (the machine files and the
-// list of their keys), the Connection page and the Plugins page.
+// The page's areas, on two sides (src/sides.ts), listed down a rail at
+// the window's left (a bar across the top on a narrow window). The Use
+// side has three areas: Home (where things stand, a card for each area),
+// Job (the jobs, the selected job, its preview, drawing operations by
+// hand and the assistant that makes jobs) and Run (the machine, its
+// steps, where the board is, heights, the cameras' pictures, the parts and
+// the run itself). The Setup side: the Checklist (what the machine knows,
+// where each value came from, what is missing), Machines (the machine
+// files, the connection and the firmware's settings), Cameras (each
+// camera's device, calibration and routines, the head and the bed), CAM
+// (the CAM profiles) and Page (this page's version, bug reports and
+// plugins).
 //
-// The bar names each side by a button with the side's tabs after it; the
-// other side's tabs fold away behind its button, so one press swaps sides
-// and the page each side last showed comes back. Side by side (split),
+// The rail names each side by a button with the side's areas after it;
+// the other side's areas fold away behind its button, so one press swaps
+// sides and the area each side last showed comes back. Side by side (split),
 // both sides show at once, each in a pane of its own with its tabs, and a
 // handle between the panes sets their widths. Which page each side shows,
 // and whether they are side by side, is set on #app for the stylesheet
@@ -30,27 +33,25 @@ import { closeMenu, openMenu } from "../menu.ts";
 import { isSide, otherSide, readAddress, SIDES, type Side } from "../sides.ts";
 import type { AppState, Store } from "../state.ts";
 
-export type PageId = "overview" | "jobs" | "plot" | "cam" | "pnp" | "auto" | "facts" | "config" | "connection" | "plugins";
+export type PageId = "home" | "job" | "run" | "facts" | "machines" | "cameras" | "cam" | "ui";
 
 /**
- * The pages in the bar's order: each one's tab label, its tooltip, its
- * side, and its color, a Solarized accent by name (the Overview's and the
+ * The pages in the rail's order: each one's tab label, its tooltip, its
+ * side, and its color, a Solarized accent by name (Home's and the
  * Checklist's are grays: each stands for its whole side).
  * The color is the page's own: its tab is underlined in it, its panels
  * wear it along their top edge, and its Overview card draws in it, unless
  * the page settings turn colors off.
  */
 export const PAGES: { id: PageId; label: string; tip: string; accent: string; side: Side }[] = [
-    { id: "overview", label: "Overview", tip: "every page at a glance", accent: "base01", side: "use" },
-    { id: "jobs", label: "Jobs", tip: "jobs, the preview and runs", accent: "orange", side: "use" },
-    { id: "plot", label: "Plot", tip: "operations drawn by hand", accent: "green", side: "use" },
-    { id: "cam", label: "CAM", tip: "CAM profiles and their G-code", accent: "cyan", side: "use" },
-    { id: "pnp", label: "PNP", tip: "pick and place", accent: "violet", side: "use" },
-    { id: "auto", label: "Auto", tip: "a model that makes jobs", accent: "magenta", side: "use" },
+    { id: "home", label: "Home", tip: "where things stand: every area at a glance", accent: "base01", side: "use" },
+    { id: "job", label: "Job", tip: "the jobs: open a file, draw one, describe one; the preview", accent: "orange", side: "use" },
+    { id: "run", label: "Run", tip: "the machine: its steps, the board's place, heights, cameras, the run", accent: "green", side: "use" },
     { id: "facts", label: "Checklist", tip: "what the machine knows: each value, where it came from, and what is missing", accent: "base00", side: "setup" },
-    { id: "config", label: "Config", tip: "machine files and settings", accent: "yellow", side: "setup" },
-    { id: "connection", label: "Connection", tip: "the port and the machine connected", accent: "blue", side: "setup" },
-    { id: "plugins", label: "Plugins", tip: "page plugins and their switches", accent: "red", side: "setup" },
+    { id: "machines", label: "Machines", tip: "the machine files, the connection and the firmware's settings", accent: "yellow", side: "setup" },
+    { id: "cameras", label: "Cameras", tip: "each camera's device, calibration and routines; the head and the bed", accent: "violet", side: "setup" },
+    { id: "cam", label: "CAM", tip: "the CAM profiles: axes, tools and operations", accent: "cyan", side: "setup" },
+    { id: "ui", label: "Page", tip: "this page: its version, bug reports and plugins", accent: "red", side: "setup" },
 ];
 
 /** A page's color as a CSS value, its Solarized variable; the page's accent for a page not listed. */
@@ -76,19 +77,24 @@ export const SIDE_PAGES_KEY = "spinny.side-pages";
 /** Whether the sides show side by side, and the Use side's share of the width. */
 export const SPLIT_KEY = "spinny.split";
 
-/** The pages' names before they were renamed, so an old address or a
- * page remembered from before still opens the same page. */
-const RENAMED: Record<string, PageId> = { machine: "jobs", mill: "plot" };
+/** The pages' names before they were renamed or merged into areas, so an
+ * old address, a page remembered from before or a plugin asking for a page
+ * by its old name still opens where that page's panels went. */
+const RENAMED: Record<string, PageId> = {
+    machine: "job", mill: "job", jobs: "job", plot: "job", auto: "job",
+    overview: "home", pnp: "run",
+    config: "machines", connection: "machines", plugins: "ui",
+};
 
 /** The page of each panel that holds edits until they are applied. */
 export const PENDING_PAGES: Record<string, PageId> = {
-    "machine-file": "config",
-    camera: "jobs",
-    "job-json": "jobs",
-    plot: "plot",
+    "machine-file": "machines",
+    camera: "run",
+    "job-json": "job",
+    plot: "job",
     "cam-profile": "cam",
-    pnp: "pnp",
-    "pnp-head": "pnp",
+    pnp: "run",
+    "pnp-head": "run",
 };
 
 /** The count of edits not applied yet on a page. */
@@ -153,7 +159,7 @@ export function writeTabPrefs(prefs: TabPrefs): void {
 /** The page each side shows, from stored text: a page of the side, else the side's first. */
 export function parseSidePages(text: string | null): Record<Side, PageId> {
     const raw = readObject(text);
-    const pages = { use: "jobs", setup: "facts" } as Record<Side, PageId>;
+    const pages = { use: "job", setup: "facts" } as Record<Side, PageId>;
     for (const side of ["use", "setup"] as Side[]) {
         const page = pageNamed(typeof raw[side] === "string" ? raw[side] : null);
         if (page !== null && sideOf(page) === side) {
@@ -180,10 +186,10 @@ export function parseSplitPrefs(text: string | null): SplitPrefs {
 }
 
 /**
- * The page to open on: the one named in the address (`?page=plot`,
- * `?page=config`), else the page the side named in it (`?side=setup`)
+ * The page to open on: the one named in the address (`?page=run`,
+ * `?page=machines`), else the page the side named in it (`?side=setup`)
  * last showed, else the start page the settings name, else the one last
- * shown in this browser, else the Jobs page.
+ * shown in this browser, else the Job area.
  */
 export function readPage(): PageId {
     try {
@@ -202,7 +208,7 @@ export function readPage(): PageId {
     if (start !== "last") {
         return start;
     }
-    return pageNamed(readStored(PAGE_KEY)) ?? "jobs";
+    return pageNamed(readStored(PAGE_KEY)) ?? "job";
 }
 
 const pageListeners: ((id: PageId) => void)[] = [];

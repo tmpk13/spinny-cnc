@@ -131,10 +131,10 @@ describe("what the machine knows", () => {
 /** The frame with the Checklist on the Setup side and two Use panels that depend on facts. */
 function frame(): void {
     const page = (id: string, panels: string): string => `<main id="page-${id}" class="page"><div class="column">${panels}</div></main>`;
-    const use = pagesOf("use").map((id) => page(id, id === "jobs"
+    const use = pagesOf("use").map((id) => page(id, id === "run"
         ? `<section id="camera" class="panel"><div class="panel-head"><h2>Camera</h2></div></section><section id="jog" class="panel"><div class="panel-head"><h2>Jog</h2></div></section><section id="steps" class="panel"></section>`
         : "")).join("");
-    const setupPages = pagesOf("setup").map((id) => page(id, id === "facts" ? `<section id="facts" class="panel"></section>` : id === "connection" ? `<section id="connection" class="panel"></section>` : "")).join("");
+    const setupPages = pagesOf("setup").map((id) => page(id, id === "facts" ? `<section id="facts" class="panel"></section>` : id === "machines" ? `<section id="connection" class="panel"></section>` : "")).join("");
     document.body.innerHTML = `<div id="app"><nav id="tabs" class="tabs"></nav><div id="pane-use" class="pane" data-side="use">${use}</div><div id="pane-setup" class="pane" data-side="setup">${setupPages}</div><div id="toasts"></div></div>`;
 }
 
@@ -198,19 +198,19 @@ describe("the Checklist and the links to it", () => {
         mountTabs(document.getElementById("tabs")!, store);
         mountFacts(document.getElementById("facts")!, ctx);
         mountLinks(ctx, { apiBase: "", mock: true, channel: null });
-        showPage("jobs");
+        showPage("run");
         expect(await goTo({ panel: "facts", detail: "link.port" })).toBe("here");
         expect(document.getElementById("app")!.dataset["side"]).toBe("setup");
         expect(location.search).toContain("side=setup");
         expect(location.hash).toBe("#facts/link.port");
         // Back: the browser puts the address before the link back, then
-        // tells the page; that entry noted the Jobs page.
-        history.replaceState({ spinny: { page: "jobs" } }, "", "/?mock=1");
-        window.dispatchEvent(new PopStateEvent("popstate", { state: { spinny: { page: "jobs" } } }));
-        expect(shownOn("use")).toBe("jobs");
+        // tells the page; that entry noted the Run area.
+        history.replaceState({ spinny: { page: "run" } }, "", "/?mock=1");
+        window.dispatchEvent(new PopStateEvent("popstate", { state: { spinny: { page: "run" } } }));
+        expect(shownOn("use")).toBe("run");
         expect(document.getElementById("app")!.dataset["side"]).toBe("use");
         // Moving on by the bar: the address no longer names the link's target.
-        showPage("pnp");
+        showPage("job");
         expect(location.hash).toBe("");
         expect(location.search).toBe("?mock=1");
     });
@@ -219,11 +219,11 @@ describe("the Checklist and the links to it", () => {
         const { ctx, store } = setup();
         mountTabs(document.getElementById("tabs")!, store);
         mountLinks(ctx, { apiBase: "", mock: true, channel: null });
-        showPage("jobs");
+        showPage("run");
         setSplit(true);
         expect(await goTo({ panel: "connection", detail: null })).toBe("here");
         const up = Array.from(document.querySelectorAll("main.page[data-up]")).map((node) => node.id);
-        expect(up).toEqual(["page-jobs", "page-connection"]);
+        expect(up).toEqual(["page-run", "page-machines"]);
     });
 
     test("with another tab showing the Setup side, a link goes there and this tab offers Show here", async () => {
@@ -242,12 +242,12 @@ describe("the Checklist and the links to it", () => {
         };
         const sync = mountLinks(ctx, { apiBase: "", mock: true, channel: mine });
         const went: string[] = [];
-        other = new TabSync({ onmessage: null, postMessage: (message) => mine.onmessage?.({ data: structuredClone(message) }), close: () => {} }, () => ({ side: "setup", split: false, pages: { use: "jobs", setup: "facts" }, visible: false, focused: 5 }), (target) => {
+        other = new TabSync({ onmessage: null, postMessage: (message) => mine.onmessage?.({ data: structuredClone(message) }), close: () => {} }, () => ({ side: "setup", split: false, pages: { use: "run", setup: "facts" }, visible: false, focused: 5 }), (target) => {
             went.push(target);
             return true;
         }, () => 0, "setup-tab");
         sync.announce();
-        showPage("jobs");
+        showPage("run");
         expect(await goTo({ panel: "facts", detail: "head.offset" })).toBe("tab");
         expect(went).toEqual(["facts/head.offset"]);
         // This tab stays where it was, and says where the target went.
@@ -262,10 +262,10 @@ describe("the Checklist and the links to it", () => {
     test("a link is a real link: the middle button and Ctrl are the browser's", () => {
         const { store } = setup();
         mountTabs(document.getElementById("tabs")!, store);
-        showPage("jobs");
+        showPage("run");
         const link = linkTo({ panel: "connection", detail: null }, "Connection", "open the Connection page");
         document.body.append(link);
-        expect(link.getAttribute("href")).toBe("/?mock=1&side=setup&page=connection#connection");
+        expect(link.getAttribute("href")).toBe("/?mock=1&side=setup&page=machines#connection");
         const ctrl = new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true });
         link.dispatchEvent(ctrl);
         expect(ctrl.defaultPrevented).toBe(false);

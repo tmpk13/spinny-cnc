@@ -112,7 +112,7 @@ describe("the steps panel", () => {
         mountSteps(again, ctx, SETUPS, "test.pick");
         expect((again.querySelector('select[aria-label="Setup"]') as HTMLSelectElement).value).toBe("camera");
         const page = document.createElement("main");
-        page.id = "page-config";
+        page.id = "page-machines";
         page.className = "page";
         const panel = document.createElement("section");
         panel.id = "target-panel";
@@ -124,7 +124,7 @@ describe("the steps panel", () => {
         expect(panel.classList.contains("pulse")).toBe(true);
         panel.dispatchEvent(new Event("pointerdown"));
         expect(panel.classList.contains("pulse")).toBe(false);
-        expect(localStorage.getItem("spinny.page")).toBe("config");
+        expect(localStorage.getItem("spinny.page")).toBe("machines");
         // The page and the picks are remembered in storage the other test files share.
         localStorage.removeItem("spinny.page");
         localStorage.removeItem("test.pick.setup");

@@ -208,7 +208,7 @@ export function mountPlugins(root: HTMLElement, ctx: Ctx, options: RuntimeOption
         syncing = syncing.then(() => runtime.sync(list)).then(() => draw());
     }, ["plugins"]);
     onPage((page) => {
-        if (page === "plugins") {
+        if (page === "ui") {
             void refresh();
         }
     });

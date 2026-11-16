@@ -68,17 +68,19 @@ describe("addresses", () => {
 
 describe("the sides' pages", () => {
     test("every page is on one side, the Use side's first", () => {
-        expect(pagesOf("use")).toEqual(["overview", "jobs", "plot", "cam", "pnp", "auto"]);
-        expect(pagesOf("setup")).toEqual(["facts", "config", "connection", "plugins"]);
+        expect(pagesOf("use")).toEqual(["home", "job", "run"]);
+        expect(pagesOf("setup")).toEqual(["facts", "machines", "cameras", "cam", "ui"]);
         expect(PAGES.every((page) => sideOf(page.id) === page.side)).toBe(true);
     });
 
     test("each side remembers a page of its own; anything else is the side's first", () => {
-        expect(parseSidePages(JSON.stringify({ use: "pnp", setup: "config" }))).toEqual({ use: "pnp", setup: "config" });
-        // A page of the other side, an old name, or junk.
-        expect(parseSidePages(JSON.stringify({ use: "config", setup: "mill" }))).toEqual({ use: "jobs", setup: "facts" });
-        expect(parseSidePages(JSON.stringify({ use: "machine" }))).toEqual({ use: "jobs", setup: "facts" });
-        expect(parseSidePages("not json")).toEqual({ use: "jobs", setup: "facts" });
+        expect(parseSidePages(JSON.stringify({ use: "run", setup: "machines" }))).toEqual({ use: "run", setup: "machines" });
+        // A page of the other side, or junk.
+        expect(parseSidePages(JSON.stringify({ use: "machines", setup: "job" }))).toEqual({ use: "job", setup: "facts" });
+        expect(parseSidePages("not json")).toEqual({ use: "job", setup: "facts" });
+        // An old name opens the area its panels went to, on its side.
+        expect(parseSidePages(JSON.stringify({ use: "pnp", setup: "config" }))).toEqual({ use: "run", setup: "machines" });
+        expect(parseSidePages(JSON.stringify({ use: "machine", setup: "plugins" }))).toEqual({ use: "job", setup: "ui" });
     });
 
     test("the split's share is held to its limits", () => {
@@ -144,37 +146,37 @@ describe("showing the sides", () => {
     test("a page shows in its side's pane, that side in front, the other folded with the page it last showed", () => {
         const app = frame();
         mountTabs(document.getElementById("tabs")!, new Store<AppState>(initialState(true)));
-        showPage("pnp");
-        expect(up()).toEqual(["page-pnp"]);
+        showPage("run");
+        expect(up()).toEqual(["page-run"]);
         expect(panesUp()).toEqual(["pane-use"]);
         expect(app.dataset["side"]).toBe("use");
-        showPage("config");
-        expect(up()).toEqual(["page-config"]);
+        showPage("machines");
+        expect(up()).toEqual(["page-machines"]);
         expect(panesUp()).toEqual(["pane-setup"]);
         expect(app.dataset["side"]).toBe("setup");
-        expect(app.dataset["page"]).toBe("config");
+        expect(app.dataset["page"]).toBe("machines");
         // A swap brings back the page each side showed last.
         showSide("use");
-        expect(up()).toEqual(["page-pnp"]);
+        expect(up()).toEqual(["page-run"]);
         showSide("setup");
-        expect(up()).toEqual(["page-config"]);
-        expect(JSON.parse(localStorage.getItem(SIDE_PAGES_KEY)!)).toEqual({ use: "pnp", setup: "config" });
+        expect(up()).toEqual(["page-machines"]);
+        expect(JSON.parse(localStorage.getItem(SIDE_PAGES_KEY)!)).toEqual({ use: "run", setup: "machines" });
     });
 
     test("side by side both sides show, each its own page, and the bar opens both sides' tabs", () => {
         const app = frame();
         mountTabs(document.getElementById("tabs")!, new Store<AppState>(initialState(true)));
-        showPage("jobs");
+        showPage("job");
         showPage("facts");
         setSplit(true);
         expect(isSplit()).toBe(true);
         expect(app.hasAttribute("data-split")).toBe(true);
-        expect(up()).toEqual(["page-jobs", "page-facts"]);
+        expect(up()).toEqual(["page-job", "page-facts"]);
         expect(panesUp()).toEqual(["pane-use", "pane-setup"]);
         const lists = Array.from(document.querySelectorAll<HTMLElement>(".tabs-list"));
         expect(lists.map((list) => list.hidden)).toEqual([false, false]);
         const selected = Array.from(document.querySelectorAll(".tabs .tab[aria-selected='true']")).map((tab) => tab.getAttribute("data-page"));
-        expect(selected).toEqual(["jobs", "facts"]);
+        expect(selected).toEqual(["job", "facts"]);
         expect(JSON.parse(localStorage.getItem(SPLIT_KEY)!)).toEqual({ on: true, share: SPLIT_SHARE });
         // One at a time again: the side in front, the other's tabs folded behind its button.
         setSplit(false);
@@ -186,7 +188,7 @@ describe("showing the sides", () => {
         frame();
         const store = new Store<AppState>(initialState(true));
         mountTabs(document.getElementById("tabs")!, store);
-        showPage("jobs");
+        showPage("job");
         const setupButton = document.querySelector<HTMLButtonElement>(".tabs-side[data-side='setup']")!;
         expect(setupButton.hasAttribute("data-open")).toBe(false);
         store.set({ pending: { "machine-file": 3 } });
@@ -198,13 +200,18 @@ describe("showing the sides", () => {
     });
 
     test("an address's side opens on the page that side showed last", () => {
-        localStorage.setItem(SIDE_PAGES_KEY, JSON.stringify({ use: "plot", setup: "connection" }));
+        localStorage.setItem(SIDE_PAGES_KEY, JSON.stringify({ use: "job", setup: "machines" }));
         at("/?mock=1&side=setup");
-        expect(readPage()).toBe("connection");
-        at("/?mock=1&side=setup&page=plugins");
-        expect(readPage()).toBe("plugins");
+        expect(readPage()).toBe("machines");
+        at("/?mock=1&side=setup&page=ui");
+        expect(readPage()).toBe("ui");
+        at("/?page=machines");
+        expect(readPage()).toBe("machines");
+        // An old page's address opens the area its panels went to.
+        at("/?page=pnp");
+        expect(readPage()).toBe("run");
         at("/?page=config");
-        expect(readPage()).toBe("config");
+        expect(readPage()).toBe("machines");
     });
 });
 
@@ -237,7 +244,7 @@ class FakeChannel implements ChannelLike {
 }
 
 function info(over: Partial<PeerInfo> = {}): Omit<PeerInfo, "id" | "seen"> {
-    return { side: "use", split: false, pages: { use: "jobs", setup: "facts" }, visible: true, focused: 0, ...over };
+    return { side: "use", split: false, pages: { use: "job", setup: "facts" }, visible: true, focused: 0, ...over };
 }
 
 describe("tabs that know of each other", () => {

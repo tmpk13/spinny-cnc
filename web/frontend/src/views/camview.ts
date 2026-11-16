@@ -233,7 +233,8 @@ export interface CameraViews {
 }
 
 export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement }, ctx: Ctx): CameraViews {
-    const visible = (): boolean => activePage() === "pnp" && document.visibilityState !== "hidden";
+    // The pictures are on the Run area.
+    const visible = (): boolean => activePage() === "run" && document.visibilityState !== "hidden";
     const jog = async (mm: [number, number]): Promise<void> => {
         if (Math.hypot(mm[0], mm[1]) < 0.001) {
             return;

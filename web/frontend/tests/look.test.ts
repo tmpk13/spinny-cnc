@@ -26,14 +26,14 @@ test("the look reads safely and goes on the root as attributes, colors on unless
 test("every page has a color of its own, which its tab and its page carry", () => {
     const accents = PAGES.map((page) => page.accent);
     expect(new Set(accents).size).toBe(PAGES.length);
-    expect(accentOf("jobs")).toBe("var(--orange)");
+    expect(accentOf("job")).toBe("var(--orange)");
     expect(accentOf("nowhere")).toBe("var(--accent)");
     const page = document.createElement("main");
-    page.id = "page-jobs";
+    page.id = "page-job";
     const bar = document.createElement("nav");
     document.body.append(page, bar);
     mountTabs(bar, new Store(initialState(true)));
-    expect(bar.querySelector<HTMLElement>('.tab[data-page="pnp"]')!.style.getPropertyValue("--page-accent")).toBe("var(--violet)");
+    expect(bar.querySelector<HTMLElement>('.tab[data-page="run"]')!.style.getPropertyValue("--page-accent")).toBe("var(--green)");
     expect(page.style.getPropertyValue("--page-accent")).toBe("var(--orange)");
 });
 

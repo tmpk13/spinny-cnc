@@ -530,21 +530,22 @@ describe("folders", () => {
 });
 
 describe("the page's own markup", () => {
-    test("groups the camera panels of the Jobs page, each camera's on the PNP page, and a G-code machine's own, in folders", async () => {
+    test("groups the Run area's camera panels by camera, the ways to place the board, and the Job area's machine panels, in folders", async () => {
         const html = await Bun.file(new URL("../index.html", import.meta.url)).text();
         const doc = new DOMParser().parseFromString(html, "text/html");
-        const folders = (page: string): Record<string, string> => {
-            const columns = Array.from(doc.querySelectorAll<HTMLElement>(`#page-${page} > .column`));
-            return markupDefaults(columns).folders ?? {};
-        };
-        expect(folders("jobs")).toEqual({ "camera-view": "Camera" });
-        expect(folders("pnp")).toEqual({ "pnp-view": "Bottom camera", "pnp-top-view": "Top camera", "pnp-head": "Machine" });
-        const jobs = markupDefaults(Array.from(doc.querySelectorAll<HTMLElement>("#page-jobs > .column")));
-        expect(jobs.stuck).toEqual({ camera: "camera-view", find: "camera-view" });
-        expect(jobs.stacked).toEqual({ "camera-controls": "camera", "camera-sight": "camera", "camera-changes": "camera" });
+        const defaults = (page: string) => markupDefaults(Array.from(doc.querySelectorAll<HTMLElement>(`#page-${page} > .column`)));
+        expect(defaults("run").folders).toEqual({ "camera-view": "Camera", "pnp-view": "Bottom camera", "pnp-top-view": "Top camera", find: "Board place" });
+        expect(defaults("run").stuck).toEqual({ camera: "camera-view", "pnp-camera": "pnp-view", "pnp-top": "pnp-top-view", align: "find", "pnp-refs": "find" });
+        expect(defaults("run").stacked).toEqual({
+            "camera-controls": "camera", "camera-sight": "camera", "camera-changes": "camera",
+            "pnp-camera-controls": "pnp-camera", "pnp-camera-sight": "pnp-camera", "pnp-camera-changes": "pnp-camera",
+            "pnp-top-controls": "pnp-top", "pnp-top-sight": "pnp-top", "pnp-top-changes": "pnp-top",
+        });
+        expect(defaults("job").folders).toEqual({ "mill-dro": "Machine" });
+        expect(defaults("job").stacked).toEqual({ "auto-about": "auto-chat" });
         // The calibration tests are setup: the Checklist's page has them.
         expect(doc.querySelector("#pane-setup #page-facts #tests")).not.toBeNull();
-        expect(doc.querySelector("#page-jobs #tests")).toBeNull();
+        expect(doc.querySelector("#pane-use #tests")).toBeNull();
     });
 
     test("every panel's menu turns edit mode on and off", () => {
@@ -615,15 +616,15 @@ describe("the tab bar's settings", () => {
     test("stored settings read safely; old page names are read as the new ones", () => {
         expect(parseTabPrefs(null)).toEqual({ start: "last", fold: false, hidden: [] });
         expect(parseTabPrefs("{")).toEqual({ start: "last", fold: false, hidden: [] });
-        expect(parseTabPrefs(JSON.stringify({ start: "mill", fold: true, hidden: ["config", "nope", "machine"] })))
-            .toEqual({ start: "plot", fold: true, hidden: ["jobs", "config"] });
+        expect(parseTabPrefs(JSON.stringify({ start: "mill", fold: true, hidden: ["config", "nope", "pnp"] })))
+            .toEqual({ start: "job", fold: true, hidden: ["run", "machines"] });
     });
 
     test("the start page wins over the page last shown", () => {
         localStorage.setItem("spinny.page", "cam");
         expect(readPage()).toBe("cam");
-        writeTabPrefs({ start: "config", fold: false, hidden: [] });
-        expect(readPage()).toBe("config");
+        writeTabPrefs({ start: "machines", fold: false, hidden: [] });
+        expect(readPage()).toBe("machines");
         writeTabPrefs({ start: "last", fold: false, hidden: [] });
         expect(readPage()).toBe("cam");
     });

@@ -152,7 +152,7 @@ export function travelText(travel: number | null | undefined): string {
  * machine connected, whichever it is: a G-code machine's file draws its
  * bars as any other machine file does.
  */
-export function mountJog(root: HTMLElement, ctx: Ctx, page = "jobs", active: () => boolean = () => true): void {
+export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () => boolean = () => true): void {
     // The step of each bar, kept across a redraw: the choice pressed, and
     // a step typed in, which is the step while it is there.
     const picks = new Map<BarId, number>();

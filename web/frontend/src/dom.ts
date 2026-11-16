@@ -388,9 +388,9 @@ export function cssVar(node: Element, name: string, fallback: string): string {
     return value !== "" ? value : fallback;
 }
 
-/** Which page is up (jobs, plot, cam, pnp, auto or config), as the tabs set it on #app. */
+/** Which page is up (home, job, run, or a Setup page), as the rail sets it on #app. */
 export function activePage(): string {
-    return document.getElementById("app")?.getAttribute("data-page") ?? "jobs";
+    return document.getElementById("app")?.getAttribute("data-page") ?? "run";
 }
 
 /** What this browser remembers under `key`; null when it remembers nothing there, or its storage is blocked. */

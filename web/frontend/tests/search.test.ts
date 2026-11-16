@@ -12,11 +12,11 @@ function makeApp(): HTMLElement {
     app.id = "app";
     app.innerHTML = `
         <nav class="tabs"><div class="tabs-tools"></div></nav>
-        <main id="page-jobs" class="grid page"><div class="column">
+        <main id="page-run" class="grid page"><div class="column">
             <section id="heightmap" class="panel" aria-label="Height map"><div class="panel-head panel-head-tools"><button class="panel-menu-button">...</button><h2>Height map</h2></div>
                 <button title="probe the grid">Probe</button><button>Save map</button></section>
         </div></main>
-        <main id="page-config" class="grid page"><div class="column">
+        <main id="page-machines" class="grid page"><div class="column">
             <section id="machine-file" class="panel" aria-label="Machine file"><button>Save</button></section>
         </div></main>`;
     document.body.append(app);
@@ -35,9 +35,9 @@ test("every page, panel and button is a feature, the layer's head buttons left o
     makeApp();
     const features = collectFeatures();
     const buttons = features.filter((feature) => feature.kind === "button").map((feature) => `${feature.where}: ${feature.label}`);
-    expect(buttons).toEqual(["Jobs > Height map: Probe", "Jobs > Height map: Save map", "Config > Machine file: Save"]);
+    expect(buttons).toEqual(["Run > Height map: Probe", "Run > Height map: Save map", "Machines > Machine file: Save"]);
     expect(features.some((feature) => feature.kind === "panel" && feature.label === "Height map")).toBe(true);
-    expect(features.some((feature) => feature.kind === "page" && feature.label === "Connection")).toBe(true);
+    expect(features.some((feature) => feature.kind === "page" && feature.label === "Cameras")).toBe(true);
 });
 
 test("the best match comes first, a tooltip word finds a button too", () => {
@@ -60,7 +60,7 @@ test("the box opens with Ctrl+K, lists matches, and Enter takes the page there",
     expect(sheet.querySelector(".search-item .search-label")?.textContent).toBe("Machine file");
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     expect(sheet.hidden).toBe(true);
-    expect(app.getAttribute("data-page")).toBe("config");
+    expect(app.getAttribute("data-page")).toBe("machines");
     expect(document.getElementById("machine-file")!.classList.contains("pulse")).toBe(true);
 });
 
@@ -71,10 +71,10 @@ test("a match's tooltip gives its whole path and what its button's tooltip says"
     const input = app.querySelector(".search-sheet input") as HTMLInputElement;
     input.value = "probe";
     input.dispatchEvent(new Event("input"));
-    expect((app.querySelector(".search-item") as HTMLElement).title).toBe("Jobs > Height map > Probe: probe the grid");
+    expect((app.querySelector(".search-item") as HTMLElement).title).toBe("Run > Height map > Probe: probe the grid");
     const features = collectFeatures();
-    expect(featurePath(features.find((feature) => feature.label === "Save map")!)).toBe("Jobs > Height map > Save map");
-    expect(featurePath(features.find((feature) => feature.kind === "panel" && feature.label === "Machine file")!)).toBe("Config > Machine file");
-    expect(featurePath(features.find((feature) => feature.kind === "page" && feature.label === "Jobs")!)).toBe("Jobs tab: jobs, the preview and runs");
+    expect(featurePath(features.find((feature) => feature.label === "Save map")!)).toBe("Run > Height map > Save map");
+    expect(featurePath(features.find((feature) => feature.kind === "panel" && feature.label === "Machine file")!)).toBe("Machines > Machine file");
+    expect(featurePath(features.find((feature) => feature.kind === "page" && feature.label === "Run")!)).toBe("Run tab: the machine: its steps, the board's place, heights, cameras, the run");
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
 });

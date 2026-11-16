@@ -56,7 +56,7 @@ The host it is given:
 | | |
 | --- | --- |
 | `host.id` | the plugin's id |
-| `host.panel({ title, page })` | adds a panel at the end of a page's last column (above a panel docked at its foot, as the Run panel is) and answers its body, an element to fill; `page` is `jobs` (when left out), `plot`, `cam`, `pnp`, `auto`, `config`, `connection` or `plugins`, `title` the plugin's name when left out. The panel takes part in the page's layout like any other (fold, hide, move, stack) and goes when the plugin is turned off |
+| `host.panel({ title, page })` | adds a panel at the end of a page's last column (above a panel docked at its foot, as the Run panel is) and answers its body, an element to fill; `page` is `run` (when left out), `home`, `job`, or a Setup page: `facts` (the Checklist), `machines`, `cameras`, `cam` or `ui` (the Page page); an old page's name (`jobs`, `plot`, `pnp`, `config` and so on) puts it where that page's panels went, `title` the plugin's name when left out. The panel takes part in the page's layout like any other (fold, hide, move, stack) and goes when the plugin is turned off |
 | `host.api` | the page's API object: every call the page itself makes to the backend, such as `host.api.state()`, `host.api.jobs()`, `host.api.jog(...)` (`web/frontend/src/api.ts`) |
 | `host.state()` | the page's state now (`web/frontend/src/state.ts`): `state.snapshot.machine` is null with no machine connected, else its `board.x` and `board.y` are the head's place in mm and `state` the machine's state; `state.jobs` the jobs listed, `state.job` the one picked |
 | `host.subscribe(listener, keys)` | calls `listener(state)` whenever one of `keys` of the state changes (any key with none given); answers a function that stops it. Stopped when the plugin is turned off |
@@ -71,17 +71,17 @@ may take the page's classes (`btn`, `field`, `hint`, `muted`,
 
 ## An example
 
-The head's place in large digits, in a panel on the Jobs page (the
+The head's place in large digits, in a panel on the Run area (the
 mock's page, `?mock=1`, has it, switched off):
 
 ```js
-// A panel on the Jobs page with the head's place on the board in large
+// A panel on the Run area with the head's place on the board in large
 // digits, drawn again whenever the machine reports.
 export const name = "Big position";
-export const description = "The head's place on the board in large digits, in a panel on the Jobs page.";
+export const description = "The head's place on the board in large digits, in a panel on the Run area.";
 
 export function activate(host) {
-    const body = host.panel({ title: "Big position", page: "jobs" });
+    const body = host.panel({ title: "Big position", page: "run" });
     const readout = document.createElement("div");
     readout.style.font = "600 2.5rem/1.2 var(--mono)";
     readout.style.color = "var(--strong)";
