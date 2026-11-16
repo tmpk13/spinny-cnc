@@ -416,6 +416,20 @@ export function pictureActions(picture: HTMLElement, ...nodes: (Node | null)[]):
     return row;
 }
 
+/**
+ * A panel's view mounted as a part of another panel: its own head becomes
+ * a section's heading (its h2 an h3, the head a `part-head`), so the panel
+ * holding it has one title and the layout layer takes no head but that one.
+ */
+export function asPart(node: HTMLElement): void {
+    for (const head of Array.from(node.children).filter((child) => child.classList.contains("panel-head"))) {
+        head.classList.replace("panel-head", "part-head");
+        for (const h2 of Array.from(head.children).filter((child) => child.tagName === "H2")) {
+            h2.replaceWith(el("h3", {}, ...Array.from(h2.childNodes)));
+        }
+    }
+}
+
 /** What this browser remembers under `key`; null when it remembers nothing there, or its storage is blocked. */
 export function readStored(key: string): string | null {
     try {

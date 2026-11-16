@@ -350,7 +350,7 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
             await tab(page, "run");
             await menu(page, "machine", "Fold");
             await menu(page, "console", "Stack with above");
-            await menu(page, "heightmap", "Stick to above");
+            await menu(page, "place", "Stick to above");
             // The height handle under the job list, on the wide layout only.
             await tab(page, "job");
             const at = await page.evaluate(() => {

@@ -6,6 +6,7 @@ import { errorText, HttpApi, type Api } from "./api.ts";
 import { MockBackend } from "./mock/backend.ts";
 import { appendConsole, autoClears, initialState, mergeAuto, noteAutoCleared, pendingTotal, pushToast, Store, withEntry, type AppState } from "./state.ts";
 import type { MessageLevel, Profile, Snapshot, WsEvent } from "./types.ts";
+import { asPart, el } from "./dom.ts";
 import { applyLook, readLook } from "./look.ts";
 import { stopPageScroll } from "./pagekeys.ts";
 import { mountTooltips } from "./tooltip.ts";
@@ -32,12 +33,14 @@ import { mountPageSettings } from "./views/pagesettings.ts";
 import { mountSearch } from "./views/search.ts";
 import { mountPanels } from "./views/panels.ts";
 import { mountPlugins } from "./views/plugins.ts";
-import { mountPnp, type PnpPanels } from "./views/pnp.ts";
+import { mountPnp, PNP_SETUP, type PnpPanels } from "./views/pnp.ts";
 import { mountFindBoard } from "./views/findboard.ts";
 import { mountPreviewPanel } from "./views/previewpanel.ts";
 import { mountReportLink } from "./views/reportlink.ts";
 import { mountStatusBar } from "./views/statusbar.ts";
-import { mountSteps } from "./views/steps.ts";
+import { mountSteps, SETUPS, setupsFor } from "./views/steps.ts";
+import { mountFit } from "./views/fit.ts";
+import { gcodePlacing, PLACING_SETUP } from "./views/placing.ts";
 import { mountTests } from "./views/tests.ts";
 import { mountSideKeys, mountTabs } from "./views/tabs.ts";
 import { mountFacts } from "./views/facts.ts";
@@ -339,7 +342,9 @@ function main(): void {
     mountTodo(panel("status"), ctx);
     const tabTools = mountTabs(panel("tabs"), store);
     mountOverview(panel("overview"), ctx);
-    mountSteps(panel("steps"), ctx);
+    // One Steps panel: a G-code pick and place machine's placing, or the
+    // setups this project's machines fit, placing parts among them.
+    mountSteps(panel("steps"), ctx, (state) => (gcodePlacing(state) ? [PLACING_SETUP] : setupsFor([...SETUPS, PNP_SETUP], state)));
     // The Machine panel: where the head is, the jog, the tool's quick
     // buttons and the markers, in one panel.
     // The Height panel: the travel height and how a run follows the map
@@ -376,10 +381,13 @@ function main(): void {
         boxes: { head: () => vision.view.box(), top: () => pnpPanels?.topBox() ?? null },
         onChange: () => pnpPanels?.boardChanged(),
     });
+    // Placing with a G-code machine is a part of the Run panel, under the
+    // job's run, shown with such a machine only.
+    const placing = el("div", { id: "pnp-run", class: "run-part stack hidden" });
+    panel("run").append(placing);
     // The pick and place panels: the parts, the board, the cameras, the
     // nozzle, and a G-code machine's own.
     pnpPanels = mountPnp({
-        steps: panel("pnp-steps"),
         parts: panel("pnp-parts"),
         board: panel("pnp-board"),
         camera: panel("pnp-camera"),
@@ -392,11 +400,17 @@ function main(): void {
         refs: place.parts.refs,
         feeders: panel("pnp-feeders"),
         machineView: panel("pnp-machine-view"),
-        run: panel("pnp-run"),
+        run: placing,
         cameraFolds: { controls: panel("pnp-camera-controls"), sight: panel("pnp-camera-sight"), changes: panel("pnp-camera-changes") },
         topFolds: { controls: panel("pnp-top-controls"), sight: panel("pnp-top-sight"), changes: panel("pnp-top-changes") },
     }, ctx, () => vision.view.box(), find);
     place.finish();
+    asPart(placing);
+    // The Run area's panels that fit the machine connected, and no others.
+    mountFit((listener) => {
+        ctx.store.subscribe(listener, ["snapshot", "placing"]);
+        listener(ctx.store.get());
+    });
     // The assistant: the conversation with a model that makes jobs and
     // other data through the backend's tools, and which model it is.
     mountAuto({ chat: panel("auto-chat"), about: panel("auto-about") }, ctx);

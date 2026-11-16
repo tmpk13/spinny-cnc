@@ -1992,6 +1992,22 @@ button.badge.state {
     font-size: 0.85rem;
 }
 
+/* A panel's view mounted as a part of another (src/dom.ts asPart): its
+   head a section heading, ruled off from what is above it. */
+.part-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    padding-top: var(--flow);
+    border-top: thin solid var(--border);
+}
+
+.part-head > h3 {
+    padding: 0;
+    border: 0;
+}
+
 /* DRO */
 
 /* The beam on: the panel holding the position glows. */

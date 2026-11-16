@@ -322,17 +322,17 @@ export const FACT_RULES: FactRule[] = [
     {
         id: "pnp.homed",
         group: "Pick and place",
-        uses: ["machine", "pnp-run"],
+        uses: ["machine", "run"],
         fits: (state) => placingFits(state) && state.placing!.connected,
         read: (state) => {
             const homed = state.placing!.homed;
-            return { label: "Homed", value: homed ? "yes" : "not since it was connected", source: "detected", when: null, fill: "routine", need: homed ? null : "home it before it moves", where: "pnp-steps", action: "Home" };
+            return { label: "Homed", value: homed ? "yes" : "not since it was connected", source: "detected", when: null, fill: "routine", need: homed ? null : "home it before it moves", where: "steps", action: "Home" };
         },
     },
     {
         id: "pnp.up",
         group: "Pick and place",
-        uses: ["pnp-run"],
+        uses: ["run"],
         fits: placingFits,
         read: (state) => {
             const position = state.placing!.camera.position;
@@ -352,7 +352,7 @@ export const FACT_RULES: FactRule[] = [
     {
         id: "pnp.up.scale",
         group: "Pick and place",
-        uses: ["pnp-run"],
+        uses: ["run"],
         fits: placingFits,
         read: (state) => {
             const scale = state.placing!.camera.mm_per_px;

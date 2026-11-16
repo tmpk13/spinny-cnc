@@ -133,3 +133,23 @@ while building them and what was not obvious.
   place's By hand.
 - The drop area is a `stack`: its old `.drop p` bottom margin left the
   new line's foot against the box (the layout check's tail finding).
+
+## Steps, Run and what fits the machine
+
+- One Steps panel: a G-code pick and place machine's placing setup, else
+  the setups this project's machines fit (setupsFor) with placing parts
+  among them. The PNP page's own steps panel is gone (mountPnp mounts one
+  only when handed `roots.steps`, as its tests do).
+- Placing with a G-code machine is a part of the Run panel (`#pnp-run`, a
+  box appended to `#run` after the job's run, its head made a section's by
+  `asPart`), shown with such a machine only. The Checklist's links for
+  placing name `run`.
+- src/views/fit.ts hides the Run area's panels the machine connected
+  cannot use: the head camera's picture and Height with a G-code pick and
+  place machine; Parts, Board and the bottom camera's picture with a laser
+  or a mill (a nozzle or a dispenser on this project's firmware places or
+  dispenses, so they show). With nothing connected every panel shows,
+  unless the pick and place machine last used says otherwise.
+- The layout check sticks Board place to the panel above it: with a laser
+  connected, Height is the first panel of its column and has no "Stick to
+  above".

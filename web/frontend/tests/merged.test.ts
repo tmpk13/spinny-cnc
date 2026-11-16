@@ -6,7 +6,8 @@
 // the way's summary.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { el } from "../src/dom.ts";
+import { asPart, el } from "../src/dom.ts";
+import { FIT_RULES, mountFit, placesParts } from "../src/views/fit.ts";
 import { mountBoardPlace, placeLine, PLACE_WAYS } from "../src/views/boardplace.ts";
 import { mountJobs } from "../src/views/jobs.ts";
 import { mountJog } from "../src/views/jog.ts";
@@ -160,4 +161,42 @@ describe("the Jobs panel and the Job panel", () => {
         expect(root.querySelector(".job-details")).toBeNull();
         expect(job.querySelector(".job-details h3")?.textContent).toBe(store.get().job!.name);
     });
+});
+
+describe("the Run area follows the machine", () => {
+    const shown = (state: Parameters<typeof placesParts>[0]): string[] => FIT_RULES.filter(([, shows]) => shows(state)).map(([id]) => id);
+
+    test("a laser shows its heights and head camera, no parts; a G-code pick and place machine the reverse", () => {
+        const { store } = setup();
+        const none = store.get();
+        expect(shown(none)).toEqual(["camera-view", "heightmap", "pnp-parts", "pnp-board", "pnp-view"]);
+        const laser = { ...none, snapshot: connected() };
+        expect(shown(laser)).toEqual(["camera-view", "heightmap"]);
+        const nozzle = { ...none, snapshot: connected({}, { profile: { kinematics: "cartesian", tool: "nozzle", h_axis: true, r_max: 0, z_max: 0 } }) };
+        expect(placesParts(nozzle)).toBe(true);
+        const gcode = { ...none, snapshot: connected({}, { profile: { kinematics: "cartesian", tool: "nozzle", h_axis: false, r_max: 0, z_max: 0, controller: "gcode" } }) };
+        expect(shown(gcode)).toEqual(["pnp-parts", "pnp-board", "pnp-view"]);
+    });
+
+    test("mountFit hides and shows the panels found as the state changes", () => {
+        const { store } = setup();
+        const panels = new Map(FIT_RULES.map(([id]) => [id, el("section", { id, class: "panel" })]));
+        mountFit((listener) => {
+            store.subscribe(listener, ["snapshot"]);
+            listener(store.get());
+        }, (id) => panels.get(id) ?? null);
+        expect(panels.get("pnp-parts")!.classList.contains("hidden")).toBe(false);
+        store.set({ snapshot: connected() });
+        expect(panels.get("pnp-parts")!.classList.contains("hidden")).toBe(true);
+        expect(panels.get("heightmap")!.classList.contains("hidden")).toBe(false);
+    });
+});
+
+test("a view mounted as a part of another panel has a section heading, not a panel head", () => {
+    const part = el("div", {}, el("div", { class: "panel-head" }, el("h2", {}, "Placing"), el("span", { class: "badge" }, "0 boards")), el("p", {}, "body"));
+    asPart(part);
+    expect(part.querySelector(".panel-head")).toBeNull();
+    expect(part.querySelector(".part-head h3")?.textContent).toBe("Placing");
+    expect(part.querySelector(".part-head .badge")?.textContent).toBe("0 boards");
+    expect(part.querySelector("h2")).toBeNull();
 });

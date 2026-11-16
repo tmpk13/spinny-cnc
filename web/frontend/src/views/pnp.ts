@@ -544,7 +544,8 @@ export function polaritySelect(label: string): HTMLSelectElement {
 }
 
 export interface PnpRoots {
-    steps: HTMLElement;
+    /** The steps of placing, when the page has no Steps panel of its own that offers them. */
+    steps?: HTMLElement;
     parts: HTMLElement;
     board: HTMLElement;
     camera: HTMLElement;
@@ -601,7 +602,9 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     let loading = false;
 
     // The steps follow the machine the parts are placed with.
-    mountSteps(roots.steps, ctx, (state) => [gcodePlacing(state) ? PLACING_SETUP : PNP_SETUP], "spinny.steps.pnp");
+    if (roots.steps) {
+        mountSteps(roots.steps, ctx, (state) => [gcodePlacing(state) ? PLACING_SETUP : PNP_SETUP], "spinny.steps.pnp");
+    }
     mountHead(roots.head, ctx, roots.quick);
     // The top camera's picture is drawn again when the part's shape is turned on or off.
     mountPnpRefs(roots.refs, ctx, () => views.top.render(ctx.store.get()));
