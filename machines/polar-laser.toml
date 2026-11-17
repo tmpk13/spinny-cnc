@@ -10,7 +10,7 @@ tool = "laser"
 
 [rail]                      # R: the radius, mm
 full_steps_per_mm = 40      # the motor's full steps per mm, microsteps not counted: 200 steps per turn, 5 mm per turn
-max_rate = 560              # mm/min; the step generator runs out before the motor does
+max_rate = 1000             # mm/min; the step generator runs out before the motor does
 accel = 50                  # mm/s^2
 jerk = 3                    # mm/s allowed at a corner
 jog_rate = 300              # mm/min for a jog without F
@@ -29,7 +29,7 @@ home_travel = 200           # mm between the ends; a home seeks a tenth further
 
 [table]                     # A: the table, degrees
 full_steps_per_deg = 55.5555546875 # 200 steps per turn, 100:1, over 360 degrees: 14222.222 at 256 microsteps
-max_rate = 400              # deg/min
+max_rate = 500              # deg/min
 accel = 50                  # deg/s^2
 jerk = 2                    # deg/s allowed at a corner
 jog_rate = 200
@@ -46,15 +46,15 @@ home_pos = 0                # deg the switch reads as
 home_travel = 400           # deg between the ends; a home seeks a tenth further
 
 [slide]                     # Z: the cross slide, mm; a setup axis here
-full_steps_per_mm = 40
+full_steps_per_mm = 1
 max_rate = 560
 accel = 50
 jerk = 3
 jog_rate = 120
 limit = 0
 invert = false
-current_ma = 800
-microsteps = 256
+current_ma = 200
+microsteps = 16
 socket = "Z"
 endstop = "none"            # none, min, max, both: where the slide's switches are
 endstop_pin = 22            # GPIO: 4 X-STOP, 3 Y-STOP, 16 E-STOP, 22 PROBE; read at boot
@@ -132,7 +132,7 @@ address = 0x40              # 0x40 to 0x7F, as the module's A0 to A5 pads set it
 # positions = { up = 30, down = 120 }   # buttons on the page
 
 [host]
-tolerance = 0.005           # chord tolerance of the streamed path, mm
+tolerance = 0.01            # chord tolerance of the streamed path, mm
 
 # The page's controls: what the jog panel and the readout draw for this
 # machine. Left out, they are drawn from the kinematics, the tool and the

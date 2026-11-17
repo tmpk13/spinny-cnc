@@ -11,6 +11,8 @@ jobs:
       run:
         working-directory: spinny-cnc
     steps:
+      # deploy/release.py finds its sibling repositories beside this one, by
+      # these directory names (docs/RELEASE.md, "Building a release").
       - name: Checkout spinny-cnc
         uses: actions/checkout@v4
         with:
@@ -22,9 +24,41 @@ jobs:
           repository: tmpk13/kicad-to-gcode
           path: kicad-to-gcode
 
+      - name: Checkout spinny-firmware
+        uses: actions/checkout@v4
+        with:
+          repository: tmpk13/spinny-cnc-firmware
+          path: spinny-firmware
+
+      # Optional to the release: without it the archives have no bin/pcbv.
+      - name: Checkout pcb-vision
+        uses: actions/checkout@v4
+        with:
+          repository: tmpk13/pcb-vision
+          path: pcb-vision
+
+      # The board firmware is built for thumbv6m-none-eabi and turned into a
+      # uf2 by elf2uf2-rs, which links libudev; the Rust programs are built
+      # for both archive platforms.
+      - name: Rust targets and elf2uf2-rs
+        run: |
+          rustup target add thumbv6m-none-eabi x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends libudev-dev
+          cargo install -q --locked elf2uf2-rs@2.2.0
+
       - uses: jdx/mise-action@v5
         with:
           working_directory: spinny-cnc
 
       - name: Run release
         run: mise run release
+
+      - name: Upload archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: spinny-release
+          path: |
+            spinny-cnc/dist/*.tar.gz
+            spinny-cnc/dist/SHA256SUMS
+          if-no-files-found: error

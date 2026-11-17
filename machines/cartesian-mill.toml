@@ -21,6 +21,7 @@ full_steps_per_mm = 50      # 200 steps per turn, 4 mm per turn
 max_rate = 1200
 limit = 60
 
+
 [table]
 socket = "E"
 current_ma = 0
@@ -35,6 +36,7 @@ jerk = 3
 jog_rate = 120
 limit = 40
 
+
 [focus]
 socket = "Z"
 fitted = true
@@ -45,10 +47,12 @@ accel = 50
 jerk = 1
 jog_rate = 120
 current_ma = 600
+invert = true
 
 [probe]
-invert = true
-brake_ms = 1
+invert = false
+brake_ms = 0
+pin = 26
 
 [host]
 tolerance = 0.005

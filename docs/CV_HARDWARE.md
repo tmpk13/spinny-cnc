@@ -84,22 +84,19 @@ wrong scales used up the search's budget.
   turned 0.42 to 0.49 degrees off: the roll in use was 180, the camera's
   180.4. Taking the turn from the head's places (below), the same records
   replay to 0.01 to 0.07 mm and within 0.1 degree.
-- Two searches with nothing known, the first over a box drawn beside the
-  board (in head places; a search box is where the picture's center goes,
-  65 mm away on a LumenPnP), the second over the board from its edge:
-  each called a wrong place found (a feeder's tape, the board's edge;
-  locks pairing a third of the pads) and failed all three checks; the
-  second started from the first one's refuted place, which had been kept
-  as found.
+- Two searches with nothing known, started at the board's edge: each
+  called a wrong place found (locks pairing a third of the pads) and
+  failed all three checks; the second started from the first one's
+  refuted place, which had been kept as found.
 - A search with nothing known after the quick scan went in: the head
   started off the board, and the scan of the whole travel (128 stops)
   found the board at its 105th stop, 400 s in, 0.10 mm and 0.08 degrees
   from the sweep's truth, and offered roll 180.38 and 15.97 um a pixel to
   keep. Its first lattice put two stops on the board, 17 and 20 mm inside
   its edges, and pcbv locked nothing there; the first stop of the lattice
-  halfway between locked and found it in 3 s. 96 of its 107 stops saw no
-  lock, and a stop took 3.7 s on average: a bed narrowed to where boards
-  lie is the quickest way to a quicker scan.
+  halfway between locked and found it in 3 s. 96 of the 107 stops saw no
+  lock and took 3.7 s each: a bed narrowed to where boards lie is the
+  quickest way to a quicker scan.
 
 ## What changed
 

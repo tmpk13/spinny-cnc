@@ -41,6 +41,7 @@ name = "isolation"
 source = "isolation"
 tool = "diode"
 loops = 2
+enabled = true
 
 [[operations]]
 name = "clearing"
@@ -56,6 +57,7 @@ tool = "diode"
 power = 1000
 speed = 150
 passes = 6
+enabled = false
 
 [[operations]]
 name = "engraving"
@@ -64,6 +66,7 @@ tool = "diode"
 match = ""              # a part of the paths' label to pick them by; empty takes every one
 power = 300
 speed = 1200
+enabled = false
 
 [post]
 header = ["G21", "G90", "G94"]
