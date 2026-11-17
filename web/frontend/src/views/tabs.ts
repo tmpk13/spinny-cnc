@@ -11,9 +11,11 @@
 // (the CAM profiles) and Page (this page's version, bug reports and
 // plugins).
 //
-// The rail names each side by a button with the side's areas after it;
-// the other side's areas fold away behind its button, so one press swaps
-// sides and the area each side last showed comes back. Side by side (split),
+// The rail names each side over its areas and lists both sides' areas, so
+// every place the page has is in sight and one press away. A narrow
+// window's bar has no room for both: there the other side's areas fold
+// away behind its name, which swaps to it, and the area each side last
+// showed comes back. Side by side (split),
 // both sides show at once, each in a pane of its own with its tabs, and a
 // handle between the panes sets their widths. Which page each side shows,
 // and whether they are side by side, is set on #app for the stylesheet
@@ -236,6 +238,15 @@ export function wideWindow(): boolean {
     return typeof globalThis.matchMedia !== "function" || globalThis.matchMedia("(min-width: 64rem)").matches;
 }
 
+/** Whether the tabs are the rail down the window's left side: on a window wide enough for it, as the stylesheet lays it out. */
+export function railShown(): boolean {
+    try {
+        return typeof globalThis.matchMedia === "function" && globalThis.matchMedia("(min-width: 64rem)").matches;
+    } catch {
+        return false;
+    }
+}
+
 /** The side in front: shown alone, or side by side the one last worked in. */
 export function frontSide(): Side {
     return front;
@@ -360,6 +371,8 @@ export function mountTabs(root: HTMLElement, store: Store<AppState>): HTMLElemen
             root.removeAttribute("data-open");
         },
     }, svgIcon("M1 2h14v12H1z M2.5 3.5v9h4.6v-9z M8.9 3.5v9h4.6v-9z", true));
+    // Its name, drawn beside the drawing where the rail has room for it.
+    splitButton.dataset["label"] = "Side by side";
     const more = el("button", { type: "button", class: "tabs-more", "aria-haspopup": "menu" }, "More");
     const tools = el("div", { class: "tabs-tools" });
     // The Setup side's group goes with the tools, so side by side they sit
@@ -397,8 +410,11 @@ export function mountTabs(root: HTMLElement, store: Store<AppState>): HTMLElemen
         for (const { page: id, tab } of tabs) {
             tab.hidden = prefs.hidden.includes(id);
         }
+        // The rail has room for both sides' areas; a narrow window's bar
+        // folds the other side's away behind its name.
+        const rail = railShown();
         for (const entry of groups) {
-            const open = both || entry.side === front;
+            const open = both || entry.side === front || rail;
             entry.list.hidden = !open;
             entry.button.setAttribute("aria-pressed", entry.side === front ? "true" : "false");
             entry.button.toggleAttribute("data-open", open);

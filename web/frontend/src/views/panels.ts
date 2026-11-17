@@ -43,6 +43,14 @@
 // closes it, but a layout does not carry it. A panel unfolding, or coming
 // to the front of its stack, is marked for the stylesheet to move it in
 // (data-unfold, data-arrive) while the page moves things (src/look.ts).
+//
+// A page can show a view (src/areaviews.ts): a few of its panels in set
+// columns, every other panel out of sight. A view is a layout of its own
+// put on the page for as long as it shows; the operator's layout is set
+// aside meanwhile (PageView.own) and is the one kept, named and shown
+// again when the view goes. Inside a view the panels are not arranged by
+// hand: no menu, no drags; a fold or a tab pressed lasts while the page is
+// open.
 
 import { el, readStored, svgIcon, writeStored } from "../dom.ts";
 import { countText } from "../format.ts";
@@ -97,6 +105,19 @@ import { closeMenu, openMenu, type MenuEntry } from "../menu.ts";
 export const LAYOUT_KEY = "spinny.layout";
 export const PRESETS_KEY = "spinny.layout.presets";
 
+/**
+ * A view of a page: the panels it shows, by column, each entry a panel's
+ * id or a stack of ids (one shown at a time under their tabs); the panels
+ * folded when it first shows; and the panels brought to the front of their
+ * stacks whenever the list changes.
+ */
+export interface ViewSpec {
+    id: string;
+    columns: (string | string[])[][];
+    folded?: string[];
+    front?: string[];
+}
+
 /** What the page settings menu works the layouts with. */
 export interface PanelsController {
     /** The names kept, Default not among them. */
@@ -138,6 +159,14 @@ export interface PanelsController {
     adopt(root: HTMLElement): boolean;
     /** Lets go of a panel taken in by `adopt`, which its owner then takes out of the page. */
     drop(id: string): void;
+    /**
+     * Shows a view of a page in place of the operator's layout, or with
+     * null the operator's layout again. A view shown again comes back as
+     * it was left (a fold, a tab in front) while the page is open.
+     */
+    setView(page: string, view: ViewSpec | null): void;
+    /** The id of the view a page shows; null for the operator's layout. */
+    viewOf(page: string): string | null;
 }
 
 interface PageView {
@@ -146,7 +175,14 @@ interface PageView {
     columns: HTMLElement[];
     /** The markup's panel ids per column and the panels it stacks: the default layout. */
     defaults: Defaults;
+    /** The layout drawn: the operator's, or while a view shows, the view's. */
     layout: PageLayout;
+    /** The operator's layout, set aside while a view shows; null with no view. */
+    own: PageLayout | null;
+    /** The view shown; null for the operator's layout. */
+    view: ViewSpec | null;
+    /** Each view's layout as it was left, by the view's id, with the columns it was made for, while the page is open. */
+    left: Map<string, { columns: string; layout: PageLayout }>;
     /** The tab rows over stacks, by the stack's ids. */
     strips: Map<string, HTMLElement>;
     /** A handle on each boundary between two columns. */
@@ -208,6 +244,59 @@ let controller: (PanelsController & { reveal(id: string): void }) | null = null;
  */
 export function revealPanel(id: string): void {
     controller?.reveal(id);
+}
+
+/** Shows a view of a page, or with null the operator's layout (PanelsController.setView); nothing where the layer is not mounted. */
+export function showPanelView(page: string, view: ViewSpec | null): void {
+    controller?.setView(page, view);
+}
+
+let viewFinder: ((page: string, panel: string) => void) | null = null;
+
+/**
+ * Names who is asked when a panel a view keeps out of sight has to be
+ * seen (a step or a link going to it): it shows a view that holds the
+ * panel, or the operator's layout.
+ */
+export function onPanelOutOfView(finder: ((page: string, panel: string) => void) | null): void {
+    viewFinder = finder;
+}
+
+/**
+ * A view's layout over a page's panels: the view's own in its columns,
+ * every other panel after them, out of sight.
+ */
+export function viewLayout(view: ViewSpec, defaults: Defaults): PageLayout {
+    const known = defaults.flat();
+    const placed = new Set<string>();
+    const columns: Stack[][][] = defaults.map(() => []);
+    const prefs: Record<string, { hidden?: boolean; collapsed?: boolean }> = {};
+    view.columns.forEach((entries, index) => {
+        const column = columns[Math.min(index, columns.length - 1)];
+        for (const entry of entries) {
+            const ids = (Array.isArray(entry) ? entry : [entry]).filter((id) => known.includes(id) && !placed.has(id));
+            if (!column || ids.length === 0) {
+                continue;
+            }
+            for (const id of ids) {
+                placed.add(id);
+            }
+            column.push([{ ids, front: ids.find((id) => (view.front ?? []).includes(id)) ?? ids[0]! }]);
+        }
+    });
+    const last = columns[columns.length - 1];
+    for (const id of known) {
+        if (!placed.has(id)) {
+            last?.push([{ ids: [id], front: id }]);
+            prefs[id] = { hidden: true };
+        }
+    }
+    for (const id of view.folded ?? []) {
+        if (placed.has(id)) {
+            prefs[id] = { collapsed: true };
+        }
+    }
+    return normalizeLayout({ columns, panels: prefs }, defaults);
 }
 
 /** Takes a panel added to a page's column into the layout (PanelsController.adopt); nothing where the layer is not mounted. */
@@ -379,7 +468,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
         const id = root.id.replace(/^page-/, "");
         const columns = childrenOf(root, ".column");
         const defaults = markupDefaults(columns);
-        const page: PageView = { id, root, columns, defaults, layout: normalizeLayout(stored[id] ?? null, defaults), strips: new Map(), handles: [], rows: new Map(), cells: new Map(), more: [], folders: new Map() };
+        const page: PageView = { id, root, columns, defaults, layout: normalizeLayout(stored[id] ?? null, defaults), own: null, view: null, left: new Map(), strips: new Map(), handles: [], rows: new Map(), cells: new Map(), more: [], folders: new Map() };
         pages.set(id, page);
         for (const column of columns) {
             column.addEventListener("pointerover", () => (lastColumn = column));
@@ -404,8 +493,22 @@ export function mountPanels(app: HTMLElement): PanelsController {
         return Object.fromEntries([...pages.values()].map((page) => [page.id, page.defaults]));
     }
 
+    /** The operator's layout of a page: the one drawn, or the one set aside while a view shows. */
+    function ownOf(page: PageView): PageLayout {
+        return page.own ?? page.layout;
+    }
+
+    /** Sets the operator's layout of a page; while a view shows it waits aside, and the view stays. */
+    function setOwn(page: PageView, layout: PageLayout): void {
+        if (page.own !== null) {
+            page.own = layout;
+        } else {
+            page.layout = layout;
+        }
+    }
+
     function currentLayouts(): Record<string, PageLayout> {
-        return canonicalLayouts(Object.fromEntries([...pages.values()].map((page) => [page.id, page.layout])), defaultsByPage());
+        return canonicalLayouts(Object.fromEntries([...pages.values()].map((page) => [page.id, ownOf(page)])), defaultsByPage());
     }
 
     function save(): void {
@@ -417,8 +520,59 @@ export function mountPanels(app: HTMLElement): PanelsController {
 
     function update(page: PageView, layout: PageLayout): void {
         page.layout = layout;
+        if (page.view !== null) {
+            // A fold or a tab pressed in a view: kept while the page is open.
+            leave(page, layout);
+        }
         save();
         render(page);
+    }
+
+    /** Keeps a view's layout as it is now, for when the view shows again. */
+    function leave(page: PageView, layout: PageLayout): void {
+        if (page.view !== null) {
+            page.left.set(page.view.id, { columns: JSON.stringify(page.view.columns), layout });
+        }
+    }
+
+    /** Shows a view of a page in place of the operator's layout, or the operator's layout again. */
+    function setView(page: PageView, view: ViewSpec | null): void {
+        if (view === null) {
+            if (page.own === null) {
+                return;
+            }
+            page.layout = page.own;
+            page.own = null;
+            page.view = null;
+            page.root.removeAttribute("data-view");
+            render(page);
+            notify();
+            return;
+        }
+        const before = page.view;
+        const columns = JSON.stringify(view.columns);
+        const shown = before !== null && before.id === view.id && JSON.stringify(before.columns) === columns;
+        // What the view newly asks to the front: over what it asked last time it showed.
+        const raised = (view.front ?? []).filter((id) => !(shown ? before.front ?? [] : []).includes(id));
+        if (shown && raised.length === 0) {
+            page.view = view;
+            return;
+        }
+        if (page.own === null) {
+            page.own = page.layout;
+        }
+        // The view as it was left, when its panels are the same; else anew.
+        const left = page.left.get(view.id);
+        let layout = left && left.columns === columns ? left.layout : viewLayout(view, page.defaults);
+        for (const id of raised) {
+            layout = bringToFront(layout, id);
+        }
+        page.view = view;
+        page.layout = layout;
+        leave(page, layout);
+        page.root.setAttribute("data-view", view.id);
+        render(page);
+        notify();
     }
 
     // --- the heads ------------------------------------------------------------
@@ -627,6 +781,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
         }
         if (layout !== page.layout) {
             page.layout = layout;
+            leave(page, layout);
             save();
         }
     }
@@ -928,6 +1083,8 @@ export function mountPanels(app: HTMLElement): PanelsController {
                 }
             });
             reorder(column, [...desired, ...handles, ...(page.more[index] ? [page.more[index]!] : [])]);
+            // A column with nothing drawn in it: a view gives its room away.
+            column.toggleAttribute("data-empty", drawn.length === 0);
             drawn.forEach(({ node, block }, at) => {
                 node.toggleAttribute("data-join-up", at > 0 && drawn[at - 1]!.block === block);
                 node.toggleAttribute("data-join-down", at < drawn.length - 1 && drawn[at + 1]!.block === block);
@@ -1141,6 +1298,10 @@ export function mountPanels(app: HTMLElement): PanelsController {
 
     function openPanelMenu(panel: PanelView, at: HTMLElement | { x: number; y: number }, from?: Element): void {
         const { page, id } = panel;
+        // A view's panels are not arranged by hand.
+        if (page.view !== null) {
+            return;
+        }
         const layout = page.layout;
         const where = locate(layout, id);
         if (!where) {
@@ -1280,7 +1441,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
     }
 
     function dragHeight(panel: PanelView, event: PointerEvent): void {
-        if (event.button !== 0) {
+        if (event.button !== 0 || panel.page.view !== null) {
             return;
         }
         event.preventDefault();
@@ -1303,7 +1464,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
     }
 
     function dragWidth(page: PageView, boundary: number, event: PointerEvent): void {
-        if (event.button !== 0) {
+        if (event.button !== 0 || page.view !== null) {
             return;
         }
         event.preventDefault();
@@ -1482,7 +1643,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
      * let go into it, and the folder's own grip (`whole`) drags the folder.
      */
     function dragPanel(panel: PanelView, event: PointerEvent, whole = false): void {
-        if (event.button !== 0 || !editing || !wide(panel.root)) {
+        if (event.button !== 0 || !editing || !wide(panel.root) || panel.page.view !== null) {
             return;
         }
         event.preventDefault();
@@ -1538,7 +1699,7 @@ export function mountPanels(app: HTMLElement): PanelsController {
      * to pull.
      */
     function dragTab(panel: PanelView, tab: HTMLElement, event: PointerEvent): void {
-        if (event.button !== 0 || !wide(panel.root)) {
+        if (event.button !== 0 || !wide(panel.root) || panel.page.view !== null) {
             return;
         }
         const page = panel.page;
@@ -1590,6 +1751,14 @@ export function mountPanels(app: HTMLElement): PanelsController {
         if (!panel) {
             return;
         }
+        // Out of sight in the view shown: whoever knows the views shows one
+        // that holds it, or the operator's layout; failing that, this does.
+        if (panel.page.view !== null && prefsOf(panel).hidden) {
+            viewFinder?.(panel.page.id, id);
+            if (panel.page.view !== null && prefsOf(panel).hidden) {
+                setView(panel.page, null);
+            }
+        }
         let layout = panel.page.layout;
         if (prefsOf(panel).hidden) {
             layout = setPrefs(layout, id, { hidden: undefined });
@@ -1608,10 +1777,19 @@ export function mountPanels(app: HTMLElement): PanelsController {
 
     function applyAll(layouts: Record<string, unknown>): void {
         for (const page of pages.values()) {
-            page.layout = normalizeLayout(layouts[page.id] ?? null, page.defaults);
+            setOwn(page, normalizeLayout(layouts[page.id] ?? null, page.defaults));
             render(page);
         }
         save();
+    }
+
+    /** A view's layout made again over a page whose panels changed (a plugin's panel came or went). */
+    function againInView(page: PageView): void {
+        if (page.view !== null) {
+            page.left.clear();
+            page.layout = viewLayout(page.view, page.defaults);
+            leave(page, page.layout);
+        }
     }
 
     // Watches the panels' sizes for the handles; made once the panels are.
@@ -1648,18 +1826,26 @@ export function mountPanels(app: HTMLElement): PanelsController {
         },
         resetPage(id) {
             const page = pages.get(id);
-            if (page) {
+            if (page && page.own !== null) {
+                page.own = normalizeLayout(null, page.defaults);
+                save();
+            } else if (page) {
                 update(page, normalizeLayout(null, page.defaults));
             }
         },
         editing: () => editing,
         setEditing: editPanels,
+        // The operator's own hiding, not a view's: a view's panels out of
+        // sight come back with the view.
         hiddenPanels: () => [...panels.values()]
-            .filter((panel) => prefsOf(panel).hidden === true)
+            .filter((panel) => ownOf(panel.page).panels[panel.id]?.hidden === true)
             .map((panel) => ({ id: panel.id, title: title(panel.root), page: panel.page.id })),
         showPanel(id) {
             const panel = panels.get(id);
-            if (panel) {
+            if (panel && panel.page.own !== null) {
+                panel.page.own = setPrefs(panel.page.own, id, { hidden: undefined });
+                save();
+            } else if (panel) {
                 update(panel.page, setPrefs(panel.page.layout, id, { hidden: undefined }));
             }
         },
@@ -1711,10 +1897,11 @@ export function mountPanels(app: HTMLElement): PanelsController {
             // The working layout as kept: the place the operator left this
             // panel in last time, which the one in use dropped at mount.
             const kept = readObject(readStored(LAYOUT_KEY))[page.id];
-            page.layout = normalizeLayout(kept ?? page.layout, page.defaults);
+            setOwn(page, normalizeLayout(kept ?? ownOf(page), page.defaults));
             const panel = decorate(root, page);
             panels.set(root.id, panel);
             sizes?.observe(root);
+            againInView(page);
             render(page);
             notify();
             return true;
@@ -1730,10 +1917,18 @@ export function mountPanels(app: HTMLElement): PanelsController {
             const page = panel.page;
             const { stacked = {}, stuck = {}, folders = {} } = page.defaults;
             page.defaults = withStacks(page.defaults.map((ids) => ids.filter((other) => other !== id)), stacked, stuck, folders);
-            page.layout = normalizeLayout(page.layout, page.defaults);
+            setOwn(page, normalizeLayout(ownOf(page), page.defaults));
+            againInView(page);
             render(page);
             notify();
         },
+        setView(id, view) {
+            const page = pages.get(id);
+            if (page) {
+                setView(page, view);
+            }
+        },
+        viewOf: (id) => pages.get(id)?.view?.id ?? null,
         reveal,
     };
 

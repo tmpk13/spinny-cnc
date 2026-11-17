@@ -1,6 +1,10 @@
 // Spacing check: drives the page and its in-page mock through a set of
 // states in Chromium, on every tab at a desktop and a phone width, and
-// fails on spacing the stylesheet's flow rules are meant to rule out:
+// fails on spacing the stylesheet's flow rules are meant to rule out. The
+// states are gone through with every panel of an area shown (the area's
+// All panels view), so no panel is left out, and then once more view by
+// view: each step of the Run area for a laser and for a pick and place
+// machine, the dock open, and each view of the Job area. It fails on:
 //
 // - Blocks stacked in a panel sit one spacing token apart (--flow-tight,
 //   --flow or --flow-wide from :root), the first flush with the top of the
@@ -216,7 +220,8 @@ function wallFindings(): Finding[] {
         // Badges are pills: their words sit close to the rim on purpose. A
         // code editor's colored layer mirrors its textarea's lines, which
         // end wherever the file's lines do, as the textarea's own text does.
-        if (!words || !parent || parent.closest("svg, select, option, textarea, script, style, .badge, .code-layer")) {
+        // A step's numbered circle and the tag beside its name are pills too.
+        if (!words || !parent || parent.closest("svg, select, option, textarea, script, style, .badge, .code-layer, .viewbar-dot, .viewbar-tag")) {
             continue;
         }
         const range = document.createRange();
@@ -341,7 +346,8 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
         name: "a conversation", pages: ["job"], enter: async (page) => {
             await tab(page, "job");
             await page.fill("#auto-chat textarea", "list the jobs");
-            await page.click("#auto-chat button:has-text('Send')");
+            // Pressed by script: at the foot of its column the button can lie under the column's mark of more below.
+            await page.evaluate(() => Array.from(document.querySelectorAll<HTMLElement>("#auto-chat button")).find((node) => node.textContent === "Send")?.click());
             await page.waitForTimeout(800);
         },
     },
@@ -400,7 +406,9 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
         // The drawer stays open across the tab switches the check makes by script.
         name: "the to-do drawer open with items, one done", pages: ["job"], enter: async (page) => {
             await tab(page, "job");
-            await page.click(".todo-toggle");
+            // The bar is folded by now, and the list's button is one of its tools: pressed by script.
+            await page.evaluate(() => document.querySelector<HTMLElement>(".todo-toggle")?.click());
+            await page.waitForTimeout(200);
             for (const text of ["clean the lens", "check the belt tension on the cross slide"]) {
                 await page.fill(".todo-input", text);
                 await page.press(".todo-input", "Enter");
@@ -441,31 +449,111 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
     },
 ];
 
+/** The views of the area shown, by the names on their tabs. */
+async function viewNames(page: Page): Promise<string[]> {
+    return page.evaluate(() => Array.from(document.querySelectorAll<HTMLElement>(".pane[data-front] .viewbar .viewbar-step, .pane[data-front] .viewbar .viewbar-tab"))
+        .filter((node) => node.getClientRects().length > 0)
+        .map((node) => node.querySelector(".viewbar-name")?.textContent ?? ""));
+}
+
+/** Shows a view of the area shown by a press on its tab. */
+async function view(page: Page, label: string): Promise<void> {
+    await page.evaluate((label) => {
+        Array.from(document.querySelectorAll<HTMLElement>(".pane[data-front] .viewbar .viewbar-step, .pane[data-front] .viewbar .viewbar-tab"))
+            .find((node) => node.querySelector(".viewbar-name")?.textContent === label)?.click();
+        window.scrollTo(0, 0);
+    }, label);
+    await page.waitForTimeout(250);
+}
+
+/** The areas view by view: each entry connects a machine, then names the areas whose every view is checked. */
+const VIEW_STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<void> }[] = [
+    {
+        name: "the polar laser, a job picked, the dock open", pages: ["run", "job"], enter: async (page) => {
+            await tab(page, "machines");
+            await page.click("#connection button:has-text('Connect')");
+            await page.waitForTimeout(500);
+            await tab(page, "job");
+            await page.locator(".job-list li .job-pick").first().click();
+            await page.waitForTimeout(500);
+            await page.evaluate(() => document.querySelector<HTMLElement>("#machine .dock-toggle")?.click());
+        },
+    },
+    {
+        name: "a job running", pages: ["run"], enter: async (page) => {
+            await tab(page, "run");
+            await view(page, "Run");
+            await page.click("#run button:has-text('Run')");
+            await page.waitForTimeout(600);
+        },
+    },
+    {
+        name: "a G-code pick and place machine", pages: ["run"], enter: async (page) => {
+            await page.click(".btn-stop");
+            await page.waitForTimeout(400);
+            await tab(page, "machines");
+            await page.click("#connection button:has-text('Disconnect')");
+            await page.waitForTimeout(300);
+            await page.locator("#connection select").selectOption({ index: await page.evaluate(() =>
+                Array.from(document.querySelectorAll("#connection select option")).findIndex((option) => option.textContent?.includes("LumenPnP"))) });
+            await page.click("#connection button:has-text('Connect')");
+            await page.waitForTimeout(500);
+        },
+    },
+];
+
 const server = Bun.serve({ port: 0, routes: { "/": index, "/tips": tips } });
 const browser = await chromium.launch(process.env["CHROMIUM"] ? { executablePath: process.env["CHROMIUM"] } : {});
 const found = new Map<string, string>();
 try {
-    for (const width of [1440, 400]) {
+    /** What the page shown breaks, kept once per finding with where it was first met. */
+    const check = async (page: Page, where: string): Promise<void> => {
+        await openDetails(page);
+        for (const finding of [...await page.evaluate(stackFindings), ...await page.evaluate(wallFindings), ...await page.evaluate(tipFindings)]) {
+            const key = `${finding.kind} ${finding.where}: ${finding.detail.replace(/-?[\d.]+px/g, "")}`;
+            if (!found.has(key)) {
+                found.set(key, `${finding.kind.padEnd(4)} ${finding.where}: ${finding.detail}  [${where}]`);
+            }
+        }
+    };
+    const open = async (width: number, storage: Record<string, string>): Promise<{ page: Page; close: () => Promise<void> }> => {
         const context = await browser.newContext({ viewport: { width, height: 1000 } });
+        await context.addInitScript((entries: Record<string, string>) => {
+            for (const [key, value] of Object.entries(entries)) {
+                localStorage.setItem(key, value);
+            }
+        }, storage);
         const page = await context.newPage();
         page.on("pageerror", (error) => console.error(`page error: ${error.message}`));
         await page.goto(`${server.url}?mock=1`);
         await page.waitForSelector(".tabs .tab[aria-selected=\"true\"]");
         await page.waitForTimeout(500);
+        return { page, close: () => context.close() };
+    };
+    for (const width of [1440, 400]) {
+        // Every panel of each area: its All panels view.
+        const whole = await open(width, { "spinny.views": JSON.stringify({ run: "all", job: "all" }) });
         for (const state of STATES) {
-            await state.enter(page);
+            await state.enter(whole.page);
             for (const id of state.pages) {
-                await tab(page, id);
-                await openDetails(page);
-                for (const finding of [...await page.evaluate(stackFindings), ...await page.evaluate(wallFindings), ...await page.evaluate(tipFindings)]) {
-                    const key = `${finding.kind} ${finding.where}: ${finding.detail.replace(/-?[\d.]+px/g, "")}`;
-                    if (!found.has(key)) {
-                        found.set(key, `${finding.kind.padEnd(4)} ${finding.where}: ${finding.detail}  [${id}, ${state.name}, ${width}px]`);
-                    }
+                await tab(whole.page, id);
+                await check(whole.page, `${id}, ${state.name}, ${width}px`);
+            }
+        }
+        await whole.close();
+        // The areas view by view, as they open.
+        const views = await open(width, {});
+        for (const state of VIEW_STATES) {
+            await state.enter(views.page);
+            for (const id of state.pages) {
+                await tab(views.page, id);
+                for (const label of await viewNames(views.page)) {
+                    await view(views.page, label);
+                    await check(views.page, `${id} > ${label}, ${state.name}, ${width}px`);
                 }
             }
         }
-        await context.close();
+        await views.close();
     }
     const drawings = await browser.newPage();
     await drawings.goto(`${server.url}tips`);

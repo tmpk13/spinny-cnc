@@ -6,8 +6,15 @@
 // part is the view it always was, mounted in a box of its own whose id is
 // the old panel's, so links and steps that name `jog` or `markers` still
 // find it; the parts' own titles give way to the panel's.
+//
+// In a view (src/views/areaviews.ts) the panel shows the position, and
+// the rest (the jog, the tool, the markers: the box `machine-more`) on a
+// press of Jog in the panel's head, open or shut as this browser last left
+// it. Docked, it lies along the foot of the view, the position staying in
+// sight while the rest opens over it. A link or a step going to a part
+// inside opens it. With every panel shown it is whole, as it always was.
 
-import { el } from "../dom.ts";
+import { button, el, readStored, writeStored } from "../dom.ts";
 import type { Ctx } from "./context.ts";
 import { mountDro } from "./dro.ts";
 import { mountJog, type JogOptions } from "./jog.ts";
@@ -27,7 +34,12 @@ export interface MachinePanel {
     head: HTMLElement;
     /** The jog's box, for rows other panels lend it or take from it. */
     jog: HTMLElement;
+    /** Opens or shuts what a view keeps out of sight: the jog, the tool and the markers. */
+    setOpen(open: boolean): void;
 }
+
+/** Whether the dock's jog is open, as this browser last left it. */
+export const DOCK_KEY = "spinny.dock.open";
 
 /** The children of `node` with the class `name`; happy-dom's `:scope` finds none. */
 function childrenWith(node: Element, name: string): HTMLElement[] {
@@ -50,7 +62,11 @@ export function mountMachine(root: HTMLElement, ctx: Ctx, page: string, ids: Mac
     const markers = part(ids.markers, "markers");
     const markersFold = el("details", { class: "machine-markers stack" }, el("summary", { title: "fold or unfold" }, "Markers"), markers);
     const title = el("div", { class: "panel-head" }, el("h2", {}, "Machine"));
-    root.append(title, dro, jog, tool, head, markersFold);
+    // What a view keeps out of sight until Jog is pressed; with every
+    // panel shown it is simply the rest of the panel. The head's own quick
+    // buttons stay out of it, under the position.
+    const more = el("div", { class: "machine-more stack" }, jog, tool, markersFold);
+    root.append(title, dro, head, more);
     mountDro(dro, ctx);
     mountJog(jog, ctx, page, () => true, jogOptions);
     mountLaser(tool, ctx);
@@ -78,5 +94,17 @@ export function mountMachine(root: HTMLElement, ctx: Ctx, page: string, ids: Mac
             h2.remove();
         }
     }
-    return { head, jog };
+    // The view's own button, last in the head; the stylesheet shows it in a view only.
+    const toggle = button("Jog", () => setOpen(!root.hasAttribute("data-open")), "btn btn-small btn-toggle dock-toggle", "show or hide the jog, the tool and the markers");
+    title.append(toggle);
+    function setOpen(open: boolean): void {
+        root.toggleAttribute("data-open", open);
+        toggle.setAttribute("aria-expanded", String(open));
+        toggle.setAttribute("aria-pressed", String(open));
+        writeStored(DOCK_KEY, open ? "1" : "0");
+    }
+    setOpen(readStored(DOCK_KEY) === "1");
+    // A link, a step or the search going to a part the dock holds shut.
+    more.addEventListener("spinny:show", () => setOpen(true));
+    return { head, jog, setOpen };
 }

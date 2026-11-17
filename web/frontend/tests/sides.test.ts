@@ -12,6 +12,7 @@ import {
     pagesOf,
     parseSidePages,
     parseSplitPrefs,
+    railShown,
     readPage,
     setSplit,
     SIDE_PAGES_KEY,
@@ -178,25 +179,54 @@ describe("showing the sides", () => {
         const selected = Array.from(document.querySelectorAll(".tabs .tab[aria-selected='true']")).map((tab) => tab.getAttribute("data-page"));
         expect(selected).toEqual(["job", "facts"]);
         expect(JSON.parse(localStorage.getItem(SPLIT_KEY)!)).toEqual({ on: true, share: SPLIT_SHARE });
-        // One at a time again: the side in front, the other's tabs folded behind its button.
+        // One at a time again: the side in front shows; the rail still lists both sides' areas.
         setSplit(false);
         expect(up()).toEqual(["page-facts"]);
-        expect(lists.map((list) => list.hidden)).toEqual([true, false]);
+        expect(lists.map((list) => list.hidden)).toEqual([false, false]);
     });
 
-    test("the side's button swaps to it; the folded side counts its edits not applied", () => {
+    test("the rail lists both sides' areas, and a side's name goes to the area it showed last", () => {
         frame();
         const store = new Store<AppState>(initialState(true));
         mountTabs(document.getElementById("tabs")!, store);
         showPage("job");
+        expect(railShown()).toBe(true);
+        const lists = Array.from(document.querySelectorAll<HTMLElement>(".tabs-list"));
+        expect(lists.map((list) => list.hidden)).toEqual([false, false]);
         const setupButton = document.querySelector<HTMLButtonElement>(".tabs-side[data-side='setup']")!;
-        expect(setupButton.hasAttribute("data-open")).toBe(false);
-        store.set({ pending: { "machine-file": 3 } });
-        expect(setupButton.getAttribute("data-pending")).toBe("3");
+        expect(setupButton.hasAttribute("data-open")).toBe(true);
         setupButton.click();
         expect(shownOn("setup")).toBe("facts");
         expect(up()).toEqual(["page-facts"]);
-        expect(setupButton.hasAttribute("data-open")).toBe(true);
+        // An area of the other side is one press away.
+        document.querySelector<HTMLButtonElement>(".tab[data-page='run']")!.click();
+        expect(up()).toEqual(["page-run"]);
+    });
+
+    test("on a narrow window the other side's areas fold away behind its name, which swaps to it and counts its edits not applied", () => {
+        const wide = globalThis.matchMedia;
+        // A window too narrow for the rail: the bar across the top.
+        globalThis.matchMedia = ((query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} })) as unknown as typeof globalThis.matchMedia;
+        try {
+            frame();
+            const store = new Store<AppState>(initialState(true));
+            mountTabs(document.getElementById("tabs")!, store);
+            showPage("job");
+            expect(railShown()).toBe(false);
+            const lists = Array.from(document.querySelectorAll<HTMLElement>(".tabs-list"));
+            expect(lists.map((list) => list.hidden)).toEqual([false, true]);
+            const setupButton = document.querySelector<HTMLButtonElement>(".tabs-side[data-side='setup']")!;
+            expect(setupButton.hasAttribute("data-open")).toBe(false);
+            store.set({ pending: { "machine-file": 3 } });
+            expect(setupButton.getAttribute("data-pending")).toBe("3");
+            setupButton.click();
+            expect(shownOn("setup")).toBe("facts");
+            expect(up()).toEqual(["page-facts"]);
+            expect(setupButton.hasAttribute("data-open")).toBe(true);
+            expect(lists.map((list) => list.hidden)).toEqual([true, false]);
+        } finally {
+            globalThis.matchMedia = wide;
+        }
     });
 
     test("an address's side opens on the page that side showed last", () => {

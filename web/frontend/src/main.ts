@@ -22,7 +22,7 @@ import { mountVersion } from "./views/version.ts";
 import { mountConsole } from "./views/console.ts";
 import { into, type Ctx } from "./views/context.ts";
 import { mountOpenPnpImport } from "./views/openpnpimport.ts";
-import { mountOverview } from "./views/overview.ts";
+import { mountHomeNeeds, mountOverview } from "./views/overview.ts";
 import { mountHeightMap } from "./views/heightmap.ts";
 import { mountJobJson } from "./views/jobjson.ts";
 import { mountJobs } from "./views/jobs.ts";
@@ -37,6 +37,7 @@ import { mountPnp, PNP_SETUP, type PnpPanels } from "./views/pnp.ts";
 import { mountFindBoard } from "./views/findboard.ts";
 import { mountPreviewPanel } from "./views/previewpanel.ts";
 import { mountReportLink } from "./views/reportlink.ts";
+import { mountRunConnect, mountRunJob } from "./views/runstart.ts";
 import { mountStatusBar } from "./views/statusbar.ts";
 import { mountSteps, SETUPS, setupsFor } from "./views/steps.ts";
 import { mountFit } from "./views/fit.ts";
@@ -49,6 +50,7 @@ import { mountSetupLinks } from "./views/setuplinks.ts";
 import { mountSplitHandle } from "./views/split.ts";
 import { mountTodo } from "./views/todo.ts";
 import { mountToasts } from "./views/toasts.ts";
+import { mountViewBars } from "./views/viewbar.ts";
 import { mountVision } from "./views/vision.ts";
 
 export function createContext(api: Api, store: Store<AppState>): Ctx {
@@ -339,9 +341,12 @@ function main(): void {
     mountStatusBar(panel("status"), ctx);
     mountConnection(panel("connection"), ctx);
     mountFocusBanner(panel("status"), ctx);
-    mountTodo(panel("status"), ctx);
     const tabTools = mountTabs(panel("tabs"), store);
+    // Home: where things stand and the next thing to do, what needs
+    // someone, and the jobs to pick from.
     mountOverview(panel("overview"), ctx);
+    mountHomeNeeds(panel("home-needs"), ctx);
+    mountRunJob(panel("home-jobs"), ctx, "Jobs");
     // One Steps panel: a G-code pick and place machine's placing, or the
     // setups this project's machines fit, placing parts among them.
     mountSteps(panel("steps"), ctx, (state) => (gcodePlacing(state) ? [PLACING_SETUP] : setupsFor([...SETUPS, PNP_SETUP], state)));
@@ -360,6 +365,12 @@ function main(): void {
     const drawing = (state: AppState): boolean => state.job === null || plotJobOf(state) !== null;
     mountPreviewPanel(panel("preview"), ctx, (state) => (drawing(state) ? state.millPlan ?? state.job : state.job), (state) => (drawing(state) ? state.millDims : []));
     mountJobJson(panel("jobjson"), ctx);
+    // The Run area's own picture of the job: the one picked, with the
+    // head on it and the trail of the run.
+    mountPreviewPanel(panel("run-preview"), ctx, (state) => state.job);
+    // Its first two steps: the machine to connect, the job to run.
+    mountRunConnect(panel("run-connect"), ctx);
+    mountRunJob(panel("run-job"), ctx);
     const vision = mountVision(panel("camera"), ctx, panel("camera-view"), { controls: panel("camera-controls"), sight: panel("camera-sight"), changes: panel("camera-changes") });
     mountAlign(place.parts.align, ctx);
     // The Setup side's Checklist: what the machine knows, where each value
@@ -431,6 +442,8 @@ function main(): void {
     // adds its controls to the heads and puts the panels where the
     // operator left them.
     mountPageSettings(tabTools, mountPanels(panel("app")));
+    // Each area's views, once the layout layer can put one on its page.
+    mountViewBars(ctx, { use: panel("views-use"), setup: panel("views-setup") });
     // The two sides: the handle between them side by side, the keys that
     // swap them, the links between them (and to the other tabs showing
     // them), and the Use side's panels' links to what they run on.
@@ -438,7 +451,10 @@ function main(): void {
     mountSideKeys();
     mountLinks(ctx, { apiBase, mock });
     mountSetupLinks(ctx);
+    // The rail's tools, in the order they are reached for: the search,
+    // the to-do list, the bug report, then the page's settings.
     mountSearch(tabTools);
+    mountTodo(tabTools, ctx);
     mountBugReport(tabTools, ctx);
     mountTooltips();
     // PageUp and PageDown jog a mill's Z; they never scroll the page.
@@ -452,9 +468,6 @@ function main(): void {
         }
     });
 
-    if (mock) {
-        ctx.toast("info", "mock backend: nothing here touches the machine");
-    }
     feed.start();
     void refreshAll(ctx);
     // A link opened in a tab of its own: its target, once every view is up.

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 
 import type { Api } from "../src/api.ts";
 import { defaultControls } from "../src/controls.ts";
@@ -13,7 +13,7 @@ import { droText, mountDro } from "../src/views/dro.ts";
 import { mountJobs } from "../src/views/jobs.ts";
 import { progressText } from "../src/views/run.ts";
 import { findButton } from "./harness.ts";
-import { anyOf, barPlace, fineStep, holdPiece, HOLD_TICK_MS, keyAction, mountJog } from "../src/views/jog.ts";
+import { anyOf, barPlace, fineStep, holdPiece, HOLD_TICK_MS, keyAction, LEVEL_KEY, levelStep, mountJog, parseLevel } from "../src/views/jog.ts";
 import { confirmSettle } from "../src/confirm.ts";
 import { MAX_BEAM_MS, mountLaser } from "../src/views/laser.ts";
 import { changedBootSettings, mountConfig } from "../src/views/config.ts";
@@ -304,7 +304,18 @@ describe("job selection", () => {
     });
 });
 
+/** Types a step of its own for an axis of the jog, in its field under More. */
+function ownStep(root: ParentNode, title: string, value: string): HTMLInputElement {
+    const field = root.querySelector(`input[aria-label="${title} step"]`) as HTMLInputElement;
+    field.value = value;
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    return field;
+}
+
 describe("jog", () => {
+    // The step size is kept per browser, and every test file shares the storage.
+    afterEach(() => localStorage.removeItem(LEVEL_KEY));
+
     test("keys map to board jogs and cancel", () => {
         const pad = defaultControls(POLAR_LASER);
         expect(keyAction("ArrowLeft", pad)).toEqual({ dx: -1, dy: 0 });
@@ -322,22 +333,28 @@ describe("jog", () => {
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 1, dy: 0, feed: null });
         calls.length = 0;
-        // Each bar has its own step: the radius bar's 10 mm, not the board's.
+        // One step size for every axis, each axis taking its own step for it:
+        // Coarse is the radius's and the board's 10 mm and the table's 90 deg.
         const radius = root.querySelector('[data-axis="r"]')!;
-        click(radius, "10 mm");
+        expect(radius.querySelector(".axis-bar-step")?.textContent).toBe("1 mm");
+        click(root, "Coarse");
+        expect(radius.querySelector(".axis-bar-step")?.textContent).toBe("10 mm");
+        expect(root.querySelector(".jog-pad-steps")?.textContent).toBe("X 10 mm, Y 10 mm");
         click(radius, "Radius -");
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dr: -10, feed: null });
         calls.length = 0;
         click(root, "X-");
         await settle();
-        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: -1, dy: 0, feed: null });
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: -10, dy: 0, feed: null });
         calls.length = 0;
-        click(root, "90 deg");
         click(root, "Turn +");
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", da: 90, feed: null });
         calls.length = 0;
+        // The size is kept for the next time the page opens.
+        expect(parseLevel(localStorage.getItem(LEVEL_KEY))).toBe(2);
+        click(root, "Normal");
         click(root, "Cancel");
         await settle();
         expect(calls.some((c) => c.name === "jogCancel")).toBe(true);
@@ -366,9 +383,10 @@ describe("jog", () => {
         for (const node of Array.from(pad.querySelectorAll<HTMLButtonElement>("button"))) {
             expect(node.title).not.toBe("");
         }
-        // The board's bars hold the steps; their moves are the pad's.
-        expect(root.querySelector('[data-axis="x"] .axis-bar-buttons')).toBeNull();
-        click(root.querySelector('[data-axis="x"]')!, "10 mm");
+        // The board has no bars: its moves are the pad's, its steps the size's or ones typed for it.
+        expect(root.querySelector('.axis-bar[data-axis="x"]')).toBeNull();
+        ownStep(root, "Board X", "10");
+        expect(root.querySelector(".jog-pad-steps")?.textContent).toBe("X 10 mm, Y 1 mm");
         click(pad, "X+ Y-");
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 10, dy: -1, feed: null });
@@ -414,16 +432,12 @@ describe("jog", () => {
         expect(barPlace("h", "mm", { ...connected().machine!, joint: { r: 0, a: 0, z: 0 } })).toBe("-.--- mm");
     });
 
-    test("a step typed in is the step until a choice is pressed again", async () => {
+    test("a step typed for an axis is that axis's step at every size, until its field is cleared", async () => {
         const { store, ctx, root, calls, api } = setup();
         await api.connect("/dev/ttyACM0");
         store.set({ snapshot: connected() });
         mountJog(root, ctx);
-        const x = root.querySelector('[data-axis="x"]')!;
-        const custom = x.querySelector('input[aria-label="Board X step"]') as HTMLInputElement;
-        custom.value = "2.5";
-        custom.dispatchEvent(new Event("input", { bubbles: true }));
-        expect(Array.from(x.querySelectorAll(".btn-choice")).every((b) => b.getAttribute("aria-pressed") === "false")).toBe(true);
+        const custom = ownStep(root, "Board X", "2.5");
         click(root, "X+");
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 2.5, dy: 0, feed: null });
@@ -437,20 +451,27 @@ describe("jog", () => {
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 0, dy: 1, feed: null });
         calls.length = 0;
-        // A choice pressed clears the typed step.
-        click(x, "10 mm");
-        expect(custom.value).toBe("");
+        // Another size leaves the typed step the axis's: only the others follow.
+        click(root, "Coarse");
         click(root, "X-");
         await settle();
-        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: -10, dy: 0, feed: null });
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: -2.5, dy: 0, feed: null });
         calls.length = 0;
-        // A typed step that is no step leaves the choice pressed.
-        custom.value = "0";
-        custom.dispatchEvent(new Event("input", { bubbles: true }));
-        expect(x.querySelector('.btn-choice[aria-pressed="true"]')?.textContent).toBe("10 mm");
+        // A typed step that is no step, or a field cleared, gives the axis back to the size.
+        ownStep(root, "Board X", "0");
         click(root, "X+");
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 10, dy: 0, feed: null });
+        expect(custom.value).toBe("0");
+        // A joint's bar marks a step of its own.
+        const step = root.querySelector('[data-axis="r"] .axis-bar-step')!;
+        expect(step.hasAttribute("data-own")).toBe(false);
+        ownStep(root, "Radius", "3");
+        expect(step.textContent).toBe("3 mm");
+        expect(step.hasAttribute("data-own")).toBe(true);
+        ownStep(root, "Radius", "");
+        expect(step.textContent).toBe("10 mm");
+        expect(step.hasAttribute("data-own")).toBe(false);
     });
 
     test("the cross slide moves on its own step and can be zeroed", async () => {
@@ -461,15 +482,16 @@ describe("jog", () => {
         const slide = root.querySelector('[data-axis="z"]')!;
         expect(slide.textContent).toContain("Cross slide");
 
-        click(slide, "Set Z=0 here");
+        // Zeroing an axis is under More, with the other things done once in a while.
+        click(root, "Set Z=0 here");
         await settle();
         click(document.querySelector("dialog[open]")!, "Set 0");
         await settle();
         expect(calls.find((c) => c.name === "setPosition")?.args[0]).toEqual({ z: 0 });
         calls.length = 0;
 
-        // The step is the slide's own: the board step stays at 1 mm.
-        click(slide, "0.05 mm");
+        // A step typed for the slide is the slide's own: the board step stays at 1 mm.
+        ownStep(root, "Cross slide", "0.05");
         click(slide, "Z+");
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dz: 0.05, feed: null });
@@ -636,10 +658,22 @@ describe("jog", () => {
         expect(calls.find((c) => c.name === "jog")?.args[0]).toMatchObject({ kind: "board", dx: small, dy: 0 });
         calls.length = 0;
         findButton(root, "Fine").click();
+        expect(findButton(root, "Fine").getAttribute("aria-pressed")).toBe("true");
         findButton(root, "X+").click();
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toMatchObject({ kind: "board", dx: small });
-        findButton(root, "Fine").click();
+    });
+
+    test("an axis's step at each size: its smallest, the one it starts on, its largest", () => {
+        expect(levelStep([0.1, 1, 10], 1, 0)).toBe(0.1);
+        expect(levelStep([0.1, 1, 10], 1, 1)).toBe(1);
+        expect(levelStep([0.1, 1, 10], 1, 2)).toBe(10);
+        // The file's own start is Normal, whichever of the choices it is.
+        expect(levelStep([0.5, 5], 5, 1)).toBe(5);
+        expect(levelStep([0.5, 5], 5, 0)).toBe(0.5);
+        expect(parseLevel(null)).toBe(1);
+        expect(parseLevel("0")).toBe(0);
+        expect(parseLevel("7")).toBe(1);
     });
 
     test("under Hold to move a held button sends pieces until let go, then the jog is cancelled", async () => {
@@ -1649,19 +1683,21 @@ describe("controls from the machine file", () => {
         expect(labels()).toContain("Set X=0 here");
         expect(labels()).not.toContain("Set Z=0 here");
         expect(root.textContent).not.toContain("Feed mm/min");
-        expect(root.querySelector('[data-axis="h"]')?.textContent).toContain("Up is positive");
+        // What the file notes of an axis is its bar's tooltip.
+        expect(root.querySelector<HTMLElement>('[data-axis="h"] .axis-bar-head')?.title).toBe("Up is positive");
         click(root, "Right");
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dr: 5, feed: null });
         calls.length = 0;
-        click(root, "0.5 mm");
-        click(root, "Left");
-        await settle();
-        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dr: -0.5, feed: null });
-        calls.length = 0;
         click(root, "Up");
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dh: 1, feed: null });
+        calls.length = 0;
+        // Fine: every axis by the smallest step its file gives it.
+        click(root, "Fine");
+        click(root, "Left");
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dr: -0.5, feed: null });
         calls.length = 0;
         // The goto row has the axes that take one, by their letters.
         const fields = Array.from(root.querySelectorAll("input[placeholder]")).filter((f) => f !== null) as HTMLInputElement[];
@@ -1676,7 +1712,7 @@ describe("controls from the machine file", () => {
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dr: -0.5, feed: null });
         calls.length = 0;
-        // The same controls again: nothing is redrawn, so the step pick stays.
+        // The same controls again: nothing is redrawn, and the step size stays.
         store.set({ settings: settingsWith(JSON.parse(JSON.stringify(rig)) as Controls) });
         click(root, "Left");
         await settle();

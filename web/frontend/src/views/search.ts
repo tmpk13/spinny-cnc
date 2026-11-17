@@ -113,7 +113,7 @@ export function collectFeatures(root: ParentNode = document): Feature[] {
             for (const press of Array.from(panel.querySelectorAll<HTMLElement>("button"))) {
                 // The layer's own head buttons are no features of the panel,
                 // nor are the setup steps' numbered stops.
-                if ((press.closest(".panel-head-tools") && !press.closest(".panel-head .button-row")) || press.closest(".roadmap")) {
+                if ((press.closest(".panel-head-tools") && !press.closest(".panel-head .button-row")) || press.closest(".roadmap") || press.classList.contains("more-press")) {
                     continue;
                 }
                 const label = (press.getAttribute("aria-label") ?? press.textContent ?? "").trim().replace(/\s+/g, " ");
@@ -138,11 +138,19 @@ export function goToFeature(feature: Feature): void {
         return;
     }
     goToPanel(feature.panel);
+    // Whatever keeps the button out of sight opens for it: a fold, a
+    // row of options, the dock's jog.
+    for (let at = feature.node?.parentElement ?? null; at && at.id !== feature.panel; at = at.parentElement) {
+        if (at instanceof HTMLDetailsElement) {
+            at.open = true;
+        }
+    }
+    feature.node?.dispatchEvent(new CustomEvent("spinny:show", { bubbles: true }));
     feature.node?.focus({ preventScroll: false });
 }
 
 export function mountSearch(tools: HTMLElement): void {
-    const lens = el("button", { type: "button", class: "tabs-tool tabs-search", "aria-label": "Find a feature", "aria-haspopup": "dialog", title: "find a feature by name (/ or Ctrl+K)" });
+    const lens = el("button", { type: "button", class: "tabs-tool tabs-search", "aria-label": "Find a feature", "aria-haspopup": "dialog", "data-label": "Search", title: "find a feature by name (/ or Ctrl+K)" });
     lens.append(svgIcon(LENS, true));
     const input = el("input", { type: "search", class: "field search-input", placeholder: "find a feature", "aria-label": "Feature", autocomplete: "off", spellcheck: "false" }) as HTMLInputElement;
     const list = el("ul", { class: "search-list", role: "listbox", "aria-label": "Matches" });

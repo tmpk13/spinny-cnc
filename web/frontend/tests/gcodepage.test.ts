@@ -69,7 +69,9 @@ describe("a G-code machine's controls", () => {
         mountJog(root, ctx);
         await settle();
         const titles = Array.from(root.querySelectorAll(".axis-bar .axis-bar-title")).map((node) => node.textContent);
-        expect(titles).toEqual(["Board X", "Board Y", "X", "Y", "Nozzle height", "N1 turn"]);
+        // The board's moves are the pad's: the bars are the machine's own axes.
+        expect(titles).toEqual(["X", "Y", "Nozzle height", "N1 turn"]);
+        expect(root.querySelector('.jog-pad[data-axis="board"]')).not.toBeNull();
         expect(root.textContent).toContain("N1 down");
         expect(Array.from(root.querySelectorAll("button")).some((each) => each.textContent === "Unlock")).toBe(false);
         expect(findButton(root, "Home").classList.contains("hidden")).toBe(false);

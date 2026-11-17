@@ -8,9 +8,10 @@
 
 import { button, el, readStored, replace, setLocked, writeStored } from "../dom.ts";
 import { inUseText, machineInUse } from "../machineuse.ts";
+import type { AppState } from "../state.ts";
 import type { Port } from "../types.ts";
 import type { Ctx } from "./context.ts";
-import { defaultPort, machineOfPort, PORT_POLL_MS, portLabel, visiblePorts } from "./statusbar.ts";
+import { defaultPort, machineOfPort, PORT_POLL_MS, portLabel, visiblePorts } from "../ports.ts";
 
 const HIDE_SYSTEM_KEY = "spinny.hideSystemPorts";
 const RECENT_KEY = "spinny.recent";
@@ -94,6 +95,47 @@ export function boardPort(ports: Port[]): string | null {
     return readRecent(readStored(RECENT_KEY)).find((entry) => entry.machine === null)?.url ?? null;
 }
 
+/** The ports offered to connect to: the ones found, without the computer's built-in ones. */
+export function offeredPorts(state: AppState): Port[] {
+    return visiblePorts(state.ports, true);
+}
+
+/** A port's name on a Connect button: the machine it is, else what it is called. */
+export function portName(port: Port): string {
+    return port.machine_name ?? (port.product || port.description || port.device || port.url);
+}
+
+/**
+ * Connects to the port offered first, or to `url`; false when there is no
+ * port to connect to or the machine did not answer.
+ */
+export async function connectOffered(ctx: Ctx, url: string | null = null): Promise<boolean> {
+    const state = ctx.store.get();
+    const target = url ?? defaultPort(offeredPorts(state))?.url ?? null;
+    if (target === null) {
+        ctx.toast("error", "no port found: plug the machine in, or type its port on the Machines page");
+        return false;
+    }
+    return connectTo(ctx, target, machineOfPort(state.ports, target));
+}
+
+/** The machines connected lately, newest first, as this browser remembers them. */
+export function recentMachines(): Recent[] {
+    return readRecent(readStored(RECENT_KEY));
+}
+
+/** One press to a machine connected lately: the one connected now is let go first. */
+export async function switchMachine(ctx: Ctx, entry: Recent): Promise<boolean> {
+    const snapshot = ctx.store.get().snapshot;
+    if (snapshot.connected && snapshot.url === entry.url) {
+        return true;
+    }
+    if (snapshot.connected && !(await disconnectFrom(ctx))) {
+        return false;
+    }
+    return connectTo(ctx, entry.url, entry.machine);
+}
+
 function readHideSystem(): boolean {
     const stored = readStored(HIDE_SYSTEM_KEY);
     return stored === null ? true : stored === "1";
@@ -172,11 +214,9 @@ export function mountConnection(root: HTMLElement, ctx: Ctx): void {
         if (snapshot.connected && snapshot.url === entry.url) {
             return;
         }
-        if (snapshot.connected && !(await close())) {
-            return;
-        }
         urlInput.value = entry.url;
-        await open(entry.url, entry.machine);
+        await switchMachine(ctx, entry);
+        renderRecent();
     }
 
     function renderRecent(): void {

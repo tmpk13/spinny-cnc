@@ -890,7 +890,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
         ctx.toast("info", `${count} deleted from ${job.name}`);
     }
 
-    mountRun(runRoot, ctx, { mapHost: places.mapHost });
+    mountRun(runRoot, ctx, { mapHost: places.mapHost, ready: true });
 
     function renderDetails(state: AppState): void {
         const job = state.job;

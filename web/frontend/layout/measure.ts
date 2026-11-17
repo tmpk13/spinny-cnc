@@ -143,7 +143,7 @@ export function measure(): Measure {
 
     // The work: canvases, pictures and large drawings, as a share of the window.
     let work = 0;
-    for (const node of Array.from(document.querySelectorAll("canvas, video, img:not(.job-thumb), svg:not(.overview-drawing)"))) {
+    for (const node of Array.from(document.querySelectorAll("canvas, video, img:not(.job-thumb), svg"))) {
         if (!shown(node)) {
             continue;
         }

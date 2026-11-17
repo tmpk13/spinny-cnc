@@ -21,13 +21,17 @@ export interface Look {
     colors: "on" | "off";
 }
 
-/** The look in stored text; anything missing or malformed is the page's fonts, moving, in color. */
+/**
+ * The look in stored text; anything missing or malformed is the page's
+ * fonts, moving, without the pages' colors: color is kept for states
+ * (docs/UI_PRINCIPLES.md, principle 6), and the colors are there to turn on.
+ */
 export function parseLook(text: string | null): Look {
     const raw = readObject(text);
     return {
         fonts: raw["fonts"] === "system" ? "system" : "page",
         motion: raw["motion"] === "off" ? "off" : "on",
-        colors: raw["colors"] === "off" ? "off" : "on",
+        colors: raw["colors"] === "on" ? "on" : "off",
     };
 }
 

@@ -1,21 +1,23 @@
-// Jog panel, drawn from the machine's controls (controls.ts): one bar per
-// axis, each with where the axis is now, its steps (the choices, and a step
-// typed in beside them), its minus and plus buttons and its zero button. On
-// a machine with a board pad, the pad comes first: eight arrows around where
-// the head is on the board, the corners moving X and Y together, each by
-// its bar's step; the board's X and Y bars under it hold those steps, and
-// the arrow keys drive them. Below: the feed field, goto fields, Center, motors and unlock; the
-// cancel button sits in the panel's head, away from every move. Which
-// joints there are, what they are called, how they step and whether the
-// feed applies is the machine file's; the panel only draws it, and draws
-// it again when the controls change. Escape cancels a jog or goto from
-// anywhere but a dialog while a machine is connected, and leaves a text
-// field, so the next arrow key jogs. In the head: Fine, which jogs every
-// bar by its smallest step (so does holding Shift with a jog key), and
-// Hold to move, under which a button or key held moves the axis until let
-// go, the step read as the distance per second. A bar per servo follows
-// the axes' (servos.ts): where it is, its named positions, an angle to send
-// it to, and Off, which lets it go.
+// Jog panel, drawn from the machine's controls (controls.ts). One step
+// size serves every axis: Fine, Normal or Coarse, each axis taking its own
+// step for it from the machine file (its smallest choice, the one it
+// starts on, its largest), so the pad and the bars all follow one pick and
+// say the step they move by. On a machine with a board pad, the pad comes
+// first: eight arrows around where the head is on the board, the corners
+// moving X and Y together; the arrow keys drive it. Then a bar per joint:
+// where it is, its step, its minus and plus. Under More: a step of its own
+// typed for any axis (which is that axis's step at every size while it is
+// there), the zero buttons, the feed field, goto fields, Center, motors
+// and unlock. The cancel button sits in the panel's head, away from every
+// move. Which joints there are, what they are called, how they step and
+// whether the feed applies is the machine file's; the panel only draws it,
+// and draws it again when the controls change. Escape cancels a jog or
+// goto from anywhere but a dialog while a machine is connected, and leaves
+// a text field, so the next arrow key jogs. Holding Shift with a jog key
+// jogs by the fine step. In the head: Hold to move, under which a button
+// or key held moves the axis until let go, the step read as the distance
+// per second. A bar per servo follows the axes' (servos.ts): where it is,
+// its named positions, an angle to send it to, and Off, which lets it go.
 
 import { askConfirm } from "../confirm.ts";
 import { controlOf, controlsOf, sameControls, unitOf } from "../controls.ts";
@@ -26,7 +28,7 @@ import { profileOf } from "../profile.ts";
 import { angleText, readAngle, servoBars, servoKey, type ServoBar } from "../servos.ts";
 import type { AppState } from "../state.ts";
 import type { AxisControl, Controls, GotoRequest, JogRequest, JointAxis, Machine, Tool } from "../types.ts";
-import { choiceRow, setPressed, type Ctx } from "./context.ts";
+import { choiceRow, type Ctx } from "./context.ts";
 
 export type KeyAction = { dx: number; dy: number } | { axis: JointAxis; sign: 1 | -1 } | "cancel" | null;
 
@@ -106,10 +108,33 @@ export function anyOf(names: string[]): string {
 export const HOLD_TICK_MS = 100;
 export const HOLD_LIMIT_S = 60;
 const SMOOTH_KEY = "spinny.jog.smooth";
+/** The step size picked, as this browser keeps it. */
+export const LEVEL_KEY = "spinny.jog.level";
+
+/** The step sizes every axis shares: each axis has its own step for each. */
+export type StepLevel = 0 | 1 | 2;
+export const LEVELS: readonly string[] = ["Fine", "Normal", "Coarse"];
+
+/** The step size in stored text; anything else is Normal. */
+export function parseLevel(text: string | null): StepLevel {
+    return text === "0" ? 0 : text === "2" ? 2 : 1;
+}
 
 /** The smallest of a bar's step choices: what Fine jogs by. */
 export function fineStep(choices: number[]): number {
     return Math.min(...choices);
+}
+
+/**
+ * An axis's step at a step size: its smallest choice for Fine, its largest
+ * for Coarse, and for Normal the step it starts on (`start`, the machine
+ * file's), which is the middle one where the file names none.
+ */
+export function levelStep(choices: number[], start: number, level: StepLevel): number {
+    if (level === 0) {
+        return fineStep(choices);
+    }
+    return level === 2 ? Math.max(...choices) : start;
 }
 
 /**
@@ -162,22 +187,14 @@ export interface JogOptions {
  * bars as any other machine file does.
  */
 export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () => boolean = () => true, options: JogOptions = {}): void {
-    // The step of each bar, kept across a redraw: the choice pressed, and
-    // a step typed in, which is the step while it is there.
-    const picks = new Map<BarId, number>();
+    // The step size every axis moves by, and a step typed for one axis,
+    // which is that axis's step while it is there; both kept across a redraw.
+    let level: StepLevel = parseLevel(readStored(LEVEL_KEY));
     const typed = new Map<BarId, number>();
     const feedInput = numberField({ placeholder: "default", min: 0 });
     const feed = (): number | null => parseNumber(feedInput.value);
     const cancelButton = button("Cancel", () => cancel(), "btn btn-danger btn-small urgent");
     cancelButton.title = "stop a jog or goto (Escape)";
-    // Fine: every bar jogs by its smallest step while pressed.
-    let fine = false;
-    const fineButton = button("Fine", () => {
-        fine = !fine;
-        fineButton.setAttribute("aria-pressed", String(fine));
-    }, "btn btn-quiet btn-small btn-toggle");
-    fineButton.setAttribute("aria-pressed", "false");
-    fineButton.title = "jog every axis by its smallest step; Shift with a jog key does the same";
     // Hold to move: a button or key held moves until let go.
     let smooth = readStored(SMOOTH_KEY) === "1";
     const smoothButton = button("Hold to move", () => {
@@ -188,7 +205,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
     smoothButton.setAttribute("aria-pressed", String(smooth));
     smoothButton.title = "hold a jog button or key to move until let go; the step is then the distance per second";
     const body = el("fieldset", { class: "panel-body" });
-    root.append(el("div", { class: "panel-head" }, el("h2", {}, "Jog"), el("div", { class: "button-row" }, fineButton, smoothButton, cancelButton)), body);
+    root.append(el("div", { class: "panel-head" }, el("h2", {}, "Jog"), el("div", { class: "button-row" }, smoothButton, cancelButton)), body);
 
     let controls: Controls = controlsOf(ctx.store.get());
     let drawn: Controls | null = null;
@@ -202,6 +219,9 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
     // Each bar's place readout, the unit it reads in, and whether it says
     // the unit (the pad's middle does not: its tooltip does), by bar.
     const places = new Map<BarId, { node: HTMLElement; unit: "mm" | "deg"; bare?: boolean }>();
+    // Where each bar says the step it moves by, with what gives the step.
+    const stepSays = new Map<BarId, { node: HTMLElement; unit: string; axis: AxisControl | undefined }>();
+
     let motors: HTMLButtonElement | null = null;
     let home: HTMLButtonElement | null = null;
     // The travel height, a host value: written when the field changes, and
@@ -224,14 +244,21 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
     /** The choices of a bar: the joint's own steps, or the pad's for one without. */
     const choicesOf = (axis?: AxisControl): number[] => axis?.steps ?? controls.pad_steps;
     const startOf = (axis?: AxisControl): number => (axis?.steps ? axis.step ?? axis.steps[0]! : controls.pad_step);
-    /** The choice a bar has pressed: the one remembered if it is still a choice, else the start. */
-    const pickOf = (id: BarId, axis?: AxisControl): number => {
-        const pick = picks.get(id);
-        return pick !== undefined && choicesOf(axis).includes(pick) ? pick : startOf(axis);
-    };
     // Shift held with a jog key: the fine step for that jog.
     let shiftJog = false;
-    const stepOf = (id: BarId, axis?: AxisControl): number => fine || shiftJog ? fineStep(choicesOf(axis)) : typed.get(id) ?? pickOf(id, axis);
+    /** The step a bar moves by: the fine one under Shift, else one typed for it, else its step at the size picked. */
+    const stepOf = (id: BarId, axis?: AxisControl): number => shiftJog ? fineStep(choicesOf(axis)) : typed.get(id) ?? levelStep(choicesOf(axis), startOf(axis), level);
+
+    /** Every bar's step in words again, after the size or a typed step changed. */
+    function showSteps(): void {
+        for (const [id, { node, unit, axis }] of stepSays) {
+            const text = `${stepOf(id, axis)} ${unit}`;
+            if (node.textContent !== text) {
+                node.textContent = text;
+            }
+            node.toggleAttribute("data-own", typed.has(id));
+        }
+    }
 
     // --- holding a jog -----------------------------------------------------
     // While held, a piece of the move goes out every tick, as long as the
@@ -356,9 +383,9 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
     };
 
     /**
-     * One axis as a bar: its letter and title, a note, the step choices
-     * with a field for any other step, the minus and plus buttons, and the
-     * zero button when the axis has one.
+     * One joint as a bar: its letter and title (what the machine file
+     * notes of it on hover), where it is now, and its minus and plus
+     * buttons with the step a press moves it by between them.
      */
     function bar(
         id: BarId,
@@ -366,57 +393,63 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
         title: string,
         note: string,
         unit: string,
-        axis: AxisControl | undefined,
-        buttons: [string, string] | null,
+        axis: AxisControl,
         onMove: (sign: 1 | -1) => Promise<unknown>,
         onHold: (sign: 1 | -1) => (seconds: number) => Promise<unknown>,
-        zero: HTMLButtonElement | null,
     ): HTMLDivElement {
-        const format = (value: number): string => `${value} ${unit}`;
-        const custom = numberField({ placeholder: "custom", min: 0, width: "6.5rem" });
-        custom.setAttribute("aria-label", `${title} step`);
-        const row = choiceRow(choicesOf(axis), pickOf(id, axis), (value) => {
-            picks.set(id, value);
-            typed.delete(id);
-            custom.value = "";
-        }, format, undefined, (value) => `jog by ${format(value)}`);
-        const existing = typed.get(id);
-        if (existing !== undefined) {
-            custom.value = String(existing);
-            setPressed(row, "");
-        }
-        custom.addEventListener("input", () => {
-            const value = parseNumber(custom.value);
-            if (value !== null && value > 0) {
-                typed.set(id, value);
-                // A step typed in is the step: no choice shows as pressed.
-                setPressed(row, "");
-            } else {
-                typed.delete(id);
-                setPressed(row, format(pickOf(id, axis)));
-            }
-        });
-        // A bar whose moves are the pad's (the board's X and Y) says its
-        // place in the pad's middle, beside the arrows.
-        let place: HTMLElement | null = null;
-        if (buttons !== null) {
-            place = el("span", { class: "axis-bar-at", title: `where ${title} is now` }, barPlace(id, unit === "deg" ? "deg" : "mm", null));
-            places.set(id, { node: place, unit: unit === "deg" ? "deg" : "mm" });
+        const place = el("span", { class: "axis-bar-at", title: `where ${title} is now` }, barPlace(id, unit === "deg" ? "deg" : "mm", null));
+        places.set(id, { node: place, unit: unit === "deg" ? "deg" : "mm" });
+        const step = el("span", { class: "axis-bar-step", title: "the step a press moves it by, at the step size picked; a step typed for this axis under More is marked" });
+        stepSays.set(id, { node: step, unit, axis });
+        const head = el("div", { class: "axis-bar-head" },
+            el("span", { class: "axis-bar-letter" }, letter),
+            el("span", { class: "axis-bar-title" }, title),
+            place,
+        );
+        if (note) {
+            head.title = note;
         }
         return el("div", { class: "axis-bar", "data-axis": id },
-            el("div", { class: "axis-bar-head" },
-                el("span", { class: "axis-bar-letter" }, letter),
-                el("span", { class: "axis-bar-title" }, title),
-                place,
-                note ? el("span", { class: "axis-bar-note" }, note) : null,
+            head,
+            el("div", { class: "axis-bar-buttons" },
+                jogButton(axis.buttons[0], () => onMove(-1), onHold(-1), `${title}: back by the step`),
+                step,
+                jogButton(axis.buttons[1], () => onMove(1), onHold(1), `${title}: on by the step`),
             ),
-            el("div", { class: "axis-bar-steps" }, row, custom),
-            buttons === null ? null : el("div", { class: "axis-bar-buttons" },
-                jogButton(buttons[0], () => onMove(-1), onHold(-1), `${title}: back by the step`),
-                jogButton(buttons[1], () => onMove(1), onHold(1), `${title}: on by the step`),
-            ),
-            zero,
         );
+    }
+
+    /** A field for a step of an axis's own, under More: typed, it is that axis's step at every size; blank, the size's. */
+    function ownStep(id: BarId, title: string, unit: string): HTMLLabelElement {
+        const field = numberField({ placeholder: "custom", min: 0, width: "5.5rem" });
+        field.setAttribute("aria-label", `${title} step`);
+        field.title = `a step of its own for ${title}, ${unit}; blank: the step size picked`;
+        const kept = typed.get(id);
+        if (kept !== undefined) {
+            field.value = String(kept);
+        }
+        field.addEventListener("input", () => {
+            const value = parseNumber(field.value);
+            if (value !== null && value > 0) {
+                typed.set(id, value);
+            } else {
+                typed.delete(id);
+            }
+            showSteps();
+        });
+        return labeled(title, field, "labeled inline");
+    }
+
+    /** The step size every axis moves by: one of three, each axis taking its own step for it. */
+    function sizeRow(): HTMLDivElement {
+        const row = choiceRow<StepLevel>([0, 1, 2], level, (value) => {
+            level = value;
+            writeStored(LEVEL_KEY, String(value));
+            showSteps();
+        }, (value) => LEVELS[value]!, undefined, (value) => `every axis by its ${LEVELS[value]!.toLowerCase()} step${value === 0 ? "; Shift with a jog key does the same" : ""}`);
+        row.setAttribute("role", "group");
+        row.setAttribute("aria-label", "Step size");
+        return row;
     }
 
     /**
@@ -445,6 +478,15 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
             return press;
         });
         return el("div", { class: "jog-pad", "data-axis": "board" }, ...cells);
+    }
+
+    /** What the pad moves by at the size picked, in words beside it: X and Y each. */
+    function padSays(): HTMLSpanElement {
+        const x = el("span", {});
+        const y = el("span", {});
+        stepSays.set("x", { node: x, unit: "mm", axis: undefined });
+        stepSays.set("y", { node: y, unit: "mm", axis: undefined });
+        return el("span", { class: "muted jog-pad-steps", title: "what an arrow moves the head by on the board" }, "X ", x, ", Y ", y);
     }
 
     /** The servos the state fits, as their bars. */
@@ -701,17 +743,12 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
         drawnController = profile.controller ?? "spinny";
         const bars = el("div", { class: "axis-bars" });
         places.clear();
-        if (controls.pad) {
-            // The pad moves the board; the bars under it hold its steps.
-            bars.append(
-                boardPad(),
-                bar("x", "X", "Board X", "Left and right arrow keys", "mm", undefined, null, (sign) => jogBoard(sign * stepOf("x"), 0), (sign) => holdBoard(sign, 0), null),
-                bar("y", "Y", "Board Y", "Up and down arrow keys", "mm", undefined, null, (sign) => jogBoard(0, sign * stepOf("y")), (sign) => holdBoard(0, sign), null),
-            );
-        }
+        stepSays.clear();
+        // The step size over everything it sets, with what the pad moves by at it.
+        const size = el("div", { class: "jog-size" }, sizeRow(), controls.pad ? padSays() : null);
+        const pad = controls.pad ? boardPad() : null;
         for (const axis of controls.axes) {
-            const zero = axis.zero ? button(`Set ${axis.letter}=0 here`, () => declare(axis), "btn btn-quiet btn-small", `call this place ${axis.letter} 0`) : null;
-            bars.append(bar(axis.axis, axis.letter, axis.label, axis.note, unitOf(axis.axis, profile), axis, axis.buttons, (sign) => jogAxis(axis, sign), (sign) => holdAxis(axis, sign), zero));
+            bars.append(bar(axis.axis, axis.letter, axis.label, axis.note, unitOf(axis.axis, profile), axis, (sign) => jogAxis(axis, sign), (sign) => holdAxis(axis, sign)));
         }
         const servos = servosOf(ctx.store.get());
         drawnServos = servoKey(servos);
@@ -721,6 +758,16 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
         }
 
         const rows: HTMLElement[] = [];
+        // A step of an axis's own, the pad's X and Y among them, in each axis's unit.
+        rows.push(el("div", { class: "jog-own-steps" },
+            el("span", { class: "choice-label", title: "a step typed here is that axis's step at every size; blank, the step size picked gives it" }, "Own steps"),
+            ...(controls.pad ? [ownStep("x", "Board X", "mm"), ownStep("y", "Board Y", "mm")] : []),
+            ...controls.axes.map((axis) => ownStep(axis.axis, axis.label, unitOf(axis.axis, profile))),
+        ));
+        const zeros = controls.axes.filter((axis) => axis.zero).map((axis) => button(`Set ${axis.letter}=0 here`, () => declare(axis), "btn btn-quiet btn-small", `call this place ${axis.letter} 0`));
+        if (zeros.length > 0) {
+            rows.push(el("div", { class: "button-row jog-zeros" }, ...zeros));
+        }
         if (controls.feed) {
             rows.push(el("div", { class: "steps" }, labeled("Feed mm/min", feedInput)));
         }
@@ -759,20 +806,25 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
             home,
             gcode ? null : button("Unlock", () => ctx.call(ctx.api.unlock()), "btn btn-quiet", "clear an alarm so the machine moves again"),
         );
-        // The pad and the bars in view; going to a place, naming one,
-        // the feed and the motors under More, open as it was left.
-        const fold = el("details", { class: "jog-more stack" }, el("summary", { title: "fold or unfold" }, "Go to, set position, motors"), ...rows, bottom);
+        // The size, the pad and the bars in view; steps of an axis's own,
+        // zeroing, going to a place, naming one, the feed and the motors
+        // under More, open as it was left.
+        const fold = el("details", { class: "jog-more stack" }, el("summary", { title: "fold or unfold" }, "More: own steps, zero, go to, motors"), ...rows, bottom);
         fold.open = moreOpen;
         fold.addEventListener("toggle", () => {
             moreOpen = fold.open;
         });
-        replace(body, bars, fold);
+        replace(body, size, el("div", { class: "jog-moves" }, pad, bars), fold);
+        showSteps();
         show(ctx.store.get());
     }
 
     function show(state: AppState): void {
         lockFieldset(body, !state.snapshot.connected, "connect first");
         setLocked(cancelButton, !state.snapshot.connected, "connect first");
+        // Red fills it only while there is a move to stop.
+        const state_ = state.snapshot.machine?.state;
+        cancelButton.classList.toggle("at-rest", state_ === undefined || state_ === "Idle");
         if (motors) {
             motors.textContent = state.snapshot.machine?.enabled ? "Motors off" : "Motors on";
         }

@@ -1,7 +1,12 @@
 // The Run panel, on the Run area: the selected job's name, how the run
 // follows the height map (in the Height panel when it is handed a place
 // there), Run, Hold, Resume and Stop, the run's progress and why it ended,
-// and picking a stopped run up at a line. The height map choice the
+// and picking a stopped run up at a line. Of Run, Hold, Resume and Stop the
+// panel shows the ones the run's state allows: Run with no run under way,
+// Hold and Stop while one runs, Resume and Stop while it is held. On the
+// Run area it leads with what the run will go by, in words: the job's
+// length and time, where the job sits and the heights, the last two with a
+// link to the step that sets them. The height map choice the
 // operator makes is the store's (`mapPick`), so any copy shows the same
 // one, and the panel puts the choice it settles on in `mapChoice` for the
 // other panels to describe.
@@ -12,9 +17,11 @@ import { formatDuration, formatLength, formatMm, parseNumber } from "../format.t
 import { isCartesian, isDispensing, isMilling, profileOf } from "../profile.ts";
 import type { AppState } from "../state.ts";
 import type { Compensate, Group, HeightMap, Job, Progress, ResumePlan, ResumeRecord, ResumeRequest } from "../types.ts";
+import { heightText, placeText } from "./areaviews.ts";
 import type { Ctx } from "./context.ts";
 import { changedWord, focusHereWord, withFocusHere, withWords } from "./focushere.ts";
 import { focusAgainText, mapUsable, mapUse, runActive, runMapUse, showMapUse } from "./heightmap.ts";
+import { linkTo } from "./links.ts";
 
 /** What a page adds to its copy of the panel. */
 export interface RunOptions {
@@ -24,6 +31,8 @@ export interface RunOptions {
     stats?: boolean;
     /** A hint at the panel's foot. */
     hint?: string;
+    /** What the run will go by, over the buttons: the job, where it sits, the heights, each in a line. */
+    ready?: boolean;
 }
 
 export function progressText(progress: Progress | null): { bar: number; counts: string; time: string; state: string; reason: string } {
@@ -126,7 +135,18 @@ export function mountRun(root: HTMLElement, ctx: Ctx, options: RunOptions = {}):
     // far from the list it was picked in.
     const title = el("span", { class: "muted run-job" });
     const stats = options.stats ? el("p", { class: "muted run-stats" }) : null;
-    const runButton = button("Run", () => run(), "btn btn-primary");
+    // What the run will go by, in words; the place and the heights lead
+    // to the steps that set them.
+    const readyJob = el("dd", {});
+    const readyPlace = el("span", {});
+    const readyHeight = el("span", {});
+    const heightRow = el("div", {}, el("dt", {}, "Height"), el("dd", {}, readyHeight, " ", linkTo({ panel: "heightmap", detail: null }, "Change", "the travel height, the height map and the focus")));
+    const ready = options.ready ? el("dl", { class: "run-ready" },
+        el("div", {}, el("dt", {}, "Job"), readyJob),
+        el("div", {}, el("dt", {}, "Board"), el("dd", {}, readyPlace, " ", linkTo({ panel: "place", detail: null }, "Change", "where the board sits on the machine"))),
+        heightRow,
+    ) : null;
+    const runButton = button("Run", () => run(), "btn btn-primary btn-big");
     // How the run follows the height map. It turns to auto by itself while a
     // usable map exists and back to off when there is none, until the
     // operator picks something; a choice the map cannot meet is refused by
@@ -155,14 +175,18 @@ export function mountRun(root: HTMLElement, ctx: Ctx, options: RunOptions = {}):
     options.mapHost?.append(el("div", { class: "button-row" }, labeled("Runs follow", compensate, "labeled inline")));
     // A map that lost its offset is not followed until it is taken again.
     const compensateNote = el("p", { class: "muted hint hidden" });
+    // How far the run is: a bar, then its state, the share done and the
+    // time in large type, and under them the lines sent and why it ended.
     const progressBar = el("div", { class: "progress-fill" });
+    const progressShare = el("span", { class: "progress-share" });
     const progressCounts = el("span", { class: "progress-counts" });
     const progressTime = el("span", { class: "progress-time" });
     const progressState = el("span", { class: "badge run-state" });
     const progressReason = el("span", { class: "progress-reason" });
-    const progressBox = el("div", { class: "progress" },
+    const progressBox = el("div", { class: "progress stack" },
         el("div", { class: "progress-track" }, progressBar),
-        el("div", { class: "progress-text" }, progressState, progressCounts, progressTime, progressReason),
+        el("div", { class: "progress-text" }, progressState, progressShare, progressTime),
+        el("div", { class: "progress-detail muted" }, progressCounts, progressReason),
     );
     // Picking a stopped run up: the line to go on from, whether to start
     // that line's path over, what the plan says, and the button.
@@ -189,6 +213,7 @@ export function mountRun(root: HTMLElement, ctx: Ctx, options: RunOptions = {}):
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Run"), title),
         ...(stats ? [stats] : []),
+        ...(ready ? [ready] : []),
         runRow,
         compensateNote,
         progressBox,
@@ -289,6 +314,7 @@ export function mountRun(root: HTMLElement, ctx: Ctx, options: RunOptions = {}):
         const progress = state.progress ?? state.snapshot.run;
         const text = progressText(progress);
         progressBar.style.width = `${(text.bar * 100).toFixed(1)}%`;
+        progressShare.textContent = `${Math.round(text.bar * 100)}%`;
         progressCounts.textContent = text.counts;
         progressTime.textContent = text.time;
         progressState.textContent = text.state;
@@ -306,6 +332,20 @@ export function mountRun(root: HTMLElement, ctx: Ctx, options: RunOptions = {}):
         lockFor(holdButton, [!connected, "connect first"], [!active, "no run under way"], [progress?.state !== "running", "the run is held already"]);
         lockFor(resumeButton, [!connected, "connect first"], [!active, "no run under way"], [progress?.state !== "hold", "only a held run resumes"]);
         lockFor(stopButton, [!connected, "connect first"], [!active, "no run under way"]);
+        // Only what the run's state allows shows: Run with no run under
+        // way, Hold while it runs, Resume while it is held, Stop with either.
+        runButton.hidden = active;
+        holdButton.hidden = !active || progress?.state !== "running";
+        resumeButton.hidden = !active || progress?.state !== "hold";
+        resumeButton.classList.toggle("btn-primary", active && progress?.state === "hold");
+        stopButton.hidden = !active;
+        if (ready) {
+            readyJob.textContent = runStatsText(job);
+            readyPlace.textContent = placeText(state);
+            readyHeight.textContent = heightText(state);
+            const profile = profileOf(state.snapshot);
+            heightRow.hidden = connected && !profile.h_axis && !isMilling(state.snapshot);
+        }
         compensate.disabled = active;
         const milling = isMilling(state.snapshot);
         powerOption.disabled = milling;
@@ -341,6 +381,6 @@ export function mountRun(root: HTMLElement, ctx: Ctx, options: RunOptions = {}):
         ctx.store.set({ mapChoice: choice });
     }
 
-    ctx.store.subscribe((state) => render(state), ["job", "progress", "snapshot", "heightMap", "mapPick"]);
+    ctx.store.subscribe((state) => render(state), ["job", "progress", "snapshot", "heightMap", "mapPick", "settings"]);
     render(ctx.store.get());
 }

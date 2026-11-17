@@ -12,10 +12,10 @@ afterEach(() => {
     document.documentElement.removeAttribute("data-colors");
 });
 
-test("the look reads safely and goes on the root as attributes, colors on unless turned off", () => {
-    expect(parseLook(null)).toEqual({ fonts: "page", motion: "on", colors: "on" });
-    expect(parseLook("{\"colors\":\"off\",\"motion\":\"off\"}")).toEqual({ fonts: "page", motion: "off", colors: "off" });
-    expect(parseLook("not json").colors).toBe("on");
+test("the look reads safely and goes on the root as attributes, colors off unless turned on", () => {
+    expect(parseLook(null)).toEqual({ fonts: "page", motion: "on", colors: "off" });
+    expect(parseLook("{\"colors\":\"on\",\"motion\":\"off\"}")).toEqual({ fonts: "page", motion: "off", colors: "on" });
+    expect(parseLook("not json").colors).toBe("off");
     const root = document.createElement("div");
     applyLook({ fonts: "page", motion: "on", colors: "off" }, root);
     expect(root.getAttribute("data-colors")).toBe("off");
@@ -37,7 +37,7 @@ test("every page has a color of its own, which its tab and its page carry", () =
     expect(page.style.getPropertyValue("--page-accent")).toBe("var(--orange)");
 });
 
-test("the page settings turn the colors off and on", () => {
+test("the page settings turn the colors on and off", () => {
     const app = document.createElement("div");
     app.id = "app";
     document.body.append(app);
@@ -46,13 +46,15 @@ test("the page settings turn the colors off and on", () => {
     mountPageSettings(tools, mountPanels(app));
     tools.querySelector<HTMLButtonElement>(".tabs-gear")!.click();
     const box = Array.from(tools.querySelectorAll("label.check")).find((label) => label.textContent?.includes("Colors for tabs and panels"))!.querySelector("input")!;
-    expect(box.checked).toBe(true);
-    box.checked = false;
+    // Off until turned on: color is kept for states.
+    expect(box.checked).toBe(false);
+    box.checked = true;
     box.dispatchEvent(new Event("change"));
+    expect(document.documentElement.hasAttribute("data-colors")).toBe(false);
+    expect(parseLook(localStorage.getItem(LOOK_KEY)).colors).toBe("on");
+    const again = Array.from(tools.querySelectorAll("label.check")).find((label) => label.textContent?.includes("Colors for tabs and panels"))!.querySelector("input")!;
+    again.checked = false;
+    again.dispatchEvent(new Event("change"));
     expect(document.documentElement.getAttribute("data-colors")).toBe("off");
     expect(parseLook(localStorage.getItem(LOOK_KEY)).colors).toBe("off");
-    const again = Array.from(tools.querySelectorAll("label.check")).find((label) => label.textContent?.includes("Colors for tabs and panels"))!.querySelector("input")!;
-    again.checked = true;
-    again.dispatchEvent(new Event("change"));
-    expect(document.documentElement.hasAttribute("data-colors")).toBe(false);
 });

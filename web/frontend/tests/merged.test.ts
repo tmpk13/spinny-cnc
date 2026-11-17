@@ -33,15 +33,27 @@ describe("the Machine panel", () => {
         for (const id of ["dro", "jog", "laser", "markers"]) {
             expect(root.querySelector(`#${id}`)).not.toBeNull();
         }
-        // The jog's own buttons lead the panel's head.
-        expect(heads[0]!.contains(findButton(root, "Fine"))).toBe(true);
+        // The jog's own buttons lead the panel's head; the step size is with the pad it sets.
         expect(heads[0]!.contains(findButton(root, "Hold to move"))).toBe(true);
+        expect(heads[0]!.contains(findButton(root, "Cancel"))).toBe(true);
+        expect(root.querySelector("#jog")!.contains(findButton(root, "Fine"))).toBe(true);
+        // In a view the head's Jog opens and shuts the jog, the tool and the markers.
+        expect(heads[0]!.contains(findButton(root, "Jog"))).toBe(true);
+        expect(root.hasAttribute("data-open")).toBe(false);
+        findButton(root, "Jog").click();
+        expect(root.hasAttribute("data-open")).toBe(true);
+        panel.setOpen(false);
+        expect(root.hasAttribute("data-open")).toBe(false);
+        // A link or the search going to a part inside opens it.
+        root.querySelector("#markers")!.dispatchEvent(new CustomEvent("spinny:show", { bubbles: true }));
+        expect(root.hasAttribute("data-open")).toBe(true);
+        panel.setOpen(false);
         // The tool's quick buttons and the markers are in the panel; the head box starts hidden.
         expect(root.contains(findButton(root, "Test beam"))).toBe(true);
         expect(root.querySelector("#markers")!.closest("details")?.querySelector("summary")?.textContent).toBe("Markers");
         expect(panel.head.classList.contains("hidden")).toBe(true);
         // The jog's rarely used rows fold under More.
-        expect(root.querySelector("#jog details.jog-more summary")?.textContent).toBe("Go to, set position, motors");
+        expect(root.querySelector("#jog details.jog-more summary")?.textContent).toBe("More: own steps, zero, go to, motors");
     });
 });
 

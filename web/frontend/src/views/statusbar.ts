@@ -1,65 +1,33 @@
-// The top bar: the machine's state (a press opens the Connection panel, where
-// the port is picked), the machine file in use (else the kind of machine),
-// its firmware, the event link, and the big Stop. Also the port helpers the Connection panel uses: a port
-// a G-code machine file claims (its url, or words in the port's USB names)
-// is named after that machine and opens as it, so the same Connect serves
-// this project's board and a pick and place machine's own Marlin.
+// The top bar: the machine, a run under way, and the big Stop. The machine
+// is one button saying its state and its name (the machine file in use,
+// else the kind of machine); a press opens its menu: connect a port found,
+// disconnect, switch to a machine connected lately, home, and the Machines
+// page for the rest. While nothing is connected a Connect button beside it
+// connects the port offered first in one press. A run under way shows as a
+// chip with its job and how far it is, a press away from the Run area. The
+// firmware's version is the machine button's tooltip; the event link shows
+// only while it is down.
 
 import { button, el, setLocked } from "../dom.ts";
+import { openMenu, type MenuEntry } from "../menu.ts";
 import { machineInUse } from "../machineuse.ts";
 import { isMilling, profileBadge, profileOf } from "../profile.ts";
-import { gcodePort } from "../ports.ts";
+import { defaultPort, machineOfPort, PORT_POLL_MS, portLabel, visiblePorts } from "../ports.ts";
 import type { AppState } from "../state.ts";
-import type { Firmware, Port } from "../types.ts";
+import type { Firmware } from "../types.ts";
+import { connectOffered, disconnectFrom, offeredPorts, portName, recentMachines, switchMachine } from "./connection.ts";
 import type { Ctx } from "./context.ts";
 import { runActive, runMapUse, showMapUse } from "./heightmap.ts";
 import { goTo } from "./links.ts";
+import { showPage } from "./tabs.ts";
+import { showAreaView } from "./viewbar.ts";
 
-/** How often the ports are listed again while nothing is connected, ms: a controller plugged in shows up by itself. */
-export const PORT_POLL_MS = 10_000;
 /** A report older than this, s, is a machine that has gone quiet; the link gives it up a little later. */
 export const STALE_SECONDS = 1.5;
 
-/**
- * The port to offer first: the controller by name, then the url last used,
- * then a G-code machine's port its file claims, then any USB device that
- * does not look like an unclaimed G-code controller, then anything.
- */
-export function defaultPort(ports: Port[]): Port | null {
-    const usb = ports.filter((port) => port.kind === "usb" && (port.machine || !gcodePort(port)));
-    return ports.find((port) => port.spinny)
-        ?? ports.find((port) => port.kind === "last")
-        ?? ports.find((port) => port.machine)
-        ?? usb[0]
-        ?? ports.find((port) => !gcodePort(port))
-        ?? null;
-}
-
-/** The G-code machine file a url opens as: the one the port listed under it names; null for this project's firmware. */
-export function machineOfPort(ports: Port[], url: string): string | null {
-    return ports.find((port) => port.url === url || port.device === url)?.machine ?? null;
-}
-
-/** The ports shown: without the built-in ones when asked, which are never the controller. */
-export function visiblePorts(ports: Port[], hideSystem: boolean): Port[] {
-    return hideSystem ? ports.filter((port) => port.kind !== "system") : ports;
-}
-
-/**
- * What the select says for a port, short: the G-code machine it is, else
- * what it is, then its device node (the long by-id url is the field's).
- */
-export function portLabel(port: Port): string {
-    const name = port.product || port.description;
-    const where = port.device && port.device !== port.url ? port.device : port.url;
-    if (port.kind === "machine") {
-        return `${port.machine_name ?? port.description}: ${port.url}`;
-    }
-    if (port.machine_name) {
-        return `${port.machine_name}: ${where}`;
-    }
-    return name ? `${name} (${where})` : where;
-}
+// The port helpers live in src/ports.ts; they are handed on from here for
+// what has always read them here.
+export { defaultPort, machineOfPort, PORT_POLL_MS, portLabel, visiblePorts };
 
 /** A version number in a firmware's words: 2.1.2, v0.3.0-rc1, bugfix-2.1.x. */
 const VERSION = /\bv?\d+(?:\.[\dx]+)+(?:[-+][\w.]+)?|\b[a-z]+-\d+(?:\.[\dx]+)+/i;
@@ -94,18 +62,37 @@ export function firmwareLabel(firmware: Firmware | null): { text: string; title:
     return { text, title: `firmware: ${said}` };
 }
 
+/** What the run chip says: the job and how far the run is. */
+export function runChipText(state: AppState): string {
+    const progress = state.progress ?? state.snapshot.run;
+    if (progress === null || !runActive(progress)) {
+        return "";
+    }
+    const name = state.jobs.find((job) => job.id === progress.job)?.name ?? "a job";
+    const share = progress.total > 0 ? Math.round((100 * progress.acked) / progress.total) : 0;
+    return `${progress.state === "hold" ? "Held" : "Running"} ${name}, ${share}%`;
+}
+
 export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
-    // The state, a press away from the Connection panel where the port is picked.
-    const stateBadge = el("button", { type: "button", class: "badge state", "data-state": "none", title: "the machine's state; press for the Connection page (Setup side)" }, "No link");
-    // On the Setup side: here, or in the tab that shows that side.
-    stateBadge.addEventListener("click", () => void goTo({ panel: "connection", detail: null }));
-    const firmware = el("span", { class: "firmware muted" }, "");
+    // The machine: its state and its name on one button, which opens its menu.
+    const stateBadge = el("span", { class: "badge state", "data-state": "none" }, "No link");
     // Shown only for a machine that is not the polar laser.
     const profile = el("span", { class: "badge profile hidden" }, "");
-    // Shown only while a run is under way: whether it follows the height map.
+    const machineButton = el("button", { type: "button", class: "machine-button", "aria-haspopup": "menu" }, profile, stateBadge);
+    machineButton.addEventListener("click", () => openMenu(machineMenu(ctx.store.get()), machineButton, "Machine"));
+    // One press to the machine found, while none is connected.
+    const connect = button("Connect", () => connectOffered(ctx), "btn btn-primary btn-small bar-connect");
+    const firmware = el("span", { class: "firmware muted" }, "");
+    // Shown only while a run is under way: the job and how far it is, and
+    // whether it follows the height map.
+    const runChip = el("button", { type: "button", class: "badge run-chip hidden", title: "the run under way; press for the Run area" });
+    runChip.addEventListener("click", () => {
+        showPage("run");
+        showAreaView("run", "run");
+    });
     const mapChip = el("span", { class: "badge map-use hidden" });
     const link = el("span", { class: "link", "data-link": "closed" }, "feed off");
-    const mock = ctx.store.get().mock ? el("span", { class: "badge mock" }, "mock") : null;
+    const mock = ctx.store.get().mock ? el("span", { class: "badge mock", title: "the page's own stand-in for the backend: nothing here touches a machine" }, "mock") : null;
     // Whatever moves or burns stops: a run or probing as their Stop does,
     // else a routine, a jog or a goto, and the beam or spindle; a G-code
     // machine's own stop line.
@@ -114,7 +101,7 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
 
     root.append(
         el("div", { class: "brand" }, "Spinny Laser"),
-        el("div", { class: "status" }, stateBadge, mapChip, profile, firmware, link, mock),
+        el("div", { class: "status" }, machineButton, connect, runChip, mapChip, firmware, link, mock),
         stop,
     );
 
@@ -124,6 +111,31 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
             ctx.store.set({ snapshot: answer.snapshot });
             ctx.toast("info", `stopped ${answer.stopped.join(", ")}`);
         }
+    }
+
+    /** The machine button's menu: the ports to connect, or the machine connected's own. */
+    function machineMenu(state: AppState): MenuEntry[] {
+        const snapshot = state.snapshot;
+        const entries: MenuEntry[] = [];
+        const machines: MenuEntry = { label: "Machines and ports", run: () => void goTo({ panel: "connection", detail: null }) };
+        if (!snapshot.connected) {
+            for (const port of offeredPorts(state)) {
+                entries.push({ label: `Connect ${portName(port)}`, run: () => void connectOffered(ctx, port.url) });
+            }
+            for (const entry of recentMachines().filter((recent) => !offeredPorts(state).some((port) => port.url === recent.url))) {
+                entries.push({ label: `Connect ${entry.label}`, run: () => void switchMachine(ctx, entry) });
+            }
+            return [...entries, ...(entries.length > 0 ? ["-" as const] : []), machines];
+        }
+        entries.push({ label: "Disconnect", run: () => void disconnectFrom(ctx) });
+        for (const entry of recentMachines().filter((recent) => recent.url !== snapshot.url)) {
+            entries.push({ label: `Switch to ${entry.label}`, run: () => void switchMachine(ctx, entry) });
+        }
+        // Only a machine with something to home: an endstop it reports, or a G-code machine's own homing.
+        if (typeof snapshot.machine?.homed === "string" || profileOf(snapshot).controller === "gcode") {
+            entries.push("-", { label: "Home", run: () => void ctx.call(ctx.api.home()), ...(runActive(state.progress ?? snapshot.run) ? { disabled: "a run is under way" } : {}) });
+        }
+        return [...entries, "-", machines];
     }
 
     function render(state: AppState): void {
@@ -152,11 +164,23 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
         profile.textContent = badgeName;
         profile.title = named !== null && use.id !== null ? `the machine file in use: ${use.id}.toml; the Machines page edits it` : "the kind of machine: its settings are no machine file's";
         profile.classList.toggle("hidden", badgeName === "");
+        machineButton.title = snapshot.connected
+            ? `the machine connected${label.title ? `, ${label.title}` : ""}; press to disconnect, switch or home`
+            : "no machine connected; press for the ports found";
+        // Connect names the port it would open; with none found it leads to where a port is typed.
+        const offered = defaultPort(offeredPorts(state));
+        connect.classList.toggle("hidden", snapshot.connected);
+        connect.textContent = offered ? `Connect ${portName(offered)}` : "Connect";
+        connect.title = offered ? `connect ${offered.url}` : "no port found: plug the machine in, or press the machine for the Machines page";
         link.setAttribute("data-link", state.link);
         link.textContent = state.link === "open" ? "live" : state.link === "connecting" ? "connecting" : "disconnected";
         const progress = state.progress ?? snapshot.run;
+        const running = runChipText(state);
+        runChip.textContent = running;
+        runChip.classList.toggle("hidden", running === "");
+        runChip.setAttribute("data-run", progress?.state ?? "");
         showMapUse(mapChip, runActive(progress) ? runMapUse(progress, isMilling(snapshot)) : null);
     }
-    ctx.store.subscribe(render, ["snapshot", "link", "progress", "settings", "machines"]);
+    ctx.store.subscribe(render, ["snapshot", "link", "progress", "settings", "machines", "ports", "jobs"]);
     render(ctx.store.get());
 }

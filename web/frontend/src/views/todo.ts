@@ -8,7 +8,7 @@
 
 import { ApiError, errorText } from "../api.ts";
 import { popUp } from "../dismiss.ts";
-import { button, el } from "../dom.ts";
+import { button, el, svgIcon } from "../dom.ts";
 import { addTodo, checkTodo, clearDone, newTodoId, openCount, removeTodo, type TodoChange, type TodoItem, type TodoList } from "../todo.ts";
 import type { Ctx } from "./context.ts";
 
@@ -26,7 +26,10 @@ function remPx(): number {
     return parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
 }
 
-/** Mounts the button in the top bar `bar`, before its Stop, and the drawer in the page. */
+/** A box with a tick in it. */
+const TICKED = "M2.5 2.5h11v11h-11zM4 4v8h8v-8zM7.2 10.6L4.9 8.3l1 -1l1.3 1.3l2.9 -2.9l1 1z";
+
+/** Mounts the button in `bar` (before a Stop, where it holds one), and the drawer in the page. */
 export function mountTodo(bar: HTMLElement, ctx: Ctx): TodoDrawer {
     const toggle = el("button", {
         type: "button",
@@ -34,7 +37,7 @@ export function mountTodo(bar: HTMLElement, ctx: Ctx): TodoDrawer {
         "aria-expanded": "false",
         "aria-controls": "todo-drawer",
         title: "the to-do list",
-    }, "To-do");
+    }, svgIcon(TICKED, true), "To-do");
     const input = el("input", {
         type: "text",
         class: "field todo-input",

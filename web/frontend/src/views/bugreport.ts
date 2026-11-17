@@ -57,7 +57,7 @@ export function mountBugReport(tools: HTMLElement, ctx: Ctx, options: BugReportO
     const shoot = options.shoot ?? (async () => (await pageShot()).png);
     const log = options.log ?? actions;
     const openTab = options.openTab ?? openInTab;
-    const bug = el("button", { type: "button", class: "tabs-tool tabs-bug", "aria-label": "Report a bug", "aria-haspopup": "dialog", title: "report a bug, with a screenshot" });
+    const bug = el("button", { type: "button", class: "tabs-tool tabs-bug", "aria-label": "Report a bug", "aria-haspopup": "dialog", "data-label": "Report a bug", title: "report a bug, with a screenshot" });
     bug.append(svgIcon(BUG));
     const gear = tools.querySelector(".tabs-gear");
     if (gear) {

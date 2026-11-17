@@ -116,7 +116,9 @@
     --radius-lg: 0.75rem;
     --gap: 0.75rem;
     --pad: 0.875rem;
-    --touch: 2.75rem;
+    /* The height of a button or a field: sized for a mouse here, and for
+       a finger on a touch screen (the rule after this block). */
+    --touch: 2.25rem;
 
     /* The space between blocks stacked in a box: under a heading, between
        any two blocks, and over a heading or a section. The flow rules at
@@ -124,6 +126,12 @@
     --flow-tight: 0.35rem;
     --flow: 0.6rem;
     --flow-wide: 1rem;
+}
+
+@media (pointer: coarse) {
+    :root {
+        --touch: 2.75rem;
+    }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -759,7 +767,7 @@ input[type="checkbox"] {
    page on hover or a press. A narrow window keeps the bar across the top. */
 @media (min-width: 64rem) {
     :root {
-        --rail: 9.5rem;
+        --rail: 10.5rem;
         --rail-folded: 1.5rem;
     }
 
@@ -1199,9 +1207,11 @@ table.settings-list td {
         grid-template-columns: minmax(0, 48rem);
     }
 
-    /* The Overview page: its cards over the page's whole width. */
-    .overview-grid {
-        grid-template-columns: minmax(0, 1fr);
+    /* Home: what is next and what needs someone, the jobs beside them;
+       no wider than its lines read well. */
+    .home-grid {
+        grid-template-columns: minmax(0, 3fr) minmax(18rem, 2fr);
+        max-width: 76rem;
     }
 
     /* The Config page: the machine file on the left, the list of every key
@@ -1264,10 +1274,9 @@ table.settings-list td {
 }
 
 .panel h2 {
-    font-size: 0.8rem;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    color: var(--strong);
+    font-size: 0.95rem;
+    font-weight: 650;
 }
 
 .panel-head {
@@ -1327,26 +1336,47 @@ table.settings-list td {
     box-shadow: none;
 }
 
+/* The next action: filled with the text's own ink, the one dark button
+   of a screen (the one light one in the dark theme). Color is kept for
+   states: blue for work under way, red for stopping and danger. */
 .btn-primary {
-    background: var(--accent-fill);
-    color: var(--on-fill);
-    border-color: var(--accent-fill);
+    background: var(--strong);
+    color: var(--panel);
+    border-color: var(--strong);
     font-weight: 600;
 }
 
 .btn-primary:hover:not(:disabled) {
-    background: color-mix(in oklab, var(--accent-fill) 85%, var(--strong));
-    border-color: color-mix(in oklab, var(--accent-fill) 85%, var(--strong));
+    background: color-mix(in oklab, var(--strong) 86%, var(--panel));
+    border-color: color-mix(in oklab, var(--strong) 86%, var(--panel));
 }
 
+/* A hazard at rest is outlined in red: firing the beam, a reset. */
 .btn-danger {
-    background: var(--danger-fill);
-    color: var(--on-fill);
-    border-color: var(--danger-fill);
+    color: color-mix(in oklab, var(--danger) 78%, var(--strong));
+    border-color: color-mix(in oklab, var(--danger) 55%, var(--border));
     font-weight: 600;
 }
 
 .btn-danger:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--danger) 12%, var(--panel));
+    border-color: var(--danger);
+}
+
+/* Red fills only what stops the machine now (the bar's Stop, a run's or a
+   probing's Stop, the jog's Cancel while something moves) and the action
+   a dialog asked about. */
+.btn-danger.btn-stop,
+.btn-danger.urgent:not(.at-rest),
+dialog .btn-danger {
+    background: var(--danger-fill);
+    color: var(--on-fill);
+    border-color: var(--danger-fill);
+}
+
+.btn-danger.btn-stop:hover:not(:disabled),
+.btn-danger.urgent:not(.at-rest):hover:not(:disabled),
+dialog .btn-danger:hover:not(:disabled) {
     background: color-mix(in oklab, var(--danger-fill) 85%, var(--strong));
     border-color: color-mix(in oklab, var(--danger-fill) 85%, var(--strong));
 }
@@ -1361,26 +1391,29 @@ table.settings-list td {
 }
 
 .btn-small {
-    min-height: 2.25rem;
+    min-height: calc(var(--touch) - 0.375rem);
     padding: 0.2rem 0.65rem;
     font-size: 0.875rem;
 }
 
 .btn-big {
-    min-height: 3.5rem;
+    min-height: 3.25rem;
     flex: 1 1 auto;
     font-size: 1.1rem;
     font-weight: 600;
 }
 
+/* A choice or a switch that is on is drawn pressed: the panel's own
+   surface ringed in ink. No color: it says what is set, not what to do. */
 .btn-choice[aria-pressed="true"],
 .btn-choice[aria-pressed="true"]:hover:not(:disabled),
 .btn-toggle[aria-pressed="true"],
 .btn-toggle[aria-pressed="true"]:hover:not(:disabled) {
-    background: var(--accent-fill);
-    color: var(--on-fill);
-    border-color: var(--accent-fill);
-    font-weight: 600;
+    background: var(--panel);
+    color: var(--strong);
+    border-color: var(--strong);
+    box-shadow: inset 0 0 0 0.0625rem var(--strong);
+    font-weight: 650;
 }
 
 .field {
@@ -1612,122 +1645,6 @@ input.num.field.invalid {
     width: 100%;
 }
 
-/* The Overview page: a card per page, a drawing over its name, what it
-   is for, and what it holds now; each card a button showing its page. The
-   drawing is lines in the text color with its accent in the card's color.
-   The cards share the panel's width in 1, 2, 4 or 8 columns, so the eight
-   of them always fill their rows, and grow with the screen. */
-#overview {
-    container-type: inline-size;
-}
-
-.overview-cards {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--gap);
-}
-
-@container (max-width: 20rem) {
-    .overview-cards {
-        grid-template-columns: minmax(0, 1fr);
-    }
-}
-
-@container (min-width: 44rem) {
-    .overview-cards {
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-    }
-}
-
-@container (min-width: 96rem) {
-    .overview-cards {
-        grid-template-columns: repeat(8, minmax(0, 1fr));
-    }
-}
-
-/* A long word (a port's path) breaks rather than spill out of its card. */
-.overview-card {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.25rem;
-    min-width: 0;
-    overflow-wrap: anywhere;
-    padding: 0.9rem 1rem 1rem;
-    font: inherit;
-    text-align: left;
-    color: var(--text);
-    background: var(--panel-2);
-    border: thin solid var(--border);
-    border-radius: var(--radius-lg);
-    cursor: pointer;
-    transition: border-color 0.12s, box-shadow 0.12s, transform 0.12s;
-}
-
-.overview-card:hover {
-    border-color: var(--card-accent, var(--accent));
-    box-shadow: var(--shadow-lg);
-    transform: translateY(-0.125rem);
-}
-
-.overview-card:focus-visible {
-    outline: 0.15rem solid var(--ring);
-    outline-offset: 0.1rem;
-}
-
-.overview-drawing {
-    display: block;
-    width: 100%;
-    max-width: 16rem;
-    height: auto;
-    margin-bottom: 0.35rem;
-    fill: none;
-    stroke: var(--muted);
-    stroke-width: 2.2;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-}
-
-.overview-drawing .accent {
-    stroke: var(--card-accent, var(--accent));
-}
-
-.overview-drawing .fill {
-    fill: var(--card-accent, var(--accent));
-}
-
-.overview-drawing .faint {
-    stroke: var(--border);
-    stroke-width: 1.2;
-}
-
-.overview-name {
-    font-size: 1.05rem;
-    font-weight: 700;
-    color: var(--strong);
-}
-
-.overview-tip,
-.overview-note {
-    font-size: 0.85rem;
-}
-
-.overview-note {
-    color: var(--strong);
-    font-weight: 600;
-}
-
-.overview-note::before {
-    content: "";
-    display: inline-block;
-    width: 0.5em;
-    height: 0.5em;
-    margin-right: 0.4em;
-    border-radius: 50%;
-    background: var(--card-accent, var(--accent));
-    vertical-align: 0.05em;
-}
-
 /* Status bar */
 
 .statusbar {
@@ -1941,7 +1858,8 @@ button.badge.state {
 
 /* The Machine panel (src/views/machine.ts): its parts stacked, each after
    the first ruled off from the one above it. */
-.machine-part ~ :is(.machine-part, .machine-markers):not(.hidden) {
+.machine-part ~ :is(.machine-part, .machine-markers):not(.hidden),
+.machine-part ~ .machine-more {
     padding-top: var(--flow);
     border-top: thin solid var(--border);
 }
@@ -2116,47 +2034,84 @@ button.badge.state {
     width: 7.5rem;
 }
 
-/* One bar per axis: its letter and title, a note, the step choices with a
-   field for any other step, the two move buttons and the zero button. The
-   head takes a line of its own; the rest wraps as the panel's width allows. */
+/* The step size every axis moves by, with what the pad moves by at it
+   said beside it. */
+.jog-size {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.75rem;
+}
+
+.jog-size .choice-row {
+    flex: 1 1 12rem;
+}
+
+.jog-pad-steps {
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* The pad beside the joints' bars where there is room for both, over them
+   where there is not. */
+.jog-moves {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0.5rem;
+}
+
+.jog-moves > .jog-pad {
+    flex: 1 1 13rem;
+    max-width: 24rem;
+}
+
+.jog-moves > .axis-bars {
+    flex: 1 1 15rem;
+    min-width: 0;
+}
+
+/* One bar per joint, on one line where it fits: its letter and title with
+   where it is, then its two moves with the step between them. A servo's
+   bar keeps its named positions and its angle field in a row of its own. */
 
 .axis-bars {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: 0.35rem;
 }
 
 .axis-bar {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.4rem 0.75rem;
-    padding: 0.5rem 0.7rem;
+    gap: 0.3rem 0.75rem;
+    padding: 0.35rem 0.6rem;
     background: var(--panel-2);
     border: thin solid var(--border);
     border-radius: var(--radius);
 }
 
 .axis-bar-head {
-    flex: 1 1 100%;
+    flex: 1 1 9rem;
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
-    gap: 0.25rem 0.6rem;
+    gap: 0.2rem 0.5rem;
+    min-width: 0;
 }
 
 .axis-bar-letter {
     font-weight: 700;
-    color: var(--accent);
-    min-width: 1.4rem;
+    color: var(--strong);
+    min-width: 1.1rem;
 }
 
 .axis-bar-title {
-    font-size: 0.8rem;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--strong);
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text);
 }
 
 /* Where the axis is now, at the head's right end. */
@@ -2184,24 +2139,51 @@ button.badge.state {
     min-width: 0;
 }
 
-.axis-bar-steps .choice-row {
-    flex: 1 1 auto;
-}
-
-/* The typed step keeps its width; it wraps under the choices when the bar is narrow. */
 .axis-bar-steps input {
     flex: none;
 }
 
 .axis-bar-buttons {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(5rem, 1fr));
-    gap: 0.4rem;
-    flex: 1 1 11rem;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex: 1 1 13rem;
+}
+
+.axis-bar-buttons .btn-axis {
+    flex: 1 1 4rem;
+    padding-inline: 0.5rem;
+    white-space: nowrap;
+}
+
+/* The step a press moves the axis by, between its two moves; one typed
+   for the axis itself is set apart from the step size's. */
+.axis-bar-step {
+    flex: none;
+    min-width: 3.75rem;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.axis-bar-step[data-own] {
+    color: var(--strong);
+    font-weight: 700;
+}
+
+/* Under More: a step of each axis's own, a field an axis. */
+.jog-own-steps {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.75rem;
 }
 
 .btn-axis {
-    min-height: 2.75rem;
+    min-height: 2.5rem;
     font-weight: 600;
 }
 
@@ -2250,7 +2232,7 @@ button.badge.state {
 .jog-pad-letter {
     font-family: var(--font);
     font-weight: 700;
-    color: var(--accent);
+    color: var(--muted);
 }
 
 .jog-pad-value {
@@ -2784,14 +2766,32 @@ table.groups input.num {
     transition: width 0.2s linear;
 }
 
+/* The run's state, the share done and the time in type large enough to
+   read from the machine; the lines sent under them, small. */
 .progress-text {
     display: flex;
     flex-wrap: wrap;
     gap: 0.4rem 0.75rem;
     align-items: center;
-    font-size: 0.85rem;
+    color: var(--strong);
+    font-variant-numeric: tabular-nums;
+}
+
+.progress-share {
+    font-size: 1.25rem;
+    font-weight: 650;
+}
+
+.progress-detail {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.75rem;
     font-family: var(--mono);
-    color: var(--muted);
+    font-size: 0.8rem;
+}
+
+.progress-detail > :empty {
+    display: none;
 }
 
 /* The height map choice takes a line above the run buttons, which share
@@ -2953,14 +2953,22 @@ table.settings tbody tr:hover td {
 
 /* Toasts */
 
+/* In the middle of the page's foot, over the lower edge of the work and
+   clear of the dock: the corners hold controls (a step's panel, the
+   dock's buttons), and a message over them hid Run. A long word (a
+   port's path) breaks rather than run out of its box. */
 .toasts {
     position: fixed;
-    right: var(--gap);
-    bottom: var(--gap);
+    left: calc(var(--rail, 0rem) + (100vw - var(--rail, 0rem)) / 2);
+    bottom: 4.75rem;
+    transform: translateX(-50%);
     display: flex;
     flex-direction: column;
+    align-items: center;
     gap: 0.5rem;
-    max-width: min(24rem, calc(100vw - 2 * var(--gap)));
+    width: max-content;
+    max-width: min(30rem, calc(100vw - var(--rail, 0rem) - 2 * var(--gap)));
+    overflow-wrap: anywhere;
     z-index: 10;
 }
 
@@ -2971,7 +2979,7 @@ table.settings tbody tr:hover td {
     color: var(--text);
     font-size: 0.9rem;
     border: thin solid var(--border);
-    border-left: 0.3rem solid var(--accent);
+    border-left: 0.3rem solid var(--border-strong);
     box-shadow: var(--shadow-lg);
     cursor: pointer;
     animation: toast-in 0.18s ease-out;
@@ -4733,8 +4741,8 @@ a.btn.disabled {
     font-size: 0.75em;
     font-weight: 700;
     text-align: center;
-    background: var(--accent-fill);
-    color: var(--on-fill);
+    background: var(--muted);
+    color: var(--panel);
 }
 
 .todo-drawer.panel {
@@ -5574,29 +5582,13 @@ dialog.bug-dialog::backdrop {
     margin-top: calc(-1 * var(--gap));
 }
 
-.page .panel[data-depth="1"] {
-    box-shadow:
-        var(--shadow),
-        0.25rem 0.25rem 0 -0.0625rem var(--panel-2),
-        0.25rem 0.25rem 0 0 var(--border);
-}
-
-.page .panel[data-depth="2"] {
-    box-shadow:
-        var(--shadow),
-        0.25rem 0.25rem 0 -0.0625rem var(--panel-2),
-        0.25rem 0.25rem 0 0 var(--border),
-        0.45rem 0.45rem 0 -0.0625rem color-mix(in oklab, var(--panel-2) 70%, var(--bg)),
-        0.45rem 0.45rem 0 0 var(--border);
-}
-
+/* A stack is its tabs over one panel: no sheets drawn behind it, whose
+   edges under the panel read as borders of nothing. */
 .panel-tab {
     position: relative;
     font: inherit;
-    font-size: 0.72rem;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: 0.875rem;
+    font-weight: 600;
     color: var(--muted);
     min-height: 2rem;
     padding: 0.35rem 0.9rem;
@@ -6505,6 +6497,781 @@ table.find-guesses tr.elsewhere td {
 .machine-view-swatch.pending {
     border-color: var(--orange);
     border-style: dashed;
+}
+
+/* --- the frame: views and the dock (docs/UI_VISUAL.md) ------------------ */
+
+/* An area's views across its top, a view's panels in set places with the
+   work largest, the machine's dock along the foot. These rules come after
+   the components' own, which they adjust, and before the flow's. They are
+   in this file and not one of their own: two stylesheets linked from the
+   page load in an order the dev server picks, not the page's. */
+
+/* --- an area's views (src/views/viewbar.ts) ----------------------------- */
+
+/* The bar sits over the page in its side's pane, and takes no room while
+   the area shown has no views. Its row is max-content: an auto row beside
+   the page's flexible one came out at no height in Chromium, and the page
+   lay over the bar. */
+.pane {
+    grid-template-rows: max-content minmax(0, 1fr);
+}
+
+.pane > .viewbar {
+    grid-row: 1;
+}
+
+.pane > main.page {
+    grid-row: 2;
+}
+
+.viewbar {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.5rem var(--gap) 0.55rem;
+    border-bottom: thin solid var(--border);
+    min-width: 0;
+}
+
+.viewbar-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 1rem;
+    min-width: 0;
+}
+
+/* Steps: numbered circles joined by a line, each with its name beside it. */
+.viewbar-steps {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.viewbar-item {
+    display: flex;
+    align-items: center;
+}
+
+.viewbar-item + .viewbar-item::before {
+    content: "";
+    width: 1.25rem;
+    height: 0.0625rem;
+    margin: 0 0.15rem;
+    background: var(--border-strong);
+}
+
+.viewbar-step {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: 2.25rem;
+    padding: 0.25rem 0.65rem 0.25rem 0.3rem;
+    border: 0;
+    border-radius: 99rem;
+    background: none;
+    color: var(--muted);
+    font: inherit;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.viewbar-step:hover {
+    background: var(--btn-hover);
+    color: var(--strong);
+}
+
+.viewbar-dot {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 1.6rem;
+    height: 1.6rem;
+    border: 0.09rem solid var(--border-strong);
+    border-radius: 50%;
+    background: var(--panel);
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    font-weight: 600;
+    line-height: 1;
+}
+
+.viewbar-dot .icon {
+    width: 0.95rem;
+    height: 0.95rem;
+    fill: currentColor;
+}
+
+/* Done: green, the color of done. To do without: a dashed ring. */
+.viewbar-item[data-done] .viewbar-dot {
+    border-color: var(--green);
+    color: var(--green);
+}
+
+.viewbar-item[data-step="optional"] .viewbar-dot {
+    border-style: dashed;
+}
+
+/* The step shown: ink, the one dark thing in the row. */
+.viewbar-item[data-step="now"] .viewbar-step {
+    color: var(--strong);
+    font-weight: 650;
+}
+
+.viewbar-item[data-step="now"] .viewbar-dot {
+    border-color: var(--strong);
+    background: var(--strong);
+    color: var(--panel);
+}
+
+/* What is so in the step shown, and the way back and on. */
+.viewbar-line {
+    align-items: baseline;
+}
+
+.viewbar-words {
+    flex: 1 1 18rem;
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.viewbar-title {
+    margin-right: 0.5rem;
+    color: var(--strong);
+    font-weight: 650;
+}
+
+.viewbar-tag {
+    margin-right: 0.5rem;
+    padding: 0.05rem 0.45rem;
+    border: thin solid var(--border-strong);
+    border-radius: 99rem;
+    font-size: 0.75rem;
+}
+
+.viewbar-nav {
+    display: flex;
+    gap: 0.4rem;
+    margin-left: auto;
+}
+
+/* Plain views: tabs, the one shown raised like a panel. */
+.viewbar-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    flex: 1 1 auto;
+    gap: 0.25rem;
+    min-width: 0;
+}
+
+.viewbar-tab {
+    min-height: 2.25rem;
+    padding: 0.3rem 0.8rem;
+    border: thin solid transparent;
+    border-radius: var(--radius);
+    background: none;
+    color: var(--muted);
+    font: inherit;
+    font-weight: 550;
+    cursor: pointer;
+}
+
+.viewbar-tab:hover {
+    background: var(--btn-hover);
+    color: var(--strong);
+}
+
+.viewbar-tab[aria-selected="true"] {
+    border-color: var(--border);
+    background: var(--panel);
+    color: var(--strong);
+    box-shadow: var(--shadow);
+}
+
+/* --- a view on its page -------------------------------------------------- */
+
+/* A view's panels are not arranged by hand: the layout's tools go. */
+.page[data-view] :is(.panel-menu-button, .panel-grip, .panel-resize, .panel-tabs-apart),
+.page[data-view] > .column-resize {
+    display: none;
+}
+
+@container pane (min-width: 64rem) {
+    /* The view's own columns; one with nothing in it gives its room away. */
+    .grid[data-view] {
+        grid-template-columns: var(--view-cols, minmax(0, 1fr) minmax(19rem, 26rem));
+    }
+
+    .grid[data-view] > .column[data-empty] {
+        display: none;
+    }
+
+    /* The dock: the last column laid along the foot, under the others. */
+    .grid[data-view][data-dock] {
+        grid-template-rows: minmax(0, 1fr) auto;
+    }
+
+    .grid[data-view] > .column[data-dock-column] {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        overflow: visible;
+    }
+
+    /* The work takes the height its column has, and gives height up to an
+       opened dock: the preview's box follows its panel, not the window. */
+    .grid[data-view] > .column > :is(.preview-panel, #camera-view, #pnp-view, #pnp-top-view, #pnp-board):not([data-collapsed], [data-height]) {
+        flex: 1 1 0;
+        min-height: 12rem;
+    }
+
+    .grid[data-view] > .column > .preview-panel {
+        max-height: none;
+    }
+
+    .grid[data-view] > .column > .preview-panel > .preview-box {
+        flex: 1 1 0;
+        height: auto;
+        min-height: 6rem;
+        max-height: none;
+    }
+}
+
+/* A stack's tab names the panel in front, whose head holds its own buttons
+   alone: no fold beside them. Home is a fixed page: its panels stay put. */
+.page[data-view] .panel[data-stacked] > .panel-head > .panel-chevron,
+#page-home :is(.panel-chevron, .panel-menu-button, .panel-grip, .panel-resize),
+#page-home > .column-resize {
+    display: none;
+}
+
+/* --- the Run area's first steps (src/views/runstart.ts) ------------------ */
+
+.start-line {
+    color: var(--strong);
+    font-size: 1.05rem;
+    font-weight: 600;
+}
+
+.start-detail:empty {
+    display: none;
+}
+
+/* A list to pick one of: each row a button, the one picked ringed in ink. */
+.pick-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.pick-row {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    width: 100%;
+    min-height: var(--touch);
+    padding: 0.4rem 0.65rem;
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+    background: var(--panel-2);
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.pick-row:hover {
+    background: var(--btn-hover);
+}
+
+.pick-row[aria-pressed="true"] {
+    border-color: var(--strong);
+    background: var(--panel);
+    box-shadow: inset 0 0 0 0.0625rem var(--strong);
+}
+
+.pick-picture {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 2.5rem;
+    height: 2.5rem;
+}
+
+.pick-picture :is(img, svg) {
+    width: 100%;
+    height: 100%;
+    border-radius: 0.25rem;
+    object-fit: contain;
+}
+
+.pick-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.pick-name {
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.pick-note {
+    font-size: 0.8rem;
+}
+
+/* --- the Machine panel in a view, and the dock (src/views/machine.ts) ---- */
+
+/* The view's own button shows in a view only: there the panel is the
+   position (and a pick and place head's quick buttons), and the jog, the
+   tool and the markers open on a press of it. */
+.dock-toggle {
+    display: none;
+}
+
+.page[data-view] .dock-toggle {
+    display: inline-flex;
+}
+
+.page[data-view] .machine:not([data-open]) > .machine-more,
+.page[data-view] .machine:not([data-open]) > .panel-head > .button-row {
+    display: none;
+}
+
+@container pane (min-width: 64rem) {
+    /* Docked, the panel lies along the foot of a view: the position in a
+       row, the head's buttons at its right end, and over them, once Jog is
+       pressed, the jog, the tool and the markers. Opening it takes height
+       from the work above; the position does not move. */
+    .column[data-dock-column] > .machine {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+            "more more"
+            "quick quick"
+            "dro head";
+        align-items: center;
+        column-gap: 1rem;
+        margin-block: 0 calc(var(--gap) / 2);
+        padding-block: 0.5rem;
+    }
+
+    .column[data-dock-column] > .machine > * {
+        margin-top: 0;
+    }
+
+    .column[data-dock-column] > .machine > .panel-head {
+        grid-area: head;
+        flex-wrap: nowrap;
+        min-height: 0;
+        padding-bottom: 0;
+        border-bottom: 0;
+    }
+
+    .column[data-dock-column] > .machine > .panel-head > :is(h2, .panel-chevron) {
+        display: none;
+    }
+
+    .column[data-dock-column] > .machine > .dro {
+        grid-area: dro;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.35rem 0.5rem;
+        min-width: 0;
+    }
+
+    .column[data-dock-column] .dro-row:not(.hidden) {
+        display: contents;
+    }
+
+    /* A cell on one line: its letter, its number, its unit. */
+    .column[data-dock-column] .dro-cell {
+        container-type: normal;
+        grid-template-columns: auto auto auto;
+        grid-template-areas: "label value unit";
+        gap: 0 0.4rem;
+        padding: 0.4rem 0.5rem;
+    }
+
+    .column[data-dock-column] .dro-value {
+        min-width: 4.2em;
+        font-size: 1.05rem;
+    }
+
+    /* The queue, the mode and the motors are for the panel shown whole. */
+    .column[data-dock-column] .dro-small {
+        display: none;
+    }
+
+    /* A pick and place head's quick buttons, in a row over the position, with the jog. */
+    .column[data-dock-column] > .machine > .machine-head {
+        grid-area: quick;
+        flex-direction: row;
+        flex-wrap: wrap;
+        padding: 0 0 0.5rem;
+        border-top: 0;
+    }
+
+    .column[data-dock-column] > .machine:not([data-open]) > .machine-head {
+        display: none;
+    }
+
+    /* The jog beside the tool and the markers, in a box that scrolls
+       within the height the work can spare. */
+    .column[data-dock-column] > .machine > .machine-more {
+        grid-area: more;
+        display: grid;
+        grid-template-columns: minmax(0, 5fr) minmax(15rem, 2fr);
+        align-items: start;
+        gap: 0.5rem 1.5rem;
+        max-height: 46vh;
+        margin-bottom: 0.5rem;
+        padding: 0 0 0.5rem;
+        border-top: 0;
+        border-bottom: thin solid var(--border);
+        overflow-y: auto;
+    }
+
+    .column[data-dock-column] > .machine > .machine-more > * {
+        margin-top: 0;
+        padding-top: 0;
+        border-top: 0;
+    }
+
+    .column[data-dock-column] > .machine > .machine-more > [data-part="jog"] {
+        grid-row: 1 / span 2;
+    }
+
+    /* The joints' bars side by side where the dock is wide enough for two. */
+    .column[data-dock-column] .jog-moves > .axis-bars {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(16.5rem, 1fr));
+        align-content: start;
+    }
+
+    .column[data-dock-column] .jog-moves > .jog-pad {
+        flex: 0 1 15rem;
+    }
+}
+
+/* With the menu's dots gone, the title takes the head's free room, so the
+   view's own buttons stay at its right end. */
+.page[data-view] .panel-head > h2 {
+    margin-right: auto;
+}
+
+/* --- the top bar and the rail ------------------------------------------- */
+
+/* The bar reads from the left: the page's name, the machine, a run under
+   way; Stop keeps the right end. */
+.statusbar .status {
+    flex: 1 1 auto;
+    margin-left: 0.5rem;
+}
+
+/* The machine: its name and its state on one button, which opens its menu. */
+.machine-button {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2rem;
+    padding: 0 0.6rem 0 0.15rem;
+    border: thin solid var(--border-strong);
+    border-radius: 99rem;
+    background: var(--panel);
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    transition: border-color 0.12s, background-color 0.12s;
+}
+
+.machine-button:hover,
+.machine-button[aria-expanded="true"] {
+    border-color: var(--strong);
+    background: var(--btn);
+}
+
+/* A chevron after it: it opens a menu. */
+.machine-button::after {
+    content: "";
+    width: 0.35rem;
+    height: 0.35rem;
+    margin: -0.15rem 0 0 0.35rem;
+    border-right: 0.125rem solid var(--muted);
+    border-bottom: 0.125rem solid var(--muted);
+    transform: rotate(45deg);
+}
+
+.machine-button .badge {
+    min-width: 0;
+    border-color: transparent;
+    background: none;
+}
+
+/* The name is the machine's: plain ink, no dot; its state after it keeps the state's color. */
+.machine-button .badge.profile {
+    padding-right: 0;
+    color: var(--strong);
+    font-size: 0.875rem;
+}
+
+.machine-button .badge.profile::before {
+    display: none;
+}
+
+/* An alarm fills its part of the button, as it fills a badge. */
+.machine-button .badge[data-state="Alarm"] {
+    margin-left: 0.4rem;
+    border-color: var(--danger-fill);
+    background: var(--danger-fill);
+}
+
+/* A run under way: a badge that is a button to the Run area, in the color of work. */
+button.badge.run-chip {
+    --tone: var(--run);
+    font-family: inherit;
+    line-height: inherit;
+    cursor: pointer;
+}
+
+button.badge.run-chip[data-run="hold"] {
+    --tone: var(--hold);
+}
+
+/* The version is the machine button's tooltip; the link shows only while it is down. */
+.statusbar .firmware,
+.statusbar .link[data-link="open"] {
+    display: none;
+}
+
+@media (min-width: 64rem) {
+    /* The rail lists both sides' areas, each side's name a small heading
+       over its own. The area shown is marked in ink. */
+    .tabs .tabs-side,
+    .tabs .tabs-side[data-open] {
+        align-self: stretch;
+        justify-content: flex-start;
+        min-height: 0;
+        margin: 1rem 0 0.25rem;
+        padding: 0 0.75rem;
+        border: 0;
+        border-radius: 0;
+        background: none;
+        color: var(--muted);
+        font-size: 0.7rem;
+    }
+
+    .tabs-bar > .tabs-group:first-child .tabs-side {
+        margin-top: 0;
+    }
+
+    .tabs .tabs-side:hover {
+        background: none;
+        color: var(--strong);
+    }
+
+    .tabs .tab,
+    .tabs .tabs-more {
+        min-height: 2.25rem;
+        letter-spacing: 0;
+    }
+
+    .tabs .tab[aria-selected="true"],
+    .tabs .tabs-more[aria-current="page"] {
+        --tab-line: var(--strong);
+    }
+
+    /* The tools at the rail's foot, each a row with its name. */
+    .tabs-tools {
+        flex-direction: column;
+        flex-wrap: nowrap;
+        align-items: stretch;
+        gap: 0.1rem;
+    }
+
+    .tabs-tools :is(.tabs-tool, .tabs-gear, .todo-toggle),
+    .tabs .tabs-split {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 0.6rem;
+        width: 100%;
+        height: auto;
+        min-height: 2rem;
+        padding: 0.3rem 0.75rem;
+        border: 0;
+        border-radius: var(--radius);
+        background: none;
+        box-shadow: none;
+        color: var(--muted);
+        font: inherit;
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+    }
+
+    .tabs-tools :is(.tabs-tool, .tabs-gear, .todo-toggle):hover,
+    .tabs .tabs-split:hover,
+    .tabs-tools .tabs-gear[aria-expanded="true"] {
+        background: var(--btn);
+        color: var(--strong);
+    }
+
+    .tabs-tools :is(.tabs-search, .tabs-bug, .tabs-gear)::after,
+    .tabs .tabs-split::after {
+        content: attr(data-label);
+    }
+
+    .tabs-tools .icon,
+    .tabs .tabs-split .icon {
+        width: 1.05rem;
+        height: 1.05rem;
+    }
+
+    /* To the top and to the end are for a long page in one column. */
+    .tabs-tools .tabs-scroll {
+        display: none;
+    }
+
+    /* In the order they are reached for, whatever order they were mounted in. */
+    .tabs-tools .tabs-search { order: 1; }
+    .tabs-tools .todo-toggle { order: 2; }
+    .tabs-tools .tabs-bug { order: 3; }
+    .tabs-tools .tabs-gear { order: 4; }
+    .tabs-tools .tabs-peek { order: 5; }
+    .tabs-tools .tabs-layouts { order: 6; }
+    .tabs-tools .tabs-done { order: 7; }
+
+    .tabs-tools :is(.tabs-tool, .tabs-gear, .todo-toggle) {
+        white-space: nowrap;
+    }
+
+    .tabs .tabs-split {
+        margin-top: 0.5rem;
+    }
+}
+
+/* --- Home (src/views/overview.ts) ---------------------------------------- */
+
+/* The machine in a line, then the next thing to do in large type over
+   its one button. */
+.home-machine {
+    color: var(--muted);
+}
+
+.home-title {
+    color: var(--strong);
+    font-size: 1.5rem;
+    font-weight: 650;
+    line-height: 1.25;
+}
+
+.home-detail {
+    font-size: 1rem;
+}
+
+.home-next .home-go {
+    flex: 0 1 22rem;
+}
+
+/* What needs someone: a line each, its link at the line's end. */
+.home-needs {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.home-need {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    padding: 0.5rem 0;
+    border-top: thin solid var(--border);
+}
+
+.home-need:first-child {
+    border-top: 0;
+    padding-top: 0;
+}
+
+.home-need-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.home-need-name {
+    color: var(--strong);
+    font-weight: 600;
+}
+
+/* --- panels in a view ---------------------------------------------------- */
+
+@container pane (min-width: 64rem) {
+    /* A panel that docks at its column's foot when every panel shows (the
+       run's) is a panel like the others in a view, where it leads. */
+    .grid[data-view] > .column > .panel[data-dock]:not([data-join-up], [data-join-down], [data-stacked]) {
+        position: static;
+        margin-top: 0;
+        border: thin solid var(--border);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow);
+    }
+
+    .grid[data-view] > .column > .panel[data-dock][data-first]:not([data-join-up], [data-join-down], [data-stacked]) {
+        margin-top: var(--gap);
+    }
+}
+
+/* Folded, the console is its name: its buttons fold away with it. */
+.console[data-collapsed] > .panel-head > .button-row {
+    display: none;
+}
+
+/* What a run will go by, over its buttons: a name and a line each. */
+.run-ready {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.3rem 0.75rem;
+    margin-inline: 0;
+    padding: 0.6rem 0.75rem;
+    border: thin solid var(--border);
+    border-radius: var(--radius);
+    background: var(--panel-2);
+}
+
+.run-ready > div {
+    display: contents;
+}
+
+.run-ready dt {
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-weight: 600;
+    line-height: 1.5rem;
+}
+
+.run-ready dd {
+    margin: 0;
+    line-height: 1.5rem;
+    overflow-wrap: anywhere;
+}
+
+.run-ready > div[hidden] {
+    display: none;
 }
 
 /* Flow: the space between blocks stacked in a box belongs to the box, not

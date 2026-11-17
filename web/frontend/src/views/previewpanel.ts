@@ -1,13 +1,18 @@
 // Hosts the 3D preview and feeds it the selected job (or what the page
 // shows in its place: the JSON panel's edit while it is typed, the Plot
 // page's plan), the live position, the soft limits, the markers and the
-// probe grid; the rotation lock, the height map toggle, the grid in place
-// of the rings, box selection, the speed view, a view straight down,
-// quarter turns and the reset to the overview sit in its head, and a
-// slider under it steps through the job's paths in the order they are cut. A path clicked, or the paths a box holds, become the page's picked
-// paths, which the Jobs panel moves between groups.
+// probe grid. Its head holds the two views asked for most (Fit, the
+// overview again, and Top view, straight down) and View, which opens a row
+// of the rest under the head: the rotation lock, the height map, the grid
+// in place of the rings, box selection, the speed view, quarter turns and
+// clearing the trail, with how the pointer works the picture in a line.
+// View says how many of its modes are on while the row is shut, so a mode
+// that changes what a drag does is never out of sight. A slider under the
+// picture steps through the job's paths in the order they are cut. A path
+// clicked, or the paths a box holds, become the page's picked paths, which
+// the Jobs panel moves between groups.
 
-import { button, el } from "../dom.ts";
+import { button, el, readStored, writeStored } from "../dom.ts";
 import { countText } from "../format.ts";
 import { cappedRate } from "../kinematics.ts";
 import { isDispensing, profileOf } from "../profile.ts";
@@ -24,6 +29,8 @@ export const HEIGHTS_LABEL = "Heights";
 export const GRID_LABEL = "Grid";
 export const BOX_LABEL = "Box select";
 export const SPEED_LABEL = "Speed";
+/** Whether the row of view options is open, as this browser last left it. */
+export const VIEW_OPTIONS_KEY = "spinny.preview.options";
 
 /**
  * The rates the speed view works with: the settings read, else the
@@ -84,6 +91,11 @@ function viewButton(label: string, title: string, onClick: () => void): HTMLButt
     return made;
 }
 
+/** What View is called: its name, and how many of the modes that change a drag or the colors are on. */
+export function viewLabel(modesOn: number): string {
+    return modesOn === 0 ? "View" : `View, ${modesOn} on`;
+}
+
 /** No paths picked: one array, so the preview sees nothing changed. */
 const NONE: PathRef[] = [];
 
@@ -103,10 +115,23 @@ export function mountPreviewPanel(
 ): Preview {
     const canvas = el("canvas", { class: "preview", "aria-label": "3D preview of the board" });
     const preview = new Preview(canvas);
+    // View's name follows the modes on; it is made further down, after the
+    // buttons that set them.
+    let viewPress: HTMLButtonElement | null = null;
+    const showModes = (): void => {
+        if (viewPress) {
+            const on = [preview.rotationLocked, preview.boxSelection, preview.speedView].filter(Boolean).length;
+            viewPress.textContent = viewLabel(on);
+            viewPress.title = on === 0
+                ? "what the preview shows and how it is turned"
+                : "what the preview shows and how it is turned; a lock, box selection or the speed view is on";
+        }
+    };
     const lock = button(LOCK_LABEL, () => showLock(preview.toggleRotationLock()), "btn btn-quiet btn-small btn-toggle", "drag pans instead of orbiting");
     const showLock = (locked: boolean): void => {
         lock.setAttribute("aria-pressed", locked ? "true" : "false");
         lock.textContent = locked ? LOCKED_LABEL : LOCK_LABEL;
+        showModes();
     };
     showLock(preview.rotationLocked);
     const heights = button(HEIGHTS_LABEL, () => showHeights(preview.toggleHeights()), "btn btn-quiet btn-small btn-toggle");
@@ -133,6 +158,7 @@ export function mountPreviewPanel(
     const box = button(BOX_LABEL, () => {
         preview.setBoxSelection(!preview.boxSelection);
         box.setAttribute("aria-pressed", preview.boxSelection ? "true" : "false");
+        showModes();
     }, "btn btn-quiet btn-small btn-toggle");
     box.title = "drag a box to pick paths; shift adds, right drag pans";
     box.setAttribute("aria-pressed", "false");
@@ -140,6 +166,7 @@ export function mountPreviewPanel(
         preview.setSpeedView(!preview.speedView);
         speed.setAttribute("aria-pressed", preview.speedView ? "true" : "false");
         showScrub();
+        showModes();
     }, "btn btn-quiet btn-small btn-toggle");
     speed.title = "color cuts by speed; red where machine rates slow them";
     speed.setAttribute("aria-pressed", "false");
@@ -203,26 +230,44 @@ export function mountPreviewPanel(
     };
     preview.onPick = (ref, additive) => pick((picked) => pickedAfter(picked, ref, additive));
     preview.onBox = (refs, additive) => pick((picked) => boxedAfter(picked, refs, additive));
+    // The rest of the view's options, in a row under the head that View
+    // opens; a search or a link going to one of them opens it too.
+    const options = el("div", { class: "preview-options stack" },
+        el("div", { class: "button-row" },
+            lock,
+            heights,
+            grid,
+            box,
+            speed,
+            viewButton("CCW 90", "turn the view a quarter counterclockwise", () => preview.turnView(-1)),
+            viewButton("CW 90", "turn the view a quarter clockwise", () => preview.turnView(1)),
+            button("Clear trail", () => preview.clearTrail(), "btn btn-quiet btn-small", "forget the head's trail"),
+        ),
+        el("p", { class: "muted hint" }, "drag orbits (pans when locked), shift or right drag pans, wheel zooms, double click resets; click picks a path, shift or ctrl adds"),
+    );
+    const view = button("View", () => setOptions(options.hidden), "btn btn-quiet btn-small btn-toggle preview-view");
+    viewPress = view;
+    function setOptions(open: boolean): void {
+        options.hidden = !open;
+        view.setAttribute("aria-pressed", String(open));
+        writeStored(VIEW_OPTIONS_KEY, open ? "1" : "0");
+        showModes();
+    }
+    options.addEventListener("spinny:show", () => setOptions(true));
     root.append(
         el("div", { class: "panel-head" },
             el("h2", {}, "Preview"),
             el("div", { class: "button-row" },
-                lock,
-                heights,
-                grid,
-                box,
-                speed,
+                button("Fit", () => preview.resetView(), "btn btn-quiet btn-small", "the overview again: the whole job in view"),
                 viewButton("Top view", "look straight down", () => preview.lookDown()),
-                viewButton("CCW 90", "turn the view a quarter counterclockwise", () => preview.turnView(-1)),
-                viewButton("CW 90", "turn the view a quarter clockwise", () => preview.turnView(1)),
-                button("Reset view", () => preview.resetView(), "btn btn-quiet btn-small", "the overview again"),
-                button("Clear trail", () => preview.clearTrail(), "btn btn-quiet btn-small", "forget the head's trail"),
+                view,
             ),
         ),
+        options,
         el("div", { class: "preview-box" }, canvas),
         scrubRow,
-        el("p", { class: "muted hint" }, "drag orbits (pans when locked), shift or right drag pans, wheel zooms, double click resets; click picks a path, shift or ctrl adds"),
     );
+    setOptions(readStored(VIEW_OPTIONS_KEY) === "1");
 
     // The view is fitted again for another job, and kept for a fresh copy of
     // the same one (an edit) or a plan changed as it is typed.

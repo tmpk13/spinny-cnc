@@ -103,7 +103,11 @@ export function mountDro(root: HTMLElement, ctx: Ctx): void {
             return value.parentElement!;
         });
         replace(joint, ...nodes);
-        board.classList.toggle("hidden", !controls.pad);
+        // The board's X and Y are a row of their own where the joints are
+        // others (a polar machine's radius and table); where the joints
+        // are X and Y themselves, the row would name them twice.
+        const letters = controls.axes.map((axis) => axis.letter.toUpperCase());
+        board.classList.toggle("hidden", !controls.pad || (letters.includes("X") && letters.includes("Y")));
     }
 
     ctx.store.subscribe((state) => {

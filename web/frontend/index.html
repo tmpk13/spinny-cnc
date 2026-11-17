@@ -17,10 +17,17 @@
              Setup side's in the other; one shows at a time, or both side by
              side with the handle between them. -->
         <div id="pane-use" class="pane" data-side="use">
+        <!-- The views of the area shown (src/views/viewbar.ts): one view's
+             panels show at a time, Run's being the steps of a run. -->
+        <nav id="views-use" class="viewbar" hidden></nav>
         <!-- The Use side's areas (src/views/tabs.ts): Home, Job and Run. -->
-        <main id="page-home" class="grid overview-grid page">
+        <main id="page-home" class="grid home-grid page">
             <div class="column">
-                <section id="overview" class="panel" aria-label="Home"></section>
+                <section id="overview" class="panel" aria-label="Next"></section>
+                <section id="home-needs" class="panel" aria-label="Needs you"></section>
+            </div>
+            <div class="column">
+                <section id="home-jobs" class="panel" aria-label="Jobs"></section>
             </div>
         </main>
         <main id="page-job" class="grid page">
@@ -45,6 +52,7 @@
             </div>
             <div class="column">
                 <section id="steps" class="panel" aria-label="Steps"></section>
+                <section id="run-preview" class="panel preview-panel" aria-label="Preview"></section>
                 <section id="camera-view" class="panel" aria-label="Head camera view"></section>
                 <section id="pnp-view" class="panel" aria-label="Bottom camera view"></section>
                 <section id="pnp-top-view" class="panel hidden" aria-label="Top camera view"></section>
@@ -52,6 +60,8 @@
                 <section id="console" class="panel console" aria-label="Console"></section>
             </div>
             <div class="column">
+                <section id="run-connect" class="panel" aria-label="Connect"></section>
+                <section id="run-job" class="panel" aria-label="Job to run"></section>
                 <section id="pnp-parts" class="panel" aria-label="Parts"></section>
                 <section id="pnp-board" class="panel" aria-label="Board"></section>
                 <section id="heightmap" class="panel" aria-label="Height"></section>
@@ -62,6 +72,7 @@
         </div>
         <div id="pane-divider" class="pane-divider" role="separator" aria-orientation="vertical" aria-label="Use and Setup widths" tabindex="0"></div>
         <div id="pane-setup" class="pane" data-side="setup">
+        <nav id="views-setup" class="viewbar" hidden></nav>
         <main id="page-facts" class="grid facts-grid page">
             <div class="column">
                 <section id="facts" class="panel" aria-label="Checklist"></section>

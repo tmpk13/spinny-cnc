@@ -172,6 +172,8 @@ export function goToPanel(id: string): void {
             at.open = true;
         }
     }
+    // A box that keeps the part out of sight (the dock's jog) opens for it.
+    node.dispatchEvent(new CustomEvent("spinny:show", { bubbles: true }));
     if (typeof node.scrollIntoView === "function") {
         node.scrollIntoView({ behavior: "smooth", block: "start" });
     }

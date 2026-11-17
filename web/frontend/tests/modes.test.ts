@@ -229,7 +229,7 @@ describe("cartesian", () => {
         expect(calls.find((c) => c.name === "goto")?.args[0]).toEqual({ kind: "joint", r: 0, z: 0 });
         // A polar machine draws the setup control again, with no z goto.
         store.set({ snapshot: snapshot({}) });
-        expect(root.querySelector('[data-axis="z"]')!.textContent).toContain("Setup only");
+        expect(root.querySelector<HTMLElement>('[data-axis="z"] .axis-bar-head')!.title).toContain("Setup only");
         expect(root.querySelector('input[placeholder="z"]')).toBeNull();
         expect(root.querySelector('input[placeholder="a"]')).not.toBeNull();
     });

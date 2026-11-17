@@ -43,17 +43,17 @@ const EYE = "M0.8 8c1.9 -3.1 4.4 -4.7 7.2 -4.7s5.3 1.6 7.2 4.7c-1.9 3.1 -4.4 4.7
 const UNKEPT = "";
 
 export function mountPageSettings(tools: HTMLElement, panels: PanelsController): void {
-    const gear = el("button", { type: "button", class: "tabs-gear", "aria-label": "Page settings", "aria-haspopup": "dialog", "aria-expanded": "false", title: "page settings" });
+    const gear = el("button", { type: "button", class: "tabs-gear", "aria-label": "Page settings", "aria-haspopup": "dialog", "aria-expanded": "false", "data-label": "Settings", title: "page settings" });
     gear.append(svgIcon(gearPath(), true));
     const quick = el("select", { class: "field tabs-layouts", "aria-label": "Panel layout", title: "the panel layout; pick a kept one to swap to it" }) as HTMLSelectElement;
     const done = el("button", { type: "button", class: "btn btn-small btn-primary tabs-done", title: "stop editing the panels" }, "Done editing");
-    const peek = el("button", { type: "button", class: "tabs-tool tabs-peek", "aria-label": "Show hidden panels", "aria-pressed": "false" });
+    const peek = el("button", { type: "button", class: "tabs-tool tabs-peek", "aria-label": "Show hidden panels", "aria-pressed": "false", "data-label": "Hidden panels" });
     peek.append(svgIcon(EYE, true));
     peek.addEventListener("click", () => panels.setPeeking(!panels.peeking()));
-    const toTop = el("button", { type: "button", class: "tabs-tool", "aria-label": "Scroll to the top", title: "scroll the column last pointed at to its top" });
+    const toTop = el("button", { type: "button", class: "tabs-tool tabs-scroll", "aria-label": "Scroll to the top", title: "scroll the column last pointed at to its top" });
     toTop.append(svgIcon(TO_TOP));
     toTop.addEventListener("click", () => panels.scrollColumn("top"));
-    const toEnd = el("button", { type: "button", class: "tabs-tool", "aria-label": "Scroll to the end", title: "scroll the column last pointed at to its end" });
+    const toEnd = el("button", { type: "button", class: "tabs-tool tabs-scroll", "aria-label": "Scroll to the end", title: "scroll the column last pointed at to its end" });
     toEnd.append(svgIcon(TO_END));
     toEnd.addEventListener("click", () => panels.scrollColumn("end"));
     const sheet = el("div", { class: "panel page-settings", role: "dialog", "aria-label": "Page settings" });

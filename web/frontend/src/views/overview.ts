@@ -1,159 +1,154 @@
-// The Home area: a card for each of the other areas and Setup pages, with
-// a small drawing of what it is for, its name, what it is for in words,
-// and a line on what it holds now (the jobs kept, a run under way, the
-// parts of the board picked, the machine connected, the plugins on, edits
-// not applied); a press on a card shows its page. The drawings are
-// inline SVG drawn with the page's text color and the page's own color
-// (tabs.ts PAGES), so they follow the light and dark themes.
+// The Home area: where things stand, and the one thing to do next. Three
+// panels: Next (the machine connected or not, the step the work stands at
+// with what is so there, and one button that goes on with it: connect the
+// machine found, or the Run area at that step), Needs you (what the
+// Checklist says a person has to do now, each line a link to where it is
+// done), and the jobs to pick from. Home holds no setting and no control
+// of the machine but Connect: everything else is a press away, in the area
+// that owns it.
 
 import { el, replace } from "../dom.ts";
-import { countText } from "../format.ts";
+import { factsOf, type Fact } from "../facts.ts";
+import { defaultPort } from "../ports.ts";
 import type { AppState } from "../state.ts";
+import { isSteps, machineName, runText, stepToOpen, viewsOf } from "./areaviews.ts";
+import { connectOffered, offeredPorts, portName } from "./connection.ts";
 import type { Ctx } from "./context.ts";
-import { portLabel } from "./statusbar.ts";
-import { accentOf, PAGES, pendingOn, showPage, type PageId } from "./tabs.ts";
+import { runActive } from "./heightmap.ts";
+import { FACT_KEYS } from "./facts.ts";
+import { goTo, linkToText } from "./links.ts";
+import { showPage } from "./tabs.ts";
+import { showAreaView } from "./viewbar.ts";
 
-const SVG_NS = "http://www.w3.org/2000/svg";
-
-/** One shape of a drawing: its tag and attributes; `accent` draws it in the card's accent rather than the text color. */
-type Shape = [tag: string, attrs: Record<string, string | number>];
-
-function shape([tag, attrs]: Shape): SVGElement {
-    const node = document.createElementNS(SVG_NS, tag);
-    for (const [name, value] of Object.entries(attrs)) {
-        node.setAttribute(name, String(value));
-    }
-    return node;
+/** What Home offers next: its name, what is so, the button's words, and what the button does. */
+export interface NextAction {
+    /** Connect the port found, find a port, watch a run, or go on at a step of the Run area. */
+    kind: "connect" | "ports" | "run" | "step";
+    title: string;
+    detail: string;
+    label: string;
+    /** The Run area's step the button opens; null for an action that is not a step. */
+    step: string | null;
 }
 
-/** Each page's drawing, in a box 120 by 72; `class: "accent"` marks the parts drawn in the card's accent color. */
-const DRAWINGS: Record<string, Shape[]> = {
-    // A board with a track between two pads, the beam's spot on it.
-    job: [
-        ["rect", { x: 14, y: 10, width: 92, height: 52, rx: 5 }],
-        ["path", { d: "M32 46 H54 L64 28 H88", class: "accent" }],
-        ["circle", { cx: 32, cy: 46, r: 5 }],
-        ["circle", { cx: 88, cy: 28, r: 5 }],
-        ["circle", { cx: 64, cy: 28, r: 2.5, class: "accent fill" }],
-    ],
-    // A play mark beside a progress bar partly filled.
-    run: [
-        ["path", { d: "M18 18 L42 36 L18 54 Z", class: "accent fill" }],
-        ["rect", { x: 54, y: 30, width: 52, height: 12, rx: 3 }],
-        ["path", { d: "M58 36 H84", class: "accent" }],
-    ],
-    // A camera's body and lens.
-    cameras: [
-        ["rect", { x: 28, y: 22, width: 64, height: 40, rx: 5 }],
-        ["path", { d: "M46 22 L52 14 H68 L74 22" }],
-        ["circle", { cx: 60, cy: 42, r: 11, class: "accent" }],
-    ],
-    // A gear beside the zigzag of a toolpath.
-    cam: [
-        ["path", { d: "M44.2 33.5 L48.9 33.9 L48.9 38.1 L44.2 38.5 L43.0 41.4 L46.0 45.0 L43.0 48.0 L39.4 45.0 L36.5 46.2 L36.1 50.9 L31.9 50.9 L31.5 46.2 L28.6 45.0 L25.0 48.0 L22.0 45.0 L25.0 41.4 L23.8 38.5 L19.1 38.1 L19.1 33.9 L23.8 33.5 L25.0 30.6 L22.0 27.0 L25.0 24.0 L28.6 27.0 L31.5 25.8 L31.9 21.1 L36.1 21.1 L36.5 25.8 L39.4 27.0 L43.0 24.0 L46.0 27.0 L43.0 30.6 Z" }],
-        ["circle", { cx: 34, cy: 36, r: 4.5 }],
-        ["path", { d: "M68 14 H106 V24 H68 V34 H106 V44 H68 V54 H106", class: "accent" }],
-    ],
-    // Three sliders, each at its own setting.
-    machines: [
-        ["path", { d: "M16 18 H104 M16 36 H104 M16 54 H104" }],
-        ["circle", { cx: 40, cy: 18, r: 5, class: "accent fill" }],
-        ["circle", { cx: 80, cy: 36, r: 5, class: "accent fill" }],
-        ["circle", { cx: 56, cy: 54, r: 5, class: "accent fill" }],
-    ],
-    // A puzzle piece.
-    ui: [
-        ["path", { d: "M30 20 H50 Q50 10 58 10 Q66 10 66 20 H86 V38 Q96 38 96 46 Q96 54 86 54 V62 H30 V48 Q40 48 40 40 Q40 32 30 32 Z", class: "accent" }],
-    ],
-};
-
-/** The drawing of a page with none of its own: a page's outline. */
-const PLAIN: Shape[] = [["rect", { x: 30, y: 10, width: 60, height: 52, rx: 4 }], ["path", { d: "M40 24 H80 M40 36 H80 M40 48 H66", class: "accent" }]];
-
-export function drawingOf(page: string): SVGSVGElement {
-    const root = document.createElementNS(SVG_NS, "svg") as SVGSVGElement;
-    root.setAttribute("viewBox", "0 0 120 72");
-    root.setAttribute("class", "overview-drawing");
-    root.setAttribute("aria-hidden", "true");
-    for (const entry of DRAWINGS[page] ?? PLAIN) {
-        root.append(shape(entry));
+/**
+ * The next thing to do, from the state: watch a run under way; connect the
+ * machine found, or find it; else the Run area's first step a run needs
+ * that is not done (pick a job, home, place the board), ending in the run.
+ */
+export function nextAction(state: AppState): NextAction {
+    const progress = state.progress ?? state.snapshot.run;
+    if (progress !== null && runActive(progress)) {
+        return { kind: "run", title: progress.state === "hold" ? "A run is held" : "A run is under way", detail: runText(state), label: "Show the run", step: "run" };
     }
-    return root;
+    if (!state.snapshot.connected) {
+        const port = defaultPort(offeredPorts(state));
+        return port
+            ? { kind: "connect", title: "Connect the machine", detail: `${portName(port)} is plugged in.`, label: `Connect ${portName(port)}`, step: null }
+            : { kind: "ports", title: "Connect the machine", detail: "No port found: plug the machine in, or type its port on the Machines page.", label: "Machines and ports", step: null };
+    }
+    const views = viewsOf("run", state);
+    const id = isSteps(views) ? stepToOpen(views) : null;
+    const step = views.find((view) => view.id === id);
+    if (!step) {
+        return { kind: "step", title: "Run", detail: "", label: "Go to Run", step: null };
+    }
+    const last = step === views[views.length - 1];
+    return {
+        kind: "step",
+        title: last ? step.label : `${step.label}: ${step.tip}`,
+        detail: step.line ?? "",
+        label: last ? `Go to ${step.label}` : `Continue: ${step.label}`,
+        step: step.id,
+    };
 }
 
-/** What a page holds now, in a few words; empty when there is nothing to say. */
-export function pageNote(page: PageId | string, state: AppState): string {
-    const notes: string[] = [];
-    switch (page) {
-        case "job":
-            notes.push(countText(state.jobs.length, "job", "jobs"));
-            if (state.auto?.busy) {
-                notes.push("the assistant at work");
-            }
-            break;
-        case "run": {
-            const run = state.progress;
-            if (run && (run.state === "running" || run.state === "hold")) {
-                const name = state.jobs.find((job) => job.id === run.job)?.name ?? run.job;
-                const share = run.total > 0 ? Math.round((100 * run.acked) / run.total) : 0;
-                notes.push(`${run.state === "hold" ? "holding" : "running"} ${name}, ${share}%`);
-            }
-            const parts = state.components?.components.length ?? 0;
-            if (parts > 0) {
-                notes.push(`${countText(parts, "part", "parts")} on the board picked`);
-            }
-            break;
-        }
-        case "machines": {
-            // The port by the name the Connection panel gives it, shorter
-            // than its path (a by-id path runs to sixty letters).
-            const url = state.snapshot.url;
-            const port = url ? state.ports.find((entry) => entry.url === url || entry.device === url) : undefined;
-            notes.push(state.snapshot.connected ? `connected: ${port ? portLabel(port) : url ?? "a machine"}` : "nothing connected");
-            break;
-        }
-        case "ui": {
-            const plugins = state.plugins ?? [];
-            if (plugins.length > 0) {
-                notes.push(`${plugins.filter((plugin) => plugin.enabled).length} of ${countText(plugins.length, "plugin", "plugins")} on`);
-            }
-            break;
-        }
-        default:
-            break;
+/** The machine in a line: which one is connected and what it is doing, or that none is. */
+export function machineLine(state: AppState): string {
+    const snapshot = state.snapshot;
+    if (!snapshot.connected) {
+        return "No machine is connected.";
     }
-    const pending = pendingOn(state.pending, page as PageId);
-    if (pending > 0) {
-        notes.push(`${countText(pending, "edit", "edits")} not applied`);
-    }
-    return notes.join("; ");
+    const said = snapshot.machine?.state;
+    const doing = said === undefined ? "connected" : said === "Alarm" ? `in alarm ${snapshot.machine?.alarm ?? ""}`.trim() : said === "Idle" ? "idle" : said.toLowerCase();
+    return said === undefined ? `${machineName(state)} is connected.` : `${machineName(state)} is connected, ${doing}.`;
 }
 
+/** The facts that ask for someone now. */
+export function needsOf(state: AppState): Fact[] {
+    return factsOf(state).filter((fact) => fact.need !== null);
+}
+
+/** The Next panel in `root`. */
 export function mountOverview(root: HTMLElement, ctx: Ctx): void {
-    const grid = el("div", { class: "overview-cards" });
-    root.append(el("div", { class: "panel-head" }, el("h2", {}, "Home")), grid);
-    const cards = PAGES.filter((page) => page.id !== "home").map((page) => {
-        const note = el("span", { class: "overview-note muted" });
-        const card = el("button", {
-            type: "button",
-            class: "overview-card",
-            title: `show the ${page.label} page: ${page.tip}`,
-            "data-page": page.id,
-            style: `--card-accent: ${accentOf(page.id)}`,
-        }, drawingOf(page.id), el("span", { class: "overview-name" }, page.label), el("span", { class: "overview-tip muted" }, page.tip), note);
-        card.addEventListener("click", () => showPage(page.id));
-        return { page: page.id, card, note };
+    const machine = el("p", { class: "home-machine" });
+    const title = el("p", { class: "home-title" });
+    const detail = el("p", { class: "muted home-detail" });
+    let action: NextAction = nextAction(ctx.store.get());
+    const go = el("button", { type: "button", class: "btn btn-primary btn-big home-go" });
+    go.addEventListener("click", () => {
+        switch (action.kind) {
+            case "connect":
+                void connectOffered(ctx);
+                break;
+            case "ports":
+                void goTo({ panel: "connection", detail: null });
+                break;
+            default:
+                showPage("run");
+                if (action.step !== null) {
+                    showAreaView("run", action.step);
+                }
+        }
     });
-    replace(grid, ...cards.map((entry) => entry.card));
-    const draw = (state: AppState): void => {
-        for (const { page, note } of cards) {
-            const text = pageNote(page, state);
-            if (note.textContent !== text) {
-                note.textContent = text;
-            }
-            note.hidden = text === "";
+    root.append(
+        el("div", { class: "panel-head" }, el("h2", {}, "Next")),
+        el("div", { class: "panel-body stack home-next" }, machine, title, detail, el("div", { class: "button-row" }, go)),
+    );
+
+    const set = (node: HTMLElement, text: string): void => {
+        if (node.textContent !== text) {
+            node.textContent = text;
         }
     };
-    ctx.store.subscribe(draw, ["jobs", "progress", "components", "auto", "snapshot", "ports", "pending", "plugins"]);
+    const draw = (state: AppState): void => {
+        action = nextAction(state);
+        set(machine, machineLine(state));
+        set(title, action.title);
+        set(detail, action.detail);
+        detail.hidden = action.detail === "";
+        set(go, action.label);
+        go.title = action.kind === "connect" ? "open the port and read the machine's settings" : action.kind === "ports" ? "the Setup side's Machines page" : "the Run area, at this step";
+    };
+    ctx.store.subscribe(draw, ["snapshot", "ports", "jobs", "job", "progress", "placing", "components", "settings", "machines", "heightMap"]);
+    draw(ctx.store.get());
+}
+
+/** The Needs you panel in `root`: the Checklist's lines that ask for someone now. */
+export function mountHomeNeeds(root: HTMLElement, ctx: Ctx): void {
+    const list = el("ul", { class: "home-needs" });
+    const none = el("p", { class: "muted" }, "Nothing needs you.");
+    const all = linkToText("facts", "The whole Checklist", "every value the machine runs on, and where each came from");
+    root.append(
+        el("div", { class: "panel-head" }, el("h2", {}, "Needs you")),
+        el("div", { class: "panel-body stack" }, none, list, el("p", { class: "home-all" }, all)),
+    );
+    let drawn = "";
+    const draw = (state: AppState): void => {
+        const needs = needsOf(state);
+        // Drawn again only when the lines change: a link replaced between a press and its release takes no click.
+        const key = JSON.stringify(needs.map((fact) => [fact.id, fact.label, fact.need, fact.where, fact.action]));
+        if (key === drawn) {
+            return;
+        }
+        drawn = key;
+        none.hidden = needs.length > 0;
+        list.hidden = needs.length === 0;
+        replace(list, ...needs.map((fact) => el("li", { class: "home-need" },
+            el("span", { class: "home-need-text" }, el("span", { class: "home-need-name" }, fact.label), el("span", { class: "muted" }, fact.need ?? "")),
+            linkToText(fact.where, fact.action, `${fact.label}: ${fact.need ?? ""}`),
+        )));
+    };
+    ctx.store.subscribe(draw, FACT_KEYS);
     draw(ctx.store.get());
 }
