@@ -5602,7 +5602,21 @@ def create_app(
 
     @app.get("/api/pnp/top/frame.jpg")
     def top_frame(width: int = FRAME_DEFAULT_WIDTH, overlay: int = 1):
-        return jpeg(lambda: backend.top_frame(width, bool(overlay)), PnpError)
+        # The picture's age and number go along as headers: a program that
+        # moved the head and wants the new place's picture tells a fresh
+        # one from the last one answered again (survey.sweep).
+        taken: dict = {}
+
+        def take() -> bytes:
+            data, info = backend.top_frame_and_age(width, bool(overlay))
+            taken.update(info)
+            return data
+
+        response = jpeg(take, PnpError)
+        for key, header in (("age_ms", "X-Frame-Age-Ms"), ("frame", "X-Frame-Number")):
+            if key in taken:
+                response.headers[header] = f"{taken[key]:g}"
+        return response
 
     @app.post("/api/pnp/top/mark")
     def top_mark():

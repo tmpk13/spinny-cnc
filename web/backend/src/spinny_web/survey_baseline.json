@@ -1,7 +1,14 @@
 {
- "about": "The numbers every pcbv change has to beat: spinny-survey baseline grades the survey below (169 pictures of an OreSat battery card, github.com/oresat/oresat-batteries oresat-battery-card at 031b458, under a LumenPnP's top camera on 2026-11-14, 8 by 7.5 mm apart over the board and a margin) with each case's pcbv options against the truth here, and fails when a case has fewer right locks, more wrong ones, or a right rms higher by more than rms_slack_mm. The pictures stay in var/surveys on the machine that took them.",
+ "about": "The numbers every pcbv change has to beat: spinny-survey baseline grades the survey below (169 pictures of an OreSat battery card, github.com/oresat/oresat-batteries oresat-battery-card at 031b458, under a LumenPnP's top camera on 2026-11-14, 8 by 7.5 mm apart over the board and a margin) with each case's pcbv options against the truth here (its two stale stops left out), and fails when a case has fewer right locks, more wrong ones, or a right rms higher by more than rms_slack_mm. The pictures stay in var/surveys on the machine that took them.",
  "survey": "20261114-lumen-battery-grid",
  "pictures": 169,
+ "stale": {
+  "about": "Stops whose picture is the stop before's: the camera gave no new frame for a moment and the sweep kept its last one (found on 2026-11-17 by correlating each picture with the one before, 0.99 and 0.999 where no other pair passes 0.76). They are left out of every case; until then stop 46's right lock of the picture it really shows was counted wrong, 8 mm off. spinny-survey sweep now asks again for a picture taken after the head came to rest.",
+  "stops": [
+   24,
+   46
+  ]
+ },
  "board_sha256": "079ed3fc2bbccbb1f71be77c9cba54464227953db315b3e41ef377fb56836eef",
  "truth": {
   "about": "head = R(turn_deg) (x, -y) + shift for a KiCad board point (x, y), the head's place over it in the LumenPnP's X and Y, mm: the robust fit of the scale case's 52 right locks",
@@ -14,37 +21,37 @@
  "rms_slack_mm": 0.005,
  "cases": {
   "scale": {
-   "about": "pcbv told the scale within a fifth either way of the camera's 0.0161 mm a pixel",
+   "about": "pcbv told the scale within a fifth either way of the camera's 0.0161 mm a pixel, too wide a window for its whole-picture search. Since 2026-11-17 a masked board's looks begin with the least of the three colors (pcb-vision fc92675): 20 more pictures lock right and 4 more wrong than the 52 and 54 (of 169) before it, the wrong ones pairing under half of their pads, which the backend's vote leaves out",
    "options": [
     "--finish",
     "masked",
     "--scale",
     "0.0129:0.0194"
    ],
-   "pictures": 169,
-   "locked": 106,
-   "right": 52,
-   "wrong": 54,
-   "right_rms_mm": 0.0689,
-   "pcbv": "pcb-vision bf6c52b (the session's build gave the same)",
-   "measured": "2026-11-14"
+   "pictures": 167,
+   "locked": 130,
+   "right": 72,
+   "wrong": 58,
+   "right_rms_mm": 0.068,
+   "pcbv": "pcb-vision 404f93b",
+   "measured": "2026-11-17"
   },
   "noscale": {
-   "about": "no scale given: pcbv tries its whole range, then its scale windows",
+   "about": "no scale given: pcbv tries its whole range, then its scale windows; 17 more right and 8 more wrong than the 48 and 68 (of 169) before the look through the least of the three colors",
    "options": [
     "--finish",
     "masked"
    ],
-   "pictures": 169,
-   "locked": 116,
-   "right": 48,
-   "wrong": 68,
-   "right_rms_mm": 0.07,
-   "pcbv": "pcb-vision bf6c52b (the session's build gave the same)",
-   "measured": "2026-11-14"
+   "pictures": 167,
+   "locked": 141,
+   "right": 65,
+   "wrong": 76,
+   "right_rms_mm": 0.0726,
+   "pcbv": "pcb-vision 404f93b",
+   "measured": "2026-11-17"
   },
   "measured": {
-   "about": "the backend's default since 2026-11-15: pcbv told the camera's measured scale 3% either way (vision.SCALE_SPREAD) and the lens Measure camera finds, so its auto model fits a similarity with the scale held to the window",
+   "about": "the backend's options for a measured camera: the scale 3% either way (vision.SCALE_SPREAD) and the lens Measure camera finds, so pcbv fits a similarity with the scale held to the window and, since 2026-11-17, runs its whole-picture search beside the spots'. Each picture is its own pcbv here, so that search never earns the trust it needs to refuse a lock: the wrong locks left are the spots' own",
    "options": [
     "--finish",
     "masked",
@@ -53,13 +60,33 @@
     "--lens",
     "0.026,0,1280x720"
    ],
-   "pictures": 169,
-   "locked": 86,
-   "right": 58,
-   "wrong": 28,
-   "right_rms_mm": 0.0478,
-   "pcbv": "pcb-vision 3d3faad",
-   "measured": "2026-11-15"
+   "pictures": 167,
+   "locked": 128,
+   "right": 112,
+   "wrong": 16,
+   "right_rms_mm": 0.0622,
+   "pcbv": "pcb-vision 404f93b",
+   "measured": "2026-11-17"
+  },
+  "sure": {
+   "about": "the measured case with the whole-picture search trusted from the first picture (--dense sure), as a backend's pcbv is after its first lock that fits the picture: views of a few pads lock, a lock the picture does not fit is refused",
+   "options": [
+    "--finish",
+    "masked",
+    "--scale",
+    "0.015617:0.016583",
+    "--lens",
+    "0.026,0,1280x720",
+    "--dense",
+    "sure"
+   ],
+   "pictures": 167,
+   "locked": 114,
+   "right": 114,
+   "wrong": 0,
+   "right_rms_mm": 0.0622,
+   "pcbv": "pcb-vision 404f93b",
+   "measured": "2026-11-17"
   }
  }
 }

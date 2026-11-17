@@ -321,12 +321,42 @@ def test_baseline_fails_a_build_that_does_worse(tmp_path, capsys):
     assert survey.main(argv) == 2
 
 
+def test_stale_stops_are_left_out_of_a_grade(tmp_path):
+    rng = np.random.default_rng(8)
+    stops, found = made_up(rng, right=8, wrong=2, lost=2, noise=0.01)
+    folder, program = fake_survey(tmp_path, stops, found)
+    truth = {"turn_deg": TURN, "shift": list(SHIFT)}
+    whole = survey.graded(folder, ["--finish", "masked"], program=str(program), truth=truth)
+    assert (whole["pictures"], whole["right"], whole["wrong"]) == (12, 8, 2)
+    # Named by a baseline: two right locks' pictures were of another place.
+    less = survey.graded(folder, ["--finish", "masked"], program=str(program), truth=truth, skip=frozenset({0, 1}))
+    assert (less["pictures"], less["right"], less["wrong"]) == (10, 6, 2)
+    data = {
+        "survey": "made-up", "pictures": 12, "board_sha256": survey.sha256_of(folder / survey.BOARD), "truth": truth, "rms_slack_mm": 0.005,
+        "stale": {"stops": [0, 1]},
+        "cases": {"scale": {"options": ["--finish", "masked"], "pictures": 10, "locked": 8, "right": 6, "wrong": 2, "right_rms_mm": 1.0}},
+    }
+    result = survey.run_baseline(data, folder, ["scale"], str(program), 1)[0]
+    assert result["now"]["pictures"] == 10 and result["now"]["right"] == 6 and not result["worse"]
+    # Marked by the sweep itself: left out without being named.
+    lines = [json.loads(line) for line in (folder / survey.STOPS).read_text().splitlines()]
+    lines[2]["stale"] = True
+    (folder / survey.STOPS).write_text("".join(json.dumps(line) + "\n" for line in lines))
+    assert survey.graded(folder, ["--finish", "masked"], program=str(program), truth=truth)["pictures"] == 11
+
+
 def test_the_shipped_baseline_names_its_cases():
     data = survey.read_baseline()
     assert data["pictures"] == 169
     scale = data["cases"]["scale"]
     assert "--scale" in scale["options"]
-    assert (scale["locked"], scale["right"], scale["wrong"]) == (106, 52, 54)
+    # Two of the sweep's 169 stops kept the picture of the stop before.
+    assert data["stale"]["stops"] == [24, 46] and scale["pictures"] == 167
+    assert (scale["locked"], scale["right"], scale["wrong"]) == (130, 72, 58)
+    # A measured camera whose pcbv trusts its whole-picture search locks no
+    # picture wrong.
+    sure = data["cases"]["sure"]
+    assert "sure" in sure["options"] and sure["wrong"] == 0 and sure["right"] >= 114
 
 
 # --- the sweep, over a backend played by a class -------------------------------------------------
@@ -353,9 +383,13 @@ class FakeBackend(survey.Backend):
         return {"connected": self.connected, "name": "Fake LumenPnP", "position": {"x": self.at[0], "y": self.at[1]},
                 "top": {"offset": [23.5, 65.2], "board_look": {"pose": "lost", "found": False}}}
 
-    def raw(self, method, path, body=None, timeout=120.0):
+    def picture(self, path, timeout=120.0):
         assert path.startswith("/api/pnp/top/frame.jpg?width=640&overlay=0")
-        return f"picture at {self.at}".encode()
+        self.asked = getattr(self, "asked", 0) + 1
+        # The ages a test scripted, one a request, then fresh pictures.
+        ages = getattr(self, "ages", [])
+        age = ages.pop(0) if ages else 0.0
+        return f"picture at {self.at}".encode(), age
 
 
 def test_sweep_keeps_a_picture_and_the_place_read_back_at_each_stop(tmp_path):
@@ -373,6 +407,30 @@ def test_sweep_keeps_a_picture_and_the_place_read_back_at_each_stop(tmp_path):
     assert header["machine"] == "Fake LumenPnP" and header["stops"] == 6 and header["top"]["offset"] == [23.5, 65.2]
     with pytest.raises(ValueError, match="no G-code machine"):
         survey.sweep(FakeBackend(connected=False), tmp_path / "t", places, 0.0, 640, {}, say=lambda text: None)
+
+
+def test_sweep_asks_again_for_a_picture_taken_before_the_head_came_to_rest(tmp_path, monkeypatch):
+    monkeypatch.setattr(survey, "FRESH_SECONDS", 0.5)
+    places = [(10.0, 20.0)]
+    # A camera that stalled: its last picture is 30 s old at the first ask,
+    # and a fresh one comes at the third.
+    backend = FakeBackend()
+    backend.ages = [30.0, 30.1]
+    said = []
+    assert survey.sweep(backend, tmp_path / "s", places, 0.0, 640, {}, say=said.append) == 1
+    stop = survey.read_stops(tmp_path / "s")[0]
+    assert backend.asked == 3 and "stale" not in stop and stop["age_ms"] == 0.0
+    # One that never delivers again: the old picture is kept, and marked.
+    dead = FakeBackend()
+    dead.ages = [30.0 + 0.1 * i for i in range(100)]
+    assert survey.sweep(dead, tmp_path / "t", places, 0.0, 640, {}, say=said.append) == 1
+    stop = survey.read_stops(tmp_path / "t")[0]
+    assert stop["stale"] is True and any("stale" in text for text in said)
+    # A backend that tells no age is taken at its word, once.
+    old = FakeBackend()
+    old.ages = [None]
+    assert survey.sweep(old, tmp_path / "u", places, 0.0, 640, {}, say=said.append) == 1
+    assert old.asked == 1 and "age_ms" not in survey.read_stops(tmp_path / "u")[0]
 
 
 def test_a_search_kept_without_its_frame_takes_the_record_header(tmp_path):

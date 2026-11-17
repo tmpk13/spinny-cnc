@@ -8,7 +8,9 @@ the probability search is in
 [PROBABILISTIC_SEARCH.md](PROBABILISTIC_SEARCH.md). This file only judges
 them: what works, what to build next, what to stop building.
 [CV_REVIEW.md](CV_REVIEW.md) replays the sessions' pictures and records to
-rank changes for speed, accuracy and wrong locks, with sources.
+rank changes for speed, accuracy and wrong locks, with sources, and
+[CV_WHOLE_PICTURE.md](CV_WHOLE_PICTURE.md) is the pass after it: views of
+few pads locked by the whole picture, wrong locks refused.
 
 ## Status after the second session (2026-11-14, night)
 

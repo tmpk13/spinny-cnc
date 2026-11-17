@@ -148,3 +148,49 @@ the numbers are in docs/CV_HARDWARE.md. Decisions and traps:
 - Travel 200 mm/s in the LumenPnP file since c8cf980 (no step lost,
   frames still on arrival). Marlin here: M203 X/Y 1500, M201 10000, M204
   T3500, 320 steps/mm.
+
+## Fourth pass, 2026-11-17 (offline, the kept pictures; docs/CV_WHOLE_PICTURE.md)
+
+- pcbv's lock rate follows the pads a picture shows (45 of 48 right at 40
+  and more, 2 of 95 under 20) and over half of the battery card shows
+  under 20. Its whole-picture search and the look through the least of
+  the three colors (pcb-vision fc92675, ff838d6; why and how in its
+  notes/dense.md) answer that; this repository only reads the result.
+- `match_of` takes the larger of the pairs' share and the whole
+  picture's score. Not the score alone: a lock that search only checked
+  must not lose weight on a board whose pads its channel does not show,
+  and pcbv, which knows whether one lock has fitted, does the refusing.
+  Not the pairs alone: the search locks a view of four pads the spot
+  finder saw two of, which the vote's least match would drop.
+- pcbv trusts that search per loaded board, so the backend sends no
+  `dense` field: trust comes with the first lock that fits and goes when
+  the board is loaded again (a new scale, parts placed).
+- A stop on the board that locks nothing costs about 0.7 s more: two of
+  the searches a stop waits for (STOP_SEARCHES, six) run the
+  whole-picture search over 36 turns, one for each channel, and pcbv
+  searches a picture that has not changed no further (ff838d6 swept
+  again at every round of looks). STOP_SEARCHES itself is not changed
+  without the machine to time it; a known turn (a place expected, the
+  last lock's) searches 3 turns.
+- Stops 24 and 46 of the first sweep hold the picture of the stop
+  before: the camera gave no frame for a moment (one look in that second
+  against two to four) and pcbv's `frame` answers its last picture again
+  with a growing `age_ms`, which the HTTP route dropped. The route now
+  sends it (X-Frame-Age-Ms), the sweep asks again until the picture was
+  taken after the head came to rest and marks a stop stale otherwise,
+  and grades leave stale stops out (the baseline names the two). A
+  search's own looks were never exposed: they wait on `age_ms`
+  (camera.wait_settled).
+- The baseline's cases were written again with the new pcbv though two
+  count as worse by the tool's rule: with the scale a fifth either way
+  20 more pictures lock right and 4 more wrong (the fourth look gives a
+  lost picture one more try), and the measured case's rms rose from
+  0.048 to 0.062 mm because 54 more pictures lock, in views of few pads.
+- Prototypes ran in system python3 (numpy and PIL; the backend's venv
+  has no JPEG decoder), 0.3 s a picture for the coarse search alone, 13
+  minutes for all 1085 pictures with refinement on six cores: the port
+  to Rust is over ten times faster and was needed to try rules on every
+  picture.
+- Nozzle centering was not touched: no picture of a tip over the bottom
+  camera is kept. What to build once there are some is in the doc; Q61
+  asks for them.

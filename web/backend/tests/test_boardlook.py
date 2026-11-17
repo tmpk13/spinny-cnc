@@ -266,6 +266,15 @@ def test_a_pose_says_how_well_it_matched():
     assert match_of({"inliers": 30, "expected": 20, "unsure": 20}) == pytest.approx(1.0)
     assert match_of({"inliers": 15, "expected": 20, "unsure": 20}) == pytest.approx(0.5)
     assert match_of({"state": "locked"}) == 1.0 and match_of({"inliers": 3, "expected": 0}) == 1.0
+    # pcbv's whole-picture search: a view of few pads the spot finder saw
+    # half of is as good as its score says; a lock that search only checked
+    # keeps what its pairs gave it, and a low score does not lower it.
+    assert match_of({"inliers": 2, "expected": 4, "dense": {"score": 0.82, "pads": 4, "found": True}}) == pytest.approx(0.82)
+    assert match_of({"inliers": 30, "expected": 32, "dense": {"score": 0.7, "pads": 32, "found": False}}) == pytest.approx(30 / 32)
+    assert match_of({"inliers": 30, "expected": 32, "dense": {"score": 0.2, "pads": 32, "found": False}}) == pytest.approx(30 / 32)
+    # A candidate carries its score itself.
+    assert match_of({"inliers": 1, "expected": 6, "score": 0.66}) == pytest.approx(0.66)
+    assert match_of({"score": 0.66}) == pytest.approx(0.66) and match_of({"inliers": 3, "expected": 0, "score": 1.4}) == 1.0
 
 
 def test_each_guess_says_where_the_newest_picture_lies_on_the_board():

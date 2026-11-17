@@ -36,6 +36,15 @@ cross-modal kin). None is tested on a rendered layout against a photo, the
 CPU-fast ones say they are weak on repeated patterns, and the dense ones
 want a GPU ([3](#sources)).
 
+## Status, 2026-11-17
+
+A fourth pass, on the kept pictures alone, is in
+[CV_WHOLE_PICTURE.md](CV_WHOLE_PICTURE.md): pcbv now also lays the whole
+picture over the drawn pads (the likelihood surface per look this review
+left for later), which locks views of few pads and refuses the wrong
+locks. It corrects two readings below: survey picture 46 is a stale
+frame, not a repeated circuit, and picture 73 a QFP turned half round.
+
 ## Status, 2026-11-15
 
 Applied the same day and measured offline, on the survey's 169 pictures
@@ -392,10 +401,13 @@ sparse picture ([1](#sources)).
 
 ### What one picture cannot settle
 
-The 3 wrong locks every filter keeps (survey pictures 46, 67 and 73) are a
-repeated circuit 8, 40 and 5 mm from the right place, two of them at the
-right turn. No test of one picture can tell them apart; a second place or
-a prior can. pcbv should report every significant mode with its odds, not
+The 3 wrong locks every filter keeps (survey pictures 46, 67 and 73) read
+as a repeated circuit 8, 40 and 5 mm from the right place, two of them at
+the right turn. (Since found, [CV_WHOLE_PICTURE.md](CV_WHOLE_PICTURE.md):
+46 is the stop before's picture, 8 mm being the sweep's step, and 73 a
+QFP that passes the spots' checks at every quarter turn, which the whole
+picture tells apart.) No test of the spots of one picture can tell a
+true repeat apart; a second place or a prior can. pcbv should report every significant mode with its odds, not
 only the best, so the copies reach the posterior as separate hypotheses
 for `look_value` to split; only a feature outside the repeated unit
 confirms, as the star trackers' Pyramid method does with its fourth star.

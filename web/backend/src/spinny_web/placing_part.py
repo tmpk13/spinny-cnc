@@ -834,10 +834,14 @@ class PlacingPart:
         return self.publish_placing()
 
     def top_frame(self, width: int, overlay: bool) -> bytes:
+        return self.top_frame_and_age(width, overlay)[0]
+
+    def top_frame_and_age(self, width: int, overlay: bool) -> tuple[bytes, dict]:
+        """The top camera's picture with its frame number and age (ms)."""
         from .backend_shared import _check_frame_width
 
         _check_frame_width(width)
-        return self.top.frame(width, overlay)
+        return self.top.frame_and_age(width, overlay)
 
     def top_mark(self) -> dict:
         """The nozzle's tip is over the mark the offset is measured from: its place is kept."""

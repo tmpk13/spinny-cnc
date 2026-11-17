@@ -80,6 +80,9 @@ BASELINE = Path(__file__).with_name("survey_baseline.json")
 # Where pcbv is looked for when neither --pcbv nor PCBV names it: the
 # sibling pcb-vision repository's builds, release first.
 PCBV_SIBLING = Path(__file__).resolve().parents[5] / "pcb-vision" / "target"
+# How long a sweep waits at a stop for a picture taken after the head came
+# to rest there, s, before it keeps the old one and marks the stop stale.
+FRESH_SECONDS = 5.0
 # What is kept in a survey folder.
 STOPS = "stops.jsonl"
 HEADER = "survey.json"
@@ -409,10 +412,13 @@ def picture_of(folder: Path, index: int) -> Path:
     return folder / f"{index:04d}.jpg"
 
 
-def answers(folder: Path, board: Path, program: str, options: list[str], cache: Path | None, jobs: int = 1, fresh: bool = False) -> list[dict]:
+def answers(folder: Path, board: Path, program: str, options: list[str], cache: Path | None, jobs: int = 1, fresh: bool = False,
+            skip: frozenset[int] = frozenset()) -> list[dict]:
     """pcbv on every stop's picture, the answers kept in `cache` as
-    locate-NNNN.json and read from there when present (unless `fresh`)."""
-    stops = read_stops(folder)
+    locate-NNNN.json and read from there when present (unless `fresh`).
+    Stops whose picture is not of their place are left out: the ones the
+    sweep marked stale, and those `skip` names by their index."""
+    stops = [stop for stop in read_stops(folder) if stop["index"] not in skip and not stop.get("stale")]
     if cache is not None:
         cache.mkdir(parents=True, exist_ok=True)
 
@@ -451,9 +457,10 @@ def survey_folder(reference: str | Path, root: Path) -> Path:
 
 
 def graded(folder: Path, options: list[str], board: Path | None = None, program: str | None = None, cache: Path | None = None,
-           jobs: int = 1, fresh: bool = False, truth: dict | None = None) -> dict:
+           jobs: int = 1, fresh: bool = False, truth: dict | None = None, skip: frozenset[int] = frozenset()) -> dict:
     """A survey graded: pcbv's answers (from the cache for this build, board
-    and options when kept) through `grade`; the pcbv and options with it."""
+    and options when kept) through `grade`; the pcbv and options with it.
+    `skip` leaves stops out by their index (pictures known to be stale)."""
     board = board or folder / BOARD
     if not board.is_file():
         raise ValueError(f"{board} is missing: name the survey's board with --board")
@@ -461,7 +468,7 @@ def graded(folder: Path, options: list[str], board: Path | None = None, program:
     program_sha, board_sha = sha256_of(Path(program)), sha256_of(board)
     if cache is None:
         cache = folder / GRADES / cache_key(program_sha, board_sha, options)
-    rows = answers(folder, board, program, options, cache, jobs, fresh)
+    rows = answers(folder, board, program, options, cache, jobs, fresh, skip)
     answer = grade(rows, truth)
     answer.update(pcbv=program, pcbv_sha256=program_sha, board_sha256=board_sha, options=options, cache=str(cache))
     (cache / "summary.json").write_text(json.dumps({**answer, "rows": rows}, indent=1))
@@ -527,9 +534,11 @@ def run_baseline(data: dict, folder: Path, cases: list[str], program: str | None
     if count != data["pictures"]:
         raise ValueError(f"{folder} holds {count} stops, the baseline {data['pictures']}")
     results = []
+    # Stops whose picture is the stop before's (the camera gave no new one).
+    stale = frozenset(int(index) for index in data.get("stale", {}).get("stops", []))
     for name in cases:
         case = data["cases"][name]
-        answer = graded(folder, list(case["options"]), board, program, jobs=jobs, truth=data["truth"])
+        answer = graded(folder, list(case["options"]), board, program, jobs=jobs, truth=data["truth"], skip=stale)
         kept = {k: case[k] for k in NUMBERS}
         problems = worse(answer, kept, float(data.get("rms_slack_mm", 0.0)))
         results.append({
@@ -596,6 +605,23 @@ class Backend:
     def call(self, method: str, path: str, body=None, timeout: float = 120.0):
         return json.loads(self.raw(method, path, body, timeout) or b"null")
 
+    def picture(self, path: str, timeout: float = 120.0) -> tuple[bytes, float | None]:
+        """A camera's picture and its age, s, as the backend's X-Frame-Age-Ms
+        header says it; None from a backend that sends none."""
+        request = urllib.request.Request(self.url + path, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                age = response.headers.get("X-Frame-Age-Ms")
+                data = response.read()
+        except urllib.error.HTTPError as exc:
+            raise ValueError(f"GET {path}: {exc.code} {exc.read().decode(errors='replace')}") from exc
+        except urllib.error.URLError as exc:
+            raise ValueError(f"no backend at {self.url}: {exc.reason}") from exc
+        try:
+            return data, float(age) / 1000.0 if age is not None else None
+        except ValueError:
+            return data, None
+
     def goto(self, place: Point) -> None:
         self.call("POST", "/api/goto", {"kind": "joint", "r": round(place[0], 3), "z": round(place[1], 3)})
 
@@ -639,8 +665,18 @@ def sweep(backend: Backend, folder: Path, places: list[Point], settle: float, wi
             started = time.time()
             backend.goto(place)
             joint = backend.joint()
+            rested = time.monotonic()
             time.sleep(settle)
-            picture = backend.raw("GET", f"/api/pnp/top/frame.jpg?width={width}&overlay=0")
+            # The picture must have been taken here: a camera that delivers
+            # nothing for a moment answers its last picture again (the
+            # first survey kept the stop before's picture at 2 of its 169
+            # stops, and both were graded as wrong locks).
+            path = f"/api/pnp/top/frame.jpg?width={width}&overlay=0"
+            picture, age = backend.picture(path)
+            while age is not None and time.monotonic() - age < rested and time.monotonic() - rested < settle + FRESH_SECONDS:
+                time.sleep(0.1)
+                picture, age = backend.picture(path)
+            stale = age is not None and time.monotonic() - age < rested
             picture_of(folder, index).write_bytes(picture)
             placing = backend.placing()
             look = (placing.get("top") or {}).get("board_look") or {}
@@ -649,6 +685,11 @@ def sweep(backend: Backend, folder: Path, places: list[Point], settle: float, wi
                 "time": time.time(), "move_s": round(time.time() - started, 3),
                 "look": {k: look.get(k) for k in ("pose", "locked", "looks", "found", "estimate")},
             }
+            if age is not None:
+                line["age_ms"] = round(age * 1000.0, 1)
+            if stale:
+                line["stale"] = True
+                say(f"{index:4d}: no picture taken after the head came to rest within {FRESH_SECONDS:g} s; the old one is kept and the stop marked stale")
             log.write(json.dumps(line) + "\n")
             log.flush()
             done += 1

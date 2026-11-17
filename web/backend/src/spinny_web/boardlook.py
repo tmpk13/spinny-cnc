@@ -548,20 +548,39 @@ def _near_end(share: float, length: float, reach: float) -> bool:
     return abs(along) <= reach or abs(along - length) <= reach
 
 
+def whole_score(raw: dict) -> float | None:
+    """What pcbv's whole-picture search says of a pose or a candidate, 0 to
+    1: how alike the picture and the drawn board are there (a pose's
+    `dense.score`, a candidate's `score`). None when that search did not
+    look at it: a camera without a measured scale, a frame tracked by its
+    spots, an older pcbv."""
+    dense = raw.get("dense")
+    score = dense.get("score") if isinstance(dense, dict) else raw.get("score")
+    return min(max(float(score), 0.0), 1.0) if _number(score) else None
+
+
 def match_of(raw: dict) -> float:
     """How well a locked pose matched the board, 0 to 1: the features pcbv
     paired of those it expected in the picture, an unsure feature counted
     among those expected at pcbv's weight (pcbv refuses a lock under a
     quarter). pcbv counts an unsure feature paired as a whole one, so with
     unsure features about the share reads a little high; it is capped at
-    1, and 1 for a pose that does not say."""
+    1, and 1 for a pose that does not say.
+
+    Where pcbv's whole-picture search scored the pose, the larger of that
+    score and the pairs' share: the search locks views whose few pads the
+    spot finder saw half of (glare, a film) at scores of 0.6 to 0.9, and a
+    lock it only checked keeps at least what its pairs gave it. A low
+    score never lowers a match here: pcbv itself refuses the lock once it
+    trusts that search on the board."""
     inliers, expected, unsure = raw.get("inliers"), raw.get("expected"), raw.get("unsure")
+    score = whole_score(raw)
     if not _number(inliers) or not _number(expected):
-        return 1.0
+        return 1.0 if score is None else score
     whole = float(expected) + UNSURE_WEIGHT * (float(unsure) if _number(unsure) else 0.0)
     if whole <= 0.0:
-        return 1.0
-    return min(max(float(inliers) / whole, 0.0), 1.0)
+        return 1.0 if score is None else score
+    return max(min(max(float(inliers) / whole, 0.0), 1.0), score or 0.0)
 
 
 def _number(value) -> bool:

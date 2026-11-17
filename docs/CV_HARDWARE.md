@@ -55,10 +55,12 @@ pictures are graded against (the board lies turned 0.17 degrees).
 
 This sweep is the baseline every pcbv change has to beat: `mise run
 survey-baseline` grades it against the truth and the numbers kept in
-`web/backend/src/spinny_web/survey_baseline.json` (right rms 0.069 and
-0.070 mm) and fails when a build has fewer right locks, more wrong ones
-or a worse rms; the session's pcbv and pcb-vision bf6c52b give the same
-numbers.
+`web/backend/src/spinny_web/survey_baseline.json` and fails when a build
+has fewer right locks, more wrong ones or a worse rms. The table above is
+the session's pcbv (pcb-vision bf6c52b gives the same); the file holds
+what today's pcbv reaches, with two of the 169 stops left out since
+2026-11-17: they kept the picture of the stop before
+([CV_WHOLE_PICTURE.md](CV_WHOLE_PICTURE.md)).
 17 of its pictures (nine right, five wrong, three off the board) are a
 test fixture in pcb-vision (`fixtures/survey/battery`), run by its
 `cargo test`.
