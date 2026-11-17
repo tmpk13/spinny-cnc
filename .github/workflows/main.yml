@@ -1,0 +1,30 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: spinny-cnc
+    steps:
+      - name: Checkout spinny-cnc
+        uses: actions/checkout@v4
+        with:
+          path: spinny-cnc
+
+      - name: Checkout kicad-to-gcode
+        uses: actions/checkout@v4
+        with:
+          repository: tmpk13/kicad-to-gcode
+          path: kicad-to-gcode
+
+      - uses: jdx/mise-action@v5
+        with:
+          working_directory: spinny-cnc
+
+      - name: Run release
+        run: mise run release
