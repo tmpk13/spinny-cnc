@@ -3282,16 +3282,7 @@ table.cam-table td.num {
     white-space: nowrap;
 }
 
-table.cam-table tbody.disabled td {
-    color: var(--muted);
-}
-
-table.cam-table input[type="checkbox"] {
-    width: 1.5rem;
-    height: 1.5rem;
-}
-
-/* An operation's cutting settings sit in one cell as small labeled fields. */
+/* An operation's tool and cutting settings, under its row, as small labeled fields. */
 .cam-fields {
     display: flex;
     flex-wrap: wrap;
