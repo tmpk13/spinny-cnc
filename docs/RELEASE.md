@@ -171,6 +171,12 @@ for cargo-zigbuild (run through uvx), the standalone Python
 (python-build-standalone, checked against its published SHA256SUMS) and
 the packages, at the versions in `uv.lock`.
 
+GitHub Actions (`.github/workflows/main.yml`) builds the same archives on
+every push to main and every pull request, from the four repositories'
+default branches checked out side by side (spinny-firmware is
+tmpk13/spinny-cnc-firmware on GitHub), and keeps them as the run's
+`spinny-release` artifact.
+
 - The version is the one in `web/backend/pyproject.toml`. When HEAD is
   not tagged `v<version>` the commit is added (`0.1.0-g4a67b63`).
 
