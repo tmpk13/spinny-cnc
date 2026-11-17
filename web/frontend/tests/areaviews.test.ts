@@ -274,6 +274,10 @@ describe("the view bar", () => {
         expect(app.querySelector("#page-run")!.hasAttribute("data-view")).toBe(false);
         expect(all.getAttribute("aria-pressed")).toBe("true");
         expect(JSON.parse(localStorage.getItem(VIEWS_KEY)!)).toEqual({ run: ALL_VIEW });
+        // No step is shown: nothing to go back or on from.
+        expect(bar.querySelector<HTMLButtonElement>(".viewbar-next")!.hidden).toBe(true);
+        expect(bar.querySelector<HTMLButtonElement>(".viewbar-back")!.hidden).toBe(true);
+        expect(bar.querySelector(".viewbar-title")?.textContent).toBe("All panels");
         // The panels made for a step alone are left out of the area shown whole.
         expect(app.querySelector("#run-connect")!.classList.contains("hidden")).toBe(true);
         all.click();

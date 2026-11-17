@@ -260,7 +260,7 @@ export function placingSteps(state: AppState): AreaView[] {
 
 /** The Job area's views: the ways to make a job, each beside the one preview. */
 export function jobViews(state: AppState): AreaView[] {
-    const list = "minmax(17rem, 21rem)";
+    const list = "minmax(16rem, 19rem)";
     return [
         {
             id: "jobs",
@@ -268,7 +268,7 @@ export function jobViews(state: AppState): AreaView[] {
             tip: "the jobs, the one picked and its preview",
             // The picked job's own panel shows once a job is picked.
             columns: state.job === null ? [["jobs"], ["preview"]] : [["jobs"], ["preview"], ["job"]],
-            cols: state.job === null ? `${list} minmax(0, 1fr)` : `${list} minmax(0, 1fr) minmax(20rem, 27rem)`,
+            cols: state.job === null ? `${list} minmax(0, 1fr)` : `${list} minmax(0, 1fr) minmax(20rem, 25rem)`,
         },
         {
             id: "draw",

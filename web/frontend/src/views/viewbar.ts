@@ -266,8 +266,9 @@ export function mountViewBars(ctx: Ctx, bars: Record<Side, HTMLElement>): ViewBa
             if (nodes.say.textContent !== words) {
                 nodes.say.textContent = words;
             }
+            // With every panel shown there is no step to go back or on from.
             nodes.back.hidden = at <= 0;
-            nodes.next.hidden = following === undefined;
+            nodes.next.hidden = at < 0 || following === undefined;
             if (following) {
                 nodes.next.textContent = `Next: ${following.label}`;
                 nodes.next.title = following.tip;

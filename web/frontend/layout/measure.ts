@@ -141,8 +141,10 @@ export function measure(): Measure {
         depth = Math.max(depth, levels);
     }
 
-    // The work: canvases, pictures and large drawings, as a share of the window.
-    let work = 0;
+    // The work: canvases, pictures and large drawings, as a share of the
+    // window. Counted over a grid of points, so two canvases laid one over
+    // the other (a preview's scene and its overlay) count once.
+    const works: DOMRect[] = [];
     for (const node of Array.from(document.querySelectorAll("canvas, video, img:not(.job-thumb), svg"))) {
         if (!shown(node)) {
             continue;
@@ -151,9 +153,21 @@ export function measure(): Measure {
         const width = Math.max(0, Math.min(vw, box.right) - Math.max(0, box.left));
         const height = Math.max(0, Math.min(vh, box.bottom) - Math.max(0, box.top));
         if (width > 200 && height > 150) {
-            work += width * height;
+            works.push(box);
         }
     }
+    const grid = 8;
+    let covered = 0;
+    let points = 0;
+    for (let y = grid / 2; y < vh; y += grid) {
+        for (let x = grid / 2; x < vw; x += grid) {
+            points += 1;
+            if (works.some((box) => x >= box.left && x < box.right && y >= box.top && y < box.bottom)) {
+                covered += 1;
+            }
+        }
+    }
+    const work = points === 0 ? 0 : covered / points;
     let scroll = 1;
     for (const node of Array.from(document.querySelectorAll<HTMLElement>("#app *"))) {
         if (node.clientHeight > 200 && node.scrollHeight > node.clientHeight + 24 && /(auto|scroll)/.test(getComputedStyle(node).overflowY) && !node.matches("textarea, pre, .console-log, .code-input")) {
@@ -172,7 +186,7 @@ export function measure(): Measure {
         boxes: boxed.size,
         depth,
         loud: Array.from(loud.entries()).sort((a, b) => b[1] - a[1]).map(([hue, count]) => `${hue} ${count}`).join(", "),
-        work: Math.round((100 * work) / (vw * vh)),
+        work: Math.round(100 * work),
         scroll: Math.round(scroll * 10) / 10,
     };
 }
