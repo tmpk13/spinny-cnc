@@ -222,8 +222,6 @@ home_fiducial = [60.91, 175.23]
 # carries back), length and crc (CRC-8, polynomial 7), then a payload whose
 # first byte is the command's code, or in an answer how it went. Scan bus
 # in the PNP tab's Feeders panel lists the feeders that answer.
-board_area = [78.8, 285, 247, 488.6]
-board_area_only = false
 [bus]
 send = "M485 {packet}"
 reply = "rs485-reply: *(?<packet>[0-9A-Fa-f]*)"   # one space or none before the hex
@@ -275,6 +273,3 @@ busy = 4
 # before each pick), vision (looked at over the bottom camera), size,
 # pocket, marks and mark (the top camera's checks) and crop; MACHINES.md
 # says what each does.
-
-[up_camera.crops]
-nozzle = [0.43255, 0.38127, 0.57757, 0.62387]
