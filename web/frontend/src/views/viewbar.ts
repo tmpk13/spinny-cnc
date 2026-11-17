@@ -135,6 +135,9 @@ export function mountViewBars(ctx: Ctx, bars: Record<Side, HTMLElement>): ViewBa
         }
         const columns = root ? Array.from(root.children).filter((child) => child.classList.contains("column")) : [];
         columns.forEach((column, index) => column.toggleAttribute("data-dock-column", view?.dock === true && index === columns.length - 1));
+        // A step's own panel, beside the work: in a window too narrow for
+        // both it comes first, so what to do is in view before the picture.
+        columns.forEach((column, index) => column.toggleAttribute("data-lead-column", view?.step !== undefined && index === 1));
         if (!view) {
             showPanelView(page, null);
             root?.removeAttribute("data-dock");

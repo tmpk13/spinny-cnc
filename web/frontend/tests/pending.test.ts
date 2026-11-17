@@ -40,21 +40,45 @@ describe("the settings list", () => {
         await settle();
         const rows = (): HTMLTableRowElement[] => Array.from(listRoot.querySelectorAll("table.settings-list tbody tr"));
         const keyOf = (row: HTMLTableRowElement): string => row.querySelector(".settings-key")?.textContent ?? "";
-        expect(rows().length).toBeGreaterThan(80);
-        // The board runs the file it boots as: nothing differs.
-        expect(listRoot.querySelector(".settings-count")?.textContent).toMatch(/, 0 differ$/);
-        // A value written at the console differs from the file's.
+        // Keeping the files is folded at the panel's foot; stepping through a find shows once there is a word to find.
+        const fileMore = root.querySelector("details.config-more") as HTMLDetailsElement;
+        expect(fileMore.open).toBe(false);
+        expect(fileMore.contains(root.querySelector('input[aria-label="New machine id"]'))).toBe(true);
+        const find = root.querySelector('input[aria-label="Find in the file"]') as HTMLInputElement;
+        const steps = (): boolean[] => ["Previous", "Next"].map((text) => Array.from(root.querySelectorAll("button")).find((b) => b.textContent === text)!.hidden);
+        expect(steps()).toEqual([true, true]);
+        find.value = "rail";
+        find.dispatchEvent(new Event("input"));
+        expect(steps()).toEqual([false, false]);
+        find.value = "";
+        find.dispatchEvent(new Event("input"));
+        expect(steps()).toEqual([true, true]);
+        // Save is the dark button only while there are edits to save.
+        const save = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Save")!;
+        expect(save.classList.contains("btn-primary")).toBe(false);
+        // The list opens on the differences: the board runs the file it boots as, so there are none, and it says so.
+        const only = listRoot.querySelector('input[aria-label="Only where the file and the board differ"]') as HTMLInputElement;
+        const none = listRoot.querySelector(".settings-none") as HTMLElement;
+        expect(only.checked).toBe(true);
+        expect(rows().length).toBe(0);
+        expect(listRoot.querySelector(".settings-count")?.textContent).toMatch(/^0 of \d+, 0 differ$/);
+        expect([none.hidden, none.textContent]).toEqual([false, "The file and the board agree on every key; untick only differences to see them all."]);
+        // A value written at the console differs from the file's: its key is the list.
         await api.updateSettings({ values: { r_rate: 777 } });
         await ctx.refreshSettings();
-        const rate = rows().find((row) => keyOf(row) === "[rail] max_rate")!;
+        expect(rows().map(keyOf)).toEqual(["[rail] max_rate"]);
+        expect(none.hidden).toBe(true);
+        const rate = rows()[0]!;
         expect(rate.classList.contains("differs")).toBe(true);
         expect(rate.cells[3]!.textContent).toBe("777");
-        const only = listRoot.querySelector('input[aria-label="Only where the file and the board differ"]') as HTMLInputElement;
-        only.checked = true;
-        only.dispatchEvent(new Event("change"));
-        expect(rows().map(keyOf)).toEqual(["[rail] max_rate"]);
+        // Every key is a tick away.
         only.checked = false;
         only.dispatchEvent(new Event("change"));
+        expect(rows().length).toBeGreaterThan(80);
+        // With the box ticked again, a search still looks through every key.
+        only.checked = true;
+        only.dispatchEvent(new Event("change"));
+        expect(rows().length).toBe(1);
         // A search by the firmware's name, letters apart, finds the key,
         // and one the file names otherwise too.
         const search = listRoot.querySelector("input[type=search]") as HTMLInputElement;
@@ -70,6 +94,10 @@ describe("the settings list", () => {
         search.dispatchEvent(new Event("input"));
         rows()[0]!.click();
         expect(text.value.slice(text.selectionStart, text.selectionEnd)).toMatch(/^accel = /);
+        // A search that finds nothing says so.
+        search.value = "zzzzqqqq";
+        search.dispatchEvent(new Event("input"));
+        expect([rows().length, none.textContent]).toEqual([0, "No key matches."]);
         search.value = "drivers stepus";
         search.dispatchEvent(new Event("input"));
         const before = text.value;
@@ -77,6 +105,7 @@ describe("the settings list", () => {
         expect(before.includes("step_us")).toBe(false);
         expect(text.value.slice(text.selectionStart, text.selectionEnd)).toBe("step_us = 2");
         expect(store.get().pending["machine-file"]).toBe(1);
+        expect(save.classList.contains("btn-primary")).toBe(true);
         localStorage.removeItem("spinny.machine");
         // The editor keeps the focus a click gave it, which would take the
         // arrow keys from the jog tests that run after these.

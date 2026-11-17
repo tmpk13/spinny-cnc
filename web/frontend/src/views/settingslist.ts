@@ -15,7 +15,7 @@ import { profileOf } from "../profile.ts";
 import type { AppState } from "../state.ts";
 import { parseToml, type TomlTable } from "../toml.ts";
 import type { MachineDocument, SettingsResponse } from "../types.ts";
-import type { Ctx } from "./context.ts";
+import { helpMark, type Ctx } from "./context.ts";
 
 /** What the list reads the file from and takes the editor to. */
 export interface SettingsListSource {
@@ -419,7 +419,12 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
         spellcheck: "false",
         autocomplete: "off",
     }) as HTMLInputElement;
+    // On from the start: where the file and the board differ is what asks
+    // for a decision; every key is a tick away, and a search looks through
+    // them all.
     const onlyDiffer = el("input", { type: "checkbox", "aria-label": "Only where the file and the board differ" }) as HTMLInputElement;
+    onlyDiffer.checked = true;
+    const none = el("p", { class: "muted settings-none" });
     const count = el("span", { class: "muted settings-count" });
     const table = el("table", { class: "settings settings-list" });
     // The rows the list shows now, for Copy all.
@@ -439,10 +444,10 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
         under.observe(bar);
     }
     root.append(
-        el("div", { class: "panel-head" }, el("h2", {}, "Settings"), count),
+        el("div", { class: "panel-head" }, el("h2", {}, "Settings"), count,
+            helpMark(ctx, "Click a row to go to its key in the file, added if missing; Insert writes the board's value there. Scales are full steps, or firmware steps where the file uses steps_per_mm. A camera's keys show the camera's values under Board.")),
         actions,
-        el("p", { class: "muted hint" },
-            "click a row to go to its key in the file, added if missing; Insert writes the board's value there. Scales are full steps, or firmware steps where the file uses steps_per_mm. A camera's keys show the camera's values under Board."),
+        none,
         el("div", { class: "settings-scroll" }, table),
     );
 
@@ -458,9 +463,16 @@ export function mountSettingsList(root: HTMLElement, ctx: Ctx, source: SettingsL
         liveStamp = stampOf(rows);
         const query = search.value.trim();
         let picked = rows.map((row) => ({ row, score: fuzzyScore(query, searchText(row)) })).filter((item) => item.score !== null);
-        if (onlyDiffer.checked) {
+        // The differences alone, while there is a board to differ from and
+        // nothing is searched for: a search looks through every key.
+        const differences = onlyDiffer.checked && query === "" && !!state.settings;
+        if (differences) {
             picked = picked.filter((item) => item.row.differs);
         }
+        none.textContent = picked.length > 0 ? ""
+            : differences ? "The file and the board agree on every key; untick only differences to see them all."
+                : query !== "" ? "No key matches." : "";
+        none.hidden = none.textContent === "";
         if (query !== "") {
             picked.sort((a, b) => b.score! - a.score!);
         }

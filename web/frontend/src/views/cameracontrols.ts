@@ -6,7 +6,10 @@
 // is sent at once and kept by the backend, which sets it again whenever the
 // camera starts; Forget takes a kept value back, leaving the camera's own.
 // A camera reached over HTTP (a bridge Pi's snapshots) or a pcbv over TCP
-// has none here, and the fold says so. Live numbers of the camera's picture
+// has none here, and the fold says so. A control an automatic one has taken
+// over (the exposure time while the exposure is automatic) does nothing, so
+// it is left out and named in a line under the list until its automatic
+// control is off; one with a kept value stays, to be forgotten. Live numbers of the camera's picture
 // (sharpness, noise, brightness, clipping) head the fold while it is open
 // (camerastats.ts), to turn the controls by.
 
@@ -182,13 +185,22 @@ export function mountCameraControls(ctx: Ctx, camera: ControlledCamera, label: s
         note.textContent = answer.note ?? (answer.controls.length === 0 ? "The camera lists no controls that can be set." : "");
         note.classList.toggle("hidden", note.textContent === "");
         const sections: HTMLElement[] = [];
-        let section = "";
+        let section: string | null = null;
+        // What an automatic control has taken over: nothing to set until it is off.
+        const idle = answer.controls.filter((control) => control.inactive && control.kept === null);
         for (const control of answer.controls) {
+            if (idle.includes(control)) {
+                continue;
+            }
             if (control.section !== section) {
                 section = control.section;
                 sections.push(el("h4", { class: "camera-controls-section" }, section || "Controls"));
             }
             sections.push(row(control));
+        }
+        if (idle.length > 0) {
+            sections.push(el("p", { class: "muted hint camera-controls-idle" },
+                `Set by the camera while an automatic control is on, and shown here once it is off: ${idle.map((control) => controlLabel(control.name)).join(", ")}.`));
         }
         replace(list, ...sections);
         list.classList.toggle("hidden", answer.controls.length === 0);

@@ -46,6 +46,8 @@ describe("the Auto tab", () => {
         const { chat, input, backend, calls, root } = mount();
         await settleMany();
         expect(chat.querySelector(".auto-empty")!.classList.contains("hidden")).toBe(false);
+        // With no turn under way there is nothing to stop: Stop is away.
+        expect(Array.from(chat.querySelectorAll("button")).find((b) => b.textContent === "Stop")!.hidden).toBe(true);
         input.value = "what jobs are there?";
         expect(press(input, "Enter", true).defaultPrevented).toBe(false);
         expect(calls.some((call) => call.name === "autoSend")).toBe(false);

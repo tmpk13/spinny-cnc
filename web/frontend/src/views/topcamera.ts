@@ -6,7 +6,10 @@
 // homing fiducial on its bed.
 // Its picture shows in the Top camera view panel, with Start, Stop and
 // Look once on it when that panel is handed in; Home by fiducial goes with
-// the machine's own buttons when a place for them is handed in. The looks
+// the machine's own buttons when a place for them is handed in. In view
+// here are starting it, which camera it is, what it last saw, its offset
+// in a line and Measure camera; how it is read, the board it looks at,
+// measuring the offset from a mark and the log are folded under More. The looks
 // of its routines are kept in its camera log. The look for a board, its
 // search and the place found are the Find board panel's (findboard.ts).
 
@@ -37,6 +40,10 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
     start.title = "start the top camera with these settings";
     const stop = button("Stop", () => into(ctx, "placing", ctx.api.topStop()), "btn");
     stop.title = "stop the top camera";
+    // The picture's panel takes that pair into its head; this panel, where
+    // the camera is picked and set up, keeps the one that can be pressed.
+    const startHere = button("Start", () => startTop(), "btn btn-primary", "start the top camera with these settings");
+    const stopHere = button("Stop", () => into(ctx, "placing", ctx.api.topStop()), "btn", "stop the top camera");
     const device = el("input", { type: "text", class: "field", "aria-label": "Top camera device", placeholder: "/dev/video2", spellcheck: "false" }) as HTMLInputElement;
     const size = el("input", { type: "text", class: "field", "aria-label": "Top camera size", placeholder: "1280x720", spellcheck: "false" }) as HTMLInputElement;
     const fps = numberField({ min: 1, max: 120, step: 1, width: "5rem" });
@@ -84,31 +91,39 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
     const fiducialLine = el("span", { class: "muted" });
     const log = el("div", { class: "camlog-box" });
     mountCameraLog(log, ctx, "top");
+    // What a part is for is its heading's tooltip.
+    const heading = (text: string, tip: string): HTMLElement => el("h3", { title: tip }, text);
 
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Top camera"), badge),
         el("fieldset", { class: "panel-body" },
-            places.picture ? null : el("div", { class: "button-row" }, start, stop),
+            el("div", { class: "button-row" }, ...(places.picture ? [startHere, stopHere] : [start, stop])),
             pick.row,
             pick.note,
-            el("div", { class: "field-grid" },
-                labeled("Device", device),
-                labeled("Size", size),
-                labeled("fps", fps),
-                explain(labeled("Mark spot", markSpot), "shade"),
-                explain(labeled("Side", side), "side"),
-                explain(labeled("Finish", finish), "finish"),
-                explain(labeled("Paste", paste), "paste"),
-            ),
-            el("div", { class: "button-row" }, apply, places.picture ? null : lookOnce),
             lookLine,
-            ...placeFolds(folds, "top", controls.root, sight.root, changes.root),
             el("div", { class: "button-row" }, offsetLine, infoTip("offset")),
-            el("div", { class: "button-row" }, measureCamera),
-            el("div", { class: "button-row" }, markHere, labeled("Step mm", step, "labeled inline"), measure, abort),
+            el("div", { class: "button-row" }, measureCamera, abort),
             el("div", { class: "button-row" }, places.home ? null : homeFiducial, places.home ? null : findFiducial, fiducialLine),
             routineLine,
-            log,
+            el("details", { class: "more top-camera-more stack" },
+                el("summary", { title: "fold or unfold" }, "More: device and size, the board it sees, its offset from a mark, the log"),
+                heading("How it is read", "the device, its picture size and rate, how a mark looks against its background, and the board the camera looks at: its side, its finish and whether it carries paste"),
+                el("div", { class: "field-grid" },
+                    labeled("Device", device),
+                    labeled("Size", size),
+                    labeled("fps", fps),
+                    explain(labeled("Mark spot", markSpot), "shade"),
+                    explain(labeled("Side", side), "side"),
+                    explain(labeled("Finish", finish), "finish"),
+                    explain(labeled("Paste", paste), "paste"),
+                ),
+                el("div", { class: "button-row" }, apply, places.picture ? null : lookOnce),
+                ...placeFolds(folds, "top", controls.root, sight.root, changes.root),
+                heading("Offset from a mark", "put the nozzle's tip on a mark and press Nozzle on mark; Measure offset then moves the camera over the mark, by the step, and keeps how far it sits from the nozzle"),
+                el("div", { class: "button-row" }, markHere, labeled("Step mm", step, "labeled inline"), measure),
+                heading("Log", "the pictures the camera's routines looked at, and photos taken by hand"),
+                log,
+            ),
         ),
     );
 
@@ -195,8 +210,15 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
         const badgeText = busy ? (top?.routine?.kind === "search" ? "searching" : "routine") : !top?.running ? "stopped" : look?.found ? "found" : look?.job ? "looking" : "running";
         badge.textContent = badgeText;
         badge.setAttribute("data-camera", badgeText === "routine" ? "finding mark" : badgeText);
-        lockFor(start, [top?.running === true, "the top camera is running"], [busy, "a routine is under way"]);
-        lockFor(stop, [top?.running !== true, "the top camera is not running"], [busy, "a routine is under way: abort it first"]);
+        for (const press of [start, startHere]) {
+            lockFor(press, [top?.running === true, "the top camera is running"], [busy, "a routine is under way"]);
+        }
+        for (const press of [stop, stopHere]) {
+            lockFor(press, [top?.running !== true, "the top camera is not running"], [busy, "a routine is under way: abort it first"]);
+        }
+        // The one that can be pressed now shows; the other is away.
+        startHere.hidden = top?.running === true;
+        stopHere.hidden = top?.running !== true;
         setLocked(apply, busy, "a routine is under way");
         lockFor(markHere, [!connected, "connect the machine first"], [running || moving || busy, "the machine is busy"]);
         lockFor(measureCamera, [!connected, "connect the machine first"], [running || moving || busy, "the machine is busy"], [top?.running !== true, "start the top camera first"]);
@@ -212,6 +234,8 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
         }
         fiducialLine.textContent = home ? `the bed's fiducial at X ${home[0]} Y ${home[1]}` : "no homing fiducial in the machine file";
         setLocked(abort, !busy, "no routine under way");
+        // Abort shows while there is a routine to stop.
+        abort.hidden = !busy;
         offsetLine.textContent = topCameraText(top);
         routineLine.textContent = topRoutineText(top);
         lockFor(lookOnce, [top?.running !== true, "start the top camera first"]);

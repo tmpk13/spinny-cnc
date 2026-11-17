@@ -1,4 +1,10 @@
-// Upload, job list, the selected job's groups and stats; the Run panel beside them is run.ts.
+// Upload, job list, the selected job's groups and stats; the Run panel
+// beside them is run.ts. The list's rows are a job each and its Delete;
+// what is done to the list now and then (the picked job's icon and file,
+// joining jobs, emptying the list) is folded under it. The picked job's
+// groups are rows that say their numbers in a line and open their fields
+// in place; its width, its margin and the path's numbers are folded under
+// them, and one button goes on to the Run area with it.
 
 import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
@@ -10,11 +16,13 @@ import { isMilling, profileOf } from "../profile.ts";
 import { GCODE_SUFFIXES, GERBER_SUFFIXES } from "../uploads.ts";
 import { type ArraySpec, type PathRef, type Regrouped, arrayPaths, arrayRefusal, boxedAfter, groupRefs, pathsMiddle, regroup, regroupRefusal, removePaths, tidyRefs } from "../regroup.ts";
 import type { AppState } from "../state.ts";
-import type { Anchor, BoardMode, ClearPattern, DepositFill, Job, UploadOptions } from "../types.ts";
+import type { Anchor, BoardMode, ClearPattern, DepositFill, Group, Job, UploadOptions } from "../types.ts";
 import { runActive } from "./heightmap.ts";
 import { choiceRow, type Ctx } from "./context.ts";
 import { iconPicker, jobPicture } from "./jobicon.ts";
+import { gcodePlacing } from "./placing.ts";
 import { mountRun } from "./run.ts";
+import { showPage } from "./tabs.ts";
 
 /** Every file the Jobs import reads: a drawing (SVG or DXF), a job, a board layer's gerber or the KiCad file, or gcode. */
 export const ACCEPT = [".svg", ".dxf", ".json", ...GERBER_SUFFIXES, ".kicad_pcb", ...GCODE_SUFFIXES].join(",");
@@ -42,8 +50,10 @@ export function stencilMargin(job: Job): number | null {
 }
 
 interface GroupRow {
-    /** The group's name line and its fields line. */
+    /** The group's row and, under it, its fields. */
     body: HTMLElement;
+    /** The group's numbers in a line, on its row. */
+    says: HTMLElement;
     power: HTMLInputElement;
     minPower: HTMLInputElement;
     speed: HTMLInputElement;
@@ -70,7 +80,31 @@ export function showsFocus(job: Job, milling: boolean, focusAxis: boolean): bool
     return focusAxis || job.groups.some((group) => group.focus !== undefined && group.focus !== null);
 }
 
-/** What the groups table shows of a job's groups besides their fields: each label and how many paths it has. */
+/**
+ * A group's numbers in a line, as its row says them while its fields are
+ * shut: the power or the spindle's speed, the feed, how deep a bit goes, a
+ * dispenser's paste, the passes when more than one and a focus of its own.
+ */
+export function groupSays(group: Group, milling: boolean): string {
+    const passes = group.passes > 1 ? `, ${group.passes} passes` : "";
+    if (group.tool === "dispenser") {
+        return `${group.thickness ?? DEFAULT_THICKNESS} mm of paste${passes}`;
+    }
+    if (milling) {
+        // A model's moves carry their own depths: its depth is the deepest they go, in levels of their own.
+        const carved = (group.moves?.length ?? 0) > 0;
+        return `S${group.power}, ${carved ? "to " : ""}${group.depth ?? DEFAULT_DEPTH} mm deep, ${group.speed} mm/min${carved ? "" : passes}`;
+    }
+    const focus = group.focus !== undefined && group.focus !== null ? `, focus ${group.focus > 0 ? "+" : ""}${group.focus} mm` : "";
+    return `S${group.power}, ${group.speed} mm/min${passes}${focus}`;
+}
+
+/** A job's length and how long it takes at its speeds, in a line. */
+export function jobSizeText(job: Job): string {
+    return `${formatLength(job.stats.length_mm)} of path, ${formatDuration(job.stats.seconds)} at these speeds`;
+}
+
+/** What the groups' rows show of a job's groups besides their fields: each label and how many paths it has. */
 export function groupsShown(job: Job): string {
     return JSON.stringify(job.groups.map((group) => [group.label, group.paths.length, group.joints?.length ?? 0, group.moves?.length ?? 0]));
 }
@@ -292,14 +326,22 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
     let iconFor: string | null = null;
     const combineButton = button("Combine", () => combine(), "btn btn-quiet btn-small");
     combineButton.title = "join the checked jobs into one, in the order checked";
+    const iconButton = button("Icon", () => toggleIcon(), "btn btn-quiet btn-small", "a glyph, a color or letters in place of the picked job's drawing");
+    iconButton.setAttribute("aria-expanded", "false");
     chooser.append(options, doneRow, chooserNote);
-    // What is done to the list now and then sits under it, out of the
-    // head: joining the jobs ticked, keeping the picked one as a file,
-    // emptying the list.
+    // What is done to the list now and then is folded under it: the
+    // picked job's icon and its file, joining jobs, emptying the list. A
+    // row of the list is the job and its Delete, nothing else; the boxes
+    // that tick jobs to join show while the fold is open.
+    const more = el("details", { class: "more jobs-more stack" },
+        el("summary", { title: "fold or unfold" }, "More: icon, save, combine, delete all"),
+        el("div", { class: "button-row job-list-actions" }, iconButton, saveButton),
+        el("div", { class: "button-row job-list-actions" }, combineButton, deleteAllButton),
+    ) as HTMLDetailsElement;
+    more.addEventListener("toggle", () => list.toggleAttribute("data-combining", more.open));
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Jobs")),
-        drop, chooser, list,
-        el("div", { class: "button-row job-list-actions" }, combineButton, saveButton, deleteAllButton),
+        drop, chooser, list, more,
     );
     // The selected job's groups, place and widths: a panel of their own when
     // the page has one, else under the list.
@@ -542,12 +584,33 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
         releaseIcon?.();
         releaseIcon = null;
         list.querySelector(".job-icon-row")?.remove();
-        list.querySelector('.job-thumb-button[aria-expanded="true"]')?.setAttribute("aria-expanded", "false");
+        iconButton.setAttribute("aria-expanded", "false");
+    }
+
+    /** The picked job's icon picker, under its row: opened by Icon, shut by it again. */
+    function toggleIcon(): void {
+        const job = ctx.store.get().job;
+        if (iconFor !== null) {
+            closeIcon();
+            return;
+        }
+        if (!job) {
+            ctx.toast("error", "pick a job to give it an icon");
+            return;
+        }
+        iconFor = job.id;
+        releaseIcon ??= popUp({
+            nodes: () => [list.querySelector(".job-icon-row"), iconButton],
+            close: closeIcon,
+        });
+        renderList(ctx.store.get());
+        // The list scrolls within its own height: the picker is brought into it.
+        list.querySelector(".job-icon-row")?.scrollIntoView?.({ block: "nearest" });
     }
 
     document.addEventListener("pointerdown", (event) => {
         const target = event.target as Element | null;
-        if (iconFor !== null && target?.closest && !target.closest(".job-icon-row, .job-thumb-button")) {
+        if (iconFor !== null && target?.closest && !target.closest(".job-icon-row") && !iconButton.contains(target)) {
             closeIcon();
         }
     });
@@ -555,37 +618,26 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
     function renderList(state: AppState): void {
         const selected = state.job?.id ?? null;
         combining = combining.filter((id) => state.jobs.some((job) => job.id === id));
-        if (iconFor !== null && !state.jobs.some((job) => job.id === iconFor)) {
+        // The picker is the picked job's: it goes when the job does, or another is picked.
+        if (iconFor !== null && (iconFor !== selected || !state.jobs.some((job) => job.id === iconFor))) {
             closeIcon();
         }
+        iconButton.setAttribute("aria-expanded", String(iconFor !== null));
         replace(list, ...state.jobs.flatMap((job) => {
             const item = el("li", { class: job.id === selected ? "selected" : "" });
+            // Shown while More is open, where Combine is: the list at rest is jobs, not boxes.
             const check = el("input", { type: "checkbox", class: "job-check", "aria-label": `combine ${job.name}`, title: "check two or more to combine" }) as HTMLInputElement;
             check.checked = combining.includes(job.id);
             check.addEventListener("change", () => {
                 combining = check.checked ? [...combining.filter((id) => id !== job.id), job.id] : combining.filter((id) => id !== job.id);
                 renderCombine();
             });
-            // A small drawing of the job, or its own icon; a press opens the
-            // icon picker. The drawing's address changes with what it
-            // shows, so an unchanged job's is not asked for again.
-            const thumb = el("button", { type: "button", class: "job-thumb-button", title: "set this job's icon", "aria-label": `Icon of ${job.name}`, "aria-expanded": String(iconFor === job.id) },
-                jobPicture(job, ctx.api.jobThumbUrl(job)));
-            thumb.addEventListener("click", () => {
-                if (iconFor === job.id) {
-                    closeIcon();
-                } else {
-                    iconFor = job.id;
-                    releaseIcon ??= popUp({
-                        nodes: () => [list.querySelector(".job-icon-row"), list.querySelector('.job-thumb-button[aria-expanded="true"]')],
-                        close: closeIcon,
-                    });
-                    renderList(ctx.store.get());
-                    // The list scrolls within its own height: the picker is brought into it.
-                    list.querySelector(".job-icon-row")?.scrollIntoView?.({ block: "nearest" });
-                }
-            });
-            const pick = el("button", { type: "button", class: "job-pick", title: "pick this job", onclick: () => void ctx.selectJob(job.id) },
+            // The row is one button: a small drawing of the job, or its own
+            // icon, with its name and size. The drawing's address changes
+            // with what it shows, so an unchanged job's is not asked for
+            // again.
+            const pick = el("button", { type: "button", class: "job-pick", title: "pick this job", "aria-pressed": String(job.id === selected), onclick: () => void ctx.selectJob(job.id) },
+                el("span", { class: "job-thumb-box" }, jobPicture(job, ctx.api.jobThumbUrl(job))),
                 el("span", { class: "job-text" },
                     el("span", { class: "job-name" }, job.name),
                     el("span", { class: "muted" }, job.layer ? ` ${job.source} ${job.layer}` : ` ${job.source}`),
@@ -594,7 +646,7 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
             );
             const remove = button("", () => removeJob(job.id, job.name), "btn btn-quiet btn-small job-remove", `delete ${job.name}`);
             remove.append(svgIcon(CROSS), el("span", { class: "sr-only" }, "Delete"));
-            item.append(check, thumb, pick, remove);
+            item.append(check, pick, remove);
             if (iconFor !== job.id) {
                 return [item];
             }
@@ -663,6 +715,14 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
     // table would tear out the field the operator is typing in, and the
     // browser fires no change for a field that is gone.
     let groupRows: GroupRow[] = [];
+    // The groups whose fields are open, by index, for the job shown: kept
+    // when its rows are built again (a re-cut), dropped for another job.
+    let openGroups = new Set<number>();
+    // The job's length and time in a line under its name.
+    let sizeEl: HTMLElement | null = null;
+    // On to the Run area with the picked job: the next thing to do here
+    // once a job is picked. A machine that places parts runs no job.
+    const goRun = button("Run this job", () => showPage("run"), "btn btn-primary job-go", "on to the Run area with this job");
     let offsetFields: { x: HTMLInputElement; y: HTMLInputElement; rotation: HTMLElement } | null = null;
     let widthField: HTMLInputElement | null = null;
     let jobMarginField: HTMLInputElement | null = null;
@@ -905,6 +965,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
     }
 
     mountRun(runRoot, ctx, { mapHost: places.mapHost, ready: true });
+    // What needs a picked job is locked from the start, not from the first change of the state.
+    renderForm(ctx.store.get());
 
     function renderDetails(state: AppState): void {
         const job = state.job;
@@ -924,23 +986,36 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
         const groups = groupsShown(job);
         const focusColumn = showsFocus(job, milling, profileOf(state.snapshot).h_axis);
         if (detailsFor !== job.id || detailsJob === null || detailsGroups !== groups || detailsMilling !== milling || detailsFocus !== focusColumn) {
+            if (detailsFor !== job.id) {
+                openGroups = new Set();
+            }
             detailsFor = job.id;
             detailsJob = job;
             detailsGroups = groups;
             detailsMilling = milling;
             detailsFocus = focusColumn;
             statsEl = statsBlock(job);
+            sizeEl = el("p", { class: "muted job-size" }, jobSizeText(job));
             if (placeRoot) {
                 replace(placeRoot, offsetRow(job));
             }
+            // In view: the job, its size, its groups a row each, and on to
+            // the run. What is set now and then is folded under them.
+            const margin = marginRow(job);
+            const rest = [placeRoot ? null : "place", milling ? "tool width" : "spot width", margin ? "margin" : null, "the path's numbers"].filter((name) => name !== null);
             replace(details,
                 el("h3", {}, job.name),
-                groupsTable(job, milling, focusColumn),
+                sizeEl,
+                groupsList(job, milling, focusColumn),
                 pickedRow,
-                statsEl,
-                placeRoot ? null : offsetRow(job),
-                widthRow(job, milling),
-                marginRow(job),
+                el("details", { class: "more job-more stack" },
+                    el("summary", { title: "fold or unfold" }, `More: ${rest.join(", ")}`),
+                    placeRoot ? null : offsetRow(job),
+                    widthRow(job, milling),
+                    margin,
+                    statsEl,
+                ),
+                el("div", { class: "button-row" }, goRun),
             );
         } else if (detailsJob !== job) {
             detailsJob = job;
@@ -969,7 +1044,14 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
                 row.enabled.checked = group.enabled;
             }
             row.body.classList.toggle("disabled", !group.enabled);
+            const says = groupSays(group, detailsMilling);
+            if (row.says.textContent !== says) {
+                row.says.textContent = says;
+            }
         });
+        if (sizeEl && sizeEl.textContent !== jobSizeText(job)) {
+            sizeEl.textContent = jobSizeText(job);
+        }
         if (offsetFields) {
             setUnlessFocused(offsetFields.x, String(job.offset.x), focused);
             setUnlessFocused(offsetFields.y, String(job.offset.y), focused);
@@ -990,21 +1072,40 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
     /** The parts of the Jobs panel that follow the selected job and the machine: Save, and the upload's labels. */
     function renderForm(state: AppState): void {
         setLocked(saveButton, !state.job, "pick a job first");
+        setLocked(iconButton, !state.job, "pick a job first");
+        goRun.toggleAttribute("data-no-job-run", gcodePlacing(state));
         const labels = jobLabels(isMilling(state.snapshot));
         relabel(powerLabel, labels.power);
         relabel(speedLabel, labels.speed);
         relabel(spotLabel, labels.spot);
     }
 
-    /** A number cell of the groups table; the stylesheet sizes it to the column. */
+    /** A number field of a group, named for a screen reader and a test. */
     function groupField(value: number, min: number, label: string): HTMLInputElement {
         const field = numberField({ value, min, step: 1 });
         field.setAttribute("aria-label", label);
         return field;
     }
 
-    function groupsTable(job: Job, milling: boolean, focusColumn: boolean): HTMLElement {
+    /** A group's field under its name, with what the number means as the tooltip. */
+    function groupCell(label: string, field: HTMLElement, title = ""): HTMLElement {
+        const cell = labeled(label, field);
+        if (title) {
+            cell.title = title;
+        }
+        return cell;
+    }
+
+    /**
+     * The job's groups, a row each: the box that takes the group in or out
+     * of the run, and a button with its name, how many paths it has and its
+     * numbers in a line, which opens its fields under it. A row is two
+     * controls however many numbers a tool has, so a job of many groups
+     * reads as a list.
+     */
+    function groupsList(job: Job, milling: boolean, focusColumn: boolean): HTMLElement {
         groupRows = [];
+        openGroups = new Set(Array.from(openGroups).filter((index) => index < job.groups.length));
         const rows = job.groups.map((group, index) => {
             const power = groupField(group.power, 0, milling ? "spindle speed" : "power");
             const minPower = groupField(group.min_power, 0, "min power");
@@ -1034,9 +1135,8 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
                 focus = numberField({ min: -50, max: 50, step: 0.1, placeholder: "-" });
                 focus.value = formatOptional(group.focus);
                 focus.setAttribute("aria-label", "focus");
-                focus.title = "mm above focus for this group, negative lowers; blank for none";
             }
-            const enabled = el("input", { type: "checkbox", "aria-label": "enabled" });
+            const enabled = el("input", { type: "checkbox", "aria-label": "enabled", title: `${group.label}: in the run, or left out of it` });
             enabled.checked = group.enabled;
             const patch = async (): Promise<void> => {
                 const p = parseNumber(power.value);
@@ -1071,59 +1171,57 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
             // Milled, the floor means nothing and the depth and the plunge
             // take its place: a pass is a step down, not a burn again. A
             // group of paste dots has only its thickness and its passes.
-            const fields = thickness
-                ? [thickness, passes, enabled]
+            const cells = thickness
+                ? [groupCell("Paste mm", thickness, "mm of paste over each pad"), groupCell("Passes", passes, "times the group runs")]
                 : milling
-                    ? [power, depth, speed, plunge, passes, enabled]
-                    : focusColumn
-                        ? [power, minPower, speed, passes, focus ?? el("span", { class: "muted" }, "-"), enabled]
-                        : [power, minPower, speed, passes, enabled];
-            // The name has a line of its own above the fields, so they get
-            // the whole width of a side panel.
-            // The name picks the group's paths in the preview, shift adds them.
-            const name = el("button", { type: "button", class: "group-pick", title: "pick this group's paths; shift adds" },
-                el("span", { class: "swatch", "data-group": String(index % 4) }), group.label);
-            name.addEventListener("click", (event) => {
+                    ? [
+                        groupCell("Spindle S", power, "spindle speed"),
+                        groupCell("Depth mm", depth, "depth of the last pass below the surface"),
+                        groupCell("Feed mm/min", speed, "feed along the cut"),
+                        groupCell("Plunge mm/min", plunge, "feed going down into the cut"),
+                        groupCell("Passes", passes, "passes to reach the depth"),
+                    ]
+                    : [
+                        groupCell("Power S", power),
+                        groupCell("Min S", minPower, "least power in corners (dyn mode); 0 is none"),
+                        groupCell("Speed mm/min", speed),
+                        groupCell("Passes", passes, "times the group runs"),
+                        ...(focus ? [groupCell("Focus mm", focus, "mm above focus for this group, negative lowers; blank for none")] : []),
+                    ];
+            // The group's paths picked in the preview, to move or copy them; shift adds them to those picked.
+            const pick = el("button", { type: "button", class: "btn btn-quiet btn-small group-pick", title: "pick this group's paths in the preview, to move, copy or delete them; shift adds" }, "Pick its paths");
+            pick.addEventListener("click", (event) => {
                 const refs = groupRefs(job, index);
                 const selection = ctx.store.get().selection;
                 const current = selection !== null && selection.job === job.id && !selection.draft ? selection.paths : [];
                 ctx.store.set({ selection: { job: job.id, paths: boxedAfter(current, refs, event.shiftKey) } });
             });
-            const body = el("tbody", { class: group.enabled ? "" : "disabled" },
-                el("tr", { class: "group-name" },
-                    el("th", { scope: "rowgroup", colspan: String(fields.length) },
-                        name,
-                        el("span", { class: "muted" }, group.joints?.length ? ` (${group.joints.length}, joint space)` : carved ? ` (${group.moves!.length}, 3D)` : dots ? ` (${group.paths.length} dots)` : ` (${group.paths.length})`))),
-                el("tr", { class: "group-fields" }, ...fields.map((field) => el("td", {}, field))),
+            const says = el("span", { class: "muted group-says" }, groupSays(group, milling));
+            const count = group.joints?.length ? ` (${group.joints.length}, joint space)` : carved ? ` (${group.moves!.length}, 3D)` : dots ? ` (${group.paths.length} dots)` : ` (${group.paths.length})`;
+            const fields = el("div", { class: "group-fields stack" }, el("div", { class: "field-grid" }, ...cells), el("div", { class: "button-row" }, pick));
+            const open = el("button", { type: "button", class: "group-open", title: "this group's numbers: show or hide its fields" },
+                el("span", { class: "group-name" }, el("span", { class: "swatch", "data-group": String(index % 4) }), group.label, el("span", { class: "muted" }, count)),
+                says,
             );
-            groupRows.push({ body, power, minPower, speed, passes, depth, plunge, thickness, focus, enabled });
+            const show = (shown: boolean): void => {
+                fields.hidden = !shown;
+                open.setAttribute("aria-expanded", String(shown));
+                if (shown) {
+                    openGroups.add(index);
+                } else {
+                    openGroups.delete(index);
+                }
+            };
+            open.addEventListener("click", () => show(fields.hidden));
+            show(openGroups.has(index));
+            const body = el("li", { class: group.enabled ? "group" : "group disabled", "aria-label": group.label },
+                el("div", { class: "group-row" }, enabled, open),
+                fields,
+            );
+            groupRows.push({ body, says, power, minPower, speed, passes, depth, plunge, thickness, focus, enabled });
             return body;
         });
-        const anyDots = job.groups.some((group) => group.tool === "dispenser");
-        const head = anyDots
-            ? [
-                el("th", { title: "mm of paste over each pad" }, "Paste mm"),
-                el("th", { title: "Times the group runs" }, "Passes"),
-                el("th", {}, "On"),
-            ]
-            : milling
-            ? [
-                el("th", { title: "Spindle speed" }, "S"),
-                el("th", { title: "Depth of the last pass below the surface, mm" }, "Depth"),
-                el("th", { title: "Feed along the cut" }, "mm/min"),
-                el("th", { title: "Plunge feed, mm/min" }, "Plunge"),
-                el("th", { title: "Passes to reach the depth" }, "Passes"),
-                el("th", {}, "On"),
-            ]
-            : [
-                el("th", {}, "S"),
-                el("th", { title: "Least power in corners (dyn mode); 0 is none" }, "Min S"),
-                el("th", {}, "mm/min"),
-                el("th", { title: "Times the group runs" }, "Passes"),
-                ...(focusColumn ? [el("th", { title: "mm above focus for the group; blank is none" }, "Focus")] : []),
-                el("th", {}, "On"),
-            ];
-        return el("div", { class: "groups-scroll" }, el("table", { class: "groups" }, el("thead", {}, el("tr", {}, ...head)), ...rows));
+        return el("ul", { class: "groups" }, ...rows);
     }
 
     function statsBlock(job: Job): HTMLElement {
@@ -1238,7 +1336,9 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
 
     function offsetRow(job: Job): HTMLElement {
         const x = numberField({ value: job.offset.x, width: "5.5rem" });
+        x.setAttribute("aria-label", "Offset x");
         const y = numberField({ value: job.offset.y, width: "5.5rem" });
+        y.setAttribute("aria-label", "Offset y");
         const rotation = el("span", { class: "muted job-rotation", title: "Counterclockwise turn since import, by Turn and alignment" }, rotationText(job));
         offsetFields = { x, y, rotation };
         const apply = async (): Promise<void> => {
@@ -1281,13 +1381,16 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
         setLocked(cw, fixed, "joint-space groups do not turn");
         angle.disabled = fixed;
         about.disabled = fixed;
-        return el("div", { class: "goto-row" },
-            el("span", { class: "choice-label" }, "Offset"),
-            x, y,
-            button("Move", () => apply(), "btn btn-quiet", "move the paths picked"),
-            el("span", { class: "choice-label" }, "Turn"),
-            angle, about, ccw, cw,
-            rotation,
+        // A number typed moves the job once the field is left or Enter is
+        // pressed, as a group's numbers are kept: no button to press after.
+        for (const field of [x, y]) {
+            field.title = "where the job's origin sits on the board, mm; the job moves when the field is left";
+            field.addEventListener("change", () => void apply());
+        }
+        return el("div", { class: "stack job-place" },
+            el("div", { class: "goto-row" }, el("span", { class: "choice-label" }, "Offset mm"), x, y),
+            el("div", { class: "goto-row" }, el("span", { class: "choice-label" }, "Turn deg"), angle, ccw, cw),
+            el("div", { class: "goto-row" }, about, rotation),
         );
     }
 }

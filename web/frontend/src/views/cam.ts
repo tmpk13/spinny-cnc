@@ -157,6 +157,22 @@ export function reportLines(report: CamGcodeReport): [string, string][] {
     return lines;
 }
 
+/**
+ * An operation's tool and numbers in a line, as its row says them while its
+ * fields are shut: the tool, what it turns or burns at, its feed, and its
+ * passes.
+ */
+export function operationSays(operation: CamOperation, tool: CamTool | undefined, passes: string): string {
+    const cutting = operation.cutting;
+    const [power, feed] = tool?.kind === "spindle" ? [cutting["rpm"], cutting["feed"]] : [cutting["power"], cutting["speed"]];
+    return [
+        tool?.name ?? operation.tool,
+        ...(power !== undefined ? [`S${power}`] : []),
+        ...(feed !== undefined ? [`${feed} mm/min`] : []),
+        passes,
+    ].join(", ");
+}
+
 // The profile last picked is a per-browser convenience, like the tab.
 const PICK_KEY = "spinny.cam.profile";
 
@@ -173,7 +189,11 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
     const problems = el("ul", { class: "cam-problems hidden" });
     const axesBox = el("div", { class: "groups-scroll" });
     const toolsBox = el("div", { class: "groups-scroll" });
-    const opsBox = el("div", { class: "groups-scroll" });
+    const opsBox = el("div", { class: "cam-ops" });
+    // The operations whose fields are open, by index, for the profile
+    // picked: the rows are made again after every change, and stay open.
+    let openOps = new Set<number>();
+    let openFor: string | null = null;
     const stockBox = el("div", { class: "cam-stock" });
     const stockSection = el("div", { class: "cam-section hidden" }, el("h3", {}, "Stock"), stockBox);
 
@@ -194,13 +214,14 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
 
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "CAM"), el("div", { class: "button-row" }, reload)),
-        el("div", { class: "button-row" }, labeled("Profile", pick, "labeled inline"), newId, create, remove),
+        // In view: which profile, what it does to a design (its operations,
+        // a row each), making a job with it and writing a job out. What
+        // the profile is made of and keeping its files are folded last.
+        el("div", { class: "button-row" }, labeled("Profile", pick, "labeled inline")),
         summary,
         problems,
-        el("div", { class: "cam-section" }, el("h3", {}, "Axes"), axesBox),
-        el("div", { class: "cam-section" }, el("h3", {}, "Tools"), toolsBox),
         stockSection,
-        el("div", { class: "cam-section" }, el("h3", {}, "Operations"), opsBox),
+        el("div", { class: "cam-section" }, el("h3", { title: "what the profile does to a design, in order; a row opens its tool and cutting settings" }, "Operations"), opsBox),
         el("div", { class: "cam-section" },
             el("h3", {}, "Make a job"),
             drop,
@@ -212,11 +233,21 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
             el("div", { class: "button-row" }, labeled("Job", jobPick, "labeled inline"), exportButton),
             reportBox,
         ),
+        el("details", { class: "more cam-more stack" },
+            el("summary", { title: "fold or unfold" }, "More: axes, tools, a new profile, delete"),
+            el("div", { class: "cam-section" }, el("h3", { title: "the machine's axes as the gcode names them" }, "Axes"), axesBox),
+            el("div", { class: "cam-section" }, el("h3", { title: "the tools the operations cut with, and what each cuts at unless an operation says otherwise" }, "Tools"), toolsBox),
+            el("div", { class: "cam-section" },
+                el("h3", { title: "a new profile starts as a copy of the one picked; Delete removes the picked one's file" }, "Profiles"),
+                el("div", { class: "button-row" }, newId, create, remove),
+            ),
+        ),
     );
 
     // --- the file ---
     const fileEditor = codeEditor("Profile file");
-    const save = button("Save", () => saveText(), "btn btn-primary", "save the profile");
+    // Dark only while there are edits to save: the next thing to do then.
+    const save = button("Save", () => saveText(), "btn", "save the profile");
     const revert = button("Revert", () => revertText(), "btn btn-quiet", "drop the edits");
     const fileStatus = el("span", { class: "muted cam-status" });
     const editor = el("div", { class: "panel-body" },
@@ -233,6 +264,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
     // An edit not saved is counted on the page's tab.
     const setDirty = (value: boolean): void => {
         dirty = value;
+        save.classList.toggle("btn-primary", value);
         setPending(ctx.store, "cam-profile", value ? 1 : 0);
     };
     let lastJob: string | null = null;
@@ -324,7 +356,7 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
         summary.textContent = parts.filter((part) => part !== "").join(" | ");
         replace(axesBox, axesTable(profile));
         replace(toolsBox, toolsTable(profile));
-        replace(opsBox, operationsTable(profile));
+        replace(opsBox, operationsList(profile));
         const model = profile.model === true || (profile.materials?.length ?? 0) > 0;
         stockSection.classList.toggle("hidden", !model);
         if (model) {
@@ -413,10 +445,18 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
         return el("table", { class: "cam-table tools" }, el("thead", {}, head), el("tbody", {}, ...rows));
     }
 
-    function operationsTable(profile: CamProfile): HTMLElement {
-        const head = el("tr", {}, ...["On", "Operation", "Tool", "Cutting settings", "Passes"].map((text) => el("th", {}, text)));
-        const bodies = profile.operations.map((operation, index) => operationRow(profile, operation, index));
-        return el("table", { class: "cam-table operations" }, el("thead", {}, head), ...bodies);
+    /**
+     * The profile's operations, a row each: the box that takes it in or
+     * out, and a button with its name, its tool and its numbers in a line,
+     * which opens its tool and cutting settings under it.
+     */
+    function operationsList(profile: CamProfile): HTMLElement {
+        if (openFor !== picked) {
+            openFor = picked;
+            openOps = new Set();
+        }
+        openOps = new Set(Array.from(openOps).filter((index) => index < profile.operations.length));
+        return el("ul", { class: "groups cam-operations" }, ...profile.operations.map((operation, index) => operationRow(profile, operation, index)));
     }
 
     function operationRow(profile: CamProfile, operation: CamOperation, index: number): HTMLElement {
@@ -425,12 +465,12 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
         const enabled = el("input", { type: "checkbox", "aria-label": `${operation.name} enabled` });
         enabled.checked = operation.enabled;
         enabled.addEventListener("change", () => void patch(["operations", index, "enabled"], enabled.checked));
-        const toolPick = el("select", { class: "field", "aria-label": `${operation.name} tool` },
+        const toolPick = el("select", { class: "field cam-tool", "aria-label": `${operation.name} tool` },
             ...profile.tools.map((candidate) => el("option", { value: candidate.id }, candidate.name)),
         );
         toolPick.value = operation.tool;
         toolPick.addEventListener("change", () => void patch(["operations", index, "tool"], toolPick.value));
-        const fields = el("div", { class: "cam-fields" });
+        const fields = el("div", { class: "cam-fields" }, labeled("Tool", toolPick));
         const model = MODEL_SOURCES.includes(operation.source);
         for (const spec of kind === "spindle" ? (model ? MODEL_FIELDS : SPINDLE_FIELDS) : LASER_FIELDS) {
             const own = operation.settings[spec.key];
@@ -491,16 +531,31 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
             : kind === "spindle"
                 ? `${countText(passes, "pass", "passes")} to ${operation.cutting["depth"] ?? 0} mm`
                 : countText(passes, "pass", "passes");
-        return el("tbody", { class: operation.enabled ? "" : "disabled" },
-            el("tr", {},
-                el("td", {}, enabled),
-                el("td", {}, el("div", { class: "cam-op-name" }, operation.name), el("div", { class: "muted" }, operation.source)),
-                el("td", {}, toolPick),
-                el("td", {}, fields),
-                el("td", { class: "cam-passes muted" }, passText),
-            ),
-            // Where a material put the speed and the feed, under the row.
-            ...(operation.feeds ? [el("tr", { class: "cam-feeds" }, el("td", {}), el("td", { colspan: "4", class: "muted" }, operation.feeds))] : []),
+        // What the operation is made from, said only where its name does not.
+        const source = operation.source === operation.name ? "" : ` ${operation.source}`;
+        const box = el("div", { class: "group-fields stack" },
+            fields,
+            // Where a material put the speed and the feed, under the fields.
+            operation.feeds ? el("p", { class: "muted cam-feeds" }, operation.feeds) : null,
+        );
+        const press = el("button", { type: "button", class: "group-open", title: "this operation's tool and cutting settings: show or hide them" },
+            el("span", { class: "group-name" }, operation.name, el("span", { class: "muted" }, source)),
+            el("span", { class: "muted group-says" }, operationSays(operation, tool, passText)),
+        );
+        const showFields = (shown: boolean): void => {
+            box.hidden = !shown;
+            press.setAttribute("aria-expanded", String(shown));
+            if (shown) {
+                openOps.add(index);
+            } else {
+                openOps.delete(index);
+            }
+        };
+        press.addEventListener("click", () => showFields(box.hidden));
+        showFields(openOps.has(index));
+        return el("li", { class: operation.enabled ? "group" : "group disabled", "aria-label": operation.name },
+            el("div", { class: "group-row" }, enabled, press),
+            box,
         );
     }
 

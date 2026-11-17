@@ -82,3 +82,28 @@ test("the controls fold asks the camera and measures only while open and on the 
     await settle();
     expect(calls.filter((call) => call.name === "cameraControls").length).toBe(2);
 });
+
+test("a control an automatic one has taken over is left out and named under the list, unless a value is kept for it", async () => {
+    const { ctx, api } = setup();
+    const fold = mountCameraControls(ctx, "head", "the head camera");
+    document.body.append(fold.root);
+    await fold.reload();
+    await settle();
+    const names = (): (string | null)[] => Array.from(fold.root.querySelectorAll(".camera-control-name")).map((name) => name.textContent);
+    const listed = (await api.cameraControls("head")).controls;
+    const idle = listed.filter((control) => control.inactive).map((control) => control.name.replace(/_/g, " "));
+    expect(idle.length).toBeGreaterThan(0);
+    // What can be set now is listed; what the camera sets by itself is not.
+    expect(names()).toEqual(listed.filter((control) => !control.inactive).map((control) => control.name.replace(/_/g, " ")));
+    const line = fold.root.querySelector(".camera-controls-idle")!;
+    expect(line.textContent).toBe(`Set by the camera while an automatic control is on, and shown here once it is off: ${idle.join(", ")}.`);
+    // A value kept for one of them brings it back, so the value can be forgotten.
+    const kept = listed.find((control) => control.inactive)!;
+    await api.setCameraControls("head", { [kept.name]: kept.default });
+    await fold.reload();
+    await settle();
+    const after = (await api.cameraControls("head")).controls.find((control) => control.name === kept.name)!;
+    expect(after.kept).not.toBeNull();
+    expect(names()).toContain(kept.name.replace(/_/g, " "));
+    fold.root.remove();
+});

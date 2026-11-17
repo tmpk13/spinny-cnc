@@ -61,19 +61,26 @@ describe("a job's icon", () => {
 });
 
 describe("the job list's icons", () => {
-    test("a press on the drawing opens the picker; a glyph, a color and letters are kept at once, and Drawing gives the drawing back", async () => {
+    test("Icon, under More, opens the picked job's picker; a glyph, a color and letters are kept at once, and Drawing gives the drawing back", async () => {
         const { ctx, root, api, calls } = setup();
         mountJobs(root, ctx, root);
         const job = await api.uploadJob(new File([SVG], "lid.svg"), { anchor: "keep" });
         await ctx.refreshJobs();
-        const thumb = (): HTMLButtonElement => root.querySelector(`button[aria-label="Icon of ${job.name}"]`) as HTMLButtonElement;
+        // A job's row is one button, its drawing in it.
+        const thumb = (): HTMLElement => Array.from(root.querySelectorAll<HTMLElement>(".job-list .job-pick")).find((row) => row.textContent!.includes(job.name))!.querySelector(".job-thumb-box") as HTMLElement;
         expect(thumb().querySelector("img.job-thumb")).not.toBeNull();
-        expect(thumb().title).not.toBe("");
-        thumb().click();
-        await settle();
+        const icon = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Icon")!;
+        expect(icon.closest("details.more")).not.toBeNull();
         const picker = (): HTMLElement | null => root.querySelector(".job-icon-picker");
+        // The icon is the picked job's: with no job picked there is none to set.
+        expect(icon.dataset["reason"]).toBe("pick a job first");
+        await ctx.selectJob(job.id);
+        expect(icon.dataset["locked"]).toBeUndefined();
+        icon.click();
+        await settle();
         expect(picker()).not.toBeNull();
-        expect(thumb().getAttribute("aria-expanded")).toBe("true");
+        expect(picker()!.closest("li")!.previousElementSibling).toBe(thumb().closest("li"));
+        expect(icon.getAttribute("aria-expanded")).toBe("true");
         // Open, it is a pop-up: the pointer elsewhere says a press only shuts it.
         expect(document.documentElement.hasAttribute("data-dismiss")).toBe(true);
         expect(picker()!.querySelectorAll(".job-icon-choice").length).toBe(12);
@@ -102,7 +109,15 @@ describe("the job list's icons", () => {
         document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
         expect(picker()).toBeNull();
         expect(thumb().closest("li")).toBe(row);
-        expect(thumb().getAttribute("aria-expanded")).toBe("false");
+        expect(icon.getAttribute("aria-expanded")).toBe("false");
+        expect(document.documentElement.hasAttribute("data-dismiss")).toBe(false);
+        // Open again, it goes when another job is picked: it was that job's.
+        icon.click();
+        await settle();
+        expect(picker()).not.toBeNull();
+        const other = (await api.jobs()).find((entry) => entry.id !== job.id)!;
+        await ctx.selectJob(other.id);
+        expect(picker()).toBeNull();
         expect(document.documentElement.hasAttribute("data-dismiss")).toBe(false);
         root.remove();
     });

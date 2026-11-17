@@ -28,15 +28,23 @@ export interface Measure {
     work: number;
     /** The longest scrolling box, in heights of itself; 1 when nothing scrolls. */
     scroll: number;
+    /** The controls in view by where they are, most first: "job 31, rail 13, bar 3". */
+    controlsBy: string;
+    /** The words in view by where they are, most first. */
+    wordsBy: string;
 }
 
 export function measure(): Measure {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
+    // What a shut fold holds keeps its boxes in a browser that skips its
+    // rendering (content-visibility), so the size alone does not say it is
+    // drawn: the browser is asked.
     const shown = (node: Element): boolean => {
         const box = node.getBoundingClientRect();
         const style = getComputedStyle(node);
-        return box.width > 0 && box.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+        return box.width > 0 && box.height > 0 && style.visibility !== "hidden" && style.display !== "none"
+            && (typeof node.checkVisibility !== "function" || node.checkVisibility());
     };
     const within = (box: DOMRect): boolean => box.bottom > 0 && box.top < vh && box.right > 0 && box.left < vw;
     /** In the window and not under something else: what a point in its middle hits is it, or within it. */
@@ -50,9 +58,23 @@ export function measure(): Measure {
         const at = document.elementFromPoint(x, y);
         return at !== null && (at === node || node.contains(at) || (at.contains(node) && at.closest("label") !== null));
     };
+    /** Where a node is: its panel by id, else the part of the frame it is in. */
+    const place = (node: Element): string => {
+        const panel = node.closest("section.panel[id]");
+        if (panel) {
+            return panel.id;
+        }
+        return node.closest(".viewbar") ? "views" : node.closest(".tabs") ? "rail" : node.closest(".statusbar") ? "bar" : node.closest("dialog, [role=dialog]") ? "dialog" : "other";
+    };
+    const tally = (counts: Map<string, number>): string => Array.from(counts.entries()).sort((a, b) => b[1] - a[1]).map(([where, count]) => `${where} ${count}`).join(", ");
     const all = Array.from(document.querySelectorAll("button, input:not([type=hidden]), select, textarea, a[href], summary")).filter(shown);
     const inView = all.filter(met);
     const locked = inView.filter((node) => (node as HTMLButtonElement).disabled || node.getAttribute("aria-disabled") === "true");
+    const controlsBy = new Map<string, number>();
+    for (const node of inView) {
+        controlsBy.set(place(node), (controlsBy.get(place(node)) ?? 0) + 1);
+    }
+    const wordsBy = new Map<string, number>();
 
     // Words, by text node, with the size and color each is set in.
     const sizes = new Set<string>();
@@ -82,6 +104,7 @@ export function measure(): Measure {
             continue;
         }
         words += count;
+        wordsBy.set(place(parent), (wordsBy.get(place(parent)) ?? 0) + count);
         const style = getComputedStyle(parent);
         sizes.add(String(Math.round(parseFloat(style.fontSize) * 2) / 2));
         inks.add(style.color);
@@ -188,5 +211,7 @@ export function measure(): Measure {
         loud: Array.from(loud.entries()).sort((a, b) => b[1] - a[1]).map(([hue, count]) => `${hue} ${count}`).join(", "),
         work: Math.round(100 * work),
         scroll: Math.round(scroll * 10) / 10,
+        controlsBy: tally(controlsBy),
+        wordsBy: tally(wordsBy),
     };
 }

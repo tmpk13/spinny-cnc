@@ -4,12 +4,13 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { initialState } from "../src/state.ts";
-import type { Job, JobSummary, Progress } from "../src/types.ts";
+import type { CamOperation, CamTool, Group, Job, JobSummary, Progress } from "../src/types.ts";
 import { cameraViews, machineViews, viewPanels, viewsOf } from "../src/views/areaviews.ts";
 import { helpMark } from "../src/views/context.ts";
 import { mountFindBoard } from "../src/views/findboard.ts";
 import { mountHeightMap } from "../src/views/heightmap.ts";
-import { mountJobs } from "../src/views/jobs.ts";
+import { operationSays } from "../src/views/cam.ts";
+import { groupSays, jobSizeText, mountJobs } from "../src/views/jobs.ts";
 import { mountPanels } from "../src/views/panels.ts";
 import { mountPnpRun } from "../src/views/pnprun.ts";
 import { mountPreviewPanel, viewLabel } from "../src/views/previewpanel.ts";
@@ -186,7 +187,7 @@ describe("the preview's view options", () => {
 });
 
 describe("the Jobs panel", () => {
-    test("opening a file is the next thing to do while no job is kept; a job's Delete is a mark that still says Delete", () => {
+    test("opening a file is the next thing to do while no job is kept; a job's row is the job and its Delete, the rest under More", () => {
         const { ctx, root, store } = setup();
         const run = document.createElement("section");
         mountJobs(root, ctx, run);
@@ -198,9 +199,24 @@ describe("the Jobs panel", () => {
         const remove = root.querySelector(".job-list .job-remove") as HTMLButtonElement;
         expect(remove.textContent).toBe("Delete");
         expect(remove.title).toBe("delete board");
-        // Combining, saving and emptying sit under the list, out of the head.
+        // A row is one button that picks the job, its drawing in it, and Delete.
+        expect(Array.from(root.querySelectorAll(".job-list li > button")).map((press) => press.className.split(" ").at(-1))).toEqual(["job-pick", "job-remove"]);
+        expect(root.querySelector(".job-list .job-pick .job-thumb-box")).not.toBeNull();
+        // The picked job's icon and file, joining and emptying are folded under the list, out of the head.
         expect(root.querySelector(".panel-head button")).toBeNull();
-        expect(Array.from(root.querySelectorAll(".job-list-actions button")).map((press) => press.textContent)).toEqual(["Combine", "Save job", "Delete all"]);
+        const more = root.querySelector("details.jobs-more") as HTMLDetailsElement;
+        expect(more.open).toBe(false);
+        expect(more.querySelector("summary")!.textContent).toBe("More: icon, save, combine, delete all");
+        expect(Array.from(more.querySelectorAll("button")).map((press) => press.textContent)).toEqual(["Icon", "Save job", "Combine", "Delete all"]);
+        // The boxes that tick jobs to join show with the fold open, where Combine is.
+        const list = root.querySelector(".job-list") as HTMLElement;
+        expect(list.hasAttribute("data-combining")).toBe(false);
+        more.open = true;
+        more.dispatchEvent(new Event("toggle"));
+        expect(list.hasAttribute("data-combining")).toBe(true);
+        more.open = false;
+        more.dispatchEvent(new Event("toggle"));
+        expect(list.hasAttribute("data-combining")).toBe(false);
     });
 });
 
@@ -275,5 +291,68 @@ describe("the search", () => {
         await settle();
         expect((app.querySelector("details") as HTMLDetailsElement).open).toBe(true);
         expect(shown).toBe(1);
+    });
+});
+
+describe("a row that says its numbers", () => {
+    const group = (over: Partial<Group>): Group => ({ label: "cut", power: 500, min_power: 0, speed: 400, passes: 1, enabled: true, paths: [], ...over });
+
+    test("a job's group: power and speed, the passes when more than one, a focus of its own", () => {
+        expect(groupSays(group({}), false)).toBe("S500, 400 mm/min");
+        expect(groupSays(group({ passes: 3 }), false)).toBe("S500, 400 mm/min, 3 passes");
+        expect(groupSays(group({ focus: 0.5 }), false)).toBe("S500, 400 mm/min, focus +0.5 mm");
+        expect(groupSays(group({ focus: -1, passes: 2 }), false)).toBe("S500, 400 mm/min, 2 passes, focus -1 mm");
+        // No focus of its own says nothing of it.
+        expect(groupSays(group({ focus: null }), false)).toBe("S500, 400 mm/min");
+    });
+
+    test("milled, how deep it goes; a model's moves carry their own depths and passes; a dispenser's paste", () => {
+        expect(groupSays(group({ power: 12000, speed: 300, depth: 1.6, passes: 4 }), true)).toBe("S12000, 1.6 mm deep, 300 mm/min, 4 passes");
+        // With no depth of its own a group mills through the copper.
+        expect(groupSays(group({ power: 12000, speed: 300 }), true)).toBe("S12000, 0.1 mm deep, 300 mm/min");
+        expect(groupSays(group({ power: 12000, speed: 300, depth: 2.5, passes: 4, moves: [[]] } as Partial<Group>), true)).toBe("S12000, to 2.5 mm deep, 300 mm/min");
+        expect(groupSays(group({ tool: "dispenser", thickness: 0.2 }), false)).toBe("0.2 mm of paste");
+        expect(groupSays(group({ tool: "dispenser", passes: 2 }), true)).toBe("0.12 mm of paste, 2 passes");
+    });
+
+    test("a job's size: its length and its time", () => {
+        expect(jobSizeText(job)).toBe("120.0 mm of path, 1:30 at these speeds");
+    });
+
+    test("a CAM operation: its tool by name, what it turns or burns at, its feed and its passes", () => {
+        const laser = { id: "diode", name: "Diode laser", kind: "laser", width: 0.08, settings: {} } as unknown as CamTool;
+        const mill = { id: "em", name: "1 mm end mill", kind: "spindle", width: 1, settings: {} } as unknown as CamTool;
+        const operation = (cutting: Record<string, number>, tool: string): CamOperation => ({ name: "outline", source: "outline", tool, enabled: true, settings: {}, cutting }) as unknown as CamOperation;
+        expect(operationSays(operation({ power: 600, speed: 150, passes: 6 }, "diode"), laser, "6 passes")).toBe("Diode laser, S600, 150 mm/min, 6 passes");
+        expect(operationSays(operation({ rpm: 10000, feed: 200, depth: 1.7 }, "em"), mill, "3 passes to 1.7 mm")).toBe("1 mm end mill, S10000, 200 mm/min, 3 passes to 1.7 mm");
+        // A tool the profile no longer has is named by its id, with no numbers to say.
+        expect(operationSays(operation({}, "gone"), undefined, "1 pass")).toBe("gone, 1 pass");
+    });
+});
+
+describe("the picked job's place by hand", () => {
+    test("an offset typed moves the job when its field is left, with no button to press after; the turn has its own row", async () => {
+        const { ctx, root, api, calls } = setup();
+        mountJobs(root, ctx, root);
+        await ctx.refreshJobs();
+        const first = (await api.jobs())[0]!;
+        await ctx.selectJob(first.id);
+        const x = root.querySelector('input[aria-label="Offset x"]') as HTMLInputElement;
+        const y = root.querySelector('input[aria-label="Offset y"]') as HTMLInputElement;
+        const place = x.closest(".job-place")!;
+        expect(Array.from(place.querySelectorAll("button")).map((press) => press.textContent)).toEqual(["Turn left", "Turn right"]);
+        calls.length = 0;
+        x.value = "3.5";
+        x.dispatchEvent(new Event("change"));
+        await settle();
+        await settle();
+        expect(calls.find((call) => call.name === "patchJob")?.args).toEqual([first.id, { offset: { x: 3.5, y: Number(y.value) } }]);
+        expect((await api.job(first.id)).offset.x).toBe(3.5);
+        // A field emptied is not an offset: said, and nothing sent.
+        calls.length = 0;
+        y.value = "";
+        y.dispatchEvent(new Event("change"));
+        await settle();
+        expect(calls.some((call) => call.name === "patchJob")).toBe(false);
     });
 });

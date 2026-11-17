@@ -415,7 +415,19 @@ describe("the CAM view", () => {
         expect(root.querySelector(".cam-summary")?.textContent).toContain("gcode only");
         expect(root.querySelectorAll("table.axes tbody tr").length).toBe(3);
         expect(root.querySelectorAll("table.tools tbody tr").length).toBe(3);
-        expect(root.querySelectorAll("table.operations tbody").length).toBe(4);
+        // The operations are a row each, their settings shut until a row is pressed; axes, tools and file keeping are folded.
+        const rows = Array.from(root.querySelectorAll<HTMLElement>(".cam-operations .group"));
+        expect(rows.length).toBe(4);
+        expect(rows.map((row) => row.getAttribute("aria-label"))[0]).toBe("isolation");
+        expect(rows.every((row) => (row.querySelector(".group-fields") as HTMLElement).hidden)).toBe(true);
+        expect(rows[0]!.querySelector(".group-says")!.textContent).toMatch(/^.+, S\d+, \d+ mm\/min, \d+ pass(es)? to 0\.1 mm$/);
+        const more = root.querySelector("details.cam-more") as HTMLDetailsElement;
+        expect(more.open).toBe(false);
+        expect(more.contains(root.querySelector("table.axes"))).toBe(true);
+        expect(more.contains(root.querySelector("table.tools"))).toBe(true);
+        expect(more.contains(field(root, "New profile id"))).toBe(true);
+        (rows[0]!.querySelector("button.group-open") as HTMLButtonElement).click();
+        expect((rows[0]!.querySelector(".group-fields") as HTMLElement).hidden).toBe(false);
         const textArea = field(fileRoot, "Profile file") as unknown as HTMLTextAreaElement;
         expect(textArea.value).toBe(millText);
 
@@ -430,6 +442,10 @@ describe("the CAM view", () => {
         expect(calls[0]).toEqual({ name: "patchCamProfile", args: ["mill-3axis", ["operations", 0, "depth"], 0.2] });
         expect(textArea.value).toContain("depth = 0.2");
         expect((field(root, "isolation Depth mm") as HTMLInputElement).value).toBe("0.2");
+        // The rows were made again from the answer: the one opened is still open, and says the new depth.
+        const again = root.querySelector<HTMLElement>(".cam-operations .group")!;
+        expect((again.querySelector(".group-fields") as HTMLElement).hidden).toBe(false);
+        expect(again.querySelector(".group-says")!.textContent).toEndWith("to 0.2 mm");
 
         const plunge = field(root, "isolation Plunge mm/min") as HTMLInputElement;
         expect(plunge.classList.contains("inherited")).toBe(true);

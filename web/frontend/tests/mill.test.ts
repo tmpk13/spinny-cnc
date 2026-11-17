@@ -316,6 +316,29 @@ describe("Plot page", () => {
         expect(root.querySelector(".mill-problem")?.textContent).toContain("bit");
     });
 
+    test("what cannot act now is not shown: Apply with no operation to change, the markers' buttons with no markers, Clear with no points, New job with no job to add to", () => {
+        const { root, store } = mountPage();
+        const press = (text: string): HTMLButtonElement => findButton(root, text);
+        const shown = (node: HTMLElement): boolean => !node.hidden;
+        click(root, "Line");
+        type(input(root, "Points"), "");
+        expect(shown(press("Apply"))).toBe(false);
+        expect(shown(press("All markers"))).toBe(false);
+        expect(shown(root.querySelector<HTMLElement>('select[aria-label="add marker"]')!)).toBe(false);
+        expect(shown(press("Clear"))).toBe(false);
+        // With no Plot job picked, Add makes a new one, so New job would say the same.
+        expect(press("Add to new job").hidden).toBe(false);
+        expect(shown(press("New job"))).toBe(false);
+        // Markers kept bring the two that take points from them; a point typed brings Clear.
+        store.set({ markers: [{ name: "A", x: 7, y: 8 }] });
+        expect(shown(press("All markers"))).toBe(true);
+        expect(shown(root.querySelector<HTMLElement>('select[aria-label="add marker"]')!)).toBe(true);
+        type(input(root, "Points"), "1, 2");
+        expect(shown(press("Clear"))).toBe(true);
+        store.set({ markers: [] });
+        expect(shown(press("All markers"))).toBe(false);
+    });
+
     test("takes a corner from the head and points from the markers", async () => {
         const { root, store } = mountPage();
         store.set({ snapshot: connected({ board: { x: 3.25, y: -1.5 } }), markers: [{ name: "A", x: 7, y: 8 }, { name: "B", x: 9, y: 1 }] });

@@ -744,6 +744,12 @@ export function mountMill(roots: { operation: HTMLElement; run?: HTMLElement }, 
         lockFor(applyButton, [problem !== "", problem], [state !== "changed", state === "applied" ? "the job has this operation already" : "pick an operation of the job to change"]);
         setLocked(addButton, problem !== "", problem);
         setLocked(newButton, problem !== "", problem);
+        // What cannot act now is not shown: Apply with no operation of a
+        // job picked to change, Clear with no points to forget.
+        applyButton.hidden = editing === null;
+        clearPoints.hidden = points.value.trim() === "";
+        // With no job to add to, Add makes a new one: New job would say the same.
+        newButton.hidden = !plotJob;
         addButton.textContent = plotJob ? "Add to job" : "Add to new job";
         replace(opList, ...(ops ?? []).map((each, index) => {
             const edit = button(operationSummary(each), () => {
@@ -1009,6 +1015,13 @@ export function mountMill(roots: { operation: HTMLElement; run?: HTMLElement }, 
 
     ctx.store.subscribe((state) => renderJobs(state), ["jobs"]);
     ctx.store.subscribe((state) => renderMachine(state), ["snapshot"]);
+    // Points from the markers are offered while there are markers.
+    const showMarkers = (state: AppState): void => {
+        addMarker.hidden = state.markers.length === 0;
+        addAll.hidden = state.markers.length === 0;
+    };
+    ctx.store.subscribe(showMarkers, ["markers"]);
+    showMarkers(ctx.store.get());
     ctx.store.subscribe((state) => renderSelected(state), ["job"]);
     renderJobs(ctx.store.get());
     renderMachine(ctx.store.get());

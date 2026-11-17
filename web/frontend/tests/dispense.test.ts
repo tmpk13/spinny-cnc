@@ -203,8 +203,9 @@ describe("a dispenser machine", () => {
         await ctx.selectJob(job.id);
         expect(root.querySelector(".run-note")?.classList.contains("hidden")).toBe(true);
         expect(Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Run")?.disabled).toBe(false);
-        expect(Array.from(root.querySelectorAll("table.groups thead th")).map((th) => th.textContent)).toEqual(["Paste mm", "Passes", "On"]);
-        expect(root.querySelector("table.groups .group-name")?.textContent).toContain("(3 dots)");
+        expect(Array.from(root.querySelector(".groups .group")!.querySelectorAll(".group-fields .labeled-text")).map((label) => label.textContent)).toEqual(["Paste mm", "Passes"]);
+        expect(root.querySelector(".groups .group-name")?.textContent).toContain("(3 dots)");
+        expect(root.querySelector(".groups .group-says")?.textContent).toBe("0.12 mm of paste");
         const thickness = root.querySelector('input[aria-label="thickness"]') as HTMLInputElement;
         expect(thickness.value).toBe("0.12");
         thickness.value = "0.2";

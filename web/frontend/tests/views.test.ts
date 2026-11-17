@@ -946,17 +946,24 @@ describe("jobs", () => {
         expect(store.get().toasts.some((t) => t.level === "error")).toBe(true);
         const stop = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Stop");
         expect(stop).toBeDefined();
-        expect(root.querySelectorAll("table.groups tbody tr").length).toBeGreaterThan(0);
+        expect(root.querySelectorAll(".groups .group").length).toBeGreaterThan(0);
     });
 
-    test("a patch of the same job updates the table in place and keeps the field being typed in", async () => {
+    test("a patch of the same job updates its groups in place and keeps the field being typed in", async () => {
         const { ctx, root, api } = setup();
         mountJobs(root, ctx, root);
         await ctx.refreshJobs();
         const jobs = await api.jobs();
         await ctx.selectJob(jobs[0]!.id);
-        const table = root.querySelector("table.groups")!;
-        const row = table.querySelectorAll("tbody")[0]!;
+        const table = root.querySelector(".groups")!;
+        const row = table.querySelectorAll(".group")[0]!;
+        // Shut, the row says the group's numbers; opened, it stays open through the patches.
+        const says = row.querySelector(".group-says")!;
+        const before = says.textContent!;
+        expect(before).toMatch(/^S\d+, \d+ mm\/min$/);
+        (row.querySelector("button.group-open") as HTMLButtonElement).click();
+        const fields = row.querySelector(".group-fields") as HTMLElement;
+        expect(fields.hidden).toBe(false);
         const field = (label: string): HTMLInputElement => row.querySelector(`input[aria-label="${label}"]`) as HTMLInputElement;
         const power = field("power");
         const minPower = field("min power");
@@ -970,7 +977,10 @@ describe("jobs", () => {
         await settle();
         await settle();
         expect((await api.job(jobs[0]!.id)).groups[0]!.power).toBe(321);
-        expect(root.querySelector("table.groups")).toBe(table);
+        expect(root.querySelector(".groups")).toBe(table);
+        // The patch carries the row's fields as they stand, the speed being typed among them.
+        expect(says.textContent).toBe("S321, 123 mm/min");
+        expect(fields.hidden).toBe(false);
         expect(speed.isConnected).toBe(true);
         expect(speed.value).toBe("123");
         expect(power.value).toBe("321");
@@ -991,8 +1001,9 @@ describe("jobs", () => {
         await settle();
         await settle();
         expect((await api.job(jobs[0]!.id)).groups[0]!.passes).toBe(3);
-        expect(root.querySelector("table.groups")).toBe(table);
+        expect(root.querySelector(".groups")).toBe(table);
         expect(passes.value).toBe("3");
+        expect(says.textContent).toEndWith(", 3 passes");
     });
 
     test("the clear choice goes with an upload, and off sends none", async () => {
@@ -1206,7 +1217,7 @@ describe("jobs", () => {
         };
         // As many groups as before, but the table says the new margin.
         await recut("0.05");
-        expect(root.querySelector("table.groups")!.textContent).toContain("paste openings, 0.050 mm margin");
+        expect(root.querySelector(".groups")!.textContent).toContain("paste openings, 0.050 mm margin");
         // The fine pads, 0.25 mm wide, leave a 0.1 mm spot no room once
         // 0.1 mm comes off each side.
         await recut("0.1");
@@ -1232,8 +1243,11 @@ describe("jobs", () => {
         expect(root.querySelectorAll("li").length).toBe(1);
         const jobs = await api.jobs();
         await ctx.selectJob(jobs[0]!.id);
-        expect(root.querySelectorAll("table.groups tbody").length).toBe(4);
-        expect(root.querySelectorAll("table.groups tbody tr.group-fields input.num").length).toBe(16);
+        expect(root.querySelectorAll(".groups .group").length).toBe(4);
+        expect(root.querySelectorAll(".groups .group-fields input.num").length).toBe(16);
+        // A row is the box that takes the group in or out and the button that opens its numbers: all shut at first.
+        expect(root.querySelectorAll(".groups .group-row > *").length).toBe(8);
+        expect(Array.from(root.querySelectorAll<HTMLElement>(".groups .group-fields")).every((fields) => fields.hidden)).toBe(true);
         expect(root.querySelector(".stats")?.textContent).toContain("Table limited");
         expect(root.querySelector("li")?.classList.contains("selected")).toBe(true);
         store.set({ progress: { job: jobs[0]!.id, state: "running", sent: 1, acked: 1, total: 10, seconds: 1, estimate: 10, group: 0 } });

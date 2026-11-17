@@ -10,7 +10,8 @@
  {
   "name": "home",
   "page": "home",
-  "before": "(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const press = (root, text) => { const b = [...document.querySelectorAll(root + ' button')].find((x) => x.textContent.trim() === text); if (b) { b.click(); } return b ? text : 'no ' + text; }; press('#connection', 'Connect'); await wait(500); document.querySelector('.job-list li .job-pick').click(); await wait(500); return 'ready'; })()",
+  "machine": "laser",
+  "job": true,
   "width": 1440,
   "height": 900,
   "wait": 900,
@@ -19,7 +20,8 @@
  {
   "name": "job",
   "page": "job",
-  "before": "(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const press = (root, text) => { const b = [...document.querySelectorAll(root + ' button')].find((x) => x.textContent.trim() === text); if (b) { b.click(); } return b ? text : 'no ' + text; }; press('#connection', 'Connect'); await wait(500); document.querySelector('.job-list li .job-pick').click(); await wait(500); return 'ready'; })()",
+  "machine": "laser",
+  "job": true,
   "width": 1440,
   "height": 900,
   "wait": 900,
@@ -28,7 +30,8 @@
  {
   "name": "run",
   "page": "run",
-  "before": "(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const press = (root, text) => { const b = [...document.querySelectorAll(root + ' button')].find((x) => x.textContent.trim() === text); if (b) { b.click(); } return b ? text : 'no ' + text; }; press('#connection', 'Connect'); await wait(500); document.querySelector('.job-list li .job-pick').click(); await wait(500); return 'ready'; })()",
+  "machine": "laser",
+  "job": true,
   "width": 1440,
   "height": 900,
   "wait": 900,
@@ -37,7 +40,9 @@
  {
   "name": "run-running",
   "page": "run",
-  "before": "(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const press = (root, text) => { const b = [...document.querySelectorAll(root + ' button')].find((x) => x.textContent.trim() === text); if (b) { b.click(); } return b ? text : 'no ' + text; }; press('#connection', 'Connect'); await wait(500); document.querySelector('.job-list li .job-pick').click(); await wait(500); press('#run', 'Run'); await wait(600); const ok = document.querySelector('dialog.confirm .btn-danger'); if (ok) { await wait(400); ok.click(); } await wait(1200); return 'ready'; })()",
+  "machine": "laser",
+  "job": true,
+  "before": "(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const run = [...document.querySelectorAll('#run button')].find((b) => b.textContent.trim() === 'Run'); run.click(); await wait(600); const ok = document.querySelector('dialog.confirm .btn-danger'); if (ok) { await wait(400); ok.click(); } await wait(1200); return 'running'; })()",
   "width": 1440,
   "height": 900,
   "wait": 900,
@@ -46,7 +51,7 @@
  {
   "name": "run-lumen",
   "page": "run",
-  "before": "(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const press = (root, text) => { const b = [...document.querySelectorAll(root + ' button')].find((x) => x.textContent.trim() === text); if (b) { b.click(); } return b ? text : 'no ' + text; }; const sel = document.querySelector('#connection select'); const opt = [...sel.options].find((o) => /LUMEN/i.test(o.value + o.textContent)); sel.value = opt.value; sel.dispatchEvent(new Event('change', { bubbles: true })); press('#connection', 'Connect'); await wait(500); return 'ready'; })()",
+  "machine": "lumen",
   "width": 1440,
   "height": 900,
   "wait": 900,
@@ -55,7 +60,7 @@
  {
   "name": "checklist",
   "page": "facts",
-  "before": "(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const press = (root, text) => { const b = [...document.querySelectorAll(root + ' button')].find((x) => x.textContent.trim() === text); if (b) { b.click(); } return b ? text : 'no ' + text; }; press('#connection', 'Connect'); await wait(500); return 'ready'; })()",
+  "machine": "laser",
   "width": 1440,
   "height": 900,
   "wait": 900,
@@ -64,7 +69,7 @@
  {
   "name": "machines",
   "page": "machines",
-  "before": "(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const press = (root, text) => { const b = [...document.querySelectorAll(root + ' button')].find((x) => x.textContent.trim() === text); if (b) { b.click(); } return b ? text : 'no ' + text; }; press('#connection', 'Connect'); await wait(500); return 'ready'; })()",
+  "machine": "laser",
   "width": 1440,
   "height": 900,
   "wait": 900,
@@ -73,7 +78,7 @@
  {
   "name": "cameras-lumen",
   "page": "cameras",
-  "before": "(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const press = (root, text) => { const b = [...document.querySelectorAll(root + ' button')].find((x) => x.textContent.trim() === text); if (b) { b.click(); } return b ? text : 'no ' + text; }; const sel = document.querySelector('#connection select'); const opt = [...sel.options].find((o) => /LUMEN/i.test(o.value + o.textContent)); sel.value = opt.value; sel.dispatchEvent(new Event('change', { bubbles: true })); press('#connection', 'Connect'); await wait(500); return 'ready'; })()",
+  "machine": "lumen",
   "width": 1440,
   "height": 900,
   "wait": 900,
@@ -82,7 +87,7 @@
  {
   "name": "cam",
   "page": "cam",
-  "before": "(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const press = (root, text) => { const b = [...document.querySelectorAll(root + ' button')].find((x) => x.textContent.trim() === text); if (b) { b.click(); } return b ? text : 'no ' + text; }; press('#connection', 'Connect'); await wait(500); return 'ready'; })()",
+  "machine": "laser",
   "width": 1440,
   "height": 900,
   "wait": 900,
@@ -91,7 +96,7 @@
  {
   "name": "page",
   "page": "ui",
-  "before": "(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const press = (root, text) => { const b = [...document.querySelectorAll(root + ' button')].find((x) => x.textContent.trim() === text); if (b) { b.click(); } return b ? text : 'no ' + text; }; press('#connection', 'Connect'); await wait(500); return 'ready'; })()",
+  "machine": "laser",
   "width": 1440,
   "height": 900,
   "wait": 900,
@@ -100,19 +105,21 @@
  {
   "name": "run-phone",
   "page": "run",
+  "machine": "laser",
+  "job": true,
   "width": 390,
   "height": 844,
-  "before": "(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const press = (root, text) => { const b = [...document.querySelectorAll(root + ' button')].find((x) => x.textContent.trim() === text); if (b) { b.click(); } return b ? text : 'no ' + text; }; press('#connection', 'Connect'); await wait(500); document.querySelector('.job-list li .job-pick').click(); await wait(500); return 'ready'; })()",
   "wait": 900,
   "measure": true
  },
  {
   "name": "run-dark",
   "page": "run",
-  "dark": true,
-  "before": "(async () => { const wait = (ms) => new Promise((r) => setTimeout(r, ms)); const press = (root, text) => { const b = [...document.querySelectorAll(root + ' button')].find((x) => x.textContent.trim() === text); if (b) { b.click(); } return b ? text : 'no ' + text; }; press('#connection', 'Connect'); await wait(500); document.querySelector('.job-list li .job-pick').click(); await wait(500); return 'ready'; })()",
+  "machine": "laser",
+  "job": true,
   "width": 1440,
   "height": 900,
+  "dark": true,
   "wait": 900,
   "measure": true
  }

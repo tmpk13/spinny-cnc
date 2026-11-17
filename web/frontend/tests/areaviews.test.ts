@@ -10,7 +10,7 @@ import { ALL_VIEW, heightText, isSteps, jobSteps, jobViews, placeText, placingSt
 import { LAYOUT_KEY, markupDefaults, mountPanels, revealPanel, showPanelView, viewLayout } from "../src/views/panels.ts";
 import { mountTabs, showPage } from "../src/views/tabs.ts";
 import { mountViewBars, showAreaView, stepMark, VIEWS_KEY } from "../src/views/viewbar.ts";
-import { connected, setup } from "./harness.ts";
+import { connected, findButton, setup } from "./harness.ts";
 
 const summary = { id: "a1", name: "board", source: "gerber", spot: 0.1, offset: { x: 1.5, y: -2 }, rotation: 0, groups: [], stats: { length_mm: 120, seconds: 90 } } as unknown as JobSummary;
 const job = { ...summary, outline: [], copper: [], groups: [] } as unknown as Job;
@@ -100,6 +100,8 @@ describe("the Job area's views", () => {
         const state = initialState(true);
         expect(jobViews(state).map((view) => view.id)).toEqual(["jobs", "draw", "assistant", "json"]);
         expect(jobViews(state)[0]!.columns).toEqual([["jobs"], ["preview"]]);
+        // What the assistant can do is there to read once: its panel is folded in the view.
+        expect(jobViews(state).find((view) => view.id === "assistant")!.folded).toEqual(["auto-about"]);
         expect(jobViews({ ...state, job })[0]!.columns).toEqual([["jobs"], ["preview"], ["job"]]);
         expect(isSteps(jobViews(state))).toBe(false);
         expect(viewsOf("home", state)).toEqual([]);
@@ -203,6 +205,20 @@ describe("a view on its page", () => {
         const columns = Array.from(app.querySelectorAll("#page-run > .column"));
         expect(columns.map((column) => column.hasAttribute("data-empty"))).toEqual([false, false, true]);
     });
+
+    test("a column that holds one panel in a view is marked, so the panel has no fold where the columns sit side by side", () => {
+        const app = makeApp();
+        mountPanels(app);
+        const columns = Array.from(app.querySelectorAll("#page-run > .column"));
+        const single = (): boolean[] => columns.map((column) => column.hasAttribute("data-single"));
+        // The operator's own layout is theirs to fold: nothing is marked.
+        expect(single()).toEqual([false, false, false]);
+        // One panel, two panels, one panel.
+        showPanelView("run", { id: "run", columns: [["run-preview"], ["run", "console"], ["machine"]] });
+        expect(single()).toEqual([true, false, true]);
+        showPanelView("run", null);
+        expect(single()).toEqual([false, false, false]);
+    });
 });
 
 describe("the view bar", () => {
@@ -235,6 +251,13 @@ describe("the view bar", () => {
         expect(Array.from(app.querySelectorAll("#page-run > .column")).map(panelsIn)).toEqual([["run-preview", "camera-view"], ["run", "console"], ["machine"]]);
         expect(app.querySelector("#page-run")!.hasAttribute("data-dock")).toBe(true);
         expect(app.querySelector("#console")!.hasAttribute("data-collapsed")).toBe(true);
+        // The step's own panels are marked to come first in a window too narrow for the work beside them; the dock is the last column.
+        const columns = Array.from(app.querySelectorAll("#page-run > .column"));
+        expect(columns.map((column) => column.hasAttribute("data-lead-column"))).toEqual([false, true, false]);
+        expect(columns.map((column) => column.hasAttribute("data-dock-column"))).toEqual([false, false, true]);
+        // The area shown whole has no step, so nothing leads.
+        findButton(bar, "All panels").click();
+        expect(columns.map((column) => column.hasAttribute("data-lead-column"))).toEqual([false, false, false]);
     });
 
     test("a step pressed stays, Back and Next walk the steps, and Next leads once the step is done", () => {

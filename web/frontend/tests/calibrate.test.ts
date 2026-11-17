@@ -69,7 +69,7 @@ describe("calibration test", () => {
         expect(made.summary[0]!.endsWith("shallowest at Y0")).toBe(true);
     });
 
-    test("a laser with a focus axis makes a focus ladder, and each line's focus shows in the groups table", async () => {
+    test("a laser with a focus axis makes a focus ladder, and each line's focus shows in its group", async () => {
         const store = new Store<AppState>(initialState(true));
         const backend = new MockBackend({ timers: false });
         await backend.connect("/dev/ttyACM0");
@@ -102,8 +102,10 @@ describe("calibration test", () => {
         const job = store.get().job!;
         expect(job.groups.map((group) => group.label)).toEqual(["test focus -1 mm", "test focus 0 mm", "test focus +1 mm"]);
         expect(panel.querySelector(".center-test-summary")?.textContent).toContain("3 lines -1 to +1 mm over focus");
-        const heads = Array.from(root.querySelectorAll("table.groups thead th")).map((th) => th.textContent);
-        expect(heads).toContain("Focus");
+        const heads = Array.from(root.querySelector(".groups .group")!.querySelectorAll(".group-fields .labeled-text")).map((label) => label.textContent);
+        expect(heads).toContain("Focus mm");
+        // Each row says its focus beside its power and speed.
+        expect(Array.from(root.querySelectorAll(".groups .group-says")).map((says) => says.textContent!.split(", ").at(-1))).toEqual(["focus -1 mm", "focus 0 mm", "focus +1 mm"]);
         const fields = Array.from(root.querySelectorAll('input[aria-label="focus"]')) as HTMLInputElement[];
         expect(fields.map((field) => field.value)).toEqual(["-1", "0", "1"]);
         // A blank field takes the group's focus away.

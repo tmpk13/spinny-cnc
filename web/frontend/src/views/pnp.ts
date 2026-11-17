@@ -20,7 +20,7 @@ import { mountCameraSight } from "./camerasight.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
 import { mountCameraViews, partLookRadius } from "./camview.ts";
-import { into, type Ctx } from "./context.ts";
+import { helpMark, into, type Ctx } from "./context.ts";
 import { mountFindBoard, shownGuesses, type FindBoardPanel } from "./findboard.ts";
 import { PLACING_SETUP, gcodePlacing, mountHead, upCameraText } from "./placing.ts";
 import { keptOut, mountPartsFilter, pickedToPlace, readShowKeptOut, setPickedToPlace, shownParts, writeShowKeptOut } from "./partsfilter.ts";
@@ -662,14 +662,23 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     const chosenLine = el("p", { class: "muted pnp-chosen" });
     roots.parts.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Parts")),
+        // In view: which board, finding a part in it, going to the one
+        // picked, and the list. Which side and which parts are listed, how
+        // the head goes to one and a board file are folded under the list.
         el("fieldset", { class: "panel-body" },
-            el("div", { class: "button-row" }, labeled("Job", jobPick, "labeled inline"), uploadButton, upload),
-            el("div", { class: "button-row" }, filter, sidePick, el("label", { class: "muted" }, grouped, " group"), keptOutLabel),
-            partsFilter.root,
-            el("div", { class: "button-row" }, gotoButton, correctLabel, withCameraLabel),
+            el("div", { class: "button-row" }, labeled("Job", jobPick, "labeled inline")),
+            el("div", { class: "button-row" }, filter),
+            el("div", { class: "button-row" }, gotoButton),
             chosenLine,
             partsNote,
             resizableBox(partsBox, "spinny.pnp.parts.height"),
+            el("details", { class: "more pnp-parts-more stack" },
+                el("summary", { title: "fold or unfold" }, "More: side, groups, parts left out, a board file"),
+                el("div", { class: "button-row" }, labeled("Side", sidePick, "labeled inline"), el("label", { class: "muted" }, grouped, " group"), keptOutLabel),
+                partsFilter.root,
+                el("div", { class: "button-row" }, correctLabel, withCameraLabel),
+                el("div", { class: "button-row" }, uploadButton, upload),
+            ),
         ),
     );
     jobPick.addEventListener("change", () => {
@@ -721,6 +730,10 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     const startButton = button("Start", () => startCamera(), "btn btn-primary");
     startButton.title = "start the bottom camera with these settings";
     const stopButton = button("Stop", () => into(ctx, "pnp", ctx.api.pnpStop()), "btn", "stop the bottom camera");
+    // The picture's panel takes that pair into its head; this panel, where
+    // the camera is picked and set up, keeps the one that can be pressed.
+    const startHere = button("Start", () => startCamera(), "btn btn-primary", "start the bottom camera with these settings");
+    const stopHere = button("Stop", () => into(ctx, "pnp", ctx.api.pnpStop()), "btn", "stop the bottom camera");
     const cameraBadge = el("span", { class: "badge" }, "stopped");
     const device = el("input", { type: "text", class: "field", "aria-label": "Bottom camera device", spellcheck: "false" }) as HTMLInputElement;
     const size = el("input", { type: "text", class: "field", "aria-label": "Bottom camera size", placeholder: "1280x720", spellcheck: "false" }) as HTMLInputElement;
@@ -771,35 +784,54 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     const deviceAbort = button("Abort", () => into(ctx, "pnp", ctx.api.pnpAbort()), "btn btn-danger urgent", "stop the routine");
     const deviceCameraLine = el("p", { class: "muted" });
     const deviceRoutineLine = el("p", { class: "muted vision-routine" });
+    // On a G-code machine, in view: where the camera is and whether its
+    // picture is measured, and the routine that measures both.
     const deviceCalibration = el("div", { class: "stack pnp-camera-device" },
-        el("h3", {}, "On the G-code machine"),
         deviceCameraLine,
-        el("div", { class: "button-row" }, labeled("X", placeX, "labeled inline"), labeled("Y", placeY, "labeled inline"), placeSet, placeForget),
-        el("div", { class: "button-row" }, placeHere, infoTip("upcam")),
-        el("div", { class: "button-row" }, labeled("Step mm", deviceStep, "labeled inline"), deviceCenter, runout, deviceAbort, infoTip("runout")),
+        el("div", { class: "button-row" }, deviceCenter, deviceAbort,
+            helpMark(ctx, "Center nozzle moves the nozzle over the camera's place, finds it in the picture, measures the picture against two small moves, and moves the nozzle onto the crosshair: that place is the camera's.")),
         deviceRoutineLine,
-        el("p", { class: "muted hint" }, "Center nozzle moves the nozzle over the camera's place, finds it in the picture, measures the picture against two small moves, and moves the nozzle onto the crosshair: that place is the camera's."),
+    );
+    // What a part is for is its heading's tooltip.
+    const cameraHeading = (text: string, tip: string): HTMLElement => el("h3", { title: tip }, text);
+    // Folded: the camera's place as numbers or taken by eye, the step the
+    // routine moves by, and the nozzle's runout.
+    const devicePlace = el("div", { class: "stack pnp-camera-place" },
+        cameraHeading("Its place on the machine", "where the camera sits: typed, taken by eye with the nozzle over its center, or measured by Center nozzle, which moves by the step"),
+        el("div", { class: "button-row" }, labeled("X", placeX, "labeled inline"), labeled("Y", placeY, "labeled inline"), placeSet, placeForget),
+        el("div", { class: "button-row" }, placeHere, infoTip("upcam"), labeled("Step mm", deviceStep, "labeled inline")),
+        cameraHeading("Runout", "how far the nozzle's tip runs off its turning axis, measured by turning it over the camera"),
+        el("div", { class: "button-row" }, runout, infoTip("runout")),
     );
     // Start, Stop and a look once go on the picture, where they are used.
     pictureActions(roots.view, startButton, stopButton, explain(labeled("Look for", lookSpot, "labeled inline"), "spot"), lookOnce);
     roots.camera.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Bottom camera"), cameraBadge),
+        // In view: starting it, which camera it is, what it last saw and,
+        // on a G-code machine, where it is. How it is read, its place as
+        // numbers, the runout and the log are folded under More.
         el("fieldset", { class: "panel-body" },
+            el("div", { class: "button-row" }, startHere, stopHere),
             cameraPick.row,
             cameraPick.note,
-            el("div", { class: "field-grid" },
-                labeled("Device", device),
-                labeled("Size", size),
-                labeled("fps", fps),
-                explain(labeled("Nozzle spot", nozzleSpot), "shade"),
-                explain(labeled("Part spot", partSpot), "shade"),
-            ),
-            el("div", { class: "button-row" }, cameraApply, cameraChip),
             lookLine,
-            ...placeFolds(roots.cameraFolds, "up", upControls.root, upSight.root, upChanges.root),
-            el("p", { class: "muted hint" }, "A fixed camera looking up at the nozzle. Set Nozzle spot and Part spot to how the bore and a held part look against their background."),
             deviceCalibration,
-            upLog,
+            el("details", { class: "more pnp-camera-more stack" },
+                el("summary", { title: "fold or unfold" }, "More: device and size, spots, its place, runout, the log"),
+                cameraHeading("How it is read", "A fixed camera looking up at the nozzle. Set Nozzle spot and Part spot to how the bore and a held part look against their background."),
+                el("div", { class: "field-grid" },
+                    labeled("Device", device),
+                    labeled("Size", size),
+                    labeled("fps", fps),
+                    explain(labeled("Nozzle spot", nozzleSpot), "shade"),
+                    explain(labeled("Part spot", partSpot), "shade"),
+                ),
+                el("div", { class: "button-row" }, cameraApply, cameraChip),
+                ...placeFolds(roots.cameraFolds, "up", upControls.root, upSight.root, upChanges.root),
+                devicePlace,
+                cameraHeading("Log", "the pictures the nozzle and part routines looked at, and photos taken by hand"),
+                upLog,
+            ),
         ),
     );
 
@@ -1374,8 +1406,15 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         const busy = pnp?.routine?.state === "running";
         cameraBadge.textContent = busy ? "routine" : running ? "running" : "stopped";
         cameraBadge.setAttribute("data-camera", busy ? "finding mark" : running ? "running" : "stopped");
-        setLocked(startButton, running, "the bottom camera is running");
-        lockFor(stopButton, [!running, "the bottom camera is not running"], [busy, "a routine is under way: abort it first"]);
+        for (const press of [startButton, startHere]) {
+            setLocked(press, running, "the bottom camera is running");
+        }
+        for (const press of [stopButton, stopHere]) {
+            lockFor(press, [!running, "the bottom camera is not running"], [busy, "a routine is under way: abort it first"]);
+        }
+        // The one that can be pressed now shows; the other is away.
+        startHere.hidden = running;
+        stopHere.hidden = !running;
         const connected = state.snapshot.connected;
         lockFor(centerButton, [!connected, "connect first"], [!running, "start the bottom camera first"], [busy, "a routine is under way"]);
         lockFor(partButton, [!connected, "connect first"], [!running, "start the bottom camera first"], [busy, "a routine is under way"], [!pnp?.position || !(pnp.mm_per_px > 0), "center the nozzle over the bottom camera first"]);
@@ -1421,6 +1460,8 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         lockFor(deviceCenter, [!linked, "connect the machine first"], [busy, "a routine is under way"], [!running, "start the bottom camera first"]);
         lockFor(runout, [!linked, "connect the machine first"], [busy, "a routine is under way"], [!running, "start the bottom camera first"], [!(deviceState?.camera.mm_per_px && deviceState.camera.position), "center the nozzle over the bottom camera first"]);
         setLocked(deviceAbort, !moving, "no routine under way on the machine");
+        // Abort shows while there is a routine to stop.
+        deviceAbort.hidden = !moving;
         deviceRoutineLine.textContent = pnp?.routine?.target === "gcode" ? pnpRoutineText(pnp) : "";
     }
 
@@ -1510,6 +1551,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
             root.classList.toggle("hidden", !onDevice);
         }
         deviceCalibration.classList.toggle("hidden", !onDevice);
+        devicePlace.classList.toggle("hidden", !onDevice);
         renderActions(state);
         renderBoard(state);
     };

@@ -8,7 +8,8 @@
 // clearing the trail, with how the pointer works the picture in a line.
 // View says how many of its modes are on while the row is shut, so a mode
 // that changes what a drag does is never out of sight. A slider under the
-// picture steps through the job's paths in the order they are cut. A path
+// picture steps through the job's paths in the order they are cut; Back
+// and On, a path at a time, show while it is off its end. A path
 // clicked, or the paths a box holds, become the page's picked paths, which
 // the Jobs panel moves between groups.
 
@@ -177,7 +178,9 @@ export function mountPreviewPanel(
     scrubBack.title = "one path fewer";
     const scrubOn = button("On", () => stepScrub(1), "btn btn-quiet btn-small");
     scrubOn.title = "one path more";
-    const scrubRow = el("div", { class: "scrub-row hidden" }, scrubBack, scrub, scrubOn, scrubNote);
+    // The slider alone while the job is drawn whole; stepping a path at a
+    // time is offered once it is somewhere along the cut.
+    const scrubRow = el("div", { class: "scrub-row hidden" }, scrub, el("div", { class: "scrub-foot" }, scrubNote, scrubBack, scrubOn));
     scrub.addEventListener("input", () => setScrub(Number(scrub.value)));
 
     function setScrub(at: number): void {
@@ -185,6 +188,8 @@ export function mountPreviewPanel(
         const value = Math.max(0, Math.min(total, Math.round(at)));
         scrub.value = String(value);
         preview.setScrub(value >= total ? null : value);
+        scrubBack.hidden = value >= total;
+        scrubOn.hidden = value >= total;
         const last = value > 0 ? preview.cutOrder()[value - 1] : undefined;
         const job = show(ctx.store.get());
         scrubNote.textContent = scrubText(value, total, last && job ? job.groups[last[0]]?.label ?? null : null);

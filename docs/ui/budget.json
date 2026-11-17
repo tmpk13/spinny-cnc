@@ -1,92 +1,241 @@
 [
  {
-  "name": "budget-home",
+  "name": "home, nothing connected",
   "page": "home",
   "width": 1440,
-  "height": 900,
-  "before": "[...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock laser'",
-  "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
-  "wait": 50
+  "height": 900
  },
  {
-  "name": "budget-job",
+  "name": "home",
+  "page": "home",
+  "machine": "laser",
+  "job": true,
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "job, none picked",
   "page": "job",
   "width": 1440,
-  "height": 900,
-  "before": "[...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock laser'",
-  "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
-  "wait": 50
+  "height": 900
  },
  {
-  "name": "budget-run",
+  "name": "job",
+  "page": "job",
+  "machine": "laser",
+  "job": true,
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "job: draw",
+  "page": "job",
+  "machine": "laser",
+  "job": true,
+  "view": "Draw",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "job: assistant",
+  "page": "job",
+  "machine": "laser",
+  "job": true,
+  "view": "Assistant",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "job: json",
+  "page": "job",
+  "machine": "laser",
+  "job": true,
+  "view": "JSON",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "run: connect",
   "page": "run",
   "width": 1440,
-  "height": 900,
-  "before": "[...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock laser'",
-  "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
-  "wait": 50
+  "height": 900
  },
  {
-  "name": "budget-run-lumen",
+  "name": "run: job",
   "page": "run",
+  "machine": "laser",
   "width": 1440,
-  "height": 900,
-  "before": "const sel = document.querySelector('#connection select'); const opt = [...sel.options].find((o) => /LUMEN/i.test(o.value + o.textContent)); sel.value = opt.value; sel.dispatchEvent(new Event('change', { bubbles: true })); [...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock LumenPnP'",
-  "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
-  "wait": 50
+  "height": 900
  },
  {
-  "name": "budget-facts",
+  "name": "run: board",
+  "page": "run",
+  "machine": "laser",
+  "job": true,
+  "view": "Board",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "run: height",
+  "page": "run",
+  "machine": "laser",
+  "job": true,
+  "view": "Height",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "run",
+  "page": "run",
+  "machine": "laser",
+  "job": true,
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "pick and place: home",
+  "page": "run",
+  "machine": "lumen",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "pick and place: parts",
+  "page": "run",
+  "machine": "lumen",
+  "view": "Parts",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "pick and place: board",
+  "page": "run",
+  "machine": "lumen",
+  "view": "Board",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "pick and place: feeders",
+  "page": "run",
+  "machine": "lumen",
+  "view": "Feeders",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "pick and place: place",
+  "page": "run",
+  "machine": "lumen",
+  "view": "Place",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "checklist",
   "page": "facts",
+  "machine": "laser",
   "width": 1440,
-  "height": 900,
-  "before": "[...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock laser'",
-  "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
-  "wait": 50
+  "height": 900
  },
  {
-  "name": "budget-machines",
+  "name": "machines",
   "page": "machines",
+  "machine": "laser",
   "width": 1440,
-  "height": 900,
-  "before": "[...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock laser'",
-  "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
-  "wait": 50
+  "height": 900
  },
  {
-  "name": "budget-cameras",
+  "name": "machines: keys",
+  "page": "machines",
+  "machine": "laser",
+  "view": "Keys",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "machines: import",
+  "page": "machines",
+  "machine": "laser",
+  "view": "Import",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "cameras",
   "page": "cameras",
+  "machine": "laser",
   "width": 1440,
-  "height": 900,
-  "before": "[...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock laser'",
-  "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
-  "wait": 50
+  "height": 900
  },
  {
-  "name": "budget-cameras-lumen",
+  "name": "cameras, pick and place",
   "page": "cameras",
+  "machine": "lumen",
   "width": 1440,
-  "height": 900,
-  "before": "const sel = document.querySelector('#connection select'); const opt = [...sel.options].find((o) => /LUMEN/i.test(o.value + o.textContent)); sel.value = opt.value; sel.dispatchEvent(new Event('change', { bubbles: true })); [...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock LumenPnP'",
-  "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
-  "wait": 50
+  "height": 900
  },
  {
-  "name": "budget-cam",
+  "name": "cameras: bottom",
+  "page": "cameras",
+  "machine": "lumen",
+  "view": "Bottom camera",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "cameras: top",
+  "page": "cameras",
+  "machine": "lumen",
+  "view": "Top camera",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "cameras: head and bed",
+  "page": "cameras",
+  "machine": "lumen",
+  "view": "Head and bed",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "cam",
   "page": "cam",
+  "machine": "laser",
   "width": 1440,
-  "height": 900,
-  "before": "[...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock laser'",
-  "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
-  "wait": 50
+  "height": 900
  },
  {
-  "name": "budget-ui",
+  "name": "page",
   "page": "ui",
+  "machine": "laser",
   "width": 1440,
-  "height": 900,
-  "before": "[...document.querySelectorAll('#connection button')].find((b) => b.textContent.trim() === 'Connect').click(); 'connected to the mock laser'",
-  "after": "(() => { const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }; const page = [...document.querySelectorAll('main.page')].find(shown); const frame = [...document.querySelectorAll('#status, #tabs')]; const n = (root, sel) => [...root.querySelectorAll(sel)].filter(shown).length; const both = (sel) => n(page, sel) + frame.reduce((a, c) => a + n(c, sel), 0); const controls = both('button') + both('input:not([type=hidden]), select, textarea'); const words = (page.innerText || '').split(/\\s+/).filter(Boolean).length; const panels = [...page.querySelectorAll('.panel')].filter(shown).length; return { controls, words, panels }; })()",
-  "wait": 50
+  "height": 900
+ },
+ {
+  "name": "phone: home",
+  "page": "home",
+  "machine": "laser",
+  "job": true,
+  "width": 390,
+  "height": 844
+ },
+ {
+  "name": "phone: job",
+  "page": "job",
+  "machine": "laser",
+  "job": true,
+  "width": 390,
+  "height": 844
+ },
+ {
+  "name": "phone: run",
+  "page": "run",
+  "machine": "laser",
+  "job": true,
+  "width": 390,
+  "height": 844
  }
 ]

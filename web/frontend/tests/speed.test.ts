@@ -135,13 +135,23 @@ describe("the preview panel's speed and cut order", () => {
         expect(row.classList.contains("hidden")).toBe(false);
         expect([slider.max, slider.value]).toEqual(["3", "3"]);
         expect(preview.scrub).toBeNull();
+        // Drawn whole, the slider is all there is: a path at a time is offered once it is along the cut.
+        const steps = (): boolean[] => Array.from(row.querySelectorAll("button")).map((b) => b.hidden);
+        expect(steps()).toEqual([true, true]);
         slider.value = "1";
         slider.dispatchEvent(new Event("input"));
         expect(preview.scrub).toBe(1);
+        expect(steps()).toEqual([false, false]);
         expect(row.textContent).toContain("1 of 3 cut, the last in a");
         Array.from(row.querySelectorAll("button")).find((b) => b.textContent === "On")!.click();
         expect(preview.scrub).toBe(2);
         expect(row.textContent).toContain("the last in a");
+        // On to the end draws it whole again, and the steps go.
+        Array.from(row.querySelectorAll("button")).find((b) => b.textContent === "On")!.click();
+        expect(preview.scrub).toBeNull();
+        expect(steps()).toEqual([true, true]);
+        slider.value = "2";
+        slider.dispatchEvent(new Event("input"));
         // An edit of the same job keeps the place; another job starts whole.
         store.set({ job: { ...store.get().job!, name: "edited" } });
         expect(preview.scrub).toBe(2);

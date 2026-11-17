@@ -122,8 +122,12 @@ run = "cd web/frontend && bun run --silent check && bun test"
 description = "Page spacing and tooltips in Chromium over the mock: stacked blocks one --flow token apart, no text against a box's edge, a title on every button, the info drawings' words apart"
 run = "cd web/frontend && bun layout/check.ts"
 
+[tasks.test-budget]
+description = "The budget of a screen, in Chromium over the mock: every area's every view (docs/ui/budget.json) holds at most 40 controls and 200 words in its first view; a screen over it fails, with where its load is"
+run = "cd web/frontend && bun layout/budget.ts"
+
 [tasks.shots]
-description = "Screenshots of the page over its mock in Chromium from a JSON list of shots (page, size, dark, a script before, a drag, one element, and with measure what the first view holds: controls, words, boxes, colors, the work's share; layout/shot.ts says how): mise run shots -- docs/ui/visual.json out/"
+description = "Screenshots of the page over its mock in Chromium from a JSON list of shots (page, size, dark, a machine connected, a job picked, a view pressed, a script before, a drag, one element, and with measure what the first view holds: controls, words, boxes, colors, the work's share; layout/shots.ts says how): mise run shots -- docs/ui/visual.json out/"
 run = "cd web/frontend && bun layout/shot.ts"
 
 [tasks.ui-figures]
@@ -153,7 +157,7 @@ ruff check toolpath web/backend deploy
 
 [tasks.test]
 description = "Every suite"
-depends = ["test-carve", "test-toolpath", "test-backend", "test-frontend", "test-layout", "test-render", "test-sim"]
+depends = ["test-carve", "test-toolpath", "test-backend", "test-frontend", "test-layout", "test-budget", "test-render", "test-sim"]
 
 [tasks.controls-fixture]
 description = "Write the default controls fixture the toolpath and page tests check their copies of the defaults against"

@@ -282,6 +282,8 @@ export function jobViews(state: AppState): AreaView[] {
             label: "Assistant",
             tip: "describe a job to the assistant",
             columns: [["auto-chat", "auto-about"], ["preview"]],
+            // What it can and cannot do is there to read once: folded, a press on its head away.
+            folded: ["auto-about"],
             cols: "minmax(22rem, 2fr) minmax(0, 3fr)",
         },
         {

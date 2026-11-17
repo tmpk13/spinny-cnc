@@ -185,7 +185,7 @@ describe("showing the sides", () => {
         expect(lists.map((list) => list.hidden)).toEqual([false, false]);
     });
 
-    test("the rail lists both sides' areas, and a side's name goes to the area it showed last", () => {
+    test("the rail lists both sides' areas under their names, which are headings there, not buttons", () => {
         frame();
         const store = new Store<AppState>(initialState(true));
         mountTabs(document.getElementById("tabs")!, store);
@@ -193,12 +193,13 @@ describe("showing the sides", () => {
         expect(railShown()).toBe(true);
         const lists = Array.from(document.querySelectorAll<HTMLElement>(".tabs-list"));
         expect(lists.map((list) => list.hidden)).toEqual([false, false]);
-        const setupButton = document.querySelector<HTMLButtonElement>(".tabs-side[data-side='setup']")!;
-        expect(setupButton.hasAttribute("data-open")).toBe(true);
-        setupButton.click();
+        // Both lists show, so a side's name has nowhere to go: the button is put away and the name is a heading.
+        expect(Array.from(document.querySelectorAll<HTMLElement>("button.tabs-side")).map((button) => button.hidden)).toEqual([true, true]);
+        expect(Array.from(document.querySelectorAll<HTMLElement>(".tabs-side-name")).map((name) => [name.hidden, name.textContent])).toEqual([[false, "Use"], [false, "Setup"]]);
+        // An area of the other side is one press away.
+        document.querySelector<HTMLButtonElement>(".tab[data-page='facts']")!.click();
         expect(shownOn("setup")).toBe("facts");
         expect(up()).toEqual(["page-facts"]);
-        // An area of the other side is one press away.
         document.querySelector<HTMLButtonElement>(".tab[data-page='run']")!.click();
         expect(up()).toEqual(["page-run"]);
     });
@@ -215,7 +216,9 @@ describe("showing the sides", () => {
             expect(railShown()).toBe(false);
             const lists = Array.from(document.querySelectorAll<HTMLElement>(".tabs-list"));
             expect(lists.map((list) => list.hidden)).toEqual([false, true]);
-            const setupButton = document.querySelector<HTMLButtonElement>(".tabs-side[data-side='setup']")!;
+            const setupButton = document.querySelector<HTMLButtonElement>("button.tabs-side[data-side='setup']")!;
+            expect(setupButton.hidden).toBe(false);
+            expect(document.querySelector<HTMLElement>(".tabs-side-name[data-side='setup']")!.hidden).toBe(true);
             expect(setupButton.hasAttribute("data-open")).toBe(false);
             store.set({ pending: { "machine-file": 3 } });
             expect(setupButton.getAttribute("data-pending")).toBe("3");

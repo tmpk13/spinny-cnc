@@ -105,23 +105,32 @@ export function mountPnpRefs(root: HTMLElement, ctx: Ctx, onShape: () => void = 
     const setRow = el("div", { class: "button-row align-set" });
     const setLine = el("p", { class: "muted align-line" });
 
+    // In view: taking a reference, what the references make of the board,
+    // and the parts to go through one after another. How many parts,
+    // changing them by hand, the board's turn and the fiducials are folded.
+    // How a reference is taken is the head's tooltip, beside the drawing.
+    const how = "Pick a part, put the nozzle or the top camera over it, and press Here. The references are kept and map the whole board;"
+        + " a corner taken with the top camera (Corner here, Board place) is a reference too.";
     root.append(
-        el("div", { class: "panel-head" }, el("h2", {}, "Board on the machine"), infoTip("references")),
+        el("div", { class: "panel-head" }, el("h2", { title: how }, "Board on the machine"), infoTip("references")),
         el("div", { class: "panel-body" },
-            el("p", { class: "muted hint" }, "Pick a part, put the nozzle or the top camera over it, and press Here. The references are kept and map the whole board;"
-                + " a corner taken with the top camera (Corner here, Board place) is a reference too."),
-            el("div", { class: "button-row" }, nozzleHere, cameraHere, shapeLabel),
+            el("div", { class: "button-row" }, nozzleHere, cameraHere),
+            fitLine,
+            list,
             el("div", { class: "stack align-parts" },
-                el("h3", {}, "Parts to align to"),
-                el("div", { class: "button-row" }, labeled("Parts", count, "labeled inline"), choose, addPicked, dropPicked, next),
+                el("h3", { title: "Choose picks parts spread over the board; Next takes the top camera to each in turn, to line up and press Camera here" }, "Parts to align to"),
+                el("div", { class: "button-row" }, choose, next),
                 setRow,
                 setLine,
             ),
-            el("div", { class: "button-row" }, labeled("Turned deg", angle, "labeled inline"), clear),
-            fitLine,
-            list,
-            el("div", { class: "button-row" }, findFiducials),
-            fiducialLine,
+            el("details", { class: "more refs-more stack" },
+                el("summary", { title: "fold or unfold" }, "More: how many parts, adding and dropping one, the board's turn, fiducials"),
+                el("div", { class: "button-row" }, labeled("Parts", count, "labeled inline"), addPicked, dropPicked),
+                el("div", { class: "button-row" }, shapeLabel),
+                el("div", { class: "button-row" }, labeled("Turned deg", angle, "labeled inline"), clear),
+                el("div", { class: "button-row" }, findFiducials),
+                fiducialLine,
+            ),
         ),
     );
 

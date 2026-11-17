@@ -123,10 +123,14 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
     const findCount = el("span", { class: "muted config-find-count" });
     const findPrevious = button("Previous", () => findStep(-1), "btn btn-quiet btn-small", "the place before (Shift+Enter)");
     const findNext = button("Next", () => findStep(1), "btn btn-quiet btn-small", "the next place (Enter)");
+    // Away until there is a word to find.
+    findPrevious.hidden = true;
+    findNext.hidden = true;
     const allFiles = el("input", { type: "checkbox", "aria-label": "Find in every machine file" }) as HTMLInputElement;
     const foundList = el("ul", { class: "config-found hidden", "aria-label": "Found in the machine files" });
     const check = button("Check", () => checkText(), "btn", "check the file without saving");
-    const save = button("Save", () => saveText(), "btn btn-primary", "save the file");
+    // Dark only while there are edits to save: the next thing to do then.
+    const save = button("Save", () => saveText(), "btn", "save the file");
     const revert = button("Revert", () => revertText(), "btn btn-quiet", "drop the edits");
     const status = el("span", { class: "muted config-status" });
     const problems = el("ul", { class: "config-problems hidden" });
@@ -135,7 +139,10 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
 
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Machine file"), el("div", { class: "button-row" }, reload)),
-        el("div", { class: "button-row" }, labeled("Machine", pick, "labeled inline"), useButton, newId, create, remove),
+        // In view: which file, making it the machine in use, the board
+        // and the text. Keeping the files (a new one, deleting one) is
+        // folded at the panel's foot.
+        el("div", { class: "button-row" }, labeled("Machine", pick, "labeled inline"), useButton),
         inUse,
         folderLine,
         offersBox,
@@ -153,6 +160,10 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         notes,
         el("p", { class: "muted hint" },
             "Save refuses a file that does not parse. Pins are read at boot: restart the board after changing one."),
+        el("details", { class: "more config-more stack" },
+            el("summary", { title: "fold or unfold" }, "More: a new file, delete"),
+            el("div", { class: "button-row" }, newId, create, remove),
+        ),
     );
 
     let files: MachineSummary[] = [];
@@ -173,6 +184,7 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
     // An edit not saved is counted on the page's tab.
     const setDirty = (value: boolean): void => {
         dirty = value;
+        save.classList.toggle("btn-primary", value);
         setPending(ctx.store, "machine-file", value ? 1 : 0);
     };
 
@@ -216,6 +228,8 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
         findCount.textContent = query === "" ? "" : count === 0 ? "none here" : `${count} here`;
         for (const node of [findPrevious, findNext]) {
             setLocked(node, count === 0, query === "" ? "type a word to find" : "the file does not hold it");
+            // Stepping through the places shows once there is a word to find.
+            node.hidden = query === "";
         }
     }
 

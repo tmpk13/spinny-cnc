@@ -6,7 +6,7 @@ import { BOARD_MISPLACEMENT, CAMERA_TRUTH, MOCK_CAMERAS, boardVector, picturePoi
 import type { WsEvent } from "../src/types.ts";
 import { cameraLabel } from "../src/views/camerapick.ts";
 import { mountFindBoard } from "../src/views/findboard.ts";
-import { cameraBadge, mountVision, poseText, routineText } from "../src/views/vision.ts";
+import { cameraBadge, measuredText, mountVision, poseText, routineText } from "../src/views/vision.ts";
 import { click, findButton, settle, setup } from "./harness.ts";
 
 async function finished(backend: MockBackend): Promise<void> {
@@ -209,6 +209,10 @@ describe("the mock camera", () => {
         const locked = poseText({ ...base, pose: { state: "locked", center: [1, 2], angle_deg: 0.5, rms_mm: 0.04, inliers: 3, expected: 3, fps: 14, job_center: [3, 4] } });
         expect(locked).toContain("locked: center 1.000, 2.000 (job frame 3.000, 4.000), angle 0.500 deg, rms 0.040 mm, 3 of 3 inliers, 14.0 fps");
         expect(cameraBadge({ ...base, pose: { state: "locked" } })).toBe("locked");
+        // Where the camera sits against the tool, once a scale says it was measured.
+        expect(measuredText(null)).toBe("");
+        expect(measuredText({ ...base, pose: null })).toStartWith("Not measured against the tool yet");
+        expect(measuredText({ ...base, pose: null, offset: [12.345, -4.5], roll: 0.25, mm_per_px: 0.0161 })).toBe("12.35, -4.50 mm from the tool, turned 0.25 deg, 0.0161 mm per px.");
         expect(routineText({ ...base, pose: null, routine: { state: "running", step: "centering", done: 3, total: 6, error: null, spot: { dx: 12.4, dy: -3.1, mm: 0.27 } } }))
             .toBe("running: centering, 3 of 6, spot 0.270 mm off the center (12.4, -3.1 px)");
         expect(routineText({ ...base, pose: null, routine: { state: "error", step: "moving", done: 1, total: 6, error: "lost", spot: null } })).toBe("error: moving, 1 of 6: lost");
@@ -230,12 +234,22 @@ describe("the mock camera", () => {
             expect(root.querySelector("img.picture-img")).toBeNull();
             const img = viewRoot.querySelector("img.picture-img") as HTMLImageElement;
             expect(img.getAttribute("src")).toBeNull();
-            // Start and Stop are on the picture.
-            expect(Array.from(root.querySelectorAll("button")).some((b) => b.textContent === "Start")).toBe(false);
+            // Start and Stop are on the picture, and this panel, where a camera is set up, has the one that can be pressed.
+            const here = (text: string): HTMLButtonElement => Array.from(root.querySelectorAll("button")).find((b) => b.textContent === text)!;
+            expect([here("Start").hidden, here("Stop").hidden]).toEqual([false, true]);
+            // Not measured against the tool yet, it says so, and where that is done.
+            expect(root.querySelector(".vision-measured")?.textContent).toStartWith("Not measured against the tool yet");
+            // The settings, the measured values, the routine and the log are folded, each under its heading.
+            const more = root.querySelector("details.vision-more") as HTMLDetailsElement;
+            expect(more.open).toBe(false);
+            expect(Array.from(more.querySelectorAll("h3")).map((heading) => heading.textContent)).toEqual(["How it is read", "Place and scale", "Measure them", "Log"]);
+            expect(more.querySelector("h3")!.title).not.toBe("");
+            expect(more.contains(root.querySelector('input[aria-label="Camera fps"]'))).toBe(true);
             click(viewRoot, "Start");
             await settle();
             await settle();
             expect(store.get().camera?.running).toBe(true);
+            expect([here("Start").hidden, here("Stop").hidden]).toEqual([true, false]);
             expect(root.querySelector(".vision-badge")?.textContent).toBe("running");
             expect(img.getAttribute("src")?.startsWith("data:image/svg+xml")).toBe(true);
             const fps = root.querySelector('input[aria-label="Camera fps"]') as HTMLInputElement;

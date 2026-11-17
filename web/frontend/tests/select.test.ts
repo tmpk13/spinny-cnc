@@ -187,9 +187,15 @@ describe("moving picked paths between groups", () => {
         await ctx.selectJob(made.id);
         const row = root.querySelector(".picked-row") as HTMLElement;
         expect(row.classList.contains("hidden")).toBe(true);
-        // A group's name picks its paths.
+        // A group's row opens its fields, where its paths are picked.
+        expect(Array.from(root.querySelectorAll(".groups .group")).map((group) => group.getAttribute("aria-label"))).toEqual(["stroke #ff0000", "stroke #0000ff"]);
+        const opens = Array.from(root.querySelectorAll("button.group-open")) as HTMLButtonElement[];
+        const fields = root.querySelector(".groups .group-fields") as HTMLElement;
+        expect([opens[0]!.getAttribute("aria-expanded"), fields.hidden]).toEqual(["false", true]);
+        opens[0]!.click();
+        expect([opens[0]!.getAttribute("aria-expanded"), fields.hidden]).toEqual(["true", false]);
         const names = Array.from(root.querySelectorAll("button.group-pick")) as HTMLButtonElement[];
-        expect(names.map((name) => name.textContent)).toEqual(["stroke #ff0000", "stroke #0000ff"]);
+        expect(names.map((name) => name.textContent)).toEqual(["Pick its paths", "Pick its paths"]);
         names[0]!.click();
         expect(store.get().selection).toEqual({ job: made.id, paths: [[0, 0], [0, 1], [0, 2]] });
         expect(row.classList.contains("hidden")).toBe(false);

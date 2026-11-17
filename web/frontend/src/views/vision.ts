@@ -2,8 +2,12 @@
 // from the cameras found attached, or typed), its picture controls and
 // measured values, the pose pcbv reads off the board, and the camera offset
 // routine, which finds a mark made with the tool in the picture and centers
-// the picture on it. The look for a board and its search are the Find
-// board panel's (findboard.ts).
+// the picture on it. In view are what the camera says, which camera it is,
+// Start and Stop, and where it was measured to sit; how it is read, its
+// place and scale as numbers, the routine that measures them and the log
+// are folded under More, each under a heading that says what it is for.
+// The look for a board and its search are the Find board panel's
+// (findboard.ts).
 // Its picture is a panel of its own (Head camera view), refreshed while it
 // shows and the camera runs, with the routine's spot, the search box, the
 // board where the looks put it and the points whose place is known
@@ -66,6 +70,21 @@ export function routineText(state: CameraState | null): string {
     const spot = routine.spot ? `, spot ${formatFixed(routine.spot.mm, 3)} mm off the center (${routine.spot.dx}, ${routine.spot.dy} px)` : "";
     const error = routine.error ? `: ${routine.error}` : "";
     return `${routine.state}: ${routine.step}, ${routine.done} of ${routine.total}${spot}${error}`;
+}
+
+/**
+ * Where the camera was measured to sit, in a line: the picture's center
+ * from the tool, its turn and its scale; or that nothing is measured yet,
+ * which a scale of zero says.
+ */
+export function measuredText(state: CameraState | null): string {
+    if (!state) {
+        return "";
+    }
+    if (!(state.mm_per_px > 0)) {
+        return "Not measured against the tool yet: Find mark, under More, measures its offset, turn and scale.";
+    }
+    return `${formatFixed(state.offset[0], 2)}, ${formatFixed(state.offset[1], 2)} mm from the tool, turned ${formatFixed(state.roll, 2)} deg, ${formatFixed(state.mm_per_px, 4)} mm per px.`;
 }
 
 /** The badge in the panel's head. */
@@ -236,6 +255,12 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
     start.title = "start the camera with these settings";
     const stop = button("Stop", () => into(ctx, "camera", ctx.api.cameraStop()), "btn", "stop the camera");
     stop.title = "stop the camera";
+    // The picture's panel takes that pair into its head; this panel, where
+    // a camera is picked and set up, keeps a pair of its own.
+    const startHere = button("Start", () => startCamera(), "btn btn-primary", "start the camera with these settings");
+    const stopHere = button("Stop", () => into(ctx, "camera", ctx.api.cameraStop()), "btn", "stop the camera");
+    // Where the routine measured the camera to sit, in a line.
+    const measuredLine = el("p", { class: "muted vision-measured" });
 
     // The settings: what the camera is read with, and how it sits against
     // the tool, which the routine below measures and Apply writes back.
@@ -292,12 +317,11 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
     // The pictures the find routine looked at, and photos taken by hand.
     const logBox = el("div", { class: "camlog-box" });
     mountCameraLog(logBox, ctx, "head");
-    const body = el("fieldset", { class: "panel-body" },
-        ...(viewRoot ? [] : [pictureRoot]),
-        // Start and Stop go with the picture when it has a panel of its own.
-        viewRoot ? poseLine : el("div", { class: "button-row" }, start, stop, poseLine),
-        pick.row,
-        pick.note,
+    // What a part is for is its heading's tooltip.
+    const heading = (text: string, tip: string): HTMLElement => el("h3", { title: tip }, text);
+    const more = el("details", { class: "more vision-more stack" },
+        el("summary", { title: "fold or unfold" }, "More: device and size, place and scale, the offset routine, the log"),
+        heading("How it is read", "the device, its picture size and rate, and which side and finish of board it looks at"),
         el("div", { class: "field-grid" },
             labeled("Device", device),
             labeled("Size", size),
@@ -307,13 +331,17 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
         ),
         el("div", { class: "button-row" }, applySettings, pendingChips[0]),
         ...placeFolds(folds, "head", controls.root, sight.root, changes.root),
+        heading("Place and scale", "where the picture's center is from the tool, how the picture is turned and how much board a pixel covers: set by Find mark; copy them into the machine file to keep them"),
         el("div", { class: "field-grid" },
             explain(labeled("Offset x mm", offsetX), "offset"),
             explain(labeled("Offset y mm", offsetY), "offset"),
             explain(labeled("Roll deg", roll), "roll"),
             explain(labeled("mm per px", scale), "scale"),
         ),
-        el("div", { class: "button-row" }, applyMeasured, pendingChips[1], el("span", { class: "muted" }, "set by Find mark; copy them into the machine file to keep them")),
+        el("div", { class: "button-row" }, applyMeasured, pendingChips[1]),
+        heading("Measure them",
+            "Make mark drills a mark at the tool; Mark is here uses a mark or hole already under it."
+            + " Find mark lifts the head, centers the camera on the mark and measures the offset, scale and roll."),
         el("div", { class: "button-row" },
             labeled("Depth mm", depth, "labeled inline"),
             labeled("Plunge mm/min", plunge, "labeled inline"),
@@ -326,11 +354,19 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
             findButton,
             abortButton,
         ),
-        routineLine,
+        heading("Log", "the pictures the routines looked at, and photos taken by hand"),
         logBox,
-        el("p", { class: "muted hint" },
-            "Make mark drills a mark at the tool; Mark is here uses a mark or hole already under it."
-            + " Find mark lifts the head, centers the camera on the mark and measures the offset, scale and roll."),
+    );
+    const body = el("fieldset", { class: "panel-body" },
+        ...(viewRoot ? [] : [pictureRoot]),
+        // Start and Stop also go with the picture when it has a panel of its own.
+        el("div", { class: "button-row" }, ...(viewRoot ? [startHere, stopHere] : [start, stop]), poseLine),
+        pick.row,
+        pick.note,
+        measuredLine,
+        // A routine under way says where it is here, in view, whether or not the fold is open.
+        routineLine,
+        more,
     );
     // Unfolded, the picture (when it is in this panel) is asked for at once rather than at the next tick.
     if (viewRoot) {
@@ -482,8 +518,17 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
         badge.setAttribute("data-camera", cameraBadge(camera));
         poseLine.textContent = poseText(camera);
         routineLine.textContent = routineText(camera);
-        setLocked(start, running, "the camera is running");
-        lockFor(stop, [!running, "the camera is not running"], [finding, "a routine is under way: abort it first"]);
+        for (const press of [start, startHere]) {
+            setLocked(press, running, "the camera is running");
+        }
+        for (const press of [stop, stopHere]) {
+            lockFor(press, [!running, "the camera is not running"], [finding, "a routine is under way: abort it first"]);
+        }
+        // The one that can be pressed now shows; the other is away.
+        startHere.hidden = running;
+        stopHere.hidden = !running;
+        measuredLine.textContent = measuredText(camera);
+        routineLine.hidden = routineLine.textContent === "";
         if (camera) {
             settingsFields.follow(device, camera.device);
             settingsFields.follow(size, camera.size);

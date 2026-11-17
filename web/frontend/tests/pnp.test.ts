@@ -198,6 +198,18 @@ describe("the pnp page", () => {
         const rows = roots.parts.querySelectorAll("table.pnp-parts tbody tr");
         expect(rows.length).toBeGreaterThan(0);
         expect(roots.board.querySelectorAll(".pnp-part").length).toBe(rows.length);
+        // The parts panel keeps the job, the search and Go to part in view; which side and which parts are listed is folded.
+        const partsMore = roots.parts.querySelector("details.pnp-parts-more") as HTMLDetailsElement;
+        expect(partsMore.open).toBe(false);
+        expect(partsMore.contains(roots.parts.querySelector('select[aria-label="Side"]'))).toBe(true);
+        expect(partsMore.contains(roots.parts.querySelector('input[aria-label="Filter parts"]'))).toBe(false);
+        // The camera's own panel has the Start that can be pressed; how it is read, its place and its log are folded.
+        const cameraMore = roots.camera.querySelector("details.pnp-camera-more") as HTMLDetailsElement;
+        expect(cameraMore.open).toBe(false);
+        expect(cameraMore.contains(roots.camera.querySelector('input[aria-label="Bottom camera device"]'))).toBe(true);
+        expect(Array.from(cameraMore.querySelectorAll("h3")).every((heading) => heading.title !== "")).toBe(true);
+        const here = (text: string): HTMLButtonElement => Array.from(roots.camera.querySelectorAll("button")).find((b) => b.textContent === text)!;
+        expect([here("Start").hidden, here("Stop").hidden]).toEqual([false, true]);
         (rows[0] as HTMLElement).click();
         expect(roots.parts.querySelector("tr.selected")).not.toBeNull();
         expect(roots.board.querySelector(".pnp-part.selected")).not.toBeNull();
@@ -207,6 +219,7 @@ describe("the pnp page", () => {
         click(roots.view, "Start");
         await settle();
         expect(store.get().pnp?.running).toBe(true);
+        expect([here("Start").hidden, here("Stop").hidden]).toEqual([true, false]);
         // A field typed in is counted for the page's tab until applied.
         const device = roots.camera.querySelector('input[aria-label="Bottom camera device"]') as HTMLInputElement;
         device.value = "/dev/video9";

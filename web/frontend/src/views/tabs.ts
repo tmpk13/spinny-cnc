@@ -360,8 +360,12 @@ export function mountTabs(root: HTMLElement, store: Store<AppState>): HTMLElemen
                 root.removeAttribute("data-open");
             },
         }, entry.label);
+        // In the rail both sides' areas are listed, so a side's name has
+        // nowhere to go: it is a heading over its areas there, and the
+        // button only where the other side's areas fold away behind it.
+        const name = el("span", { class: "tabs-side-name", "data-side": entry.id }, entry.label);
         const list = el("div", { class: "tabs-list", role: "tablist", "aria-label": `${entry.label} pages`, "data-side": entry.id });
-        return { side: entry.id, button, list, group: el("div", { class: "tabs-group", "data-side": entry.id }, button, list) };
+        return { side: entry.id, button, name, list, group: el("div", { class: "tabs-group", "data-side": entry.id }, button, name, list) };
     });
     const splitButton = el("button", {
         type: "button",
@@ -417,6 +421,8 @@ export function mountTabs(root: HTMLElement, store: Store<AppState>): HTMLElemen
         for (const entry of groups) {
             const open = both || entry.side === front || rail;
             entry.list.hidden = !open;
+            entry.button.hidden = rail;
+            entry.name.hidden = !rail;
             entry.button.setAttribute("aria-pressed", entry.side === front ? "true" : "false");
             entry.button.toggleAttribute("data-open", open);
             entry.button.title = open

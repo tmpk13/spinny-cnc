@@ -153,7 +153,7 @@ describe("spindle", () => {
         await expect(backend.updateSettings({ values: { spindle: 2 } })).rejects.toThrow();
     });
 
-    test("a milling machine's group table has depth and plunge in place of the floor", async () => {
+    test("a milling machine's groups have depth and plunge in place of the floor", async () => {
         const { store, ctx, root, calls, api } = setup();
         await api.connect("/dev/ttyACM0");
         mountJobs(root, ctx, root);
@@ -161,11 +161,12 @@ describe("spindle", () => {
         await ctx.refreshJobs();
         const jobs = await api.jobs();
         await ctx.selectJob(jobs[0]!.id);
-        const heads = Array.from(root.querySelectorAll("table.groups thead th")).map((th) => th.textContent);
-        expect(heads).toEqual(["S", "Depth", "mm/min", "Plunge", "Passes", "On"]);
-        // Six columns do not fit a narrow phone: the table scrolls in its own box.
-        expect(root.querySelector("table.groups")!.parentElement!.classList.contains("groups-scroll")).toBe(true);
-        const depth = root.querySelector('table.groups input[aria-label="depth"]') as HTMLInputElement;
+        // A group's fields, each under its name; they wrap in a narrow panel, with no table to scroll.
+        const heads = (): (string | null)[] => Array.from(root.querySelector(".groups .group")!.querySelectorAll(".group-fields .labeled-text")).map((label) => label.textContent);
+        expect(heads()).toEqual(["Spindle S", "Depth mm", "Feed mm/min", "Plunge mm/min", "Passes"]);
+        // Shut, the row says the numbers in a line.
+        expect(root.querySelector(".groups .group-says")!.textContent).toContain("0.1 mm deep");
+        const depth = root.querySelector('.groups input[aria-label="depth"]') as HTMLInputElement;
         expect(depth.value).toBe("0.1");
         depth.value = "0.25";
         depth.dispatchEvent(new Event("change"));
@@ -181,8 +182,8 @@ describe("spindle", () => {
         expect(labels.slice(0, 3)).toEqual(["Spindle S", "Feed mm/min", "Tool mm"]);
         // A laser machine gets its own columns back.
         store.set({ snapshot: snapshot({ tool: "laser" }) });
-        const back = Array.from(root.querySelectorAll("table.groups thead th")).map((th) => th.textContent);
-        expect(back).toEqual(["S", "Min S", "mm/min", "Passes", "On"]);
+        expect(heads()).toEqual(["Power S", "Min S", "Speed mm/min", "Passes"]);
+        expect(root.querySelector(".groups .group-says")!.textContent).not.toContain("deep");
     });
 
     test("the settings list shows the milling clearance and spin-up on a spindle machine only", () => {

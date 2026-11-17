@@ -1085,6 +1085,10 @@ export function mountPanels(app: HTMLElement): PanelsController {
             reorder(column, [...desired, ...handles, ...(page.more[index] ? [page.more[index]!] : [])]);
             // A column with nothing drawn in it: a view gives its room away.
             column.toggleAttribute("data-empty", drawn.length === 0);
+            // Alone in its column in a view, a panel has nothing to make
+            // room for: the stylesheet takes its fold away where the
+            // columns sit side by side.
+            column.toggleAttribute("data-single", page.view !== null && drawn.length === 1);
             drawn.forEach(({ node, block }, at) => {
                 node.toggleAttribute("data-join-up", at > 0 && drawn[at - 1]!.block === block);
                 node.toggleAttribute("data-join-down", at < drawn.length - 1 && drawn[at + 1]!.block === block);
