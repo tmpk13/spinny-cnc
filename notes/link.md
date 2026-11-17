@@ -143,6 +143,13 @@ The `log_records` fixture in the backend tests sees every record twice
 message gets the first one's twin: assert on the first and last, or on
 presence, never on `[1]`.
 
+A link says it is closed before it has told anyone: `close()` sets the
+flag `is_open` reads, then shuts the port, fails what was pending, joins
+its reader and poller (up to a second each) and only then publishes
+`disconnect`. A test that waits for `not lk.is_open` and reads the event
+at once passes alone and fails with the machine busy (2026-11-17, with
+every suite running at once): wait for the event itself.
+
 ## To verify on the bench (firmware of 2026-10-14, not yet flashed)
 
 1. `mise run flash`, connect from the page twice in a row: each connect

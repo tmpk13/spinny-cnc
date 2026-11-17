@@ -215,7 +215,10 @@ def test_port_vanishing_closes_the_link_and_reports():
     assert pending.wait(1.0)
     fake.vanish()
     assert wait_for(lambda: not lk.is_open, 2.0)
-    assert len(events.of("disconnect")) == 1
+    # The link says it is closed before it has told anyone: close() sets the
+    # flag first, then shuts the port, ends its threads and only then sends
+    # the event, so the event is waited for rather than read at once.
+    assert wait_for(lambda: len(events.of("disconnect")) == 1, 2.0)
     assert "error" in events.of("disconnect")[0]["reason"]
     with pytest.raises(LinkClosed):
         lk.send("go R2")
