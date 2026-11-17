@@ -8,12 +8,14 @@ Each `dist/spinny-<label>-<platform>.tar.gz` unpacks to one directory with
 a standalone CPython 3.12 holding the locked packages, the built page and
 the machine, CAM and pick and place files as committed (`python/`), the
 launchers and the Rust programs built for the platform (`bin/`), and the
-SKR Pico firmware (`firmware/`). docs/RELEASE.md, which goes in as the
-README, tells how to use one.
+SKR Pico firmware (`firmware/`). The firmware and `spinny-virtual` come
+from the spinny-firmware repository beside this one. docs/RELEASE.md,
+which goes in as the README, tells how to use one.
 
 The source is the working tree, so a tree with changes to anything that
-goes in is refused unless --allow-dirty; the configuration files always
-come from HEAD, never from the working tree's edits.
+goes in, the firmware repository's included, is refused unless
+--allow-dirty; the configuration files always come from HEAD, never from
+the working tree's edits.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 SIBLING = REPO.parent / "kicad-to-gcode"
 VISION = REPO.parent / "pcb-vision"
+FIRMWARE = REPO.parent / "spinny-firmware"
 DIST = REPO / "dist"
 BUILD = DIST / "build"
 CACHE = DIST / "cache"
@@ -54,7 +57,7 @@ ZIGBUILD = ["uvx", "--from", "cargo-zigbuild==0.24.1", "cargo-zigbuild"]
 # What the downloads call themselves; see fetch().
 USER_AGENT = "spinny-release"
 # Paths whose uncommitted changes would go into an archive.
-SOURCES = ["toolpath", "web", "carve", "firmware", "deploy", "docs/RELEASE.md", "pyproject.toml", "uv.lock"]
+SOURCES = ["toolpath", "web", "carve", "deploy", "docs/RELEASE.md", "pyproject.toml", "uv.lock"]
 # Committed directories shipped inside spinny_web, which seeds a new home
 # with them.
 SHIPPED = ["machines", "cam"]
@@ -252,8 +255,8 @@ def export_requirements(extras: list[str]) -> Path:
 
 def build_firmware() -> Path:
     out = fresh(BUILD / "firmware")
-    run(["cargo", "build", "-q", "--release"], cwd=REPO / "firmware" / "rp2040")
-    elf = REPO / "firmware" / "rp2040" / "target" / "thumbv6m-none-eabi" / "release" / "spinny-fw"
+    run(["cargo", "build", "-q", "--release"], cwd=FIRMWARE / "rp2040")
+    elf = FIRMWARE / "rp2040" / "target" / "thumbv6m-none-eabi" / "release" / "spinny-fw"
     run(["elf2uf2-rs", elf, out / "spinny-fw.uf2"])
     shutil.copy2(elf, out / "spinny-fw.elf")
     return out
@@ -272,14 +275,14 @@ def export_shipped() -> Path:
 
 
 def build_programs(target: Target) -> list[Path]:
-    """spinny-carve, spinny-virtual and, when pcb-vision is beside this
-    repository and builds, pcbv: release builds for the target and GLIBC,
-    stripped."""
+    """spinny-carve, spinny-virtual (from spinny-firmware) and, when
+    pcb-vision is beside this repository and builds, pcbv: release builds
+    for the target and GLIBC, stripped."""
     env = {"CARGO_PROFILE_RELEASE_STRIP": "symbols"}
     common = [*ZIGBUILD, "build", "-q", "--release", "--target", f"{target.triple}.{GLIBC}", "--target-dir", BUILD / "cargo"]
     out = BUILD / "cargo" / target.triple / "release"
     run([*common, "--manifest-path", REPO / "carve" / "Cargo.toml", "--bin", "spinny-carve"], env=env)
-    run([*common, "--manifest-path", REPO / "firmware" / "Cargo.toml", "-p", "spinny-virtual"], env=env)
+    run([*common, "--manifest-path", FIRMWARE / "Cargo.toml", "-p", "spinny-virtual"], env=env)
     programs = [out / "spinny-carve", out / "spinny-virtual"]
     if (VISION / "Cargo.toml").is_file():
         try:
@@ -387,18 +390,26 @@ def main(argv: list[str] | None = None) -> int:
     if unknown:
         parser.error(f"no such extra: {', '.join(unknown)}")
 
-    dirty = bool(git("status", "--porcelain", "--", *SOURCES))
+    if not (FIRMWARE / "Cargo.toml").is_file():
+        raise SystemExit(f"no spinny-firmware repository at {FIRMWARE}: the board firmware and spinny-virtual are built from it")
+    firmware_dirty = bool(run(["git", "-C", FIRMWARE, "status", "--porcelain"], capture=True).strip())
+    dirty = bool(git("status", "--porcelain", "--", *SOURCES)) or firmware_dirty
     if dirty and not args.allow_dirty:
-        raise SystemExit("uncommitted changes in what goes into a release (git status -- " + " ".join(SOURCES) + "): commit them, or pass --allow-dirty")
+        raise SystemExit(
+            "uncommitted changes in what goes into a release (git status -- " + " ".join(SOURCES)
+            + f", and git -C {FIRMWARE} status): commit them, or pass --allow-dirty"
+        )
     version = tomllib.loads((REPO / "web" / "backend" / "pyproject.toml").read_text())["project"]["version"]
     commit = git("rev-parse", "--short", "HEAD")
     tagged = f"v{version}" in git("tag", "--points-at", "HEAD").split()
     name = label(version, commit, tagged, dirty)
     sibling = run(["git", "-C", SIBLING, "rev-parse", "--short", "HEAD"], capture=True).strip()
+    firmware_commit = run(["git", "-C", FIRMWARE, "rev-parse", "--short", "HEAD"], capture=True).strip()
     stamp = {
         "spinny": name,
         "commit": git("rev-parse", "HEAD"),
         "kicad-to-gcode": sibling,
+        "spinny-firmware": firmware_commit + ("-dirty" if firmware_dirty else ""),
         "extras": ",".join(extras) or "none",
         "built": date.today().isoformat(),
     }

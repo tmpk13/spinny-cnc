@@ -62,9 +62,40 @@ web/backend): one .venv, one uv.lock, `uv run` from anywhere. Choices:
   with the local packages editable, and `pixi.lock merge=binary` in
   .gitattributes.
 
+## Firmware in its own repository (2026-11-16)
+
+The user asked for the firmware to be its own repository. It is
+`spinny-firmware`, checked out beside this one like kicad-to-gcode and
+pcb-vision; its history came along with `git subtree split --prefix=firmware`
+(55 commits), and `docs/PROTOCOL.md`, `notes/firmware.md` and
+`notes/board.md` went with it. Choices:
+
+- A sibling checkout, not a submodule or a cargo git dependency: the host
+  needs a built program (`spinny-virtual`) and the board's uf2, not a
+  library, and the other siblings already work this way.
+- The host still uses it in four places, each naming `../spinny-firmware`:
+  the `virtual*` and `build-virtual` tasks (`cargo --manifest-path`),
+  `test-backend` (`SPINNY_VIRTUAL=../spinny-firmware/target/debug/spinny-virtual`),
+  `flash` and `relay/load-uf2.sh` (`mise -C ../spinny-firmware run ...`;
+  load-uf2 takes `SPINNY_FIRMWARE` for another checkout), and
+  `deploy/release.py`, which builds the uf2 and `spinny-virtual` from it,
+  stamps its commit into the archive and refuses a dirty firmware checkout
+  like a dirty host one.
+- `mise run test` here no longer runs the firmware's own tests; the end to
+  end tests still drive it. Its tests: `mise -C ../spinny-firmware run test`.
+- The virtual firmware's unit tests read seven shipped machine files; they
+  are copies in its `virtual/tests/machines/` now. The cross-check of the
+  current files is `test_machines.py`'s end to end test, which starts the
+  virtual firmware with each and compares what the backend reads.
+- An agent worktree under `.claude/worktrees/` needs a `spinny-firmware`
+  symlink beside it, as it does for kicad-to-gcode.
+- Links to the firmware's documents point at
+  `https://github.com/tmpk13/spinny-firmware`, the origin set in the new
+  checkout; nothing has been pushed there.
+
 ## load-uf2 over ssh (2026-10-27)
 
-mise passes the `--` arguments only to the task named, never to its `depends`, so a task that depends on `scp-uf2` cannot hand it the host. `load-uf2` depends on `uf2` alone and streams the file itself: `ssh host 'cat > /mnt/pico/spinny-fw.uf2 && sync'`. That works without root only because the udev rule mounts the BOOTSEL drive with `umask=000`.
+mise passes the `--` arguments only to the task named, never to its `depends`, so a task that depends on `scp-uf2` cannot hand it the host. `load-uf2` builds the uf2 itself (since 2026-11-16 the script runs `mise -C ../spinny-firmware run uf2`, as the firmware has its own repository) and streams the file: `ssh host 'cat > /mnt/pico/spinny-fw.uf2 && sync'`. That works without root only because the udev rule mounts the BOOTSEL drive with `umask=000`.
 
 ## Updates from GitHub (2026-11-12)
 

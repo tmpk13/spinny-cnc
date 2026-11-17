@@ -164,8 +164,9 @@ mise run release -- --extras auto,mcp                     # with the optional pa
 The archives and a `SHA256SUMS` for them land in `dist/`. The build
 needs what a checkout's own tasks need: uv, bun, cargo with the
 `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu` and
-`thumbv6m-none-eabi` targets, `elf2uf2-rs`, the kicad-to-gcode repository
-beside this one (pcb-vision beside it too for `pcbv`), and the internet
+`thumbv6m-none-eabi` targets, `elf2uf2-rs`, the kicad-to-gcode and
+spinny-firmware repositories beside this one (pcb-vision beside it too for
+`pcbv`), and the internet
 for cargo-zigbuild (run through uvx), the standalone Python
 (python-build-standalone, checked against its published SHA256SUMS) and
 the packages, at the versions in `uv.lock`.
@@ -203,4 +204,5 @@ An archive left out is an update that platform does not find; a missing
   by cargo-zigbuild against glibc 2.28: a plain cargo build would ask for
   the build machine's newest glibc symbol versions (`fmod@GLIBC_2.38` from
   Ubuntu 24.04), which bookworm and Ubuntu 22.04 lack. The firmware is the
-  same release build `mise run uf2` makes.
+  same release build spinny-firmware's `mise run uf2` makes, and a
+  firmware checkout with uncommitted changes is refused like this one.

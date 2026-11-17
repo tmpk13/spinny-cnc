@@ -16,7 +16,7 @@ A page from another origin cannot drive the machine: its posts and
 websockets are refused, with `--cors-origin` and `--allowed-host` to admit
 or pin what a setup needs ([WEB_API.md](../../docs/WEB_API.md)).
 
-The API is `docs/WEB_API.md`; the firmware protocol is `docs/PROTOCOL.md`.
+The API is `docs/WEB_API.md`; the firmware protocol is [PROTOCOL.md](https://github.com/tmpk13/spinny-firmware/blob/main/docs/PROTOCOL.md) of spinny-firmware.
 `../frontend/dist` is served at `/` when it exists.
 
 ## Modules

@@ -9,7 +9,7 @@
 # This is what brings back a board whose USB controller locked up (RP2040
 # erratum E15): it stays on the bus, every transfer fails with a protocol
 # error the kernel does not log, and only a bus reset clears it. Firmware
-# with the start-of-frame guard (firmware/rp2040-logic/src/usb_guard.rs)
+# with the start-of-frame guard (rp2040-logic/src/usb_guard.rs in spinny-firmware)
 # drops off the bus by itself when that happens.
 # The reset takes root; sudo is used.
 set -euo pipefail

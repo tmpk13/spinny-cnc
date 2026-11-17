@@ -1,6 +1,6 @@
 # Operating the machine
 
-From the first connection to a probed, compensated run. The wiring and the bring-up order are in `firmware/rp2040/README.md`; the line protocol is `docs/PROTOCOL.md`, the web API `docs/WEB_API.md`.
+From the first connection to a probed, compensated run. The wiring and the bring-up order are in spinny-firmware's [rp2040/README.md](https://github.com/tmpk13/spinny-firmware/blob/main/rp2040/README.md); the line protocol is its [PROTOCOL.md](https://github.com/tmpk13/spinny-firmware/blob/main/docs/PROTOCOL.md), the web API [WEB_API.md](WEB_API.md).
 
 ## Connecting and first moves
 
@@ -165,7 +165,7 @@ for *Focus here* (*Touch off here* on a mill) again before a run follows
 the map, and a tie ([below](#probing-less-around-the-cuts-and-one-point))
 sets it again from one probe.
 
-Wiring and bring-up are in `firmware/rp2040/README.md`.
+Wiring and bring-up are in spinny-firmware's [rp2040/README.md](https://github.com/tmpk13/spinny-firmware/blob/main/rp2040/README.md).
 
 ### Cartesian and spindle
 
@@ -206,7 +206,7 @@ Since the tool may be the probe, the page locks probing while the spindle
 turns, and the spindle's start while probing.
 
 FAN3 is a low side switch on the fan rail, not a logic output: see the
-spindle note in `firmware/rp2040/README.md` before connecting one.
+spindle note in spinny-firmware's [rp2040/README.md](https://github.com/tmpk13/spinny-firmware/blob/main/rp2040/README.md) before connecting one.
 
 ### The Draw panel
 
@@ -1433,7 +1433,7 @@ can be homed: *Home* in the Machine panel (under *Go to, set position,
 motors*), or `home`, `home R` or `home R+`
 in the console, finds the switch and declares the axis to read
 `home_pos` there. The cycle, and the halt `endstop_halt` asks for, are
-in [PROTOCOL.md](PROTOCOL.md#endstops-and-homing). The readout's *Homed*
+in [PROTOCOL.md](https://github.com/tmpk13/spinny-firmware/blob/main/docs/PROTOCOL.md#endstops-and-homing). The readout's *Homed*
 field names the joints homed since the position was last lost; a
 position set, a reset while moving, a lost motor supply or an endstop
 halt unhome them.
@@ -1462,7 +1462,7 @@ by hand. A move waits for whatever motion is queued before it, and is
 refused while a job runs, the board is probed or a camera routine moves
 the head. At the console, `servo N1 A90` moves servo 1, `servo N1 off`
 lets it go, and the status line's `S` field says where each one is
-([PROTOCOL.md](PROTOCOL.md#servos)).
+([PROTOCOL.md](https://github.com/tmpk13/spinny-firmware/blob/main/docs/PROTOCOL.md#servos)).
 
 A servo stays where it is through a hold, a stop, a reset and a
 disconnect, and goes to its `start` angle at power on (none, and no
@@ -1474,7 +1474,7 @@ wider than the servo's own drives it against its stop at the ends. With
 a PCA9685, the console says at boot whether the chip answers
 (`[MSG:servo pca9685 0x40 on GP0 GP1 ready]`, or `not answering,
 retrying`); the wiring and the supply are in
-[firmware/rp2040/README.md](../firmware/rp2040/README.md#servos).
+[rp2040/README.md](https://github.com/tmpk13/spinny-firmware/blob/main/rp2040/README.md#servos) of spinny-firmware.
 
 ### When the machine goes quiet
 
@@ -1487,7 +1487,7 @@ every few seconds. What to read, in order:
    unanswered, when the machine was last heard and what it last said,
    and its last status report. `machine: boot ...` lines say why the
    board started every time it was connected (the reasons are in
-   [PROTOCOL.md](PROTOCOL.md#diagnostics)). The board says
+   [PROTOCOL.md](https://github.com/tmpk13/spinny-firmware/blob/main/docs/PROTOCOL.md#diagnostics)). The board says
    it at every open of its port, so the same line at a later connect is
    logged as news; a fault is an error the first time only. After a link
    that failed on its own, the next connect compares the board's uptime
@@ -1526,4 +1526,4 @@ Bring a board that stopped answering back with its RESET button rather
 than a power cycle when you can: the next connect then logs the record
 of its last life, which a power cycle loses. The record, and `diag`,
 which prints it with the counters at any time, are in
-[PROTOCOL.md](PROTOCOL.md#diagnostics).
+[PROTOCOL.md](https://github.com/tmpk13/spinny-firmware/blob/main/docs/PROTOCOL.md#diagnostics).

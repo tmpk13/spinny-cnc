@@ -135,7 +135,7 @@ ssh "$target" mkdir -p "$remote_dir/spinny-laser-pcb" "$remote_dir/kicad-to-gcod
 rsync -az --delete \
     --exclude '.git/' --exclude '.venv/' --exclude '__pycache__/' \
     --exclude 'node_modules/' --exclude 'var/' --exclude 'target/' \
-    --exclude 'firmware/' --exclude 'sim/' --exclude '.claude/' \
+    --exclude 'sim/' --exclude '.claude/' \
     "$here/" "$target:$remote_dir/spinny-laser-pcb/"
 rsync -az --delete \
     --exclude '.git/' --exclude '.venv/' --exclude '__pycache__/' \

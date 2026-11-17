@@ -11,8 +11,6 @@ __pycache__/
 build/
 
 # Rust
-firmware/target/
-firmware/rp2040/target/
 sim/target/
 carve/target/
 *.uf2

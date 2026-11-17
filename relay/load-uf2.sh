@@ -6,11 +6,16 @@
 #   relay/load-uf2.sh            # this computer
 #   relay/load-uf2.sh user@host  # a Pi
 #
-# The board reboots into the new firmware as soon as the last block lands.
+# The firmware is built first, in the spinny-firmware repository beside
+# this one (SPINNY_FIRMWARE names another checkout). The board reboots into
+# the new firmware as soon as the last block lands.
 set -euo pipefail
 
-uf2=firmware/rp2040/target/thumbv6m-none-eabi/release/spinny-fw.uf2
-[ -f "$uf2" ] || { echo "no $uf2, run: mise run uf2" >&2; exit 1; }
+here="$(cd "$(dirname "$0")/.." && pwd)"
+firmware="${SPINNY_FIRMWARE:-$here/../spinny-firmware}"
+[ -f "$firmware/Cargo.toml" ] || { echo "no spinny-firmware repository at $firmware" >&2; exit 1; }
+mise -C "$firmware" run uf2
+uf2="$firmware/rp2040/target/thumbv6m-none-eabi/release/spinny-fw.uf2"
 
 if [ $# -eq 0 ]; then
     cp "$uf2" /mnt/pico/ && sync

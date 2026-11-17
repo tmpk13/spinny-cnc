@@ -18,7 +18,7 @@ connected from the Connection panel and jogged, homed and stopped like the other
 | Backend | `GET /api/machines`, `GET`, `PUT`, `PATCH` and `DELETE /api/machines/{id}`, `POST /api/machines/{id}/check`, `POST /api/machines/{id}/apply` ([WEB_API.md](WEB_API.md)); `spinny-web --machines DIR` reads another directory |
 | Virtual firmware | `spinny-virtual --machine machines/cartesian-mill.toml`; `--settings` after it overrides single values |
 | Gcode tools | `spinny-iso --machine machines/polar-laser.toml ...`: the axis rates, the power scale and the chord tolerance stand in for the defaults; a flag given still wins |
-| Code | `spinny_laser.machines` (Python), `firmware/virtual/src/machine.rs` (Rust), `web/frontend/src/mock/machines.ts` (the page's mock); the virtual firmware's tests load the shipped files, so the three stay one schema |
+| Code | `spinny_laser.machines` (Python), [`virtual/src/machine.rs`](https://github.com/tmpk13/spinny-firmware/blob/main/virtual/src/machine.rs) of spinny-firmware (Rust), `web/frontend/src/mock/machines.ts` (the page's mock); the backend's end to end tests start the virtual firmware with the shipped files and check that it comes up as the machine Python reads, so the three stay one schema |
 
 The shipped files: `polar-laser` (the firmware's defaults, every key
 spelled out), `polar-laser-focus` (the focus axis fitted),
@@ -240,7 +240,7 @@ current, the TMC2209 register fields every driver is given alike:
 `interpolate` and the keys named as the datasheet names the fields,
 `toff`, `tbl`, `hstrt`, `hend`, `hold_delay` (IHOLDDELAY), `tpowerdown`
 and `tpwmthrs`. What each one does and its range is in the settings table
-of [PROTOCOL.md](PROTOCOL.md). Left out, a key keeps the firmware's
+of [PROTOCOL.md](https://github.com/tmpk13/spinny-firmware/blob/main/docs/PROTOCOL.md). Left out, a key keeps the firmware's
 default, which is what the firmware wrote before these were settings, so a
 file without them runs the drivers as before.
 
@@ -280,7 +280,7 @@ The laser (or spindle) PWM output, the probe input and the tool output
 are on whichever GPIOs `[output] pin`, `[probe] pin` and `[enable] pin`
 name, and an axis's switch on its `endstop_pin`: any GPIO but the driver
 sockets' and the UART's, which
-[firmware/rp2040/README.md](../firmware/rp2040/README.md#pins) lists
+[rp2040/README.md](https://github.com/tmpk13/spinny-firmware/blob/main/rp2040/README.md#pins) of spinny-firmware lists
 with the headers' GPIOs. An output (the laser's, a fitted tool output's, a
 servo's) may not be a STOP header's either (GP3, GP4, GP16, GP25): their
 signals reach the chip through an input buffer, which would drive against
@@ -302,7 +302,7 @@ the negative one of two, the positive switch of a two-ended axis reading
 `home_pos + home_travel`; `home_travel` is the distance between its ends,
 which bounds the seek, and `home_pull` how far a home backs off the
 switch. The cycle and the halt are in
-[PROTOCOL.md](PROTOCOL.md#endstops-and-homing), the page's *Home* and
+[PROTOCOL.md](https://github.com/tmpk13/spinny-firmware/blob/main/docs/PROTOCOL.md#endstops-and-homing), the page's *Home* and
 *Homed* in [OPERATING.md](OPERATING.md#endstops-and-homing).
 
 `[enable]` is an output that follows the tool: driven while a job runs, a
@@ -364,8 +364,8 @@ moved, and hangs loose meanwhile. `name` and `positions` are the page's:
 a bar per servo in the Machine panel with its angle, a field to move it to
 any angle in its range, a button per named position and *Off*, which lets
 it go. The firmware's side, the `servo` line and how a servo rides through
-holds and resets, is [PROTOCOL.md](PROTOCOL.md#servos); the wiring and the
-supply, [firmware/rp2040/README.md](../firmware/rp2040/README.md#servos).
+holds and resets, is [PROTOCOL.md](https://github.com/tmpk13/spinny-firmware/blob/main/docs/PROTOCOL.md#servos); the wiring and the
+supply, [rp2040/README.md](https://github.com/tmpk13/spinny-firmware/blob/main/rp2040/README.md#servos) of spinny-firmware.
 
 `[pca9685]` says where that chip is: its I2C bus's data line `sda` (an
 even GPIO) and clock line `scl` (an odd one), which must be one I2C

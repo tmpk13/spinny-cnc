@@ -174,7 +174,7 @@ On a spindle machine (`profile.tool` `spindle`) `POST /api/laser` answers
 | `POST /api/spindle` | `{"power": 800}` starts it at that `S`, or changes its speed; 400 on a laser machine, 409 while a run is active (a run starts and stops it itself) and while the board is probed (the probe may be the tool) |
 | `POST /api/spindle/off` | stops it; 409 while a run is active, where the stop is the run's stop |
 
-Servos ([PROTOCOL.md](PROTOCOL.md#servos)), on any machine on this
+Servos ([PROTOCOL.md](https://github.com/tmpk13/spinny-firmware/blob/main/docs/PROTOCOL.md#servos)), on any machine on this
 project's firmware that fits them:
 
 | Method and path | Body |

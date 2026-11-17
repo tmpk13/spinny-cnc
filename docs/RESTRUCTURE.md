@@ -9,7 +9,7 @@ throughout. The decisions only the owner can make are in
 
 | Part | Lines (source + tests) | Verdict |
 | --- | --- | --- |
-| `firmware/` (core, rp2040, rp2040-logic, virtual) | 21k | Sound. Keep it as it is. |
+| `firmware/` (core, rp2040, rp2040-logic, virtual) | 21k | Sound. Keep it as it is. Since 2026-11-16 it is its own repository, spinny-firmware. |
 | `carve/`, `sim/` | 4.6k | Sound. Keep them. |
 | `toolpath/` (`spinny_laser`) | 15.6k | Sound. A few readers live in the backend instead of here. |
 | `web/backend/` (`spinny_web`) | 30k + 20k | One object does everything. Restructure it. |
@@ -198,7 +198,9 @@ work can land between steps; nothing is frozen.
    type, default, bounds, unit, whether a restart is needed, help text). A
    core test writes it and fails when the committed copy differs.
    `machines.py`, `app.py`, `fake_serial.py` and the page read it, and the
-   settings table in `PROTOCOL.md` is generated from it.
+   settings table in `PROTOCOL.md` is generated from it. With the firmware
+   in its own repository since 2026-11-16, the file is written there and
+   this one keeps a copy that a task refreshes from `../spinny-firmware`.
 2. A new route serves the machine keys and the default controls, which
    already live in `spinny_laser`. The Machines page, the settings list and
    the servo bars read them from it instead of from `machinekeys.ts`.

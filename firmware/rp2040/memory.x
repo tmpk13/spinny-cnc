@@ -1,6 +1,0 @@
-MEMORY {
-    BOOT2 : ORIGIN = 0x10000000, LENGTH = 0x100
-    /* The last 4K sector holds the settings and stays out of the image. */
-    FLASH : ORIGIN = 0x10000100, LENGTH = 2048K - 0x100 - 4K
-    RAM   : ORIGIN = 0x20000000, LENGTH = 264K
-}

@@ -303,3 +303,11 @@ Why it matters: they sit above the job list and look like the selected job's set
 - B. Keep them in the Jobs panel under a heading "For the next import".
 Applied: A, in the plan (docs/UI_PANELS.md); nothing built yet.
 Answer:
+
+## Q54. Where should the firmware repository live on GitHub?
+Why it matters: the firmware moved to its own repository, spinny-firmware, checked out beside this one; this repository's docs link its protocol and pin table by web address, and those links work only once it is pushed there.
+- A. github.com/tmpk13/spinny-firmware, public like spinny-cnc (recommended): the links as written work after the first push.
+- B. Another name or owner: the links and the checkout's origin change to it.
+- C. Private: readers of spinny-cnc on GitHub get a 404 on the protocol; it would then be better back in this repository as a copy.
+Applied: A: origin set to git@github.com:tmpk13/spinny-firmware.git in the new checkout; nothing pushed.
+Answer:

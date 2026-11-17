@@ -74,11 +74,11 @@ run = "cargo build -q --release --manifest-path ../pcb-vision/Cargo.toml -p pcbv
 
 [tasks.virtual-dispenser]
 description = "Virtual firmware on socket://127.0.0.1:2323 as the cartesian paste dispenser over a tilted board"
-run = "cd firmware && cargo run -q -p spinny-virtual -- --listen 127.0.0.1:2323 --machine ../machines/cartesian-dispenser.toml --surface -1.5,0.01,-0.02"
+run = "cargo run -q --manifest-path ../spinny-firmware/Cargo.toml -p spinny-virtual -- --listen 127.0.0.1:2323 --machine machines/cartesian-dispenser.toml --surface -1.5,0.01,-0.02"
 
 [tasks.virtual]
 description = "Virtual firmware on socket://127.0.0.1:2323 as the polar laser"
-run = "cd firmware && cargo run -q -p spinny-virtual -- --listen 127.0.0.1:2323 --machine ../machines/polar-laser.toml"
+run = "cargo run -q --manifest-path ../spinny-firmware/Cargo.toml -p spinny-virtual -- --listen 127.0.0.1:2323 --machine machines/polar-laser.toml"
 
 [tasks.virtual-pnp]
 description = "A virtual LumenPnP for the PNP tab: its Marlin on socket://127.0.0.1:2327 (machines/virtual-pnp.toml), Photon feeders, cameras at http://127.0.0.1:2328/snapshot (bottom) and :2329 (top)"
@@ -86,19 +86,15 @@ run = "uv run spinny-virtual-pnp --machine machines/virtual-pnp.toml"
 
 [tasks.virtual-mill]
 description = "Virtual firmware on socket://127.0.0.1:2323 as the cartesian spindle machine over a tilted board"
-run = "cd firmware && cargo run -q -p spinny-virtual -- --listen 127.0.0.1:2323 --machine ../machines/cartesian-mill.toml --surface -1.5,0.01,-0.02"
+run = "cargo run -q --manifest-path ../spinny-firmware/Cargo.toml -p spinny-virtual -- --listen 127.0.0.1:2323 --machine machines/cartesian-mill.toml --surface -1.5,0.01,-0.02"
 
 [tasks.flash]
-description = "Build the board firmware and copy it to an SKR Pico held in BOOTSEL mode"
-run = "cd firmware/rp2040 && cargo run --release"
+description = "Build the board firmware in ../spinny-firmware and copy it to an SKR Pico held in BOOTSEL mode; that repository's own tasks (uf2, symbolize, test) run with mise -C ../spinny-firmware run TASK"
+run = "mise -C ../spinny-firmware run flash"
 
 [tasks.build-virtual]
-description = "Build the virtual firmware the end to end tests run against"
-run = "cd firmware && cargo build -q -p spinny-virtual"
-
-[tasks.test-firmware]
-description = "Firmware crates"
-run = "cd firmware && cargo test -q"
+description = "Build the virtual firmware in ../spinny-firmware that the end to end tests run against"
+run = "cargo build -q --manifest-path ../spinny-firmware/Cargo.toml -p spinny-virtual"
 
 [tasks.build-carve]
 description = "Build the 3D kernel the CAM runs for STL models: carve/target/debug/spinny-carve"
@@ -116,7 +112,7 @@ run = "uv run pytest -q toolpath/tests"
 [tasks.test-backend]
 description = "Web backend, with the end to end runs on the virtual firmware"
 depends = ["build-virtual", "build-carve"]
-run = "SPINNY_VIRTUAL=firmware/target/debug/spinny-virtual uv run pytest -q web/backend/tests"
+run = "SPINNY_VIRTUAL=../spinny-firmware/target/debug/spinny-virtual uv run pytest -q web/backend/tests"
 
 [tasks.test-frontend]
 description = "Page: type check and tests"
@@ -147,11 +143,9 @@ description = "Gcode simulator"
 run = "cd sim && cargo test -q"
 
 [tasks.lint]
-description = "Linters: ruff on the Python, clippy on every Rust crate with warnings as errors, and the page's type check"
+description = "Linters: ruff on the Python, clippy on carve and sim with warnings as errors, and the page's type check"
 run = """
 ruff check toolpath web/backend deploy
-(cd firmware && cargo clippy -q --all-targets -- -D warnings)
-(cd firmware/rp2040 && cargo clippy -q -- -D warnings)
 (cd carve && cargo clippy -q --all-targets -- -D warnings)
 (cd sim && cargo clippy -q --all-targets -- -D warnings)
 (cd web/frontend && bun run --silent check)
@@ -159,23 +153,7 @@ ruff check toolpath web/backend deploy
 
 [tasks.test]
 description = "Every suite"
-depends = ["test-firmware", "test-carve", "test-toolpath", "test-backend", "test-frontend", "test-layout", "test-render", "test-sim"]
-
-[tasks.uf2]
-description = "Build the board firmware as a uf2: firmware/rp2040/target/thumbv6m-none-eabi/release/spinny-fw.uf2"
-run = """
-(cd firmware/rp2040 && cargo build --release)
-elf2uf2-rs firmware/rp2040/target/thumbv6m-none-eabi/release/spinny-fw firmware/rp2040/target/thumbv6m-none-eabi/release/spinny-fw.uf2
-"""
-
-[tasks.symbolize]
-description = "The source line behind a hard fault's pc or lr from the boot message, against the last release build: mise run symbolize -- 0x10001234"
-run = "arm-none-eabi-addr2line -f -C -i -e firmware/rp2040/target/thumbv6m-none-eabi/release/spinny-fw"
-
-[tasks.scp-uf2]
-description = "Build the uf2 and copy it to a host with scp, to put on a board held in BOOTSEL there: mise run scp-uf2 -- pi@spinny.local:"
-depends = ["uf2"]
-run = "scp firmware/rp2040/target/thumbv6m-none-eabi/release/spinny-fw.uf2"
+depends = ["test-carve", "test-toolpath", "test-backend", "test-frontend", "test-layout", "test-render", "test-sim"]
 
 [tasks.controls-fixture]
 description = "Write the default controls fixture the toolpath and page tests check their copies of the defaults against"
@@ -198,8 +176,7 @@ description = "Write the CAM post samples fixture the page's mock post is checke
 run = "uv run python -m spinny_web.cam > web/backend/tests/data/cam-post-samples.json"
 
 [tasks.load-uf2]
-description = "Build the uf2 and write it onto a board held in BOOTSEL, here or on a Pi over ssh, through the /mnt/pico automount from relay/pico-udev-setup.sh: mise run load-uf2 -- pi@spinny.local"
-depends = ["uf2"]
+description = "Build the uf2 in ../spinny-firmware and write it onto a board held in BOOTSEL, here or on a Pi over ssh, through the /mnt/pico automount from relay/pico-udev-setup.sh: mise run load-uf2 -- pi@spinny.local"
 run = "relay/load-uf2.sh"
 
 [tasks.release]

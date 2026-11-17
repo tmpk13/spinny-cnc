@@ -29,9 +29,7 @@ its controller before each pick.
 
 | Part | What | Build, test, run |
 | --- | --- | --- |
-| `firmware/core` | portable control core: parser, settings, planner, stepper, machine | `cd firmware && cargo test` |
-| `firmware/rp2040` | the SKR Pico firmware | `mise run flash` |
-| `firmware/virtual` | the core on a TCP socket with a virtual clock | `mise run virtual` |
+| [spinny-firmware](https://github.com/tmpk13/spinny-firmware), checked out beside this one | the portable control core (parser, settings, planner, stepper, machine), the SKR Pico firmware, and the core on a TCP socket with a virtual clock that the backend's end to end tests run | `mise run flash`, `mise run virtual`, `mise run build-virtual`; its own `mise run test` |
 | `web/backend` `virtual_pnp` | a virtual LumenPnP: its Marlin on a TCP socket (moves in time, M400, M410, the vacuum sensor, Photon feeders, axes out of square and M852 when built with it) and its two cameras drawn from the head's place, served as JPEG snapshots | `mise run virtual-pnp` |
 | `web/backend` | serial link (this project's firmware, or a G-code machine's controller), job import (and again for another bit), the Draw panel's operations, markers, streaming, probing (grid or pads), dispensing, the cameras through pcbv and the list of those attached, alignment, the parts of a board, the tools a language model gets (the assistant's agent, and `spinny-mcp` for any MCP client), an installed release's update from GitHub's releases and its machine files offered against the operator's copies, API, serves the page | `uv run spinny-web`, `uv run spinny-mcp` |
 | `web/frontend` | the page | `cd web/frontend && bun run build` |
@@ -43,7 +41,7 @@ its controller before each pick.
 | `deploy` | the Pi's services and `deploy-pi.sh`; `release.py`, the archives that run with nothing installed: a standalone Python with the locked packages, the page and the shipped machine and CAM files, the Rust programs linked for glibc 2.28, the firmware | `mise run deploy-pi`, `mise run release` ([RELEASE.md](RELEASE.md)) |
 | [pcb-vision](https://github.com/tmpk13/pcb-vision), checked out beside this one | `pcbv`: the camera's capture and the localizer that finds a KiCad board in its picture, served to the backend over JSON lines | `mise run build-pcbv`; its own `mise run test` |
 
-The line protocol is [PROTOCOL.md](PROTOCOL.md), the web API
+The line protocol is [PROTOCOL.md](https://github.com/tmpk13/spinny-firmware/blob/main/docs/PROTOCOL.md), the web API
 [WEB_API.md](WEB_API.md), the machine configuration files
 [MACHINES.md](MACHINES.md), the CAM profiles [CAM.md](CAM.md).
 
@@ -188,7 +186,7 @@ flowchart LR
 ```
 
 Each part keeps its own module diagram next to its code:
-[firmware/README.md](../firmware/README.md),
+[spinny-firmware's ARCHITECTURE.md](https://github.com/tmpk13/spinny-firmware/blob/main/ARCHITECTURE.md),
 [web/backend/README.md](../web/backend/README.md),
 [web/frontend/README.md](../web/frontend/README.md),
 [toolpath/README.md](../toolpath/README.md).
@@ -224,7 +222,7 @@ with `--connect auto`: it keeps its own link to the controller up, so a job
 uploaded to `http://host.local:8000` streams from the Pi whether or not
 the page stays open, and a controller that is replugged, or goes quiet and
 is given up, is taken up again by itself. The Pi needs no bun, and
-`firmware/` and `sim/` stay behind. Jobs, the height map and the resume
+`sim/` stays behind. Jobs, the height map and the resume
 record are the Pi's own.
 
 **Or a release.** The `aarch64-linux` archive from `mise run release`

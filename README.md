@@ -3,7 +3,8 @@
 A laser PCB machine with a rail over a rotary table: the head rides the
 radius `R` on a rail that passes over the rotation axis of a harmonic
 drive table, the angle `A`, that the board turns on. It runs its own
-firmware on a BTT SKR Pico and is driven from a browser; an optional focus
+firmware ([spinny-firmware](https://github.com/tmpk13/spinny-firmware), checked out beside this repository) on
+a BTT SKR Pico and is driven from a browser; an optional focus
 axis `H` carries a touch probe, and the cross slide `Z` makes it an X/Y
 machine with a spindle on the laser output or a solder paste dispenser's
 plunger on the table's driver. A camera on the head, read through the
@@ -29,7 +30,7 @@ page like the others.
 `mise tasks` lists the rest. Components: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 Reference: [operating](docs/OPERATING.md), [machine files](docs/MACHINES.md),
 [CAM](docs/CAM.md), [calibration](docs/CALIBRATION.md),
-[protocol](docs/PROTOCOL.md), [web API](docs/WEB_API.md),
+[protocol](https://github.com/tmpk13/spinny-firmware/blob/main/docs/PROTOCOL.md), [web API](docs/WEB_API.md),
 [gcode toolchain](docs/GCODE.md), [M2 Nano assessment](docs/M2_NANO.md),
 [releases](docs/RELEASE.md), [page plugins](docs/PLUGINS.md),
 [board vision: where it goes](docs/CV_DIRECTION.md),
