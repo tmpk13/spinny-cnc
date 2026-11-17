@@ -21,7 +21,6 @@ full_steps_per_mm = 50      # 200 steps per turn, 4 mm per turn
 max_rate = 1200
 limit = 60
 
-
 [table]
 socket = "E"
 current_ma = 0
@@ -35,7 +34,6 @@ accel = 50
 jerk = 3
 jog_rate = 120
 limit = 40
-
 
 [focus]
 socket = "Z"
