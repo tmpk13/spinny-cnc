@@ -22,7 +22,7 @@ import { mountCameraSight } from "./camerasight.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
 import { boardMarks, frameSize, roughOf, shownSpots } from "./camview.ts";
-import { into, type Ctx } from "./context.ts";
+import { helpMark, into, type Ctx } from "./context.ts";
 import { explain } from "../terms.ts";
 import { headKnown, knownMarks } from "./known.ts";
 import { type Calibration, mountPicture, type PictureView } from "./picture.ts";
@@ -192,12 +192,12 @@ export function mountVisionView(root: HTMLElement, ctx: Ctx, visible: () => bool
     const empty = el("p", { class: "muted camera-view-empty" }, "The camera is not running.");
     const lookLine = el("p", { class: "muted vision-look" });
     root.append(
-        el("div", { class: "panel-head" }, el("h2", {}, "Head camera view")),
+        el("div", { class: "panel-head" }, el("h2", {}, "Head camera view"),
+            helpMark(ctx, "Drag the picture to move the head; double-click a point to bring it to the crosshair; Ctrl and the wheel zoom; Shift and a drag draw the box a board search keeps to.")),
         el("div", { class: "panel-body" },
             picture.root,
             empty,
             lookLine,
-            el("p", { class: "muted hint" }, "Drag the picture to move the head; double-click a point to bring it to the crosshair; Ctrl and the wheel zoom; Shift and a drag draw the box a board search keeps to."),
         ),
     );
     ctx.store.subscribe((state) => {

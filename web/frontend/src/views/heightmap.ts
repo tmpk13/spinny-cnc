@@ -682,7 +682,6 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): HeightPanel {
     // a beam, is brought to the surface, and a cut goes that far below it.
     const FOCUS_HINT = "Jog the head until the beam is in focus over the probed area, then press Focus here.";
     const TOUCH_HINT = "Jog the tool down over the probed area until it just touches the copper, then press Touch off here.";
-    const focusHint = el("p", { class: "muted hint" }, FOCUS_HINT);
     const focusField = numberField({ step: 0.05 });
     // The text the field was last given from the map: a field still showing
     // it follows the map, one typed in keeps what was typed until Set.
@@ -713,7 +712,15 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): HeightPanel {
     const loadButton = button("Load map", () => loadInput.click(), "btn btn-quiet", "load a height map file");
     const clearButton = button("Clear", () => clearMap(), "btn btn-quiet", "forget the height map");
 
-    body.append(
+    // What every run with a map uses stays in view: what to probe, Probe,
+    // the map itself, and taking the focus. The rest is one press away, in
+    // place: the area and its points, probing the pads instead, tying the
+    // map again, how the probe moves, the focus as a number, the map's file.
+    // What each part is for is its heading's tooltip.
+    const heading = (text: string, tip: string): HTMLElement => el("h3", { title: tip }, text);
+    const more = el("details", { class: "more hm-more stack" },
+        el("summary", { title: "fold or unfold" }, "More: area, pads, tying the map, probe, files"),
+        heading("Area and points", "the rectangle probed, in board mm, and how many points across and along it; Fit to job sizes it to the job"),
         el("div", { class: "field-grid hm-grid-fields" },
             labeled("X from mm", gridFields.x0),
             labeled("X to mm", gridFields.x1),
@@ -722,6 +729,17 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): HeightPanel {
             labeled("Points X", gridFields.nx),
             labeled("Points Y", gridFields.ny),
         ),
+        heading("Pads", "Probe pads touches the job's pads instead of a grid, for a probe that must land on copper. Pads under Min area are skipped. Past Max points, the most spread out are kept."),
+        el("div", { class: "button-row hm-pads" },
+            labeled("Min area mm^2", minAreaField, "labeled inline"),
+            labeled("Max points", maxPointsField, "labeled inline"),
+            padsPlanButton,
+            padsProbeButton,
+            padsContinueButton,
+            padsNote,
+        ),
+        heading("Tie the map", PROBE_HERE_HINT),
+        el("div", { class: "button-row" }, probeHereMap, probeNearestMap, probeHereZero),
         el("details", { class: "hm-probe-settings" },
             el("summary", { title: "fold or unfold",}, "Probe"),
             el("div", { class: "field-grid" },
@@ -740,36 +758,22 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): HeightPanel {
                 + " The Probe readout must say up when free and down on touch; if not, set invert = true under [probe]."
                 + " Brake queue: run-on past contact, 0 stops dead up to h_jerk; Save to flash keeps it."),
         ),
-        el("div", { class: "button-row" }, modeField, marginLabel, fit, estimateNote),
-        el("div", { class: "button-row" }, probeButton, continueButton, stopButton),
-        probeNote,
-        el("div", { class: "button-row hm-pads" },
-            el("span", { class: "choice-label" }, "Pads"),
-            labeled("Min area mm^2", minAreaField, "labeled inline"),
-            labeled("Max points", maxPointsField, "labeled inline"),
-            padsPlanButton,
-            padsProbeButton,
-            padsContinueButton,
-            padsNote,
-        ),
-        el("p", { class: "muted hint" },
-            "Probe pads touches the job's pads instead of a grid, for a probe that must land on copper."
-            + " Pads under Min area are skipped. Past Max points, the most spread out are kept."),
-        el("div", { class: "button-row" }, probeHereMap, probeNearestMap, probeHereZero),
-        el("p", { class: "muted hint" }, PROBE_HERE_HINT),
-        mapBox,
-        legend,
+        heading("Focus and file", "the focus as a number, the depth of focus a run may drift by, and the map kept in a file"),
         el("div", { class: "button-row hm-focus" },
             focusLabel,
             setFocus,
-            focusHere,
-            focusState,
-        ),
-        focusHint,
-        el("div", { class: "button-row" },
             labeled("Rayleigh mm", rayleighField, "labeled inline"),
-            saveButton, loadButton, clearButton, loadInput,
         ),
+        el("div", { class: "button-row" }, saveButton, loadButton, clearButton, loadInput),
+    );
+    body.append(
+        el("div", { class: "button-row" }, modeField, marginLabel, fit, estimateNote),
+        el("div", { class: "button-row" }, probeButton, continueButton, stopButton),
+        probeNote,
+        mapBox,
+        legend,
+        el("div", { class: "button-row hm-focus-here" }, focusHere, focusState),
+        more,
     );
 
     async function startProbe(): Promise<void> {
@@ -1040,9 +1044,12 @@ export function mountHeightMap(root: HTMLElement, ctx: Ctx): HeightPanel {
         lockFor(probeHereZero, ...noProbe);
         probeHereZero.textContent = milling ? "Probe here: set Z 0" : "Probe here: set H 0";
         setLocked(stopButton, !probing, "not probing");
+        // Stop shows while there is probing to stop.
+        stopButton.hidden = !probing;
         lockFor(focusHere, [!connected, "connect first"], [!heightMap?.map, "no height map"], [probing, "probing"], [!idle, "wait for the machine to be idle"]);
         focusHere.textContent = touchOff ? "Touch off here" : "Focus here";
-        focusHint.textContent = touchOff ? TOUCH_HINT : FOCUS_HINT;
+        // How it is done is the button's tooltip.
+        focusHere.title = touchOff ? TOUCH_HINT : FOCUS_HINT;
         relabel(focusLabel, touchOff ? "Touch-off offset mm" : "Focus offset mm");
         lockFor(setFocus, [!heightMap?.map, "no height map"], [probing, "probing"]);
         lockFor(clearButton, [!heightMap?.map, "no height map"], [probing, "probing"]);

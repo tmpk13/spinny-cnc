@@ -20,7 +20,7 @@ import type { Ctx } from "./context.ts";
 /** The ways to place the board, in the panel's order: the key, the box's id, the fold's title, open at first or not. */
 export const PLACE_WAYS = [
     { key: "hand", id: "board-hand", title: "By hand", open: true },
-    { key: "find", id: "find", title: "By camera", open: true },
+    { key: "find", id: "find", title: "By camera", open: false },
     { key: "align", id: "align", title: "By marks", open: false },
     { key: "refs", id: "pnp-refs", title: "By references", open: true },
 ] as const;

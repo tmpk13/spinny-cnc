@@ -78,14 +78,19 @@ export function mountPnpRun(root: HTMLElement, ctx: Ctx): void {
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Placing"), boards),
         el("div", { class: "panel-body" },
-            el("div", { class: "button-row" }, planButton, download, run, stop),
-            el("div", { class: "button-row" }, runRest, recount, openWindow),
-            el("div", { class: "button-row" },
-                el("label", { class: "muted" }, fiducialsFirst, " find fiducials first"),
-                el("label", { class: "muted", title: "after each board, ask for the next one and place it again" }, repeat, " repeat"),
-                resetBoards,
-            ),
+            // In view: plan it, run it, stop it. What a run is done with now
+            // and then is one press away, in place.
+            el("div", { class: "button-row" }, planButton, run, stop),
             runLine,
+            el("details", { class: "more pnp-run-more stack" },
+                el("summary", { title: "fold or unfold" }, "More: the rest, repeat, feeders, the program"),
+                el("div", { class: "button-row" }, runRest, recount, openWindow, download),
+                el("div", { class: "button-row" },
+                    el("label", { class: "muted" }, fiducialsFirst, " find fiducials first"),
+                    el("label", { class: "muted", title: "after each board, ask for the next one and place it again" }, repeat, " repeat"),
+                    resetBoards,
+                ),
+            ),
             failedList,
             log,
             planLine,
@@ -259,6 +264,9 @@ export function mountPnpRun(root: HTMLElement, ctx: Ctx): void {
         lockFor(planButton, [!job, "pick a board job first"], [!device?.machine, "no G-code machine to place with: connect one from the top bar"]);
         lockFor(run, [!connected, "connect the machine first"], [running, "a run is under way"], [!job, "pick a board job first"]);
         setLocked(stop, !running, "no run under way");
+        // Stop shows while there is placing to stop; Run while there is none.
+        stop.hidden = !running;
+        run.hidden = running;
         setLocked(windowStop, !running, "no run under way");
         lockFor(runRest, [!connected, "connect the machine first"], [running, "a run is under way"], [partsLeft(device, plan, job?.id ?? null).length === 0, "the last run left no part of this job"]);
         setLocked(recount, running, "a run is under way");

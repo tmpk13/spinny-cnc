@@ -809,7 +809,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
         // The size, the pad and the bars in view; steps of an axis's own,
         // zeroing, going to a place, naming one, the feed and the motors
         // under More, open as it was left.
-        const fold = el("details", { class: "jog-more stack" }, el("summary", { title: "fold or unfold" }, "More: own steps, zero, go to, motors"), ...rows, bottom);
+        const fold = el("details", { class: "more jog-more stack" }, el("summary", { title: "fold or unfold" }, "More: own steps, zero, go to, motors"), ...rows, bottom);
         fold.open = moreOpen;
         fold.addEventListener("toggle", () => {
             moreOpen = fold.open;

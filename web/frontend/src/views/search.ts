@@ -113,7 +113,7 @@ export function collectFeatures(root: ParentNode = document): Feature[] {
             for (const press of Array.from(panel.querySelectorAll<HTMLElement>("button"))) {
                 // The layer's own head buttons are no features of the panel,
                 // nor are the setup steps' numbered stops.
-                if ((press.closest(".panel-head-tools") && !press.closest(".panel-head .button-row")) || press.closest(".roadmap") || press.classList.contains("more-press")) {
+                if ((press.closest(".panel-head-tools") && !press.closest(".panel-head .button-row")) || press.closest(".roadmap") || press.classList.contains("more-press") || press.classList.contains("help-mark")) {
                     continue;
                 }
                 const label = (press.getAttribute("aria-label") ?? press.textContent ?? "").trim().replace(/\s+/g, " ");

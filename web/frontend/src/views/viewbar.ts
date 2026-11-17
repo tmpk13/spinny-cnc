@@ -20,7 +20,7 @@ import { button, el, readStored, replace, svgIcon, writeStored } from "../dom.ts
 import { readObject } from "../layout.ts";
 import type { Side } from "../sides.ts";
 import type { AppState } from "../state.ts";
-import { ALL_VIEW, isSteps, stepToOpen, VIEW_ONLY, viewHolding, viewsOf, type AreaView } from "./areaviews.ts";
+import { ALL_VIEW, isSteps, stepToOpen, VIEW_ONLY, viewHolding, viewPanels, viewsOf, type AreaView } from "./areaviews.ts";
 import type { Ctx } from "./context.ts";
 import { onPanelOutOfView, showPanelView } from "./panels.ts";
 import { onPage, onSides, pageNamed, shownOn, type PageId } from "./tabs.ts";
@@ -82,6 +82,23 @@ export function mountViewBars(ctx: Ctx, bars: Record<Side, HTMLElement>): ViewBa
 
     const has = (views: AreaView[], id: string): boolean => id === ALL_VIEW || views.some((view) => view.id === id);
 
+    /**
+     * The views an area lists now. Steps are all listed: they are the
+     * order of the work. Of plain views, only the ones with a panel the
+     * machine connected has: a view whose panels their own views all hide
+     * (a top camera's on a laser) would show nothing.
+     */
+    function listed(page: PageId): AreaView[] {
+        const views = viewsOf(page, ctx.store.get());
+        if (isSteps(views) || typeof document === "undefined") {
+            return views;
+        }
+        return views.filter((view) => viewPanels(view).some((id) => {
+            const node = document.getElementById(id);
+            return node !== null && !node.classList.contains("hidden");
+        }));
+    }
+
     /** The view an area shows now: the one pressed, the one remembered, else where the work stands. */
     function current(page: PageId, views: AreaView[]): string {
         const steps = isSteps(views);
@@ -130,7 +147,7 @@ export function mountViewBars(ctx: Ctx, bars: Record<Side, HTMLElement>): ViewBa
     }
 
     function show(page: PageId, id: string): void {
-        const views = viewsOf(page, ctx.store.get());
+        const views = listed(page);
         if (!has(views, id)) {
             return;
         }
@@ -177,7 +194,7 @@ export function mountViewBars(ctx: Ctx, bars: Record<Side, HTMLElement>): ViewBa
         const tag = el("span", { class: "viewbar-tag muted" }, "optional");
         const say = el("span", { class: "viewbar-say" });
         const step = (by: number): void => {
-            const now = viewsOf(page, ctx.store.get());
+            const now = listed(page);
             const at = now.findIndex((view) => view.id === picked.get(page)?.id);
             const to = now[at + by];
             if (at >= 0 && to) {
@@ -200,7 +217,7 @@ export function mountViewBars(ctx: Ctx, bars: Record<Side, HTMLElement>): ViewBa
     function draw(side: Side): void {
         const bar = bars[side];
         const page = shownOn(side);
-        const views = viewsOf(page, ctx.store.get());
+        const views = listed(page);
         if (views.length === 0) {
             bar.hidden = true;
             delete built[side];
@@ -271,18 +288,17 @@ export function mountViewBars(ctx: Ctx, bars: Record<Side, HTMLElement>): ViewBa
         if (id === null) {
             return;
         }
-        const views = viewsOf(id, ctx.store.get());
-        show(id, viewHolding(views, panel) ?? ALL_VIEW);
+        show(id, viewHolding(listed(id), panel) ?? ALL_VIEW);
     });
     onPage(() => drawAll());
     onSides(() => drawAll());
-    ctx.store.subscribe((_state: AppState) => drawAll(), ["snapshot", "job", "jobs", "settings", "heightMap", "camera", "placing", "components", "progress", "machines"]);
+    ctx.store.subscribe((_state: AppState) => drawAll(), ["snapshot", "job", "jobs", "settings", "heightMap", "camera", "placing", "components", "progress", "machines", "pnp"]);
     drawAll();
 
     mounted = {
         show,
         shown(page) {
-            const views = viewsOf(page, ctx.store.get());
+            const views = listed(page);
             return views.length === 0 ? null : current(page, views);
         },
     };

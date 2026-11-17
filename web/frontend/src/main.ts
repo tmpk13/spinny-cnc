@@ -391,6 +391,10 @@ function main(): void {
         page: "run",
         boxes: { head: () => vision.view.box(), top: () => pnpPanels?.topBox() ?? null },
         onChange: () => pnpPanels?.boardChanged(),
+        // Start is the picture's own button: pressed for the panel, so the
+        // camera starts with what its settings say.
+        start: (camera) => Array.from(panel(camera === "top" ? "pnp-top-view" : "camera-view").querySelectorAll<HTMLButtonElement>(".picture-actions button"))
+            .find((press) => press.textContent === "Start")?.click(),
     });
     // Placing with a G-code machine is a part of the Run panel, under the
     // job's run, shown with such a machine only.

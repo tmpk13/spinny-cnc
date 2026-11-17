@@ -2250,12 +2250,16 @@ button.badge.state {
 /* Jobs */
 
 .drop {
-    border: 0.125rem dashed var(--border-strong);
+    border: thin dashed var(--border-strong);
     border-radius: var(--radius);
-    padding: 1rem 0.75rem;
-    text-align: center;
+    padding: 0.75rem;
     background: var(--panel-2);
     transition: border-color 0.12s, background-color 0.12s;
+}
+
+.drop-how,
+.drop .import-line {
+    font-size: 0.8rem;
 }
 
 .drop.over {
@@ -2323,6 +2327,7 @@ button.badge.state {
 /* Disclosures draw their own chevron in place of the marker. */
 .center-test > summary,
 .hm-probe-settings > summary,
+details.more > summary,
 .panel-fold > summary {
     display: flex;
     align-items: center;
@@ -2333,12 +2338,14 @@ button.badge.state {
 
 .center-test > summary::-webkit-details-marker,
 .hm-probe-settings > summary::-webkit-details-marker,
+details.more > summary::-webkit-details-marker,
 .panel-fold > summary::-webkit-details-marker {
     display: none;
 }
 
 .center-test > summary::before,
 .hm-probe-settings > summary::before,
+details.more > summary::before,
 .panel-fold > summary::before {
     content: "";
     flex: none;
@@ -2353,8 +2360,22 @@ button.badge.state {
 
 .center-test[open] > summary::before,
 .hm-probe-settings[open] > summary::before,
+details.more[open] > summary::before,
 .panel-fold[open] > summary::before {
     transform: rotate(45deg);
+}
+
+/* More: what a panel keeps one press away, in place. It looks the same in
+   every panel: a chevron and its words, quiet until pointed at, saying
+   what is inside. */
+details.more > summary {
+    color: var(--muted);
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+details.more > summary:hover {
+    color: var(--strong);
 }
 
 /* A panel that folds away to its title line. */
@@ -2422,7 +2443,7 @@ button.badge.state {
 .job-list li {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.35rem;
     padding-right: 0.4rem;
     border-bottom: thin solid var(--border);
     transition: background-color 0.12s;
@@ -2440,9 +2461,10 @@ button.badge.state {
     background: var(--panel-2);
 }
 
+/* The job picked: marked in ink, as the area shown is in the rail. */
 .job-list li.selected {
-    background: color-mix(in oklab, var(--accent) 12%, var(--panel));
-    box-shadow: inset 0.2rem 0 0 var(--accent);
+    background: var(--panel-2);
+    box-shadow: inset 0.2rem 0 0 var(--strong);
 }
 
 .job-pick {
@@ -2577,12 +2599,28 @@ button.badge.state {
     border: thin solid var(--border);
 }
 
+/* A job's name on a line of its own, what it was made from and how long
+   it is under it, small. */
 .job-text {
+    display: block;
     min-width: 0;
+    font-size: 0.8rem;
+    line-height: 1.35;
+}
+
+.job-text .job-name {
+    display: block;
+    font-size: 0.95rem;
+    overflow-wrap: anywhere;
 }
 
 .job-stat {
     font-size: 0.8rem;
+}
+
+/* Joining, keeping and emptying: under the list, quiet. */
+.job-list-actions .btn {
+    color: var(--muted);
 }
 
 table.groups, table.settings {
@@ -6744,6 +6782,27 @@ table.find-guesses tr.elsewhere td {
     }
 }
 
+/* A camera's picture in front of a stack has nothing in its head but how
+   the pointer works it: the mark keeps to the panel's corner, and the
+   head takes no line of its own. */
+.page[data-view] .panel[data-stacked] {
+    position: relative;
+}
+
+.page[data-view] .panel[data-stacked] > .panel-head:has(> .help-mark):not(:has(> .button-row, > .badge, > .setup-link)) {
+    position: absolute;
+    top: var(--pad);
+    right: var(--pad);
+    min-height: 0;
+    padding: 0;
+    border: 0;
+}
+
+/* What follows such a head starts the panel: no space over it. */
+.page[data-view] .panel[data-stacked] > .panel-head:has(> .help-mark):not(:has(> .button-row, > .badge, > .setup-link)) + * {
+    margin-top: 0;
+}
+
 /* A stack's tab names the panel in front, whose head holds its own buttons
    alone: no fold beside them. Home is a fixed page: its panels stay put. */
 .page[data-view] .panel[data-stacked] > .panel-head > .panel-chevron,
@@ -7216,6 +7275,168 @@ button.badge.run-chip[data-run="hold"] {
 .home-need-name {
     color: var(--strong);
     font-weight: 600;
+}
+
+/* How something is done, behind a question mark: its words on hover, and
+   said as a message on a press. */
+.help-mark {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    width: 1.35rem;
+    height: 1.35rem;
+    padding: 0;
+    border: thin solid var(--border-strong);
+    border-radius: 50%;
+    background: none;
+    color: var(--muted);
+    font: inherit;
+    font-size: 0.8rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: help;
+}
+
+.help-mark:hover {
+    border-color: var(--strong);
+    color: var(--strong);
+}
+
+/* Words for whoever reads the page aloud, where a drawing says them to the eye. */
+.sr-only {
+    position: absolute;
+    width: 0.0625rem;
+    height: 0.0625rem;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+/* A job's Delete: a small cross at its row's end. */
+.job-remove {
+    flex: none;
+    min-width: 0;
+    padding: 0.2rem 0.4rem;
+    color: var(--muted);
+}
+
+/* The parts of the Run panel a G-code pick and place machine has no use
+   for: it cuts no paths, its run is the placing. */
+[data-no-job-run] {
+    display: none !important;
+}
+
+/* --- a narrow window ----------------------------------------------------- */
+
+/* Below the rail's width the frame keeps to three short rows, so a phone
+   shows the work and not the frame: the top bar on one line (the mark
+   without its name, the machine's button giving way to Stop), the areas
+   and the tools on one line that scrolls sideways, and the steps as their
+   numbers with only the one shown named. */
+@media (max-width: 63.99rem) {
+    .tabs-bar {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+
+    .tabs-bar > *,
+    .tabs-right > *,
+    .tabs-group > *,
+    .tabs-list > *,
+    .tabs-tools > * {
+        flex: none;
+    }
+
+    .tabs-tools {
+        flex-wrap: nowrap;
+    }
+}
+
+@media (max-width: 40rem) {
+    .statusbar {
+        flex-wrap: nowrap;
+        gap: 0.5rem;
+        padding: 0.4rem 0.6rem;
+    }
+
+    .statusbar .brand {
+        gap: 0;
+        font-size: 0;
+    }
+
+    .statusbar .status {
+        flex-wrap: nowrap;
+        min-width: 0;
+        margin-left: 0;
+        overflow: hidden;
+    }
+
+    .machine-button {
+        min-width: 0;
+    }
+
+    .machine-button .badge.profile,
+    .statusbar .bar-connect {
+        display: block;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .statusbar .badge.mock {
+        display: none;
+    }
+
+    .statusbar .btn-stop {
+        flex: none;
+        min-width: 5rem;
+    }
+
+    .viewbar {
+        padding-inline: 0.6rem;
+    }
+
+    .viewbar-steps {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+
+    .viewbar-item {
+        flex: none;
+    }
+
+    .viewbar-item:not([data-step="now"]) .viewbar-name {
+        display: none;
+    }
+
+    .viewbar-item + .viewbar-item::before {
+        width: 0.6rem;
+    }
+
+    .viewbar-step {
+        padding-right: 0.3rem;
+    }
+
+    /* The views and All panels share one line; the views give way. */
+    .viewbar-row:first-child {
+        flex-wrap: nowrap;
+    }
+
+    .viewbar-steps,
+    .viewbar-tabs {
+        flex: 1 1 0;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+
+    .viewbar-tab,
+    .viewbar-all {
+        flex: none;
+    }
 }
 
 /* --- panels in a view ---------------------------------------------------- */

@@ -49,6 +49,27 @@ export async function into<K extends keyof AppState, T extends AppState[K]>(ctx:
     return answer;
 }
 
+/**
+ * A small question mark for how something is done: the words are its
+ * tooltip, and a press says them as a message, for a screen with no
+ * hover. How-to stays out of a panel's view this way, one press away.
+ */
+export function helpMark(ctx: Ctx, how: string): HTMLButtonElement {
+    const mark = document.createElement("button");
+    mark.type = "button";
+    mark.className = "help-mark";
+    mark.textContent = "?";
+    mark.title = how;
+    mark.setAttribute("aria-label", `How: ${how}`);
+    mark.addEventListener("click", (event) => {
+        // In a summary a press would also fold or unfold it.
+        event.preventDefault();
+        event.stopPropagation();
+        ctx.toast("info", how);
+    });
+    return mark;
+}
+
 /** Radio-style button row; `format` gives each value its label. */
 export function choiceRow<T>(
     values: T[],

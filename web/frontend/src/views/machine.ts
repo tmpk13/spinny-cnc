@@ -60,7 +60,7 @@ export function mountMachine(root: HTMLElement, ctx: Ctx, page: string, ids: Mac
     const tool = part(ids.laser, "tool");
     const head = el("div", { class: "machine-part machine-head stack hidden", "data-part": "head" });
     const markers = part(ids.markers, "markers");
-    const markersFold = el("details", { class: "machine-markers stack" }, el("summary", { title: "fold or unfold" }, "Markers"), markers);
+    const markersFold = el("details", { class: "more machine-markers stack" }, el("summary", { title: "fold or unfold" }, "Markers"), markers);
     const title = el("div", { class: "panel-head" }, el("h2", {}, "Machine"));
     // What a view keeps out of sight until Jog is pressed; with every
     // panel shown it is simply the rest of the panel. The head's own quick

@@ -260,7 +260,7 @@ export function placingSteps(state: AppState): AreaView[] {
 
 /** The Job area's views: the ways to make a job, each beside the one preview. */
 export function jobViews(state: AppState): AreaView[] {
-    const list = "minmax(15rem, 19rem)";
+    const list = "minmax(17rem, 21rem)";
     return [
         {
             id: "jobs",
@@ -294,6 +294,77 @@ export function jobViews(state: AppState): AreaView[] {
     ];
 }
 
+/**
+ * The Machines page's views: the machine and its file (which machine, its
+ * port, the file's text), the file beside every key a file can set with
+ * the board's own value (a press on a key goes to it in the file), and
+ * making a machine file from OpenPnP's.
+ */
+export function machineViews(): AreaView[] {
+    return [
+        {
+            id: "machine",
+            label: "Machine",
+            tip: "the machine connected, its port and its file",
+            columns: [["connection", "machine-file"]],
+            cols: "minmax(0, 64rem)",
+        },
+        {
+            id: "keys",
+            label: "Keys",
+            tip: "every key a machine file can set, the file's value beside the board's",
+            columns: [["machine-file"], ["settings"]],
+            cols: "minmax(0, 3fr) minmax(24rem, 2fr)",
+        },
+        {
+            id: "import",
+            label: "Import",
+            tip: "make a machine file from OpenPnP's machine.xml",
+            columns: [["openpnp-import"]],
+            cols: "minmax(0, 64rem)",
+        },
+    ];
+}
+
+/**
+ * The Cameras page's views: a camera each, its settings beside its picture
+ * controls, lens and colors, and changes, and the pick and place head and
+ * bed. The bar lists the ones the machine connected has.
+ */
+export function cameraViews(): AreaView[] {
+    const cols = "minmax(20rem, 2fr) minmax(0, 3fr)";
+    return [
+        {
+            id: "head-camera",
+            label: "Head camera",
+            tip: "the camera on the head: its device, its place and scale, its routines",
+            columns: [["camera"], [["camera-controls", "camera-sight", "camera-changes"]]],
+            cols,
+        },
+        {
+            id: "bottom-camera",
+            label: "Bottom camera",
+            tip: "the camera looking up at the nozzle, and the nozzle seen by it",
+            columns: [["pnp-camera", "pnp-nozzle"], [["pnp-camera-controls", "pnp-camera-sight", "pnp-camera-changes"]]],
+            cols,
+        },
+        {
+            id: "top-camera",
+            label: "Top camera",
+            tip: "a pick and place machine's camera on its head",
+            columns: [["pnp-top"], [["pnp-top-controls", "pnp-top-sight", "pnp-top-changes"]]],
+            cols,
+        },
+        {
+            id: "head",
+            label: "Head and bed",
+            tip: "a pick and place head's moves and heights, and the bed from above",
+            columns: [["pnp-head"], ["pnp-machine-view"]],
+            cols: "minmax(20rem, 2fr) minmax(0, 3fr)",
+        },
+    ];
+}
+
 /** The views an area offers besides All; none for an area shown whole. */
 export function viewsOf(page: PageId, state: AppState): AreaView[] {
     switch (page) {
@@ -301,9 +372,18 @@ export function viewsOf(page: PageId, state: AppState): AreaView[] {
             return gcodePlacing(state) ? placingSteps(state) : jobSteps(state);
         case "job":
             return jobViews(state);
+        case "machines":
+            return machineViews();
+        case "cameras":
+            return cameraViews();
         default:
             return [];
     }
+}
+
+/** The panels a view holds, by id. */
+export function viewPanels(view: AreaView): string[] {
+    return view.columns.flatMap((column) => column.flatMap((entry) => (Array.isArray(entry) ? entry : [entry])));
 }
 
 /** Whether an area's views are steps, done in order. */
@@ -322,5 +402,5 @@ export function stepToOpen(views: AreaView[]): string | null {
 
 /** The first view that shows a panel; null when none does. */
 export function viewHolding(views: AreaView[], panel: string): string | null {
-    return views.find((view) => view.columns.some((column) => column.some((entry) => (Array.isArray(entry) ? entry.includes(panel) : entry === panel))))?.id ?? null;
+    return views.find((view) => viewPanels(view).includes(panel))?.id ?? null;
 }

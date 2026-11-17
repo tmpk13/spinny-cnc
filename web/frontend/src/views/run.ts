@@ -22,6 +22,7 @@ import type { Ctx } from "./context.ts";
 import { changedWord, focusHereWord, withFocusHere, withWords } from "./focushere.ts";
 import { focusAgainText, mapUsable, mapUse, runActive, runMapUse, showMapUse } from "./heightmap.ts";
 import { linkTo } from "./links.ts";
+import { gcodePlacing } from "./placing.ts";
 
 /** What a page adds to its copy of the panel. */
 export interface RunOptions {
@@ -334,6 +335,12 @@ export function mountRun(root: HTMLElement, ctx: Ctx, options: RunOptions = {}):
         lockFor(stopButton, [!connected, "connect first"], [!active, "no run under way"]);
         // Only what the run's state allows shows: Run with no run under
         // way, Hold while it runs, Resume while it is held, Stop with either.
+        // A G-code pick and place machine cuts no paths: its run is the
+        // placing, in the part of the panel under this one.
+        const placer = gcodePlacing(state);
+        for (const node of [title, runRow, compensateNote, progressBox, pickupBox, ...(ready ? [ready] : []), ...(stats ? [stats] : [])]) {
+            node.toggleAttribute("data-no-job-run", placer);
+        }
         runButton.hidden = active;
         holdButton.hidden = !active || progress?.state !== "running";
         resumeButton.hidden = !active || progress?.state !== "hold";
@@ -381,6 +388,6 @@ export function mountRun(root: HTMLElement, ctx: Ctx, options: RunOptions = {}):
         ctx.store.set({ mapChoice: choice });
     }
 
-    ctx.store.subscribe((state) => render(state), ["job", "progress", "snapshot", "heightMap", "mapPick", "settings"]);
+    ctx.store.subscribe((state) => render(state), ["job", "progress", "snapshot", "heightMap", "mapPick", "settings", "placing"]);
     render(ctx.store.get());
 }

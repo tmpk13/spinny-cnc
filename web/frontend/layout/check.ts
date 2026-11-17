@@ -220,8 +220,8 @@ function wallFindings(): Finding[] {
         // Badges are pills: their words sit close to the rim on purpose. A
         // code editor's colored layer mirrors its textarea's lines, which
         // end wherever the file's lines do, as the textarea's own text does.
-        // A step's numbered circle and the tag beside its name are pills too.
-        if (!words || !parent || parent.closest("svg, select, option, textarea, script, style, .badge, .code-layer, .viewbar-dot, .viewbar-tag")) {
+        // A step's numbered circle, the tag beside its name and a question mark's circle are pills too.
+        if (!words || !parent || parent.closest("svg, select, option, textarea, script, style, .badge, .code-layer, .viewbar-dot, .viewbar-tag, .help-mark")) {
             continue;
         }
         const range = document.createRange();

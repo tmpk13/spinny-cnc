@@ -16,7 +16,7 @@ import { formatFixed } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { BoardCorners, BoardEstimate, Job, RoutineSpot, SpotLook } from "../types.ts";
 import { undoEntry } from "./changes.ts";
-import { type Ctx, into } from "./context.ts";
+import { type Ctx, helpMark, into } from "./context.ts";
 import { bottomHead, bottomKnown, knownMarks, LABEL_REM, topKnown } from "./known.ts";
 import { boardTurn, partShapes, readShowShape, shapeMarks } from "./partshape.ts";
 import { armBox, type Calibration, machineToPicturePoints, type Mark, mountPicture, type PictureCrops, type PictureShown, type PictureView, type ShownSpot } from "./picture.ts";
@@ -306,11 +306,11 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
         cropPick.value = partCrop(state)?.name ?? "";
     }
     roots.bottom.append(
-        el("div", { class: "panel-head" }, el("h2", {}, "Bottom camera view")),
+        el("div", { class: "panel-head" }, el("h2", {}, "Bottom camera view"),
+            helpMark(ctx, "Drag the picture to move the head; double-click a point to bring it to the crosshair; Ctrl and the wheel zoom. The grip under the picture sets its height.")),
         el("div", { class: "panel-body" },
             bottom.root,
             bottomEmpty,
-            el("p", { class: "muted hint" }, "Drag the picture to move the head; double-click a point to bring it to the crosshair; Ctrl and the wheel zoom. The grip under the picture sets its height."),
         ),
     );
 
@@ -383,11 +383,11 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
     }
 
     roots.top.append(
-        el("div", { class: "panel-head" }, el("h2", {}, "Top camera view")),
+        el("div", { class: "panel-head" }, el("h2", {}, "Top camera view"),
+            helpMark(ctx, "Drag the picture to move the head; double-click a point to bring it to the crosshair; Ctrl and the wheel zoom; Shift and a drag draw the box a board search keeps to; Nozzle box, then a drag, marks where the nozzle shows.")),
         el("div", { class: "panel-body" },
             top.root,
             topEmpty,
-            el("p", { class: "muted hint" }, "Drag the picture to move the head; double-click a point to bring it to the crosshair; Ctrl and the wheel zoom; Shift and a drag draw the box a board search keeps to; Nozzle box, then a drag, marks where the nozzle shows."),
         ),
     );
 

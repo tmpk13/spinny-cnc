@@ -356,6 +356,8 @@ export interface FindBoardOptions {
     boxes: Record<LookCamera, () => MachineBox | null>;
     /** Told when the camera picked changes, or the threshold moves while dragged. */
     onChange?: () => void;
+    /** Starts a camera, as Start on its picture does; left out, the panel only says where Start is. */
+    start?: (camera: LookCamera) => void;
 }
 
 export interface FindBoardPanel {
@@ -373,6 +375,10 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
     const options_ = CAMERAS.map((key) => el("option", { value: key }, SOURCES[key].label) as HTMLOptionElement);
     pick.append(...options_);
     const note = el("p", { class: "muted find-note" });
+    // With the camera stopped nothing here can act: the one thing that can
+    // is offered in place of the row of locked buttons.
+    const startButton = button("Start the camera", () => options.start?.(chosen), "btn btn-primary", "start the camera picked, as Start on its picture does");
+    const startRow = el("div", { class: "button-row find-start hidden" }, startButton);
     const lookButton = button("Look for board", () => lookForBoard(), "btn", "load the selected job's board: the camera looks for it in every picture until Unload");
     const searchButton = button("Search", () => runSearch(), "btn",
         "move the camera over the search box (Shift and a drag on its picture), else where the corners put the board, else the board's size about where it looks, until a guess is likely enough; it starts where the board is known to be (corners, a place found before, the marks or references, the job's place) and tells pcbv to look there first");
@@ -455,15 +461,23 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
     let skewData: SkewState | null = null;
     let skewKey = "";
     const cornersLine = el("p", { class: "muted find-corners" });
+    const actions = el("div", { class: "button-row find-actions" }, lookButton, searchButton, stopButton, placeButton);
 
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Find board"), badge),
         el("fieldset", { class: "panel-body" },
             el("div", { class: "button-row" }, labeled("Camera", pick, "labeled inline")),
             note,
-            el("div", { class: "button-row" }, lookButton, searchButton, scanButton, stopButton, placeButton, forgetButton, unloadButton, motionField),
+            startRow,
+            // In view: the camera, the three presses a find takes (load the
+            // board, search for it, take the place found) and what the looks
+            // say. The rest is one press away, in place.
+            actions,
             lookLine,
             knownLine,
+            el("details", { class: "more find-rest stack" },
+            el("summary", { title: "fold or unfold" }, "More: scan, guesses, corners, features"),
+            el("div", { class: "button-row" }, scanButton, forgetButton, unloadButton, motionField),
             explain(el("h3", {}, "Guesses"), "guess"),
             graph.root,
             el("div", { class: "button-row find-slider-row" }, explain(labeled("Threshold", slider, "labeled inline"), "threshold"), sliderValue),
@@ -490,6 +504,7 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
                 + " board's references, so Go to part and Find fiducials work from it at once; Use as board place takes a place found instead."
                 + " With Probability over the pose each column is a place's probability, the last (?) what no place holds yet, where nothing has looked;"
                 + " Full scan, once a rough place is known, covers the whole board and lays its pictures out below.")),
+            ),
         ),
     );
 
@@ -774,8 +789,11 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
         const badgeText = src.searching(state) ? "searching" : src.scanning(state) ? "scanning" : busy ? "routine" : !running ? "stopped" : look?.found ? "found" : look?.job ? "looking" : "running";
         badge.textContent = badgeText;
         badge.setAttribute("data-camera", badgeText === "routine" ? "finding mark" : badgeText);
-        note.textContent = running ? "" : `The ${src.label.toLowerCase()} is not running: Start is on its picture.`;
+        note.textContent = running ? "" : options.start ? `The ${src.label.toLowerCase()} is not running.` : `The ${src.label.toLowerCase()} is not running: Start is on its picture.`;
         note.classList.toggle("hidden", running);
+        // Stopped, the camera's start is the one thing offered; the presses it unlocks wait.
+        startRow.classList.toggle("hidden", running || !options.start);
+        actions.classList.toggle("hidden", !running && options.start !== undefined);
 
         // What may be done now, and why not.
         const machineReady = chosen === "top" ? state.placing?.connected === true : state.snapshot.connected;
@@ -807,6 +825,12 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             ? "keep where the board found, else its corners, puts it as the job's references (two parts far apart); Find fiducials then makes it exact"
             : "take where the board found, else its corners, puts it as marks in the Align panel";
         lockFor(unloadButton, [!look?.job, "no board loaded"], [busy, "a routine is under way"]);
+        // The next of the three presses is the dark one: load the board,
+        // then search for it, then take the place found.
+        const next = !look?.job ? lookButton : found || ours ? placeButton : searchButton;
+        for (const press of [lookButton, searchButton, placeButton]) {
+            press.classList.toggle("btn-primary", press === next && running);
+        }
         // Stop shows while this camera searches or scans.
         stopButton.classList.toggle("hidden", !(src.searching(state) || src.scanning(state)));
         lockFor(forgetButton, [!look?.job, "no board loaded"], [busy, "a routine is under way"],

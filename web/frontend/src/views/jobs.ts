@@ -3,7 +3,7 @@
 import { errorText } from "../api.ts";
 import { askConfirm } from "../confirm.ts";
 import { popUp } from "../dismiss.ts";
-import { button, downloadText, el, fileDrop, labeled, numberField, onEnter, relabel, replace, setLocked, setUnlessFocused } from "../dom.ts";
+import { button, downloadText, el, fileDrop, labeled, numberField, onEnter, relabel, replace, setLocked, setUnlessFocused, svgIcon } from "../dom.ts";
 import { countText, formatDuration, formatFixed, formatLength, formatMm, formatOptional, formatPercent, parseNumber } from "../format.ts";
 import { type BoardLayer, boardLayers, isDrawingLayer, layerChoiceText } from "../kicad.ts";
 import { isMilling, profileOf } from "../profile.ts";
@@ -131,6 +131,9 @@ export interface JobsPlaces {
 }
 
 /** The Jobs panel in `root` and the Run panel in `runRoot`. */
+/** A cross: take this away. */
+const CROSS = "M3.4 2.3L8 6.9l4.6 -4.6l1.1 1.1L9.1 8l4.6 4.6l-1.1 1.1L8 9.1l-4.6 4.6l-1.1 -1.1L6.9 8L2.3 3.4z";
+
 export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, places: JobsPlaces = {}): void {
     const placeRoot = places.place;
     const fileInput = el("input", { type: "file", accept: ACCEPT, multiple: true, class: "file-input", "aria-label": "Job file" });
@@ -207,9 +210,13 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
     // they stay out of the panel until asked for.
     const importLine = el("p", { class: "muted import-line" });
     const settingsButton = button("Import settings", () => openSettings(), "btn btn-quiet btn-small", "the power, speed, place and board choices the next import is made with");
+    // The way in: one button that opens a file (the next thing to do
+    // while no job is kept), the same by a drop, and what the import will
+    // be made with in a line.
+    const openLabel = el("label", { class: "btn", title: "open a file as a job: svg, dxf, json, gerber, kicad_pcb, gcode, stl" }, "Open a file", fileInput);
     const drop = el("div", { class: "drop stack" },
-        el("p", {}, "Drop a file here (svg, dxf, json, gerber, kicad_pcb, gcode) or"),
-        el("div", { class: "button-row" }, el("label", { class: "btn btn-quiet" }, "pick a file", fileInput), settingsButton),
+        el("div", { class: "button-row" }, openLabel, settingsButton),
+        el("p", { class: "muted drop-how" }, "or drop one here: svg, dxf, json, gerber, kicad_pcb, gcode"),
         importLine,
     );
     // The import dialog. A KiCad board is cut from one of its layers: the
@@ -286,9 +293,13 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
     const combineButton = button("Combine", () => combine(), "btn btn-quiet btn-small");
     combineButton.title = "join the checked jobs into one, in the order checked";
     chooser.append(options, doneRow, chooserNote);
+    // What is done to the list now and then sits under it, out of the
+    // head: joining the jobs ticked, keeping the picked one as a file,
+    // emptying the list.
     root.append(
-        el("div", { class: "panel-head" }, el("h2", {}, "Jobs"), el("div", { class: "button-row" }, combineButton, saveButton, deleteAllButton)),
+        el("div", { class: "panel-head" }, el("h2", {}, "Jobs")),
         drop, chooser, list,
+        el("div", { class: "button-row job-list-actions" }, combineButton, saveButton, deleteAllButton),
     );
     // The selected job's groups, place and widths: a panel of their own when
     // the page has one, else under the list.
@@ -581,13 +592,16 @@ export function mountJobs(root: HTMLElement, ctx: Ctx, runRoot: HTMLElement, pla
                     job.stats ? el("span", { class: "muted job-stat" }, ` ${formatLength(job.stats.length_mm)}, ${formatDuration(job.stats.seconds)}`) : null,
                 ),
             );
-            const remove = button("Delete", () => removeJob(job.id, job.name), "btn btn-quiet btn-small", "delete this job");
+            const remove = button("", () => removeJob(job.id, job.name), "btn btn-quiet btn-small job-remove", `delete ${job.name}`);
+            remove.append(svgIcon(CROSS), el("span", { class: "sr-only" }, "Delete"));
             item.append(check, thumb, pick, remove);
             if (iconFor !== job.id) {
                 return [item];
             }
             return [item, el("li", { class: "job-icon-row" }, iconPicker(job, ctx, closeIcon))];
         }));
+        // With no job kept, opening one is the next thing to do.
+        openLabel.classList.toggle("btn-primary", state.jobs.length === 0);
         if (state.jobs.length === 0) {
             list.append(el("li", { class: "muted" }, "no jobs yet"));
         }
