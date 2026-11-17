@@ -1303,6 +1303,9 @@ class Posterior(Consensus):
                     "state": "locked", "center": item.get("center"), "corners": item.get("corners"), "angle_deg": item.get("angle_deg"),
                     "mm_per_px": item.get("mm_per_px", raw.get("mm_per_px")), "width": raw.get("width"), "height": raw.get("height"),
                     "inliers": item.get("found", item.get("inliers")), "expected": item.get("expected"), "unsure": item.get("unsure"),
+                    # A place pcbv's whole-picture search refined says how
+                    # well the picture fits it (boardlook.match_of).
+                    "score": item.get("score"),
                 }
                 found, _ = pose_estimate(fields, where, to_job, self.board.middle)
                 if found is None:

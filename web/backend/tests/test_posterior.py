@@ -229,6 +229,25 @@ def test_a_wrong_candidate_is_a_hypothesis_of_its_own_and_does_not_bend_the_fit(
     assert lead.probability > 0.9
 
 
+def test_a_candidate_the_whole_picture_fits_counts_by_its_score_not_by_its_few_pairs():
+    posterior = Posterior(board(), None, sessions=1)
+    plain = FakePcbv()
+    center = machine_of((20.0, 15.0))
+    raw = plain.pose(center)
+    frame = PictureFrame(center, 0.0, False)
+    # pcbv's whole-picture search locked a view whose pads the spot finder
+    # saw a third of: the candidate says how well the picture fits.
+    held = raw["candidates"][0]
+    held["found"] = held["inliers"] = held["expected"] / 3.0
+    estimate, _ = pose_estimate(raw, frame, DESIGN.board_to_job, MIDDLE)
+    by_pairs = posterior._candidates(raw, frame, DESIGN.board_to_job, estimate)[0]
+    assert by_pairs.match == pytest.approx(1.0 / 3.0)
+    held["score"] = 0.82
+    by_score = posterior._candidates(raw, frame, DESIGN.board_to_job, estimate)[0]
+    assert by_score.match == pytest.approx(0.82)
+    assert by_score.strength > 100.0 * by_pairs.strength
+
+
 def test_corners_taken_rule_out_a_place_that_puts_one_elsewhere():
     middle = truth_middle()
     box = (middle[0] - 25.0, middle[1] - 25.0, middle[0] + 25.0, middle[1] + 25.0)
