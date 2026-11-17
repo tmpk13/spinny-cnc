@@ -154,7 +154,7 @@ the numbers are in docs/CV_HARDWARE.md. Decisions and traps:
 - pcbv's lock rate follows the pads a picture shows (45 of 48 right at 40
   and more, 2 of 95 under 20) and over half of the battery card shows
   under 20. Its whole-picture search and the look through the least of
-  the three colors (pcb-vision fc92675, ff838d6; why and how in its
+  the three colors (pcb-vision fc92675 to f008be5; why and how in its
   notes/dense.md) answer that; this repository only reads the result.
 - `match_of` takes the larger of the pairs' share and the whole
   picture's score. Not the score alone: a lock that search only checked

@@ -33,7 +33,7 @@
    "right": 72,
    "wrong": 58,
    "right_rms_mm": 0.068,
-   "pcbv": "pcb-vision 404f93b",
+   "pcbv": "pcb-vision f008be5",
    "measured": "2026-11-17"
   },
   "noscale": {
@@ -47,7 +47,7 @@
    "right": 65,
    "wrong": 76,
    "right_rms_mm": 0.0726,
-   "pcbv": "pcb-vision 404f93b",
+   "pcbv": "pcb-vision f008be5",
    "measured": "2026-11-17"
   },
   "measured": {
@@ -65,7 +65,7 @@
    "right": 112,
    "wrong": 16,
    "right_rms_mm": 0.0622,
-   "pcbv": "pcb-vision 404f93b",
+   "pcbv": "pcb-vision f008be5",
    "measured": "2026-11-17"
   },
   "sure": {
@@ -85,7 +85,7 @@
    "right": 114,
    "wrong": 0,
    "right_rms_mm": 0.0622,
-   "pcbv": "pcb-vision 404f93b",
+   "pcbv": "pcb-vision f008be5",
    "measured": "2026-11-17"
   }
  }

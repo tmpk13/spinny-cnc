@@ -20,7 +20,7 @@ here has run on the machine.
 | The battery card sweep, 167 pictures | 58 right, 26 wrong | 114 right, 0 wrong |
 
 "Before" is pcb-vision 5d67045 as the backend asks it (the scale 3
-percent either way, the lens); "after" pcb-vision ff838d6 and later. The 586
+percent either way, the lens); "after" pcb-vision f008be5. The 586
 pictures are the two sweeps of the battery card and a third of the stop
 pictures of the 68 searches recorded on 2026-11-15; a lock is right
 within 0.5 mm of the sweep's truth.
