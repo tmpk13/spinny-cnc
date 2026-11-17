@@ -856,3 +856,13 @@
 - The Jobs panel is the list; the next import's settings in the import dialog (Import settings), stated in a line; the selected job its own Job panel.
 - Word meanings kept on hover, the "What the words mean" folds gone; Find board's long text folded under How it works.
 - Run shows only the panels the connected machine can use.
+- A visual analysis of the page (docs/UI_VISUAL.md) and the redo it ends in: an area shows one view at a time; the Run area's views are the steps of a run (Connect, Job, Board, Height, Run) with Back and Next, All panels one press away.
+- Major tabs on the side rail, the tabs at the top are an area's views (groups); the rail lists Use and Setup under their names, its tools named.
+- The Machine panel is a dock along the foot of a step; one step size (Fine, Normal, Coarse) for every axis.
+- Connect in the top bar, on Home and in Run's first step; the machine is one button in the top bar with connect, disconnect, switch and home.
+- Home says what is next, what needs someone, and lists the jobs.
+- Stacks draw no sheets behind them (the borders under stacked frames are gone).
+- Find board shows the camera, three presses and what the looks say; the rest under More; with the camera stopped it offers its start.
+- Height, placing, the preview's view buttons and the Jobs panel keep the usual in view and the rest under More.
+- Color only for states: the pages' colors off unless turned on, the next action dark, red filled only for what stops the machine.
+- `mise run shots` measures what a first view holds ("measure": true); docs/ui/visual.json is the list.

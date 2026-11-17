@@ -16,8 +16,17 @@ side.
 [UI_PANELS.md](UI_PANELS.md) sorts what is inside the panels (one
 home per control, the panels after, new names). It was built on
 2026-11-16 with the rail and the three areas Home, Job and Run below
-(phase 4's frame, in part); its last section says what was built and
-what of this proposal is still open (the steps as the spine, the dock).
+(phase 4's frame, in part).
+
+[UI_VISUAL.md](UI_VISUAL.md) looked at the screens that left and built
+most of the rest on 2026-11-17: the steps as the spine (each step a view
+of the Run area, phase 3), the dock and one step size (phase 2), the
+quiet page (phase 1: color for states, instructions out of the panels,
+the action that unlocks in place of a locked wall), Home as drawn below,
+and the bar with the machine as one button. Its last section says what
+the screens hold now and what is still open: the Job area's operations as
+rows, layers on the Setup pages, the steps read from the machine file,
+the guide, and the budget as a test (phase 5).
 
 The figures are drawn by [ui/figures.py](ui/figures.py) (`mise run
 ui-figures`). Magenta numbers on a figure are notes, explained under it;

@@ -2,7 +2,9 @@
 
 The plan is docs/UI_PANELS.md (what goes inside each panel) and
 docs/UI_REDESIGN.md (the frame). This file holds the decisions taken
-while building them and what was not obvious.
+while building them and what was not obvious. Since 2026-11-17 an area
+shows one view of its panels at a time and the Machine panel is a dock:
+notes/views.md.
 
 ## Decisions
 
@@ -65,7 +67,7 @@ while building them and what was not obvious.
   reveals the section a part is in, opens a fold holding it and pulses the
   section.
 - The parts' heads are taken apart after mounting: their titles go, the
-  position's age and the jog's Fine, Hold to move and Cancel join the
+  position's age and the jog's Hold to move and Cancel join the
   panel's head. The panel layer only takes a section's direct
   `.panel-head`, and setup links go to the section named in FACT_RULES
   (`machine`, `job-machine`), so nested heads would be neither.

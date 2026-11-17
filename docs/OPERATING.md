@@ -4,13 +4,17 @@ From the first connection to a probed, compensated run. The wiring and the bring
 
 ## Connecting and first moves
 
-Open `http://localhost:8000`, connect to the board in the *Connection*
-panel, on the Setup side's *Machines* page (or to `socket://127.0.0.1:2323` for the virtual firmware, or to
+Open `http://localhost:8000` and press *Connect* in the top bar: it names
+the port found (this project's board, or a port a machine file claims) and
+opens it. Home and the Run area's first step offer the same button; a port
+typed by hand is the *Connection* panel's, on the Setup side's *Machines*
+page (`socket://127.0.0.1:2323` for the virtual firmware, or
 `socket://127.0.0.1:2324` for a controller on a Pi forwarded by `mise run
-relay-pi -- user@host`). The top bar shows only the machine's state (a
-press on it opens the Connection panel), the firmware's version (a G-code
-machine's says its first word and version, Marlin 2.1.2, its whole answer
-to M115 on hover) and the big *Stop*, always in view:
+relay-pi -- user@host`). The top bar holds the machine as one button, its
+name and its state (a press opens its menu: connect a port found,
+disconnect, switch to a machine connected lately, home, and the Machines
+page; the firmware's version is its tooltip), a chip for a run under way,
+and the big *Stop*, always in view:
 it stops a run or probing the way their own Stop does, else ends a camera
 routine, cancels a jog or goto and turns the beam or spindle off; on a
 G-code machine it sends the file's stop. One machine is connected at a
@@ -20,17 +24,25 @@ connected go first. Then jog the beam over the
 axis with the radius buttons, press "Set R=0 here", then turn the table
 with the turn buttons: a positive turn must swing the point under the beam
 counterclockwise seen from above, otherwise set `$dir_invert`. Check steps
-per unit at low speed before the first job. Every axis is a bar in the
-Machine panel (Run area), with where the axis is now at its right, its step choices and
-a field for any other step. On a machine with a board pad the pad comes
+per unit at low speed before the first job. The Machine panel lies along
+the foot of every step of the Run area as a dock: the position always in
+view, and the jog, the tool's buttons and the markers on a press of *Jog*.
+One step size serves every axis: *Fine*, *Normal* or *Coarse*, each axis
+taking its own step for it from the machine file (its smallest choice,
+the one it starts on, its largest), and each axis says the step it moves
+by. On a machine with a board pad the pad comes
 first: eight arrows around the head's X and Y on the board, the corners
-moving X and Y together, X by the X bar's step and Y by the Y bar's (the
-Board X and Board Y bars under it hold those steps, and the arrow keys
-move along one axis at a time). PageUp and PageDown never scroll the
+moving X and Y together (the arrow keys
+move along one axis at a time). Every joint is a line under it: where it
+is now, and its two moves with the step between them. A step of an
+axis's own (X 10 mm while Y stays at 1) is typed under *More*, where the
+zero buttons, going to a place, declaring the position, the feed and the
+motors are too; a step typed for an axis holds at every size until its
+field is cleared. PageUp and PageDown never scroll the
 page (a mill's file binds them to Z); a text area keeps them. *Cancel*
 in the panel's head, or Escape, stops a move (Escape also leaves a text
-field, so the next arrow key jogs). *Fine* in the head jogs every bar by
-its smallest step, as Shift held with a jog key does. Under *Hold to
+field, so the next arrow key jogs). Shift held with a jog key jogs by the
+fine step. Under *Hold to
 move* a jog button or key held moves the axis until it is let go, the
 step read as the distance per second: the page sends a piece of the move
 every tenth of a second, and at the release this project's firmware
@@ -73,6 +85,12 @@ group per layer (its lines joined where their ends meet, blocks inserted,
 curves flattened, in the unit its header gives, millimeters when it gives
 none). Save a DXF as ASCII: a binary one is refused. The Setup side's
 CAM page takes a DXF too, its layers being what a paths operation's `match` picks.
+
+The preview's head has *Fit* (the whole job in view again) and *Top view*;
+*View* opens a row with the rest: the rotation lock, the height map, the
+grid, *Box select*, the speed view, quarter turns and *Clear trail*. While
+the row is shut, View says how many of the lock, box selection and the
+speed view are on.
 
 A click on a path in the preview picks it (shift or ctrl adds one or takes
 it back, *Box select* picks every path inside a dragged box, a click on a
@@ -330,14 +348,34 @@ for priming the needle and checking the flow.
 
 ### Setup steps
 
-The Steps panel in the Run area shows a common setup as a
-row of numbered circles: *Probe and follow a height map*, *Mill a board*,
-*Measure the camera offset* or *Place parts* (only the ones the machine has what for,
-once it is connected), or with a G-code pick and place machine
-connected, *Place parts with a G-code machine*. A step fills in when the page sees it done (a job
-picked, a travel height set, the map probed, the focus taken, the map on
-for the run), the next one is ringed and said in words under the row,
-and a press on any step goes to the panel that does it.
+The Run area shows one step of a run at a time. Its steps run across its
+top as numbered circles: *Connect*, *Job*, *Board* (where the board sits),
+*Height* (on a machine with an axis for it) and *Run*; with a G-code pick
+and place machine, *Connect*, *Home*, *Parts*, *Board*, *Feeders* and
+*Place*. A step shows the work on the left (the job's preview with the
+head on it, a camera's picture on a tab behind it) and the one panel that
+does the step on the right, with the Machine panel docked along the foot.
+A step is ticked when the page sees it done (connected, a job picked, a
+usable map, a run finished), a step a run can do without is ringed with a
+dashed line, and the line under the steps says what is so in the one
+shown. The area opens at the first step a run needs that is not done and
+moves on when a step's own action completes it; a step pressed stays, and
+*Back* and *Next* walk them. *All panels*, at the right end, shows every
+panel of the area at once, arranged with the layout tools below; pressed
+again it gives the steps back.
+
+With all panels shown the area also has the Steps panel, which follows a
+common setup as a row of numbered circles: *Probe and follow a height
+map*, *Mill a board*, *Measure the camera offset* or *Place parts* (only
+the ones the machine has what for, once it is connected). A step fills in
+when the page sees it done, the next one is ringed and said in words
+under the row, and a press on any step goes to the panel that does it.
+
+The Job area has views the same way, as tabs: *Jobs* (the list, the
+preview and the picked job), *Draw*, *Assistant* and *JSON*. So have the
+Machines page (*Machine*, *Keys*, *Import*) and the Cameras page (a view a
+camera, and *Head and bed*). A link, a setup step or the search going to
+a panel the view shown does not hold brings up the view that holds it.
 
 ### Edits not applied
 
@@ -351,12 +389,14 @@ leaving the page with any asks first.
 
 ### The Use and Setup sides
 
-The page's tabs run down a rail at the window's left (a bar across the
+The page's areas run down a rail at the window's left (a bar across the
 top on a narrow window), on two sides. *Use* (the areas Home, Job and
 Run) is what is done on every run; *Setup* (Checklist, Machines,
-Cameras, CAM and Page) is what the machine is and knows. The other side's name in the
-rail, or the `\` key, swaps to it, on the page it showed last; the
-button after the tabs, or `|`, shows both side by side with a handle
+Cameras, CAM and Page) is what the machine is and knows. The rail lists
+both sides' areas under their names, each one press away; a side's name,
+or the `\` key, goes to the page that side showed last (on a narrow
+window the bar shows one side's areas, and the other side's name swaps to
+it). *Side by side* in the rail, or `|`, shows both with a handle
 between them (on a window at least about 1000 px wide). Each side also
 opens in a tab of its own: `/?side=setup` (keep `?mock=1` or `?api=` as
 the page has them), or the middle button on any link to it.
@@ -373,16 +413,25 @@ here*), and otherwise here, with Back to return. How it works and why:
 
 ### Panels, tabs and the page settings
 
-*Home* has a card for every other area and Setup page: a small drawing of
-what it is for, and a line on what it holds now (the jobs kept and a run
-under way, the parts of the board picked, the machine connected, edits
-not applied). A press on a card shows its page.
+*Home* says where things stand: the machine connected or not, the next
+thing to do with one button that does it (connect the port found, or the
+Run area at the step the work stands at), what the Checklist says needs
+someone, each line a link to where it is done, and the jobs to pick from.
 
-Every page has a color of its own (Job orange, Run green, Machines
-yellow, Cameras violet, CAM cyan, Page red; Home and the Checklist grey):
-its tab is underlined in it and its panels wear it along their top edge.
+Color is kept for states: the next action is the one dark button of a
+screen, a choice that is on is drawn pressed, blue is work under way,
+yellow something that needs someone, red what stops the machine and
+danger (a hazard at rest, as Test beam, is outlined in red, not filled).
+*Colors for tabs and panels* in the page settings gives every page a
+color of its own (Job orange, Run green, Machines yellow, Cameras violet,
+CAM cyan, Page red; Home and the Checklist grey) on its tab and along its
+panels' top edge; it is off unless turned on. Inside a panel, what every
+run uses is in view and the rest under a *More* in the same panel, which
+says what it holds; how something is done is a button's tooltip, or a
+question mark's (pressed, it says its words as a message).
 
-Every panel's head has a fold button (the chevron before its name) and a
+The layout tools arrange an area's *All panels* view; a step or another
+view has its panels in set places. There, every panel's head has a fold button (the chevron before its name) and a
 menu (the dots after it, or a right click on the head): fold, hide, move
 up, down or to the next column, stack with the panel above or below,
 stick to the panel above, lay stuck panels *Side by side* (and back *One
@@ -437,8 +486,8 @@ panel in a folder goes alone; the folder's own grip drags the folder),
 then press *Done editing* in the rail. While a panel is
 hidden an eye shows beside the gear, counting them: pressed, the hidden
 panels show for a while with a dashed edge (their menu has *Show for
-good*), and pressed again they hide. The two arrows beside it scroll the column last pointed
-at to its top or its end. A layout kept by name
+good*), and pressed again they hide. On a narrow window two arrows beside it scroll the page
+to its top or its end. A layout kept by name
 covers every page; *Default* is the page as shipped and cannot be saved
 over. Once one is kept, a pick beside the gear swaps layouts in one
 step. The Steps, Head camera and Job JSON panels, and the Board place
@@ -464,7 +513,7 @@ order ("hprb" finds the Height panel's Probe), among every page, panel and
 button: Enter or a press shows its page and panel, unfolded and pulsing,
 and gives a button the focus without pressing it.
 
-*To-do* in the top bar, beside Stop, opens a list from the right edge:
+*To-do* among the rail's tools opens a list from the right edge:
 type a line and press Enter to add it, check it off when done, *Delete*
 takes one out and *Clear done* the ones checked off. The button, Escape
 or a press anywhere else closes it, and the button counts what is left.
@@ -511,7 +560,8 @@ a host value: `[host] travel` in a machine file, `host.travel` in
 ### Probing less: around the cuts, and one point
 
 Probing every point of a grid over a sparse board measures mostly bare
-board. Under the grid fields, *around the job's cuts* probes only the
+board. Beside *Fit to job* (the grid's own fields are under the Height
+panel's *More*), *around the job's cuts* probes only the
 points a cut of the selected job comes within the margin of (the corners
 of every grid cell a cut passes through) and leaves the rest out: the
 preview shows which, and the estimate beside it says how many points and
@@ -535,7 +585,7 @@ map.
 
 A probe that has to land on copper, the tool itself touching grounded
 copper or a conductive tip, finds nothing on the bare board between the
-pads. *Probe pads* in the Height panel probes the selected job's pads
+pads. *Probe pads*, under the Height panel's *More*, probes the selected job's pads
 instead of a grid: every pad of at least the least area given (half a
 square millimeter by default, so a tip has room), and when the board has
 more pads than the most points asked for, the most spread out of them, in
@@ -1032,8 +1082,8 @@ Steps panel's *Place parts with a G-code machine*):
 Moving it by hand: the Machine panel draws the file's bars (X, Y, the
 nozzle's height Z and its turn A; the LumenPnP's say which way N1 goes on
 its seesaw); a jog reads where the head is (M114) and moves by the step
-from there, so jogs pressed quickly add up. A goto (the Machine panel's
-fold *Go to, set position, motors*) moves
+from there, so jogs pressed quickly add up. A goto (under the jog's
+*More*) moves
 only the axes given: it goes up to the file's safe height only to go
 across and only from below it (a nozzle above it stays there; a seesaw
 comes down to it from above too), turns the nozzle on the way, and puts
@@ -1357,7 +1407,7 @@ survives the host as well as the controller.
 
 1. If the controller lost its position (it was powered down, or reset
    while moving), tell it where the head is first: *Here is* in the
-   Machine panel (under *Go to, set position, motors*) declares the joints without moving them, and *Last known* fills
+   Machine panel (under the jog's *More*) declares the joints without moving them, and *Last known* fills
    in the last position the machine reported before the link closed,
    run or no run. A board that comes back counting from zero does not
    overwrite it: the position is held (the toast says so) until it is

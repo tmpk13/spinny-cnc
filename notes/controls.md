@@ -35,7 +35,8 @@ plan line, and the feature search.
   a held press is swallowed so it is not a step too.
 - A G-code jog now takes the feed given on any axis (it was X/Y only), so
   a held Z moves at the rate its pieces come.
-- Fine and Shift: stepOf reads `fine || shiftJog`; a key jog sets
+- Shift: stepOf reads `shiftJog` for the fine step (Fine itself is one of
+  the three step sizes since 2026-11-17, notes/views.md); a key jog sets
   shiftJog only around the synchronous request build, and a held key
   keeps the Shift it went down with.
 - Escape blurs a focused field (and still cancels), so the next arrow key

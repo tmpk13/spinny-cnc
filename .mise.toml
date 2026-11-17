@@ -123,7 +123,7 @@ description = "Page spacing and tooltips in Chromium over the mock: stacked bloc
 run = "cd web/frontend && bun layout/check.ts"
 
 [tasks.shots]
-description = "Screenshots of the page over its mock in Chromium from a JSON list of shots (page, size, dark, a script before, a drag, one element; layout/shot.ts says how): mise run shots -- shots.json out/"
+description = "Screenshots of the page over its mock in Chromium from a JSON list of shots (page, size, dark, a script before, a drag, one element, and with measure what the first view holds: controls, words, boxes, colors, the work's share; layout/shot.ts says how): mise run shots -- docs/ui/visual.json out/"
 run = "cd web/frontend && bun layout/shot.ts"
 
 [tasks.ui-figures]

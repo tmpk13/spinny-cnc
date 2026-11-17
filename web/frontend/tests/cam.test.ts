@@ -523,7 +523,8 @@ describe("the tabs", () => {
         document.body.append(app);
         mountTabs(nav, new Store<AppState>(initialState(true)));
         expect(Array.from(nav.querySelectorAll(".tab")).map((tab) => tab.textContent)).toEqual(PAGES.map((page) => page.label));
-        expect(activePage()).toBe("job");
+        // A browser that remembers no page opens on Home.
+        expect(activePage()).toBe("home");
         click(nav, "CAM");
         expect(app.getAttribute("data-page")).toBe("cam");
         expect(activePage()).toBe("cam");
@@ -540,7 +541,7 @@ describe("the tabs", () => {
         localStorage.setItem("spinny.page", "pnp");
         expect(readPage()).toBe("run");
         localStorage.setItem("spinny.page", "nonsense");
-        expect(readPage()).toBe("job");
+        expect(readPage()).toBe("home");
         localStorage.removeItem("spinny.page");
     });
 });

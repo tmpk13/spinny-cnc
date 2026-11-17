@@ -4,8 +4,10 @@ Rules for anything shown on the page, so it stays easy to use as it
 grows. Each rule says what to do, why (the research behind it, listed
 under [Sources](#sources) with how strong it is), and how to check a
 change against it. [UI_REDESIGN.md](UI_REDESIGN.md) applies them to
-today's page, screen by screen; [UI_SPLIT.md](UI_SPLIT.md) is the page's
-two sides, Use and Setup (principle 14).
+the page, screen by screen; [UI_SPLIT.md](UI_SPLIT.md) is the page's
+two sides, Use and Setup (principle 14); [UI_VISUAL.md](UI_VISUAL.md)
+looks at the screens as the eye meets them, and is where an area came to
+show one view at a time.
 
 ## Who the page is for
 
@@ -334,10 +336,13 @@ else?
 
 **Rule.** Each screen, in its default state, holds at most 40 controls
 and 200 words, frame included; Run and Job screens should sit well under
-it. The counts come from `mise run shots -- docs/ui/budget.json OUT`
-(the [redesign](UI_REDESIGN.md#what-overloads-the-page-today) has today's
-numbers) and will become a check in `mise run test-layout`. Going over
-means something belongs in another layer, not that the budget is wrong.
+it. The counts come from `mise run shots -- docs/ui/visual.json OUT`,
+which measures what the first view of each screen holds (the controls and
+words in the window before any scroll, the boxes, the colors, the share
+given to the work; [UI_VISUAL.md](UI_VISUAL.md) has the numbers before
+and after the redo of 2026-11-17), and will become a check in `mise run
+test-layout`. Going over means something belongs in another layer, not
+that the budget is wrong.
 
 **Why.** The numbers are this project's rule, not a law of cognition:
 no study gives a limit of buttons per screen (see the claims below). A

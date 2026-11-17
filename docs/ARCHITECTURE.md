@@ -165,7 +165,22 @@ The page is two sides, Use and Setup ([UI_SPLIT.md](UI_SPLIT.md)),
 shown one at a time, side by side in one tab, or in tabs of their own.
 The Use side's areas Home, Job and Run and the Setup side's pages are
 listed down a rail; what goes in which panel is
-[UI_PANELS.md](UI_PANELS.md).
+[UI_PANELS.md](UI_PANELS.md). An area shows one view of itself at a time,
+a few of its panels around the work ([UI_VISUAL.md](UI_VISUAL.md)); the
+Run area's views are the steps of a run for the machine connected.
+
+```mermaid
+flowchart LR
+    RAIL[rail: both sides' areas] --> AREA[an area: Home, Job, Run, or a Setup page]
+    AREA --> BAR[view bar: the area's views, one shown]
+    BAR -->|a view: its panels by column| LAYER[layout layer: the view put on the page in place of the operator's layout]
+    BAR -->|All panels| OWN[the operator's own layout, kept per browser]
+    STATE[the page's state: the machine, the job, the heights, a run] -->|which steps there are, which are done| BAR
+    LAYER --> WORK[the work: the job's preview, a camera's picture]
+    LAYER --> SIDE[the step's panel: its few controls, the rest under More]
+    LAYER --> DOCK[the dock: the position, the jog on a press]
+    LINK[a link, a setup step, the search] -->|a panel out of sight| BAR
+```
 Each tab has its own store and event feed from the backend; the tabs tell
 each other which side they show, and pass on a link's target, over a
 BroadcastChannel; the backend's `changed` event has every tab read again

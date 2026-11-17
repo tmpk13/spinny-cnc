@@ -166,16 +166,45 @@ toggle that hides the built-in system ports; it marks a machine whose
 last report is old, as the Position panel does, before the backend gives
 the link up. The console's *Log* shows the backend's log, *Wire* the last lines over the wire with their times, polls included.
 
-The page's areas and pages are on two sides, down a rail at the left of
-a wide window (a bar across the top of a narrow one; `PAGES` in
-`src/views/tabs.ts`; the designs in `docs/UI_SPLIT.md` and
-`docs/UI_PANELS.md`): *Use*, with the areas *Home*, *Job* (Jobs, Job,
-Preview, Job JSON, Draw, Machine, Assistant) and *Run* (Machine, Steps,
-the cameras' pictures, Board place, Console, Parts, Board, Height,
-Feeders, Run), and *Setup*, with the *Checklist* (`src/facts.ts`,
-`src/views/facts.ts`), *Machines*, *Cameras*, *CAM* and *Page*. The
-Machine panel (`src/views/machine.ts`) is the position, the jog, the
-laser's or spindle's buttons and the markers in one. A side swaps in by
+The page's areas and pages are on two sides, both listed down a rail at
+the left of a wide window (a bar across the top of a narrow one, which
+shows one side's; `PAGES` in `src/views/tabs.ts`; the designs in
+`docs/UI_SPLIT.md` and `docs/UI_PANELS.md`): *Use*, with the areas
+*Home* (what is next, what needs someone, the jobs:
+`src/views/overview.ts`), *Job* (Jobs, Job, Preview, Job JSON, Draw,
+Machine, Assistant) and *Run* (Machine, Steps, the job's preview, the
+cameras' pictures, Board place, Console, Parts, Board, Height, Feeders,
+Run), and *Setup*, with the *Checklist* (`src/facts.ts`,
+`src/views/facts.ts`), *Machines*, *Cameras*, *CAM* and *Page*.
+
+An area shows one view of itself at a time (`docs/UI_VISUAL.md` says
+why): a few of its panels in set places, the work on the left and what
+acts on it on the right. `src/views/areaviews.ts` says what each view
+holds: the Run area's are the steps of a run for the machine connected
+(Connect, Job, Board, Height, Run; a G-code pick and place machine's
+Connect, Home, Parts, Board, Feeders, Place), each done or not from the
+state; the Job area's are Jobs, Draw, Assistant and JSON; Machines and
+Cameras have theirs. `src/views/viewbar.ts` lists them across the top of
+each side's pane, opens a stepped area where the work stands and follows
+it until a step is pressed, and shows All panels, the area whole, as the
+layout tools arranged it. A view is a layout of its own that
+`src/views/panels.ts` puts on the page in place of the operator's
+(`setView`), which is set aside and stays the one kept; a link, a setup
+step or the search going to a panel a view keeps out of sight brings up
+the view that holds it. The Run area's first two steps have small panels
+of their own (`src/views/runstart.ts`).
+
+The Machine panel (`src/views/machine.ts`) is the position, the jog, the
+laser's or spindle's buttons and the markers in one; in a view it shows
+the position and opens the rest on Jog, and in a step it is docked along
+the foot. The jog (`src/views/jog.ts`) has one step size, Fine, Normal or
+Coarse, for every axis, each axis taking its own step for it from the
+machine file. The top bar (`src/views/statusbar.ts`) is the machine as one
+button with a menu (connect, disconnect, switch, home), Connect while
+nothing is connected, a chip for a run under way, and Stop. Inside a
+panel, what every run uses is in view and the rest under a More
+(`details.more`) in the same panel; how something is done is a tooltip or
+a question mark (`helpMark` in `src/views/context.ts`). A side comes to the front by
 its name in the rail or `\`, both show side by side by the bar's button or `|`
 (`src/views/split.ts` holds the handle), and each pane lays its page out
 by its own width (container queries). The page each side shows is
@@ -280,7 +309,7 @@ classDiagram
         measuredBy(entries, target, name, now)  the routine result that still holds
     }
     class views {
-        context statusbar tabs split links setuplinks facts steps fit banner machine dro jog laser markers mill jobs jobjson calibrate center heightmap focushere previewpanel vision picture camview cameracontrols camerapick camlog boardplace align pnp device auto console settingslist cam config editor toasts
+        context statusbar tabs split links setuplinks facts steps fit areaviews viewbar runstart overview banner machine dro jog laser markers mill jobs jobjson calibrate center heightmap focushere previewpanel vision picture camview cameracontrols camerapick camlog boardplace align pnp device auto console settingslist cam config editor toasts
     }
     class align {
         fitRigid(pairs) rotation, shift, scale, rms, residuals

@@ -55,12 +55,10 @@
 
 ## The Overview page
 
-- First tab, but not the start page: readPage still falls back to Jobs
-  and a browser that kept a page opens on it.
-- Cards are buttons (search finds them too, after the tabs, which rank
-  0.5 higher). The drawings are inline SVG in a 120 by 72 box, stroked in
-  --muted with one accent per page (--card-accent); the gear's teeth are
-  computed once and written into the source.
+- Gone since 2026-11-17: its cards repeated the rail and said nothing of
+  the machine. Home is now what is next, what needs someone and the jobs
+  (src/views/overview.ts, notes/views.md), and is the page a browser that
+  remembers none opens on.
 
 ## Info drawings check
 
@@ -129,18 +127,15 @@
 
 Built by an agent (todo-panels), cherry-picked.
 
-- Each page's color lives in tabs.ts PAGES, one home for the tab, its page
-  and its Overview card; the tab bar sets `--page-accent` on the tab and on
+- Each page's color lives in tabs.ts PAGES, one home for the tab and its
+  page; the tab bar sets `--page-accent` on the tab and on
   `main#page-<id>`. Only edges take the color, never text (yellow and cyan
   are too faint on base3 for small words). `Look.colors` sets
   `data-colors="off"` on the root and the color rules are gated with
   `:root:not([data-colors="off"])`; panels inside a folder take the plain
-  top border back on the wide layout so the folder wears one color.
-- The Overview fills the width: `#overview` is an inline-size container,
-  cards in 1, 2, 4 or 8 columns so they always fill their rows, with
-  `overflow-wrap: anywhere`; the Connection note names the port with
-  `portLabel`, not its by-id path. It was in rem all along, but capped at
-  76rem, so it looked fixed on a wide screen.
+  top border back on the wide layout so the folder wears one color. The
+  colors are off unless turned on since 2026-11-17 (color is kept for
+  states, notes/views.md).
 - Number fields (`input.num.field`) are centered. `dom.ts stepperBox(field,
   minus, plus, unit)` draws a field between - and + as one box, which takes
   the field's focus ring (`:focus-within`) and invalid mark

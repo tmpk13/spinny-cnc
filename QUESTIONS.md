@@ -258,28 +258,28 @@ Answer:
 Why it matters: a stale height map or an alarm stands out only if little else is colored (docs/UI_PRINCIPLES.md, principle 6).
 - A. Color only for states (recommended): "Colors for tabs and panels" off by default, the next action's button dark, blue only while working, yellow needs you, red danger, green done.
 - B. Keep each page's color on its tab and panel edges by default, with the state colors on top.
-Applied: A, in 1599949 (docs/UI_REDESIGN.md).
+Applied: A, built in 947e6f3: the pages' colors are off unless turned on in the page settings, the next action is ink, a choice that is on is drawn pressed, red fills only what stops the machine.
 Answer:
 
 ## Q45. Should Plot, CAM's profile pick and Auto become ways to make a job inside Job?
 Why it matters: four tabs make jobs today, each with its own preview, and Plot its own run.
 - A. One New job: Open a file, Draw it (the Plot operations), Describe it (the assistant); profiles edited on the Setup side; Auto a drawer on any screen (recommended).
 - B. Keep Plot, CAM and Auto as areas of their own on the rail.
-Applied: A, in 1599949 (docs/UI_REDESIGN.md).
+Applied: A, in part, in 947e6f3: Jobs, Draw, Assistant and JSON are views of the Job area, one shown at a time beside the one preview; the CAM profiles stay a Setup page.
 Answer:
 
 ## Q46. One step level (Fine, Normal, Coarse) for every axis, mapped per axis in the machine file?
 Why it matters: the jog panel holds six step choosers today, one per axis, repeated on Plot and PNP.
 - A. One level for every axis, each axis's step for it set in [controls]; a custom step per axis in the dock's More (recommended).
 - B. Keep a chooser per axis, folded into the dock's More.
-Applied: A, in 1599949 (docs/UI_REDESIGN.md).
+Applied: A, built in 947e6f3 without new keys: Fine is an axis's smallest step choice in its file, Normal the one it starts on, Coarse its largest; a step typed for one axis is under the jog's More.
 Answer:
 
 ## Q47. What should the panel layout layer become once each step shows only its own panels?
 Why it matters: folders, stacks, side by side, named layouts and peeking are code to keep and things to learn, built while every panel showed at once.
 - A. Keep it behind Edit panels in Settings, for arranging a step's panels by hand (recommended): nothing lost, out of the way.
 - B. Retire it once the screens fit their budget: less code, and every page looks as the docs say.
-Applied: A, in 1599949 (docs/UI_REDESIGN.md).
+Applied: A, in 947e6f3: the layout tools arrange an area's All panels view; a step or another view has its panels in set places.
 Answer:
 
 ## Q49. When the Setup side is open in another tab behind this one, where should a Setup link go?
@@ -310,4 +310,32 @@ Why it matters: the firmware moved to its own repository, spinny-firmware, check
 - B. Another name or owner: the links and the checkout's origin change to it.
 - C. Private: readers of spinny-cnc on GitHub get a 404 on the protocol; it would then be better back in this repository as a copy.
 Applied: A: origin set to git@github.com:tmpk13/spinny-firmware.git in the new checkout; nothing pushed.
+Answer:
+
+## Q55. Should the Run area open on its steps, or on all its panels?
+Why it matters: a step shows the work and one panel; someone who knows the page may want every panel at once, as before (docs/UI_VISUAL.md).
+- A. On its steps (recommended): a screen holds one thing to do; All panels is one press away and stays once pressed.
+- B. On all panels, the steps one press away.
+Applied: A, in 947e6f3.
+Answer:
+
+## Q56. Should the rail list both sides' areas, or swap between the sides?
+Why it matters: on 2026-11-15 the sides were built to swap, the other side's areas folded away behind its name; listed, every area is in sight and one press away, for five more lines in the rail.
+- A. List both under their names (recommended): no navigation is hidden; `\`, a side's name and Side by side work as before.
+- B. Swap as before: a shorter rail while working on one side.
+Applied: A, in 947e6f3.
+Answer:
+
+## Q57. Should a run wait until the board's place is confirmed?
+Why it matters: the page cannot tell whether the board was placed (a job's offset always has a value), so the Board step is never ticked and Run does not wait for it; a job run at the wrong place cuts the wrong copper.
+- A. No wait (recommended): the Run panel says where the job sits, with a link to Board; nothing more to press on every run.
+- B. A press of "The board is placed" on the Board step for each job picked, which ticks the step and unlocks Run.
+Applied: A, in 947e6f3.
+Answer:
+
+## Q58. Should buttons and fields be smaller with a mouse?
+Why it matters: every control was 2.75rem tall, a finger's size; at that size six number fields took a quarter of a column.
+- A. 2.25rem with a mouse, 2.75rem on a touch screen (recommended): more of a step fits without a scroll; the jog's moves stay 2.5rem.
+- B. 2.75rem everywhere: larger targets at the machine with a mouse too.
+Applied: A, in 947e6f3.
 Answer:

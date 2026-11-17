@@ -257,6 +257,10 @@ shots -- docs/ui/budget.json var/ui-budget`), against the audit in
 | Page | 30 | 120 | 3 | Plugins: 22, 62, 1 |
 
 The page holds 47 panels, 61 before; 21 on the Use side, 52 before. No
-screen is within the budget of 40 controls and 200 words yet: the jog's
-bars (about 60 controls) and the firmware settings list (over 300) are
-most of what is left.
+screen was within the budget of 40 controls and 200 words after this:
+the jog's bars (about 60 controls) and the firmware settings list (over
+300) were most of what was left, and a screen still showed every panel
+its area owns. [UI_VISUAL.md](UI_VISUAL.md) is what followed: an area
+shows one view at a time, the Machine panel is a dock with one step size,
+and the panels keep the usual in view and the rest under More; its last
+section has the counts after.

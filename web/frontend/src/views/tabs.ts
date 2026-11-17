@@ -191,7 +191,8 @@ export function parseSplitPrefs(text: string | null): SplitPrefs {
  * The page to open on: the one named in the address (`?page=run`,
  * `?page=machines`), else the page the side named in it (`?side=setup`)
  * last showed, else the start page the settings name, else the one last
- * shown in this browser, else the Job area.
+ * shown in this browser, else Home, which says where things stand and
+ * what to do next.
  */
 export function readPage(): PageId {
     try {
@@ -210,7 +211,7 @@ export function readPage(): PageId {
     if (start !== "last") {
         return start;
     }
-    return pageNamed(readStored(PAGE_KEY)) ?? "job";
+    return pageNamed(readStored(PAGE_KEY)) ?? "home";
 }
 
 const pageListeners: ((id: PageId) => void)[] = [];

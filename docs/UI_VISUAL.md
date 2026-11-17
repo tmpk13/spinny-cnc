@@ -40,7 +40,7 @@ At 1440 by 900, before any scroll or press (the page before the redo):
 | Screen | Controls in view (page) | Words in view (page) | Boxes (deep) | Type sizes | Text colors | Filled colors | Work % | Scroll |
 |---|---:|---:|---:|---:|---:|---|---:|---:|
 | Home, nothing connected | 22 (23) | 107 (107) | 20 (2) | 7 | 6 | red 1 | 0 | 1x |
-| Job, a job picked | 76 (191) | 183 (538) | 85 (3) | 9 | 7 | blue 3, red 1 | 49 | 4.3x |
+| Job, a job picked | 76 (191) | 183 (538) | 85 (3) | 9 | 7 | blue 3, red 1 | 25 | 4.3x |
 | Run, polar laser | 80 (203) | 289 (1002) | 108 (4) | 11 | 11 | blue 5, red 4, green 2 | 0 | 2.7x |
 | Run, a job running | 81 (203) | 291 (1374) | 111 (4) | 11 | 11 | blue 5, red 4, green 2 | 0 | 2.7x |
 | Run, LumenPnP | 62 (211) | 306 (1122) | 114 (4) | 11 | 11 | blue 8, red 4, green 1 | 0 | 3.1x |
@@ -75,7 +75,7 @@ The share of the Run window showing the work is 0%. There is no preview of
 the job in the area that runs it: the toolpath, the board and the head's
 place on it are in the Job area. The camera's picture is a Start button and
 two lines of instructions until started, and then opens below the fold.
-On Job the preview has half the window, under two rows of ten view
+On Job the preview has a quarter of the window, under two rows of ten view
 buttons. A machine page should be mostly a picture of the machine's work
 with a few controls beside it; this one is the reverse.
 
@@ -216,7 +216,7 @@ screen shows one view of its area, not every panel the area owns.**
    time. A view is a few panels in fixed places: the work on the left, as
    large as the window allows, and what acts on it on the right. Run's
    views are the steps of a run for the machine connected (Connect, Job,
-   Board, Height, Run for a laser; Connect, Home, Board, Place the board,
+   Board, Height, Run for a laser; Connect, Home, Parts, Board, Feeders,
    Place for a pick and place machine), numbered, marked done, with Back
    and Next and one line saying what the step is for. Job's views are the
    ways to make a job (Jobs, Draw, Assistant, JSON). The last view of every
@@ -243,17 +243,89 @@ screen shows one view of its area, not every panel the area owns.**
    folds under More in the same panel; instructions become hover meanings.
    Fields are smaller on a screen with a mouse and stay large on a touch
    screen. (Findings 5, 8.)
-8. **Messages out of the way.** Toasts move off the controls, wrap, and
-   the two that say nothing new go. (Finding 9.)
+8. **Messages out of the way.** Toasts move off the controls and wrap,
+   and the mock's note, there on every start, goes. (Finding 9.)
 
 The redo keeps what the page had right: Stop always in reach, the search
 that finds any control, locked buttons that say why, Undo on camera
 changes, the Setup side and its Checklist, and every panel's own logic,
 which the views only arrange.
 
-What was built, and what the screens hold after it, is under
+What was built, what the screens hold after it and what is left is under
 [After](#after).
 
 ## After
 
-Not written yet: the redo is under way.
+Built on 2026-11-16 and 17 in three commits (947e6f3 the frame, bc23953
+the layers inside the panels, aec321b the count). The same thirteen
+screens, measured the same way:
+
+| Screen | Controls in view (page) | Words in view (page) | Boxes (deep) | Type sizes | Text colors | Filled colors | Work % | Scroll |
+|---|---:|---:|---:|---:|---:|---|---:|---:|
+| Home, nothing connected | 23 (24) | 75 (75) | 25 (3) | 9 | 7 | red 1 | 0 | 1x |
+| Job, a job picked | 68 (70) | 137 (137) | 71 (3) | 9 | 6 | red 1 | 24 | 1x |
+| Run, polar laser | 37 (39) | 116 (118) | 46 (3) | 10 | 8 | red 1 | 30 | 1x |
+| Run, a job running | 39 (41) | 138 (140) | 51 (3) | 10 | 8 | red 2 | 30 | 1x |
+| Run, LumenPnP | 37 (41) | 115 (115) | 46 (3) | 9 | 7 | red 1 | 0 | 1x |
+| Checklist | 35 (65) | 244 (278) | 61 (3) | 9 | 8 | red 1 | 0 | 1.1x |
+| Machines | 39 (46) | 148 (500) | 40 (3) | 11 | 6 | red 1 | 0 | 1.6x |
+| Cameras, LumenPnP | 60 (64) | 216 (216) | 54 (3) | 10 | 7 | red 2 | 0 | 1.1x |
+| CAM | 52 (66) | 194 (510) | 93 (3) | 10 | 10 | red 1 | 0 | 1.5x |
+| Page | 31 (32) | 145 (145) | 28 (3) | 9 | 7 | red 1 | 0 | 1x |
+| Run on a phone (390 px) | 19 (36) | 38 (120) | 25 (3) | 6 | 5 | red 1 | 54 | 1x |
+
+Run's first view went from 80 controls, 289 words and 108 boxes with no
+picture of the work to 37 controls, 116 words and 46 boxes around the
+job's preview, and what a step does not show is no longer on the page
+behind a scroll: the page holds 39 controls where it held 203. The one
+filled color left on a screen at rest is Stop. From opening the page to a
+running job takes four presses on one side and no scroll: Connect in the
+top bar, the job, Run in the rail, Run.
+
+![The Run area after the redo](ui/shots/after-run.png)
+
+![Run with a job running, after](ui/shots/after-run-running.png)
+
+![Home after the redo, nothing connected](ui/shots/after-home-off.png)
+
+![The Job area after the redo](ui/shots/after-job.png)
+
+![Run with the LumenPnP after the redo, at its Home step](ui/shots/after-run-lumen.png)
+
+![The Machines page after the redo](ui/shots/after-machines.png)
+
+![Run on a phone after the redo](ui/shots/after-run-phone.png)
+
+### What each finding became
+
+| Finding | Now |
+|---|---|
+| 1. No first place to look | A view is the work with one panel beside it; the next action is the one dark button. |
+| 2. The work is not on the screen | Run has the job's preview with the head on it, the camera's picture behind it on a tab. |
+| 3. The next action is elsewhere | Connect is in the top bar, on Home and in Run's first step; Home names the next thing; each step has its action in its panel. |
+| 4. The screen does not change with the state | Run shows Run, or Hold and Stop, or Resume and Stop; the top bar carries a running job's share; a camera stopped offers its start. |
+| 5. A panel shows its whole feature | Height, Board place, the jog, placing and the preview keep the usual in view and the rest under More, in place. One step size serves every axis. |
+| 6. The frame is heavy | Both sides' areas are listed under their names; the rail's tools are named; the bar is the machine, the run and Stop; the layout tools show with All panels only. |
+| 7. Color says nothing | The pages' colors are off; ink is the next action; pressed is drawn, not colored; red fills only what stops the machine. |
+| 8. Words and numbers at one weight | Paragraphs became tooltips, heading tooltips and a question mark; controls are a mouse's size, a finger's on a touch screen; the run's share is in large type. |
+| 9. Messages cover controls | Toasts sit over the foot of the work and wrap; the mock's note is its chip's tooltip. |
+| 10. Details that mislead | One Run and one Stop with a pick and place machine; X and Y named once; the Job panel has room for its table; the search skips the layout's marks. |
+
+### What is not done
+
+- **Job** is still over the budget (68 controls): the picked job's table
+  is six fields a group. It wants the rows the redesign drew, each opening
+  its details in place.
+- **The Setup pages** got views, not layers: a camera's panel is still 60
+  controls, and the firmware's key list 160 rows, all showing.
+- **The steps are the page's own**, per kind of machine
+  (web/frontend/src/views/areaviews.ts), not yet read from the machine
+  file as TODO.md asks.
+- **Board and Height are steps a run can do without**: the page cannot
+  tell whether the board was placed, so it never marks Board done.
+- **No guide.** How-to went to tooltips and question marks; the guide of
+  principle 8, opened at a section, is not written.
+- **The budget is not a test yet** (principle 13): the numbers above come
+  from `mise run shots`, by hand.
+- The choices made on the way that are the user's to confirm are in
+  [QUESTIONS.md](../QUESTIONS.md).

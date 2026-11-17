@@ -19,8 +19,6 @@
  - Remove unload button replace with stop searching.
  - No board loaded can't be cleared?
 
- - Get rid of stacked pannel boarders at the bottom of stacked frames.
-
 - Rearange scattered controls.
 - Offset config item, apply to config.
 
@@ -28,12 +26,9 @@
 
  - Have dedicated UI setting page, keep only quick options in the settings icon in top bar. 
 
- - Find board has way too much text.
  - More help graphics.
 
 - Add simple auto home, auto calibrate and auto connect button to top bar.
-
- - Clearer seperation between setup and use on left bar.
 
  - Calibration checker. Checks if calibration is currently accurate within parameters. (Example, go to part location, part should be detected by pads there.)
 
@@ -52,8 +47,6 @@
  - Quick bar, for common actions. Default bar.
 
  - There should be a way to stop searching for the location with the camera. Without unloading the board.
-
- - Major tabs move to vertical side panel, tabs at top become groups,
 
  - Maybe if quick search does not find a board on a trigger, have it continue search.
 
