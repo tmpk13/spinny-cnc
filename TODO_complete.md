@@ -866,3 +866,9 @@
 - Height, placing, the preview's view buttons and the Jobs panel keep the usual in view and the rest under More.
 - Color only for states: the pages' colors off unless turned on, the next action dark, red filled only for what stops the machine.
 - `mise run shots` measures what a first view holds ("measure": true); docs/ui/visual.json is the list.
+- A job's groups and a CAM profile's operations are rows that say their numbers and open their fields in place; a job's row in the list is the job and its Delete, the rest under More.
+- The camera panels (head, bottom, top) keep Start, the camera and what it saw in view, the rest under More; a camera starts on the Cameras page; picture controls an automatic one has taken over are left out and named.
+- The firmware key list opens on the keys where the file and the board differ; a search looks through every key.
+- Every view of every area within 40 controls and 200 words in its first view, checked by `mise run test-budget` (docs/ui/budget.json, 31 screens).
+- On a narrow window a step's own panel comes before the preview: Run is in a phone's first view.
+- In the rail a side's name is a heading; a ticked box and a slider are drawn in ink; a panel alone in its column in a view has no fold.

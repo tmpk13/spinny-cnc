@@ -321,9 +321,9 @@ Answer:
 
 ## Q56. Should the rail list both sides' areas, or swap between the sides?
 Why it matters: on 2026-11-15 the sides were built to swap, the other side's areas folded away behind its name; listed, every area is in sight and one press away, for five more lines in the rail.
-- A. List both under their names (recommended): no navigation is hidden; `\`, a side's name and Side by side work as before.
+- A. List both under their names (recommended): no navigation is hidden; `\` and Side by side work as before, and a side's name is a heading there, a button only on a narrow window.
 - B. Swap as before: a shorter rail while working on one side.
-Applied: A, in 947e6f3.
+Applied: A, in 947e6f3 (the names as headings in d4dee4e).
 Answer:
 
 ## Q57. Should a run wait until the board's place is confirmed?
@@ -338,4 +338,18 @@ Why it matters: every control was 2.75rem tall, a finger's size; at that size si
 - A. 2.25rem with a mouse, 2.75rem on a touch screen (recommended): more of a step fits without a scroll; the jog's moves stay 2.5rem.
 - B. 2.75rem everywhere: larger targets at the machine with a mouse too.
 Applied: A, in 947e6f3.
+Answer:
+
+## Q59. Where should a job's icon be set from?
+Why it matters: a press on a job's drawing used to open the icon picker, which made every row of the list three buttons and a box; a row is now one button (the job) and Delete.
+- A. From Icon under the list's More, for the picked job (recommended): the list reads as a list; the picker is two presses away.
+- B. By a press on the picked job's drawing: one press, and the picked row has a button the others do not.
+Applied: A, in d4dee4e.
+Answer:
+
+## Q60. Should the firmware key list open on the keys that differ, or on every key?
+Why it matters: the Machines page's Keys view listed 160 keys with their help, 17 screens long; where the file and the board differ is what asks for a decision.
+- A. On the differences (recommended): three rows instead of 160; "only differences" unticked shows them all, and a search looks through every key either way.
+- B. On every key, as before: the whole reference at once, the differences marked among them.
+Applied: A, in d4dee4e.
 Answer:

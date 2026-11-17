@@ -204,8 +204,29 @@ button with a menu (connect, disconnect, switch, home), Connect while
 nothing is connected, a chip for a run under way, and Stop. Inside a
 panel, what every run uses is in view and the rest under a More
 (`details.more`) in the same panel; how something is done is a tooltip or
-a question mark (`helpMark` in `src/views/context.ts`). A side comes to the front by
-its name in the rail or `\`, both show side by side by the bar's button or `|`
+a question mark (`helpMark` in `src/views/context.ts`). A list of things
+with numbers (a job's groups, a CAM profile's operations) is rows: each
+says its numbers in a line and opens its fields under it (`.groups` in
+the stylesheet). A button that cannot act now is put away, not locked,
+where its turn comes by itself (Stop of a camera that is not running,
+Clear with nothing to clear).
+
+A screen's first view holds at most 40 controls and 200 words, frame
+included (principle 13 of `docs/UI_PRINCIPLES.md`); `mise run
+test-budget` (`layout/budget.ts`) opens every view listed in
+`docs/ui/budget.json` over the mock and fails for one that holds more,
+saying which panels hold it. A new control goes where the layer it
+belongs to is: in view if every run uses it, else under the panel's More,
+and the check says when a view has grown too full. `mise run shots`
+(`layout/shot.ts`) takes pictures of the same kind of list and prints the
+fuller measure (`layout/measure.ts`); both run through `layout/shots.ts`,
+where a shot names the machine to connect, whether a job is picked and
+the view pressed. `mise run test-layout` (`layout/check.ts`) checks the
+spacing and that every button has a title.
+
+A side comes to the front by one of its areas in the rail (by its name
+where a narrow window folds the other side's areas away behind it) or
+`\`, both show side by side by the rail's button or `|`
 (`src/views/split.ts` holds the handle), and each pane lays its page out
 by its own width (container queries). The page each side shows is
 remembered per browser and set by the address: `?page=run`,

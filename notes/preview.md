@@ -80,7 +80,7 @@ The JSON panel formats the job with every path on one line (`formatJson`):
 caret (`stepsAt`), not by a parse, so it works while the text is broken
 past the caret; `offsetOf` is the way back for a picked path. An edit that
 parses is the preview's job (`jobDraft`) until Apply or Revert; a job
-changed under a dirty editor (a groups table patch) is not pulled in, the
+changed under a dirty editor (a group's number set in the Job panel) is not pulled in, the
 status line says so instead. The edit counts as pending on the Machine tab.
 
 ## The canvas that crept down the page (2026-11-08)

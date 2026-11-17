@@ -336,13 +336,16 @@ else?
 
 **Rule.** Each screen, in its default state, holds at most 40 controls
 and 200 words, frame included; Run and Job screens should sit well under
-it. The counts come from `mise run shots -- docs/ui/visual.json OUT`,
-which measures what the first view of each screen holds (the controls and
-words in the window before any scroll, the boxes, the colors, the share
-given to the work; [UI_VISUAL.md](UI_VISUAL.md) has the numbers before
-and after the redo of 2026-11-17), and will become a check in `mise run
-test-layout`. Going over means something belongs in another layer, not
-that the budget is wrong.
+it. `mise run test-budget` is the check: it opens every view of every
+area over the mock (docs/ui/budget.json), counts what the first view
+holds (the controls and words in the window before any scroll, with
+nothing folded open), and fails for a screen over the budget, saying
+which panels hold the load. `mise run shots -- docs/ui/visual.json OUT`
+prints the same counts with the boxes, the colors and the share given to
+the work ([UI_VISUAL.md](UI_VISUAL.md) has them before and after the redo
+of 2026-11-17). Going over means something belongs in another layer, not
+that the budget is wrong: a row that says its numbers and opens in place,
+a More fold, a button shown only while it can act.
 
 **Why.** The numbers are this project's rule, not a law of cognition:
 no study gives a limit of buttons per screen (see the claims below). A

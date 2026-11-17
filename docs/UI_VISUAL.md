@@ -23,6 +23,9 @@ and words in the window before any scroll, the controls locked, the type
 sizes and text colors in use, the boxes drawn and how deep they nest, the
 filled colors, the share of the window showing the work (the preview, a
 camera's picture, the board), and how far the longest column scrolls on.
+It counts the screen at rest: a message passing by is let go first, and
+what a shut fold holds is not counted. `mise run test-budget` holds every
+view of every area to the budget ([After](#after)).
 
 ## The short answer
 
@@ -35,24 +38,29 @@ day) did not change that: a screen still shows every panel it owns.
 
 ## What the first view holds
 
-At 1440 by 900, before any scroll or press (the page before the redo):
+At 1440 by 900, before any scroll or press, the page before the redo
+(commit 8caaa5d, measured again on 2026-11-17 with the instrument as it is
+now, so this table and the one under [After](#after) compare like with
+like):
 
 | Screen | Controls in view (page) | Words in view (page) | Boxes (deep) | Type sizes | Text colors | Filled colors | Work % | Scroll |
 |---|---:|---:|---:|---:|---:|---|---:|---:|
-| Home, nothing connected | 22 (23) | 107 (107) | 20 (2) | 7 | 6 | red 1 | 0 | 1x |
-| Job, a job picked | 76 (191) | 183 (538) | 85 (3) | 9 | 7 | blue 3, red 1 | 25 | 4.3x |
-| Run, polar laser | 80 (203) | 289 (1002) | 108 (4) | 11 | 11 | blue 5, red 4, green 2 | 0 | 2.7x |
-| Run, a job running | 81 (203) | 291 (1374) | 111 (4) | 11 | 11 | blue 5, red 4, green 2 | 0 | 2.7x |
-| Run, LumenPnP | 62 (211) | 306 (1122) | 114 (4) | 11 | 11 | blue 8, red 4, green 1 | 0 | 3.1x |
-| Checklist | 35 (64) | 252 (284) | 62 (3) | 9 | 9 | red 1 | 0 | 1.1x |
-| Machines | 41 (372) | 322 (3621) | 79 (3) | 11 | 8 | blue 2, red 1 | 0 | 17x |
-| Cameras, LumenPnP | 68 (133) | 284 (535) | 86 (3) | 9 | 8 | red 2 | 6 | 2x |
-| CAM | 50 (65) | 193 (516) | 86 (3) | 10 | 10 | red 1, blue 1 | 0 | 1.7x |
-| Page | 30 (31) | 151 (151) | 29 (3) | 8 | 8 | red 1 | 0 | 1x |
-| Run on a phone (390 px) | 29 (200) | 83 (989) | 35 (3) | 9 | 9 | red 2, green 2 | 0 | 1x |
+| Home, nothing connected | 22 (23) | 100 (100) | 19 (2) | 6 | 6 | red 1 | 21 | 1x |
+| Job, a job picked | 79 (167) | 183 (458) | 83 (3) | 9 | 8 | blue 3, red 1 | 25 | 4.3x |
+| Run, polar laser | 81 (169) | 284 (615) | 99 (4) | 11 | 11 | blue 5, red 4, green 2 | 0 | 2.7x |
+| Run, a job running | 81 (169) | 293 (989) | 102 (4) | 11 | 11 | blue 5, red 4, green 2 | 0 | 2.7x |
+| Run, LumenPnP | 66 (184) | 298 (762) | 112 (4) | 11 | 11 | blue 8, red 4, green 1 | 0 | 3.1x |
+| Checklist | 35 (36) | 175 (180) | 34 (3) | 8 | 9 | red 1 | 0 | 1.1x |
+| Machines | 42 (372) | 319 (3610) | 77 (3) | 11 | 8 | blue 2, red 1 | 0 | 17x |
+| Cameras, LumenPnP | 69 (123) | 269 (489) | 74 (3) | 8 | 8 | red 2 | 6 | 2x |
+| CAM | 50 (65) | 191 (505) | 84 (3) | 10 | 10 | red 1, blue 1 | 0 | 1.7x |
+| Page | 30 (31) | 140 (140) | 27 (3) | 8 | 8 | red 1 | 0 | 1x |
+| Run on a phone (390 px) | 29 (166) | 84 (602) | 33 (3) | 9 | 9 | red 2, green 2 | 0 | 1x |
+
+Home's 21% is its empty preview: a picture of no job.
 
 The budget in principle 13 is 40 controls and 200 words a screen. Run holds
-twice that in its first view and five times that in all.
+twice that in its first view and four times that in all.
 
 ## What the eye meets
 
@@ -60,7 +68,7 @@ twice that in its first view and five times that in all.
 
 ![The Run area before the redo](ui/shots/before-run.png)
 
-Run draws 108 boxes in its first view, nested four deep: panels, boxes in
+Run draws 99 boxes in its first view, nested four deep: panels, boxes in
 panels, fields in boxes. Each panel has the same head (a chevron, a title
 in capitals, a dots menu, a colored top edge) and the same weight. Text is
 set in 11 sizes between 11.5 and 17.6 px and 11 colors. Six panels start
@@ -256,31 +264,41 @@ What was built, what the screens hold after it and what is left is under
 
 ## After
 
-Built on 2026-11-16 and 17 in three commits (947e6f3 the frame, bc23953
-the layers inside the panels, aec321b the count). The same thirteen
-screens, measured the same way:
+Built on 2026-11-16 and 17: the frame (947e6f3), the layers inside the
+panels (bc23953, aec321b), and every view under the budget with a check
+that keeps it there (d4dee4e). The same screens, measured the same way:
 
 | Screen | Controls in view (page) | Words in view (page) | Boxes (deep) | Type sizes | Text colors | Filled colors | Work % | Scroll |
 |---|---:|---:|---:|---:|---:|---|---:|---:|
-| Home, nothing connected | 23 (24) | 75 (75) | 25 (3) | 9 | 7 | red 1 | 0 | 1x |
-| Job, a job picked | 68 (70) | 137 (137) | 71 (3) | 9 | 6 | red 1 | 24 | 1x |
-| Run, polar laser | 37 (39) | 116 (118) | 46 (3) | 10 | 8 | red 1 | 30 | 1x |
-| Run, a job running | 39 (41) | 138 (140) | 51 (3) | 10 | 8 | red 2 | 30 | 1x |
-| Run, LumenPnP | 37 (41) | 115 (115) | 46 (3) | 9 | 7 | red 1 | 0 | 1x |
-| Checklist | 35 (65) | 244 (278) | 61 (3) | 9 | 8 | red 1 | 0 | 1.1x |
-| Machines | 39 (46) | 148 (500) | 40 (3) | 11 | 6 | red 1 | 0 | 1.6x |
-| Cameras, LumenPnP | 60 (64) | 216 (216) | 54 (3) | 10 | 7 | red 2 | 0 | 1.1x |
-| CAM | 52 (66) | 194 (510) | 93 (3) | 10 | 10 | red 1 | 0 | 1.5x |
-| Page | 31 (32) | 145 (145) | 28 (3) | 9 | 7 | red 1 | 0 | 1x |
-| Run on a phone (390 px) | 19 (36) | 38 (120) | 25 (3) | 6 | 5 | red 1 | 54 | 1x |
+| Home, nothing connected | 21 (22) | 75 (75) | 25 (3) | 9 | 7 | red 1 | 0 | 1x |
+| Job, a job picked | 39 (39) | 128 (128) | 38 (3) | 8 | 6 | red 1 | 24 | 1x |
+| Run, polar laser | 33 (33) | 109 (110) | 42 (3) | 10 | 8 | red 1 | 30 | 1x |
+| Run, a job running | 35 (35) | 126 (127) | 46 (3) | 10 | 8 | red 2 | 30 | 1x |
+| Run, LumenPnP | 33 (37) | 103 (103) | 44 (3) | 8 | 7 | red 1 | 0 | 1x |
+| Checklist | 34 (35) | 176 (181) | 34 (3) | 8 | 8 | red 1 | 0 | 1.1x |
+| Machines | 35 (40) | 141 (497) | 34 (3) | 10 | 6 | red 1 | 0 | 1.7x |
+| Cameras, LumenPnP | 39 (39) | 153 (153) | 32 (3) | 9 | 6 | red 1 | 0 | 1x |
+| CAM | 38 (38) | 165 (429) | 35 (3) | 9 | 10 | red 1 | 0 | 1x |
+| Page | 29 (30) | 141 (141) | 27 (3) | 9 | 7 | red 1 | 0 | 1x |
+| Run on a phone (390 px) | 24 (33) | 72 (113) | 30 (3) | 9 | 7 | red 1 | 0 | 1x |
 
-Run's first view went from 80 controls, 289 words and 108 boxes with no
-picture of the work to 37 controls, 116 words and 46 boxes around the
+Run's first view went from 81 controls, 284 words and 99 boxes with no
+picture of the work to 33 controls, 109 words and 42 boxes around the
 job's preview, and what a step does not show is no longer on the page
-behind a scroll: the page holds 39 controls where it held 203. The one
-filled color left on a screen at rest is Stop. From opening the page to a
-running job takes four presses on one side and no scroll: Connect in the
-top bar, the job, Run in the rail, Run.
+behind a scroll: the page holds 33 controls where it held 169. Job went
+from 79 controls to 39, a camera's page from 69 to 39. The one filled
+color left on a screen at rest is Stop. From opening the page to a running
+job takes four presses on one side and no scroll: Connect in the top bar,
+the job, Run in the rail (or Run this job), Run. On a phone the Run step
+opens on its Run button, with the preview under it, where it opened on a
+preview with the button a screen further down.
+
+`mise run test-budget` goes through 31 screens (docs/ui/budget.json: every
+view of every area with the polar laser, the Run and Cameras views with
+the LumenPnP, and Home, Job and Run at a phone's width) and fails when one
+holds more than 40 controls or 200 words in its first view, saying which
+panels hold them. On 2026-11-17 the most were 39 controls (Job, Draw, Run's
+Board step, two camera pages) and 176 words (the Checklist).
 
 ![The Run area after the redo](ui/shots/after-run.png)
 
@@ -296,28 +314,39 @@ top bar, the job, Run in the rail, Run.
 
 ![Run on a phone after the redo](ui/shots/after-run-phone.png)
 
+The head camera's page and CAM, before and after:
+
+![The head camera's page before the redo](ui/shots/before-cameras.png)
+
+![The head camera's page after the redo](ui/shots/after-cameras.png)
+
+![CAM before the redo](ui/shots/before-cam.png)
+
+![CAM after the redo](ui/shots/after-cam.png)
+
 ### What each finding became
 
 | Finding | Now |
 |---|---|
 | 1. No first place to look | A view is the work with one panel beside it; the next action is the one dark button. |
 | 2. The work is not on the screen | Run has the job's preview with the head on it, the camera's picture behind it on a tab. |
-| 3. The next action is elsewhere | Connect is in the top bar, on Home and in Run's first step; Home names the next thing; each step has its action in its panel. |
-| 4. The screen does not change with the state | Run shows Run, or Hold and Stop, or Resume and Stop; the top bar carries a running job's share; a camera stopped offers its start. |
-| 5. A panel shows its whole feature | Height, Board place, the jog, placing and the preview keep the usual in view and the rest under More, in place. One step size serves every axis. |
-| 6. The frame is heavy | Both sides' areas are listed under their names; the rail's tools are named; the bar is the machine, the run and Stop; the layout tools show with All panels only. |
-| 7. Color says nothing | The pages' colors are off; ink is the next action; pressed is drawn, not colored; red fills only what stops the machine. |
+| 3. The next action is elsewhere | Connect is in the top bar, on Home and in Run's first step; Home names the next thing; each step has its action in its panel; the Job panel ends in Run this job; a camera starts on the page it is set up on. |
+| 4. The screen does not change with the state | Run shows Run, or Hold and Stop, or Resume and Stop; the top bar carries a running job's share; a camera stopped offers Start and a running one Stop; Abort, Clear, Apply and a find's steps show while they can act. |
+| 5. A panel shows its whole feature | Height, Board place, the jog, placing, the cameras, the machine file and the preview keep the usual in view and the rest under More, in place. A job's groups and a CAM profile's operations are rows that say their numbers and open their fields in place. The firmware's key list opens on the keys that differ. One step size serves every axis. |
+| 6. The frame is heavy | Both sides' areas are listed under their names, which are headings; the rail's tools are named; the bar is the machine, the run and Stop; the layout tools show with All panels only, and a panel alone in its column has no fold. |
+| 7. Color says nothing | The pages' colors are off; ink is the next action, a ticked box and a slider's fill; pressed is drawn, not colored; red fills only what stops the machine. |
 | 8. Words and numbers at one weight | Paragraphs became tooltips, heading tooltips and a question mark; controls are a mouse's size, a finger's on a touch screen; the run's share is in large type. |
 | 9. Messages cover controls | Toasts sit over the foot of the work and wrap; the mock's note is its chip's tooltip. |
-| 10. Details that mislead | One Run and one Stop with a pick and place machine; X and Y named once; the Job panel has room for its table; the search skips the layout's marks. |
+| 10. Details that mislead | One Run and one Stop with a pick and place machine; X and Y named once; a job's numbers read as a line, not a table too wide for its panel; the key list's buttons no longer run off its panel; the search skips the layout's marks. |
 
 ### What is not done
 
-- **Job** is still over the budget (68 controls): the picked job's table
-  is six fields a group. It wants the rows the redesign drew, each opening
-  its details in place.
-- **The Setup pages** got views, not layers: a camera's panel is still 60
-  controls, and the firmware's key list 160 rows, all showing.
+- **All panels is outside the budget.** It is the operator's own layout
+  of every panel of an area, kept for whoever wants the old screen, and
+  it holds what the old screen held.
+- **A mill's screens are not in the check.** The page's mock offers the
+  polar laser and the LumenPnP; a mill shows other fields in the same
+  panels (depth and plunge in a group, the spindle's numbers in Draw).
 - **The steps are the page's own**, per kind of machine
   (web/frontend/src/views/areaviews.ts), not yet read from the machine
   file as TODO.md asks.
@@ -325,7 +354,8 @@ top bar, the job, Run in the rail, Run.
   tell whether the board was placed, so it never marks Board done.
 - **No guide.** How-to went to tooltips and question marks; the guide of
   principle 8, opened at a section, is not written.
-- **The budget is not a test yet** (principle 13): the numbers above come
-  from `mise run shots`, by hand.
+- **Nothing here was tried on the machines.** The page was driven over
+  its mock; the layout check, the budget and the unit tests are what was
+  run.
 - The choices made on the way that are the user's to confirm are in
   [QUESTIONS.md](../QUESTIONS.md).

@@ -198,8 +198,8 @@ Machine.
 - The contents: `mise run shots -- docs/ui/panels.json var/ui-panels`
   prints every panel's headings, fields, buttons and text with its
   controls and words in view; a control found in two panels breaks rule 1.
-- The budget: `mise run shots -- docs/ui/budget.json var/ui-budget` per
-  page, against the 40 controls and 200 words.
+- The budget: `mise run test-budget`, every view's first view against
+  the 40 controls and 200 words.
 - The page still works: `mise run test-layout` and the end to end tests
   after each step, since every move changes selectors they use.
 
@@ -241,8 +241,9 @@ Where it differs from the plan above:
   job and Export gcode stay in its panel on the Setup side; page settings
   beyond the gear's quick ones are not a page yet.
 
-What it measured, connected over the mock, before any press (`mise run
-shots -- docs/ui/budget.json var/ui-budget`), against the audit in
+What it measured, connected over the mock, before any press (the whole
+page, with the shot list docs/ui/budget.json held at the time; the file
+is now the budget check's list), against the audit in
 [UI_REDESIGN.md](UI_REDESIGN.md#what-overloads-the-page-today):
 
 | Page | Controls | Words | Panels | Before |

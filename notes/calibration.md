@@ -120,7 +120,7 @@ the offset (position lost, so mechanical) before looking at the software.
 
 ## Material and depth tests (2026-11-02)
 
-Every patch is a group, so the groups table is the legend and a patch can
+Every patch is a group, so the job's groups are the legend and a patch can
 be cut again alone. The material test is refused on a spindle machine and
 the depth test on a laser. A focus ladder was left out: a laser group has
 no focus height (H only comes from height map compensation), and adding

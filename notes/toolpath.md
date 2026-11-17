@@ -14,11 +14,9 @@
   writes the line) instead of refused: `S` is modal, so the parser cannot
   always compare them, and a UI edit that lowers `S` below the floor
   should not start failing.
-- The groups table went from two number columns to three; at the 20rem
-  side column 5.5rem fields overflowed. The fields are now 3rem to 5.5rem
-  and fluid, with the spin buttons hidden and the side padding trimmed so
-  "1000" still fits at 3rem (checked in headless Chromium at 390, 1280 and
-  1600 px wide).
+- A group's numbers are fields under its row, three to a line and
+  wrapping (notes/views.md); the table they were, whose columns were
+  squeezed to fit a 20rem side column, is gone.
 
 ## Copper clearing
 

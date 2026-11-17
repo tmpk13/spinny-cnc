@@ -63,16 +63,20 @@ nothing to say about a setup axis.
 `Joint` stays the interpolated pair (`r`, `a`) that the kinematics work in;
 `JointPosition` adds `z` and is what the machine reports.
 
-## The groups table under the operator's hands
+## A job's groups under the operator's hands
 
-A patch of one group field reloads the job, and a fresh copy of the same
-job used to rebuild the whole table, tearing out the field being typed
-into: the browser fires no `change` for a removed element, so that value
-was lost. A same-job update now sets the existing inputs in place and
-skips the focused one; only a different job, a different group count, or
-a group's label or path count changing rebuilds (`groupsShown`). A re-cut
-for another width or a stencil's margin keeps the count but changes the
-labels, which until 2026-11-02 stayed stale in the table. The stencil's
+The groups are rows that open their fields in place since 2026-11-17
+(notes/views.md); what follows held for the table they were and holds
+for the rows. A patch of one group field reloads the job, and a fresh
+copy of the same job used to rebuild the whole list, tearing out the
+field being typed into: the browser fires no `change` for a removed
+element, so that value was lost. A same-job update now sets the existing
+inputs in place and skips the focused one (and sets each row's line of
+numbers); only a different job, a different group count, or a group's
+label or path count changing rebuilds (`groupsShown`), and the rows open
+stay open through it. A re-cut for another width or a stencil's margin
+keeps the count but changes the labels, which until 2026-11-02 stayed
+stale. The stencil's
 margin row re-cuts on Enter or its button without a confirm, since trying
 margins against the preview is what it is for; picking stencil in the
 upload form turns a Layer of F.Cu or B.Cu into its paste layer. The run panel shows `progress.error` beside the badge, so the

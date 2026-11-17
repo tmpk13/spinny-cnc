@@ -52,6 +52,48 @@ what was not obvious.
   message on a press for a screen with no hover).
 - **Home opens a fresh browser** (`readPage` falls back to `home`): it
   says what is next. A browser that remembers a page still opens on it.
+- **A list of things with numbers is rows that open in place.** A job's
+  groups and a CAM profile's operations were tables of fields: six
+  controls a row, every row. A row is now two controls however many
+  numbers a tool has (the box that takes it in or out, and a button that
+  says the numbers in a line, `groupSays` and `operationSays`), and its
+  fields open under it, each under its name. The rows are a `ul.groups`:
+  a list lays out its own items, so the spacing check leaves it alone.
+  Which rows are open is kept by index while the same job or profile
+  shows, since CAM makes its rows again after every change.
+- **A button that cannot act now is put away where its turn comes by
+  itself**: a camera's Stop while it is stopped, Abort with no routine,
+  the Assistant's Stop, Draw's Apply with no operation picked, Clear with
+  nothing typed, the markers' buttons with no markers, a find's Previous
+  and Next with no word. A button the operator has to do something for
+  (Run with no job) stays, locked, with its reason: putting that one away
+  would hide where the action is.
+- **A list's row is the thing and one action.** A job in the list is one
+  button and Delete; the box that ticks it for Combine shows while the
+  list's More is open, and the icon picker opens from Icon there, under
+  the picked job. Per-row marks grow with the list; what is done to one
+  job now and then does not need a control on every row.
+- **A camera starts where it is set up.** Start and Stop belong to the
+  picture's panel in the Run area; a camera's own panel on the Cameras
+  page has a pair too (the one that can be pressed), since that page has
+  no picture panel and a camera could not be started on it.
+- **The key list opens on the differences.** 160 keys with their help is
+  a reference; the keys where the file and the board differ are what asks
+  for a decision. A search looks through every key whatever the box says,
+  so a key is never hidden from someone looking for it.
+- **An offset typed is applied when its field is left**, as a group's
+  numbers are: Move was one more button for the same thing.
+- **In the rail a side's name is a heading.** Both lists show there, so
+  the name had nowhere to go that an area does not; it is a button only
+  on a narrow window, where the other side's areas fold away behind it.
+- **On a narrow window a step's panel comes before the work**
+  (`data-lead-column`, order on its panels since the columns are not
+  boxes there): the preview first put Run a screen down on a phone.
+- **Back shows only where the steps are small marks** (a narrow window):
+  beside named steps it said one of them again.
+- **A panel's Setup link shows in a view only while it has a need to
+  say**; with the rail listing the Setup areas beside every view, the
+  plain link was one more thing to read on every panel.
 
 ## The layer and a view
 
@@ -96,6 +138,22 @@ what was not obvious.
   from the node: `goToPanel` and the search dispatch it, the Machine
   panel and the preview's View row open on it.
 
+## The budget as a check
+
+- `mise run test-budget` (layout/budget.ts over layout/shots.ts) walks
+  docs/ui/budget.json: 31 screens, every view of every area. The limit is
+  the principle's (40 controls, 200 words, first view, frame included). A
+  shot may carry a ceiling of its own with its reason (`budget: {controls,
+  words, why}`); none does.
+- The frame is 15 of the 40: the rail's 13 (8 areas, side by side, 4
+  tools) and the bar's 2. A view has 25 for itself.
+- All panels is not in the list: it is the operator's own layout.
+- A new view goes into budget.json; a view over the budget wants a layer
+  (a More, rows, a button put away), not a higher ceiling.
+- docs/ui/budget.json was, until 2026-11-17, an older list that counted a
+  whole page through a script of its own; the counts in UI_REDESIGN.md and
+  UI_PANELS.md were made with it (it is in the history at 36eb42e).
+
 ## Traps
 
 - **Two stylesheets load in an order the dev server picks.** A second
@@ -116,6 +174,13 @@ what was not obvious.
   moved there) is pressed by script.
 - **The shots' measure counted a preview twice** (its scene canvas and
   its overlay); the work's share is counted over a grid of points.
+- **The measure counted what a shut fold holds.** Chromium keeps the
+  boxes of a closed `details` (content-visibility), so words inside one
+  had a size and lay "in the window": `checkVisibility()` is asked too.
+  A toast covers what is under it (a control under one is not "met"), so
+  the measure lets go of the toasts first.
+- **A table's row buttons with `white-space: nowrap` ran off a narrow
+  panel** (the key list's Copy and Insert): the cell wraps them now.
 - A stacked panel in a view whose head holds only a question mark has
   that head taken out of the flow to the panel's corner; the block after
   it then needs its top margin taken off, or the layout check reports a

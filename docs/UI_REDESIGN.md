@@ -37,8 +37,10 @@ they are not part of the page.
 ![Controls and words in view on each page today](ui/budget.svg)
 
 Counted over the mock in Chromium, connected, with everything a page
-shows before any press (`mise run shots -- docs/ui/budget.json
-var/ui-budget` prints the counts):
+shows before any press (the whole page, with the shot list
+docs/ui/budget.json held at the time; that file is now the list of the
+budget check, `mise run test-budget`, which counts a screen's first
+view):
 
 | Page | Controls in view | Words in view | Panels |
 |---|---:|---:|---:|
@@ -434,8 +436,9 @@ should become once screens fit their budget.
 
 ## Checking that it worked
 
-- The counts: `mise run shots -- docs/ui/budget.json var/ui-budget`
-  before and after each phase, against the budget.
+- The counts: `mise run test-budget` (every view's first view against
+  the budget; [UI_VISUAL.md](UI_VISUAL.md#after) has them before and
+  after the redo).
 - A timed run: from opening the page to a running job on the demo
   coupon, and to a placed board on the virtual LumenPnP, counting presses
   (the bug report already logs the last 200).

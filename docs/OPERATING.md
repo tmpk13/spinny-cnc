@@ -49,7 +49,9 @@ every tenth of a second, and at the release this project's firmware
 cancels the jog at once, while a G-code machine runs out the last piece. The Setup side's
 *Machines* page holds the machine files (the *Machine file* panel), where the pins are set too (the laser output, the probe
 and an optional tool output), and beside them the *Settings* panel, the list of every key a
-file can set with the board's value next to the file's.
+file can set with the board's value next to the file's. The list opens on
+the keys where the two differ; unticking *only differences* shows them
+all, and a search looks through every key either way.
 
 ### Jobs, the preview and the Run panel
 
@@ -57,8 +59,17 @@ The *Jobs* panel in the Job area imports a file dropped on it or picked.
 *Import settings* under its drop area opens the import dialog with what
 the next import is made with (the power, speed and spot, the anchor and
 offset, the layer, mirror, Board and the fields its mode takes), and the
-line under the drop area says them. The selected job's groups, stats,
-width and margin are its own *Job* panel.
+line under the drop area says them. A row of the list is a job, one
+button with its drawing, and its Delete; *More* under the list holds the
+picked job's *Icon* and *Save job*, *Combine* and *Delete all*.
+
+The picked job is the *Job* panel: its length and time in a line, then
+its groups, a row each. A row is the box that takes the group in or out
+of the run and a button that says its numbers ("S500, 400 mm/min, 3
+passes"); pressed, it opens the group's fields under it, each under its
+name, with *Pick its paths*. A number is kept when its field is left.
+*More* under the groups holds the width (and a stencil's margin) and the
+path's numbers, and *Run this job* goes on to the Run area with it.
 
 A board upload isolates its copper by default; with Board set to deposit,
 for a process that lays copper down, it burns the copper itself and
@@ -93,8 +104,8 @@ the row is shut, View says how many of the lock, box selection and the
 speed view are on.
 
 A click on a path in the preview picks it (shift or ctrl adds one or takes
-it back, *Box select* picks every path inside a dragged box, a click on a
-group's name in the Job panel all of its paths); the Job panel then moves
+it back, *Box select* picks every path inside a dragged box, *Pick its
+paths* in a group's opened row all of its paths); the Job panel then moves
 the picked paths into a group of their own, which takes the first one's
 settings (switched off if any group they come from is) and can be given
 its own power, speed, passes or focus, or into a
@@ -108,13 +119,14 @@ back. A job made from a file or in the Draw panel whose paths are moved,
 deleted or copied (the page asks first), or changed in the *Job JSON*
 panel, is no longer made again from it for another width, which would put
 its paths back as the file or the operations make them. Each job in the list carries a
-small drawing of itself; a press on it opens a picker for an icon in its
+small drawing of itself; *Icon*, under the list's *More*, opens a picker
+under the picked job for an icon in its
 place: one of twelve glyphs or one or two letters, on one of eight colors,
 kept with the job at once (also while it runs); *Drawing* gives the drawing
-back. Checking two or more jobs and pressing *Combine* makes
+back. With *More* open each job has a box: checking two or more and pressing *Combine* makes
 one new job of them, cut in the order they were checked, each group's name
 led by its job's (the jobs themselves stay; jobs made for different tools
-do not combine). The *Job JSON* panel under the preview
+do not combine). The *Job JSON* view
 shows the job with a path a line: the path and point under the caret are
 drawn on the preview, a picked path brings the caret to its line, an edit
 is drawn as it is typed and kept with *Apply*. A path picked on an edit
@@ -131,8 +143,9 @@ from the machine's rates once its settings are read, else from the
 defaults and says so, each held to what the step generator pulses at the
 axis's steps a unit, as the firmware holds it. The slider under the
 preview steps through the job's paths in the order they are cut (*Back*
-and *On* a path at a time): the paths cut so far are drawn, the last of
-them marked, the rest faint; at its end the job is drawn whole.
+and *On*, a path at a time, show while it is off its end): the paths cut
+so far are drawn, the last of them marked, the rest faint; at its end the
+job is drawn whole.
 
 The preview is drawn by the graphics card (WebGL2) in the background, so
 a board of hundreds of thousands of points still turns smoothly and the
@@ -360,7 +373,8 @@ usable map, a run finished), a step a run can do without is ringed with a
 dashed line, and the line under the steps says what is so in the one
 shown. The area opens at the first step a run needs that is not done and
 moves on when a step's own action completes it; a step pressed stays, and
-*Back* and *Next* walk them. *All panels*, at the right end, shows every
+*Next* goes on to the one after (a narrow window, whose steps are small
+marks, has *Back* too, and puts the step's panel before the picture). *All panels*, at the right end, shows every
 panel of the area at once, arranged with the layout tools below; pressed
 again it gives the steps back.
 
@@ -610,7 +624,11 @@ and a release built beside pcb-vision carries it as `bin/pcbv`
 ([RELEASE.md](RELEASE.md#the-other-programs)). The
 *Head camera* panel on the Setup side's *Cameras* page holds its settings; its
 picture is the *Head camera view* panel in the Run area, whose *Start* and
-*Stop* start and stop it, and with *Look for board* (the Board place
+*Stop* start and stop it (the camera's own panel has them too). A
+camera's panel keeps in view which camera it is, what it last saw and
+where it was measured to sit; its device and size, its place and scale as
+numbers, the routine that measures them and its log are under its *More*,
+each under a heading whose tooltip says what it is for. With *Look for board* (the Board place
 panel's *By camera*) on a job imported from a KiCad file the panels say where
 on the board the picture is and how well it is locked (below).
 
@@ -712,8 +730,10 @@ camera lets be set (exposure, gain, focus, white balance, brightness and
 the like, as v4l2-ctl lists them): a slider, a box or a list each. A value
 set goes to the camera at once and is kept, so it is set again whenever
 the camera starts (kept ones are bold; *Forget* leaves the camera's own).
-Automatic exposure is set before a manual exposure time; a control greyed
-out does nothing while an automatic one is on. A camera on a bridge Pi
+Automatic exposure is set before a manual exposure time; a control an
+automatic one has taken over is left out and named in a line under the
+list until the automatic one is off (one with a kept value stays, to be
+forgotten). A camera on a bridge Pi
 (an HTTP snapshot URL) has none here: they are set on the Pi.
 
 While the panel shows (in front of its stack and unfolded), *Live picture* at its head measures the camera's
