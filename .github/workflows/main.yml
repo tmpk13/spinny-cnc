@@ -8,9 +8,16 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
+      - name: Checkout spinny-cnc
+        uses: actions/checkout@v4
+    
+      - name: Checkout kicad-to-gcode
+        uses: actions/checkout@v4
+        with:
+          repository: tmpk13/kicad-to-gcode
+          path: ../kicad-to-gcode
+    
       - uses: jdx/mise-action@v5
-
-      - name: Run mise task
+    
+      - name: Run release
         run: mise run release
