@@ -85,12 +85,14 @@ describe("Find board", () => {
         expect(root.querySelector(".find-note")?.textContent).toBe("The head camera is not running.");
         start.click();
         expect(started).toEqual(["head"]);
-        // Running: the three presses of a find, the next one dark.
+        // Running: the three presses of a find, the next one dark. The
+        // search loads the board itself, so it leads; Look for board is the
+        // look from where the camera stands.
         store.set({ camera: { ...(store.get().camera ?? {}), running: true } as NonNullable<ReturnType<typeof store.get>["camera"]> });
         expect(inView(start, root)).toBe(false);
         expect(inView(findButton(root, "Look for board"), root)).toBe(true);
-        expect(findButton(root, "Look for board").classList.contains("btn-primary")).toBe(true);
-        expect(findButton(root, "Search").classList.contains("btn-primary")).toBe(false);
+        expect(findButton(root, "Look for board").classList.contains("btn-primary")).toBe(false);
+        expect(findButton(root, "Search").classList.contains("btn-primary")).toBe(true);
         // The scan, the guesses, the corners and the features are one press away.
         const rest = root.querySelector("details.find-rest") as HTMLDetailsElement;
         expect(rest.open).toBe(false);

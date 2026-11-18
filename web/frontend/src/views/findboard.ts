@@ -2,7 +2,10 @@
 // camera picked from those that can look for one (the head camera, and with
 // a G-code machine its top camera), a running one unless another is picked.
 // Look for board loads the job's board into the camera's pcbv; Search moves
-// the camera over a box until a guess is likely enough; Use as board place
+// the camera until a guess is likely enough, loading the board first when
+// it is not, and is named for where it would look (Scan the bed with
+// nothing known of the board's place on a machine whose file says where
+// boards lie); Use as board place
 // keeps where the board found (else the corners taken) puts the board: the
 // top camera's as the job's references, the head camera's as alignment
 // marks. The guesses the looks make are columns of their share of the
@@ -96,6 +99,42 @@ export function pickedCamera(state: AppState, stored: string | null): LookCamera
     }
     return defaultCamera(state);
 }
+
+/** Where a camera's search would look: a box drawn, about a place known, the whole bed, or about where the camera stands. */
+export type SearchKind = "box" | "known" | "bed" | "around";
+
+/**
+ * What Search would do for the selected job, as the backend plans it: a box
+ * drawn on the picture is searched; else the search starts where the board
+ * is known to be (corners taken, a place found, the references or marks);
+ * else, with the top camera of a machine whose file says where boards lie
+ * (`[top_camera] bed` or `board_area`), the bed is scanned quickly, at
+ * stops spaced by the board's size; else the board's size about where the
+ * camera stands.
+ */
+export function searchWill(state: AppState, camera: LookCamera, boxDrawn: boolean): SearchKind {
+    if (boxDrawn) {
+        return "box";
+    }
+    const job = state.job?.id ?? null;
+    const source = SOURCES[camera];
+    const look = source.look(state);
+    const ours = look !== null && look.job === job;
+    const corners = (look?.corners ?? null) !== null && look?.corners?.job === job && (look?.corners?.points.length ?? 0) > 0;
+    if (corners || (ours && ((look?.estimate ?? null) !== null || (look?.known ?? null) !== null)) || (job !== null && source.placeKnown(state, job))) {
+        return "known";
+    }
+    const top = camera === "top" ? state.placing?.document?.top ?? null : null;
+    return top !== null && ((top.bed ?? null) !== null || (top.board_area ?? null) !== null) ? "bed" : "around";
+}
+
+/** Search's name and tooltip for what it would do. */
+const SEARCH_SAYS: Record<SearchKind, [label: string, tip: string]> = {
+    box: ["Search the box", "move the camera over the box drawn on its picture until a guess is likely enough"],
+    known: ["Search", "move the camera about where the board is known to be (corners, a place found before, the marks or references) until a guess is likely enough; pcbv is told to look there first"],
+    bed: ["Scan the bed", "nothing says where the board is: a quick scan of the bed (the board area the machine file names first), at stops spaced by the board's size, until a guess is likely enough"],
+    around: ["Search", "move the camera over the board's size about where it looks until a guess is likely enough; Shift and a drag on its picture draws a box to keep to"],
+};
 
 /** The guesses at or over the threshold, and the most likely one whatever its share: the ones a board drawing shows. */
 export function shownGuesses(look: BoardLook | null | undefined, threshold: number): BoardGuess[] {
@@ -380,8 +419,8 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
     const startButton = button("Start the camera", () => options.start?.(chosen), "btn btn-primary", "start the camera picked, as Start on its picture does");
     const startRow = el("div", { class: "button-row find-start hidden" }, startButton);
     const lookButton = button("Look for board", () => lookForBoard(), "btn", "load the selected job's board: the camera looks for it in every picture until Unload");
-    const searchButton = button("Search", () => runSearch(), "btn",
-        "move the camera over the search box (Shift and a drag on its picture), else where the corners put the board, else the board's size about where it looks, until a guess is likely enough; it starts where the board is known to be (corners, a place found before, the marks or references, the job's place) and tells pcbv to look there first");
+    // Named for what it would do (searchWill): Scan the bed when nothing says where the board is.
+    const searchButton = button("Search", () => runSearch(), "btn", SEARCH_SAYS.around[1]);
     const scanButton = button("Full scan", () => runScan(), "btn",
         "move the camera over the whole board where a rough place puts it (a find, the corners, the Align marks or references), row by row: every picture is weighed and kept for the mosaic below");
     const placeButton = button("Use as board place", () => usePlace(), "btn");
@@ -578,6 +617,14 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
     }
 
     async function runSearch(): Promise<void> {
+        // The selected job's board is loaded first when another, or none, is.
+        const job = ctx.store.get().job;
+        if (job && lookNow()?.job !== job.id) {
+            await lookForBoard();
+            if (lookNow()?.job !== job.id) {
+                return;
+            }
+        }
         const box = options.boxes[chosen]();
         if (chosen === "top") {
             await into(ctx, "placing", ctx.api.topSearch(box));
@@ -800,8 +847,11 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
         const machineFree = chosen === "top"
             ? state.placing?.running !== true && !(state.pnp?.routine?.state === "running" && state.pnp.routine.target === "gcode")
             : state.snapshot.machine?.state === "Idle";
-        const scaled = chosen === "top" ? (state.placing?.top?.mm_per_px ?? 0) > 0 : (state.camera?.mm_per_px ?? 0) > 0 || state.camera?.pose?.state === "locked";
-        const offsetKnown = chosen === "top" ? (state.placing?.top?.offset ?? state.placing?.document?.top?.offset ?? null) !== null : true;
+        // A scale measured; the top camera's searches also plan by the one its
+        // machine file gives, or the one pcbv reads off a board it has locked on.
+        const measured = chosen === "top" ? (state.placing?.top?.mm_per_px ?? 0) > 0 : (state.camera?.mm_per_px ?? 0) > 0;
+        const scaled = measured || look?.pose === "locked" || (chosen === "head" && state.camera?.pose?.state === "locked")
+            || (chosen === "top" && (state.placing?.document?.top?.mm_per_px ?? 0) > 0);
         const corners = look?.corners ?? null;
         const ours = corners !== null && job !== null && corners.job === job.id;
         lockFor(lookButton,
@@ -809,12 +859,19 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             [!job, "pick a board job first"],
             [job?.design?.board !== true, "the camera needs a job uploaded as .kicad_pcb"],
             [busy, "a routine is under way"]);
+        const will = searchWill(state, chosen, options.boxes[chosen]() !== null);
+        searchButton.textContent = SEARCH_SAYS[will][0];
         lockFor(searchButton,
-            [!look?.job, "load a board first: Look for board"],
+            [!running, `start the ${src.label.toLowerCase()} first`],
+            [!job, "pick a board job first"],
+            [job?.design?.board !== true, "the camera needs a job uploaded as .kicad_pcb"],
             [!machineReady, "connect the machine first"],
             [!machineFree, chosen === "top" ? "the machine is busy" : "the machine must be Idle"],
             [busy, "a routine is under way"],
-            [!scaled, chosen === "top" ? "the top camera's scale is not measured: Measure offset first" : "the camera's scale is not measured: Find mark first"]);
+            [!scaled, chosen === "top"
+                ? "nothing says the top camera's scale: give [top_camera] mm_per_px in the machine file, or Measure offset"
+                : "the camera's scale is not measured: Find mark first"]);
+        searchButton.title = SEARCH_SAYS[will][1];
         const found = look?.found === true && job !== null && look.job === job.id;
         lockFor(placeButton,
             [!job, "pick a board job first"],
@@ -827,7 +884,8 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
         lockFor(unloadButton, [!look?.job, "no board loaded"], [busy, "a routine is under way"]);
         // The next of the three presses is the dark one: load the board,
         // then search for it, then take the place found.
-        const next = !look?.job ? lookButton : found || ours ? placeButton : searchButton;
+        // The search loads the board itself: Look for board is for a look from where the camera stands.
+        const next = found || ours ? placeButton : searchButton;
         for (const press of [lookButton, searchButton, placeButton]) {
             press.classList.toggle("btn-primary", press === next && running);
         }
@@ -840,7 +898,6 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             [!running, `start the ${src.label.toLowerCase()} first`],
             [!machineReady, "connect the machine first"],
             [!machineFree, chosen === "top" ? "the machine is busy" : "the machine must be Idle"],
-            [!offsetKnown, "the top camera's offset is not measured: Measure offset first"],
             [busy, "a routine is under way"]);
         setLocked(clearButton, corners === null, "no corners taken");
         lockFor(edgeButton,
@@ -848,8 +905,10 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             [!running, `start the ${src.label.toLowerCase()} first`],
             [!machineReady, "connect the machine first"],
             [!machineFree, chosen === "top" ? "the machine is busy" : "the machine must be Idle"],
-            [!scaled, "the camera's scale is not measured"],
-            [!offsetKnown, "the top camera's offset is not measured: Measure offset first"],
+            // The top camera's edges are measured by its own scale; the head camera's by a lock's too.
+            [chosen === "top" ? !measured : !scaled, chosen === "top"
+                ? "the top camera's scale is not measured: Measure camera, or a search that finds a board, measures it"
+                : "the camera's scale is not measured: Find mark first"],
             [busy, "a routine is under way"]);
         // Centering features is the head camera's: the top camera's Find fiducials does it on the PNP page.
         const headOnly = chosen === "head";
@@ -902,7 +961,7 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
             [busy, "a routine is under way"]);
         setLocked(skewClear, (shownSkew?.count ?? 0) === 0 || busy, "no boards kept");
         const name = look?.job ? state.jobs.find((entry) => entry.id === look.job)?.name ?? null : null;
-        lookLine.textContent = lookText(look, name) || "No board loaded: pick a board job and press Look for board.";
+        lookLine.textContent = lookText(look, name) || (job ? `No board loaded: ${SEARCH_SAYS[will][0]} loads ${job.name} and looks for it.` : "No board loaded: pick a board job first.");
         knownLine.textContent = look?.job ? knownText(look.known) : "";
         knownLine.classList.toggle("hidden", knownLine.textContent === "");
 

@@ -110,6 +110,7 @@ import {
     mockScan,
     onBoard,
     roughBox,
+    QUICK_SHARE,
     searchStops,
     type LookTuning,
     type MachinePicture,
@@ -7464,7 +7465,7 @@ export class MockBackend implements Api, EventFeed {
             name: device?.name ?? null,
             document: device ? deviceDocument(device) : null,
             angle: placing.angle,
-            references: placing.references.map((entry) => ({ ...entry, at: [entry.at[0], entry.at[1]] })),
+            references: placing.references.map((entry) => ({ ...entry, at: this.referenceAt(entry) })),
             taken: { ...placing.taken },
             boards: placing.boards,
             camera: {
@@ -8094,12 +8095,12 @@ export class MockBackend implements Api, EventFeed {
         }
         const parts = mockComponents(this.requireJob(job));
         const fiducials = parts.filter((entry) => entry.fiducial);
-        this.deviceFitOf(job, parts);
+        this.deviceFitOf(job, parts, this.topOffsetInUse(device).known ? "nozzle" : "camera");
         if (fiducials.length === 0) {
             throw new ApiError(400, "the board has no fiducials: footprints whose reference starts FID or whose name says Fiducial");
         }
-        if (!this.topMeasured()) {
-            throw new ApiError(400, "the top camera's offset is not measured: put the nozzle on a mark, then Measure offset");
+        if (!(this.topConfig.mm_per_px > 0)) {
+            throw new ApiError(400, "the top camera's scale is not measured: Measure camera, or a search that finds a board, measures it");
         }
         this.beginTop("fiducials", ["lifting", ...fiducials.map((entry) => entry.ref), "fitting", "done"], device, job);
         return this.placingStateOf();
@@ -8221,11 +8222,8 @@ export class MockBackend implements Api, EventFeed {
         const half = [(width / 2) * TOP_TRUTH.mmPerPx, (height / 2) * TOP_TRUTH.mmPerPx];
         const corners = ([[-1, 1], [1, 1], [1, -1], [-1, -1]] as const).map(([sx, sy]): [number, number] => [center.x + sx * half[0]!, center.y + sy * half[1]!]);
         const view = corners.map(([x, y]) => toJob({ x, y }));
-        const offset = this.topConfig.offset;
-        if (offset === null) {
-            this.topBoardLook.see(locked, null, view, seen, "the top camera's offset is not known: Measure offset first");
-            return locked;
-        }
+        // Through the offset in use; with none known the places are the head's own.
+        const offset = this.topOffsetInUse().offset;
         const estimate = this.offBy(truth, offset[0] - TOP_TRUTH.offset[0], offset[1] - TOP_TRUTH.offset[1]);
         // The picture where the look takes it to be: through the offset in force.
         const dx = offset[0] - TOP_TRUTH.offset[0];
@@ -8492,11 +8490,10 @@ export class MockBackend implements Api, EventFeed {
         if (jobId === null) {
             throw new ApiError(400, "no board loaded: press Look for board first");
         }
-        const offset = this.topConfig.offset ?? device.top?.offset ?? null;
-        if (offset === null) {
-            throw new ApiError(400, "the top camera's offset is not known: give [top_camera] offset in the machine file, or Measure offset");
-        }
-        if (!(this.topConfig.mm_per_px > 0)) {
+        const offset = this.topOffsetInUse(device).offset;
+        // The scale measured, else the one the machine file designs.
+        const scale = this.topConfig.mm_per_px > 0 ? this.topConfig.mm_per_px : device.top?.mm_per_px ?? 0;
+        if (!(scale > 0)) {
             throw new ApiError(400, "the camera's scale is not measured: measure it first, so the search knows how far its picture reaches");
         }
         const [width, height] = parseSize(this.topConfig.size);
@@ -8512,7 +8509,14 @@ export class MockBackend implements Api, EventFeed {
         const known = cornersKnown(this.topBoardLook.cornersOf(job.id), middle, cornerMm, diagonal) ?? this.topBoardLook.foundKnown(job.id);
         let stops: Board[];
         try {
-            stops = searchStops(box ?? around ?? [here.x - diagonal / 2, here.y - diagonal / 2, here.x + diagonal / 2, here.y + diagonal / 2], [width * this.topConfig.mm_per_px, height * this.topConfig.mm_per_px], known ? { x: known.center[0], y: known.center[1] } : here);
+            // Nothing says where the board is: a quick scan of where boards
+            // lie (the file's board area, else its bed), the stops spaced by
+            // the board's size.
+            const lie = device.top?.board_area ?? device.top?.bed ?? null;
+            const bounds = jobBounds(job);
+            const quick = box === null && around === null && known === null && lie !== null && bounds !== null;
+            const coarse = quick ? QUICK_SHARE * Math.min(bounds.x1 - bounds.x0, bounds.y1 - bounds.y0) : null;
+            stops = searchStops(quick ? lie : box ?? around ?? [here.x - diagonal / 2, here.y - diagonal / 2, here.x + diagonal / 2, here.y + diagonal / 2], [width * scale, height * scale], known ? { x: known.center[0], y: known.center[1] } : here, coarse);
         } catch (error) {
             throw new ApiError(400, errorText(error));
         }
@@ -8530,7 +8534,7 @@ export class MockBackend implements Api, EventFeed {
         progress.seconds = Math.round(session.elapsed * 10) / 10;
         const stops = this.topSearchStops;
         const reached = Math.floor(session.elapsed / SEARCH_STOP_SECONDS);
-        const offset = this.topConfig.offset ?? session.device.top?.offset ?? [0, 0];
+        const offset = this.topOffsetInUse(session.device).offset;
         while (this.topSession === session && progress.done < Math.min(reached, stops.length + 1)) {
             const index = progress.done;
             if (index >= stops.length) {
@@ -8561,6 +8565,13 @@ export class MockBackend implements Api, EventFeed {
                 progress.done = progress.total;
                 this.recordSearch("top", session.job!, null, session.elapsed, stops.length, index + 1, this.topBoardLook.state().estimate ?? null);
                 this.message("info", `board found: its middle at ${formatFixed(estimate.center[0], 3)}, ${formatFixed(estimate.center[1], 3)} mm, turned ${formatFixed(estimate.rotation, 3)} degrees (mock)`);
+                // A board found measures the picture's scale when none was
+                // measured, as the backend's search keeps pcbv's (logged
+                // there with an undo; kept plainly here).
+                if (!(this.topConfig.mm_per_px > 0)) {
+                    this.topConfig = { ...this.topConfig, mm_per_px: TOP_TRUTH.mmPerPx };
+                    this.message("info", `the board found puts the top camera's scale at ${formatFixed(TOP_TRUTH.mmPerPx * 1000, 2)} um a pixel (mock)`);
+                }
             }
         }
         this.emitPlacing();
@@ -8596,7 +8607,7 @@ export class MockBackend implements Api, EventFeed {
         placing.references = placing.references.filter((entry) => !(entry.job === jobId && (refs.has(entry.ref) || entry.by === "look" || entry.by === "corners" || entry.by === "corner")));
         for (const part of pair) {
             const at = applyEstimate(best, { x: part.x, y: part.y });
-            placing.references.push({ job: jobId, ref: part.ref, at: [round4(at.x), round4(at.y)], by });
+            placing.references.push({ job: jobId, ref: part.ref, at: [round4(at.x), round4(at.y)], by, offset: this.topOffsetInUse().offset });
         }
         this.emitPlacing();
         return this.placingStateOf();
@@ -8606,10 +8617,7 @@ export class MockBackend implements Api, EventFeed {
         const device = this.gcodeIdle();
         const job = this.requireJob(jobId);
         const point = this.cornerPoint(job, corner);
-        const offset = this.topConfig.offset ?? device.top?.offset ?? null;
-        if (offset === null) {
-            throw new ApiError(400, "the top camera's offset is not known: give [top_camera] offset in the machine file, or Measure offset");
-        }
+        const offset = this.topOffsetInUse(device).offset;
         const head = this.deviceHere(device);
         const at: [number, number] = [head.x + offset[0], head.y + offset[1]];
         this.topBoardLook.addCorner(job.id, corner, point, at, jobSize(job).middle);
@@ -8626,6 +8634,7 @@ export class MockBackend implements Api, EventFeed {
         placing.references.push({
             job: jobId, ref, at: [round4(at[0]), round4(at[1])], by: "corner", point: [round4(point[0]), round4(point[1])],
             ...(angle !== null ? { angle: round4(angle) } : {}),
+            offset: this.topOffsetInUse().offset,
         });
     }
 
@@ -8694,10 +8703,7 @@ export class MockBackend implements Api, EventFeed {
         const device = this.gcodeIdle();
         const job = this.requireJob(jobId);
         const point = this.cornerPoint(job, corner);
-        const offset = this.topConfig.offset ?? device.top?.offset ?? null;
-        if (offset === null) {
-            throw new ApiError(400, "the top camera's offset is not known: give [top_camera] offset in the machine file, or Measure offset");
-        }
+        const offset = this.topOffsetInUse(device).offset;
         const at = this.deviceHere(device);
         const machine: [number, number] = [round4(at.x + offset[0]), round4(at.y + offset[1])];
         const [width, height] = parseSize(this.topConfig.size);
@@ -9070,7 +9076,7 @@ export class MockBackend implements Api, EventFeed {
             (entry) => !(entry.job === job && (refs.has(entry.ref) || (found.length > 1 && entry.by !== "fiducial"))),
         );
         for (const entry of found) {
-            this.placing().references.push({ job, ref: entry.ref, at: entry.at, by: "fiducial" });
+            this.placing().references.push({ job, ref: entry.ref, at: entry.at, by: "fiducial", offset: this.topOffsetInUse().offset });
         }
         this.topFiducials = { job, found, fit: { ...fit, marks: found.length } };
         this.emitPlacing();
@@ -9249,15 +9255,18 @@ export class MockBackend implements Api, EventFeed {
         this.devicePart(request.job, request.ref);
         let at = request.at;
         if (at === undefined) {
-            // The camera's offset as measured, else as the file designs it: the backend's _top_offset.
-            const offset: [number, number] = request.camera ? this.topOffsetOf(this.placingDevice()) : [0, 0];
+            // The camera's offset in use: as measured, else as the file designs it, else none.
+            const offset: [number, number] = request.camera ? this.topOffsetInUse().offset : [0, 0];
             const here = this.deviceHere(this.gcodeIdle());
             at = [here.x + offset[0], here.y + offset[1]];
         } else if (!at.every((value) => Number.isFinite(value) && Math.abs(value) <= 10000)) {
             throw new ApiError(400, "a reference's place must be within 10000 mm");
         }
         this.placing().references = this.placing().references.filter((entry) => !(entry.job === request.job && entry.ref === request.ref));
-        this.placing().references.push({ job: request.job, ref: request.ref, at: [round4(at[0]), round4(at[1])], by: request.camera ? "camera" : "nozzle" });
+        this.placing().references.push({
+            job: request.job, ref: request.ref, at: [round4(at[0]), round4(at[1])], by: request.camera ? "camera" : "nozzle",
+            ...(request.camera && request.at === undefined ? { offset: this.topOffsetInUse().offset } : {}),
+        });
         this.emitPlacing();
         return this.placingStateOf();
     }
@@ -9274,7 +9283,7 @@ export class MockBackend implements Api, EventFeed {
      * reference of its own, and turns a lone one by its edges' turn. The
      * backend's _board_fit.
      */
-    private deviceFitOf(jobId: string, parts: Component[]): AlignFit {
+    private deviceFitOf(jobId: string, parts: Component[], frame: "nozzle" | "camera" = "nozzle"): AlignFit {
         const byRef = new Map(parts.map((part) => [part.ref, part]));
         const designOf = (entry: PnpReference): [number, number] | null => {
             if (entry.by === "corner") {
@@ -9286,7 +9295,12 @@ export class MockBackend implements Api, EventFeed {
         const entries = this.placing().references.filter((entry) => entry.job === jobId && designOf(entry) !== null);
         const found = entries.filter((entry) => entry.by === "fiducial");
         const used = found.length > 1 ? found : entries;
-        const pairs: [[number, number], [number, number]][] = used.map((entry) => [designOf(entry)!, [entry.at[0], entry.at[1]]]);
+        // With no offset known the camera's places are the head's, not the
+        // nozzle's: a fit is of one frame, the one asked for.
+        if (!this.topOffsetInUse().known && used.some((entry) => (entry.offset !== undefined) !== (frame === "camera"))) {
+            throw new ApiError(400, "the board's place was taken by the top camera, whose offset from the nozzle is not known: put the nozzle on a mark, press Nozzle on mark, then Measure offset");
+        }
+        const pairs: [[number, number], [number, number]][] = used.map((entry) => [designOf(entry)!, this.referenceAt(entry)]);
         const angle = this.placing().angle ?? (used.length === 1 ? used[0]!.angle ?? null : null);
         try {
             return deviceFit(pairs, angle);
@@ -9517,15 +9531,46 @@ export class MockBackend implements Api, EventFeed {
     private gcodeGotoPart(job: string, ref: string, camera = false): void {
         const device = this.gcodeIdle();
         const part = this.devicePart(job, ref);
-        const { plan } = this.devicePlanOf(job, []);
-        const [tx, ty] = turnPoint([part.x, part.y], plan.fit.rotation);
-        let [x, y] = [tx + plan.fit.shift[0], ty + plan.fit.shift[1]];
+        // The camera goes by the camera's own places while no offset is known; the nozzle needs the nozzle's.
+        const { offset, known } = this.topOffsetInUse(device);
+        const fit = this.deviceFitOf(job, mockComponents(this.requireJob(job)), camera && !known ? "camera" : "nozzle");
+        const [tx, ty] = turnPoint([part.x, part.y], fit.rotation);
+        let [x, y] = [tx + fit.shift[0], ty + fit.shift[1]];
         if (camera) {
-            const offset = this.topOffsetOf(device);
             [x, y] = [x - offset[0], y - offset[1]];
         }
         this.headLines(device, gotoLines(device, this.deviceHere(device), { x, y }));
         this.emitPlacing();
+    }
+
+    /**
+     * The top camera's offset in use, and whether anything says it: as
+     * measured, else as the machine file's design has it, else zero, which
+     * makes the places the camera takes the head's own (the backend's
+     * _top_offset_in_use).
+     */
+    private topOffsetInUse(device: MockDevice | null = this.gcodeId !== null ? this.placingDevice() : null): { offset: [number, number]; known: boolean } {
+        if (this.topConfig.offset !== null) {
+            return { offset: [this.topConfig.offset[0], this.topConfig.offset[1]], known: true };
+        }
+        if (device?.top?.offset) {
+            return { offset: [device.top.offset[0], device.top.offset[1]], known: true };
+        }
+        return { offset: [0, 0], known: false };
+    }
+
+    /**
+     * Where a reference lies under the offset in use now: one taken through
+     * the camera was kept with the offset in use then, and moves by the
+     * difference; one taken by the nozzle, or kept before references
+     * carried an offset, stays.
+     */
+    private referenceAt(entry: PnpReference): [number, number] {
+        if (!entry.offset) {
+            return [entry.at[0], entry.at[1]];
+        }
+        const now = this.topOffsetInUse().offset;
+        return [round4(entry.at[0] + now[0] - entry.offset[0]), round4(entry.at[1] + now[1] - entry.offset[1])];
     }
 
     /** Where the top camera's picture center is from the nozzle: as measured, else as the profile's design has it. */

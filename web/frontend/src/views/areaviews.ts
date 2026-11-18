@@ -182,6 +182,17 @@ export function jobSteps(state: AppState): AreaView[] {
     return steps.filter((step): step is AreaView => step !== null);
 }
 
+/** How each kind of reference was taken, as the Board step says it. */
+const TAKEN_BY: Record<string, string> = {
+    nozzle: "the nozzle", camera: "the camera", fiducial: "fiducials found", look: "the camera's look", corners: "corners taken", corner: "corners taken",
+};
+
+/** A board's references in a line: how many, and how they were taken. */
+export function referencesText(references: { by?: string }[]): string {
+    const ways = Array.from(new Set(references.map((entry) => TAKEN_BY[entry.by ?? "nozzle"] ?? "hand")));
+    return `${references.length} ${references.length === 1 ? "reference" : "references"} taken, by ${ways.join(" and ")}.`;
+}
+
 /**
  * The steps of placing parts with a G-code pick and place machine:
  * connect, home, pick the board and its parts, say where the board sits,
@@ -191,7 +202,8 @@ export function placingSteps(state: AppState): AreaView[] {
     const placing = state.placing;
     const jobId = state.job?.id ?? null;
     const parts = state.components !== null && state.components.job === jobId ? state.components.components.length : 0;
-    const references = referencesOf(placing, jobId).length;
+    const taken = referencesOf(placing, jobId);
+    const references = taken.length;
     const cameras: (string | string[])[] = [["pnp-top-view", "pnp-view"]];
     return [
         {
@@ -232,7 +244,7 @@ export function placingSteps(state: AppState): AreaView[] {
             cols: WORK_AND_PANEL,
             dock: true,
             step: { done: references > 0, optional: false },
-            line: references > 0 ? `${references} ${references === 1 ? "reference" : "references"} taken.` : "No reference taken yet.",
+            line: references > 0 ? referencesText(taken) : "The board's place is not known yet: find it by the camera, or take a reference.",
         },
         {
             id: "feeders",

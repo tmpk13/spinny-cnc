@@ -233,6 +233,37 @@ describe("the view bar", () => {
     const names = (bar: HTMLElement): string[] => Array.from(bar.querySelectorAll(".viewbar-name")).map((node) => node.textContent ?? "");
     const marks = (bar: HTMLElement): (string | null)[] => Array.from(bar.querySelectorAll(".viewbar-item")).map((node) => node.getAttribute("data-step"));
 
+    test("the Run area's steps have Auto: it says where it stopped in a line of its own, until a step is pressed", async () => {
+        const app = makeApp();
+        const { ctx, store } = setup();
+        mountTabs(app.querySelector("#tabs")!, store);
+        mountPanels(app);
+        mountViewBars(ctx, { use: app.querySelector("#views-use")!, setup: app.querySelector("#views-setup")! }, { auto: { startCamera: () => undefined, sleep: () => Promise.resolve() } });
+        const bar = app.querySelector<HTMLElement>("#views-use")!;
+        // The Job area's views are not steps: no Auto there.
+        showPage("job");
+        expect(Array.from(bar.querySelectorAll("button")).some((press) => press.textContent === "Auto")).toBe(false);
+        showPage("run");
+        const auto = findButton(bar, "Auto");
+        expect(auto.title).toContain("never starts a run");
+        const line = bar.querySelector<HTMLElement>(".viewbar-auto")!;
+        expect(line.hidden).toBe(true);
+        // A job picked puts the area on its last step; Auto, with no port to connect, goes back to the first and says why it stops.
+        store.set({ jobs: [summary], job });
+        showAreaView("run", "run");
+        expect(app.querySelector("#page-run")!.getAttribute("data-view")).toBe("run");
+        auto.click();
+        await Promise.resolve();
+        expect(line.hidden).toBe(false);
+        expect(line.textContent).toBe("Auto: No port found: plug the machine in, or type its port on the Machines page.");
+        expect(line.getAttribute("data-auto")).toBe("need");
+        expect(app.querySelector("#page-run")!.getAttribute("data-view")).toBe("connect");
+        expect(auto.textContent).toBe("Auto");
+        // A step pressed by hand: the line has been read.
+        showAreaView("run", "job");
+        expect(line.hidden).toBe(true);
+    });
+
     test("lists the steps of the Run area, opens where the work stands and follows it", () => {
         const { app, store, bar } = mounted();
         showPage("run");

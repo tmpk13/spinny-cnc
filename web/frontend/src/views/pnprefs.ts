@@ -16,7 +16,7 @@ import { formatFixed, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { Component, PlacingState, PnpReference } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
-import { fiducialText, referencesOf } from "./placing.ts";
+import { fiducialText, placeWaitsForOffset, referencesOf } from "./placing.ts";
 import { infoTip } from "./infotip.ts";
 import { readAlignCount, readAlignSet, readShowShape, spreadParts, writeAlignCount, writeAlignSet, writeShowShape } from "./partshape.ts";
 
@@ -286,12 +286,14 @@ export function mountPnpRefs(root: HTMLElement, ctx: Ctx, onShape: () => void = 
         nozzleHere.textContent = picked ? `Nozzle here: ${state.pnpPart}` : "Nozzle here";
         cameraHere.textContent = picked ? `Camera here: ${state.pnpPart}` : "Camera here";
         lockFor(nozzleHere, [!connected, "connect the machine first"], [busy, "the machine is busy"], [!picked, "pick a part in the Parts panel first"]);
-        const offsetKnown = (device?.top?.offset ?? null) !== null || (state.placing?.document?.top?.offset ?? null) !== null;
-        lockFor(cameraHere, [!connected, "connect the machine first"], [busy, "the machine is busy"], [!picked, "pick a part in the Parts panel first"], [!offsetKnown, "the top camera's offset is not known: give it in the machine file or measure it"]);
+        // A place taken through the camera needs no offset first: it is kept
+        // with the offset in use and follows the one measured later.
+        lockFor(cameraHere, [!connected, "connect the machine first"], [busy, "the machine is busy"], [!picked, "pick a part in the Parts panel first"]);
         setLocked(clear, refs.length === 0, "no reference to clear");
-        const measured = device?.top?.offset !== null && device?.top?.offset !== undefined && (device?.top?.mm_per_px ?? 0) > 0;
-        lockFor(findFiducials, [!connected, "connect the machine first"], [busy, "the machine is busy"], [device?.top?.running !== true, "start the top camera first"], [!measured, "measure the top camera's offset first"], [!job, "pick a board job first"]);
-        fitLine.textContent = fitText(fit, refs.length, device?.angle);
+        lockFor(findFiducials, [!connected, "connect the machine first"], [busy, "the machine is busy"], [device?.top?.running !== true, "start the top camera first"],
+            [!((device?.top?.mm_per_px ?? 0) > 0), "the top camera's scale is not measured: Measure camera, or a search that finds a board, measures it"], [!job, "pick a board job first"]);
+        fitLine.textContent = fitText(fit, refs.length, device?.angle)
+            + (placeWaitsForOffset(device, job?.id ?? null) ? " Taken by the camera, whose offset from the nozzle is not known: placing waits for Measure offset, and the place follows it." : "");
         fiducialLine.textContent = fiducialText(device?.top, job?.id ?? null);
         const angleText = device?.angle === null || device?.angle === undefined ? "" : String(device.angle);
         if (angle !== document.activeElement && (angle.value === angleShown || angleShown === "")) {

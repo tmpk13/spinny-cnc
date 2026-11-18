@@ -5,6 +5,11 @@
 // other views as plain tabs. All panels, at the bar's end, shows the area
 // whole, as the operator arranged it.
 //
+// The Run area's steps have Auto beside Next (src/views/autosteps.ts): it
+// does the steps the page can do by itself, showing the step it is on and
+// saying what it does in a line of its own under the step's, and stops
+// where a person is needed. The line stays until a step is pressed.
+//
 // Which view an area shows: a view pressed stays until another is; until
 // one is pressed, a stepped area follows the work (the first step a run
 // needs that is not done), so it opens where things stand and moves on
@@ -21,6 +26,7 @@ import { readObject } from "../layout.ts";
 import type { Side } from "../sides.ts";
 import type { AppState } from "../state.ts";
 import { ALL_VIEW, isSteps, stepToOpen, VIEW_ONLY, viewHolding, viewPanels, viewsOf, type AreaView } from "./areaviews.ts";
+import { autoRunner, type AutoIo, type AutoRunner } from "./autosteps.ts";
 import type { Ctx } from "./context.ts";
 import { onPanelOutOfView, showPanelView } from "./panels.ts";
 import { onPage, onSides, pageNamed, shownOn, type PageId } from "./tabs.ts";
@@ -68,6 +74,17 @@ interface Built {
     back: HTMLButtonElement;
     next: HTMLButtonElement;
     all: HTMLButtonElement;
+    /** Auto and its line, where the area's steps have it. */
+    auto: HTMLButtonElement | null;
+    autoLine: HTMLElement | null;
+}
+
+/** The area whose steps Auto does. */
+const AUTO_PAGE: PageId = "run";
+
+export interface ViewBarOptions {
+    /** What Auto needs besides the page's requests (a camera's start, its waits); left out, the steps have no Auto. */
+    auto?: Pick<AutoIo, "startCamera"> & Partial<Pick<AutoIo, "sleep">>;
 }
 
 /**
@@ -75,10 +92,19 @@ interface Built {
  * child of its pane. The layout layer has to be mounted first, as a view
  * is put on the page through it.
  */
-export function mountViewBars(ctx: Ctx, bars: Record<Side, HTMLElement>): ViewBars {
+export function mountViewBars(ctx: Ctx, bars: Record<Side, HTMLElement>, options: ViewBarOptions = {}): ViewBars {
     const picked = new Map<PageId, { id: string; byHand: boolean }>();
     const kept = readObject(readStored(VIEWS_KEY));
     const built: Partial<Record<Side, Built>> = {};
+    // Auto shows the step its move is in, as a press on the step would.
+    const auto: AutoRunner | null = options.auto
+        ? autoRunner({ ctx, startCamera: options.auto.startCamera, sleep: options.auto.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))) }, (line) => {
+            if (line !== null && has(listed(AUTO_PAGE), line.step)) {
+                picked.set(AUTO_PAGE, { id: line.step, byHand: true });
+            }
+            drawAll();
+        })
+        : null;
 
     const has = (views: AreaView[], id: string): boolean => id === ALL_VIEW || views.some((view) => view.id === id);
 
@@ -154,6 +180,10 @@ export function mountViewBars(ctx: Ctx, bars: Record<Side, HTMLElement>): ViewBa
         if (!has(views, id)) {
             return;
         }
+        // A step pressed by hand: what Auto last said has been read.
+        if (page === AUTO_PAGE) {
+            auto?.clear();
+        }
         picked.set(page, { id, byHand: true });
         remember(page, views, id);
         drawAll();
@@ -208,13 +238,22 @@ export function mountViewBars(ctx: Ctx, bars: Record<Side, HTMLElement>): ViewBa
         const next = button("Next", () => step(1), "btn btn-small viewbar-next");
         const top = el("div", { class: "viewbar-row" }, list, all);
         const nodes: HTMLElement[] = [top];
+        const runner = steps && page === AUTO_PAGE ? auto : null;
+        const autoButton = runner
+            ? button("Auto", () => (runner.running() ? runner.stop() : runner.start()), "btn btn-small viewbar-auto-press",
+                "do what the page can by itself, from the first step not done: connect the machine found, home a G-code machine, find the board with the camera and take its place; it stops where you are needed and never starts a run")
+            : null;
+        const autoLine = runner ? el("p", { class: "viewbar-auto", role: "status", hidden: true }) : null;
         if (steps) {
-            nodes.push(el("div", { class: "viewbar-row viewbar-line" }, el("p", { class: "viewbar-words" }, title, tag, say), el("div", { class: "viewbar-nav" }, back, next)));
+            nodes.push(el("div", { class: "viewbar-row viewbar-line" }, el("p", { class: "viewbar-words" }, title, tag, say), el("div", { class: "viewbar-nav" }, back, autoButton, next)));
+        }
+        if (autoLine) {
+            nodes.push(autoLine);
         }
         replace(bar, ...nodes);
         bar.toggleAttribute("data-steps", steps);
         bar.setAttribute("aria-label", steps ? "Steps" : "Views");
-        return { page, ids: views.map((view) => view.id).join(" "), tabs, title, tag, say, back, next, all };
+        return { page, ids: views.map((view) => view.id).join(" "), tabs, title, tag, say, back, next, all, auto: autoButton, autoLine };
     }
 
     function draw(side: Side): void {
@@ -278,6 +317,18 @@ export function mountViewBars(ctx: Ctx, bars: Record<Side, HTMLElement>): ViewBa
             }
             // The way on is the next action once this step is done.
             nodes.next.classList.toggle("btn-primary", view?.step?.done === true);
+        }
+        if (auto && nodes.auto && nodes.autoLine) {
+            const going = auto.running();
+            const line = auto.line();
+            nodes.auto.textContent = going ? "Stop Auto" : "Auto";
+            nodes.auto.classList.toggle("urgent", going);
+            nodes.autoLine.hidden = line === null;
+            const words = line === null ? "" : `Auto: ${line.text}`;
+            if (nodes.autoLine.textContent !== words) {
+                nodes.autoLine.textContent = words;
+            }
+            nodes.autoLine.setAttribute("data-auto", line?.kind ?? "");
         }
     }
 

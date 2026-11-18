@@ -1874,7 +1874,7 @@ button.badge.state {
 
 /* The Board place panel (src/views/boardplace.ts): each way a fold, ruled
    off from the one above it; a way whose view hides its box goes. */
-.place-way ~ .place-way:not(.hidden) {
+.place-way:not(.hidden) ~ .place-way:not(.hidden) {
     padding-top: var(--flow);
     border-top: thin solid var(--border);
 }
@@ -6800,6 +6800,19 @@ table.find-guesses tr.elsewhere td {
     display: flex;
     gap: 0.4rem;
     margin-left: auto;
+}
+
+/* What Auto is doing, or where it stopped and why: a line of its own
+   under the step's, ink while it waits for someone. */
+.viewbar-auto {
+    margin: 0;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+}
+
+.viewbar-auto[data-auto="need"] {
+    color: var(--strong);
+    font-weight: 600;
 }
 
 /* Where the rail shows, the steps are named and in reach right over this

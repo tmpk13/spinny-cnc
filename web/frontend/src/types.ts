@@ -1575,6 +1575,12 @@ export interface PnpReference {
     point?: [number, number];
     /** The board's turn a corner's edges showed, degrees: a lone reference is turned by it. */
     angle?: number;
+    /**
+     * The top camera's offset in use when the place was taken through it
+     * ([0, 0] with none known): `at` as sent is corrected to the offset in
+     * use now, so a place the camera took follows an offset measured later.
+     */
+    offset?: [number, number];
 }
 
 export interface PlacingRun {

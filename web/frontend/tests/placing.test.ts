@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { DEVICE_LINES_PER_SECOND, MockBackend } from "../src/mock/backend.ts";
 import { blockLines, deviceFit, planDevice, planSummary, VISION_NOTE } from "../src/mock/openpnp.ts";
 import type { Component } from "../src/types.ts";
-import { nothingText, PLACING_SETUP, placingBadge, placingRunText, planText, referencesOf } from "../src/views/placing.ts";
+import { nothingText, PLACING_SETUP, placeWaitsForOffset, placingBadge, placingRunText, planText, referencesOf, topOffsetKnown } from "../src/views/placing.ts";
 import { mountPnp } from "../src/views/pnp.ts";
 import { referenceFit } from "../src/views/pnprefs.ts";
 import { parseDevice } from "./gcoderig.ts";
@@ -241,6 +241,61 @@ describe("a corner taken with the top camera", () => {
         state = await backend.topCornersClear();
         expect(state.references.filter((entry) => entry.by === "corner")).toEqual([]);
         await expect(backend.pnpGoto({ job: job.id, ref: part.ref })).rejects.toMatchObject({ status: 400 });
+    });
+});
+
+describe("the top camera's offset applied after", () => {
+    test("a place the camera took follows an offset measured later; the nozzle's stays", async () => {
+        const backend = new MockBackend({ timers: false });
+        const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
+        await marlinRig(backend, "\n[top_camera]\noffset = [20.0, 0.0]\n");
+        await backend.connect("/dev/ttyACM1", "openpnp-marlin");
+        const { components } = await backend.components(job.id);
+        const part = components.find((entry) => !entry.fiducial)!;
+        await backend.command("G0 X80 Y30");
+        await backend.topCorner(job.id, "bottom left");
+        let state = await backend.pnpReference({ job: job.id, ref: part.ref });
+        const corner = () => state.references.find((entry) => entry.by === "corner")!;
+        const nozzle = () => state.references.find((entry) => entry.by === "nozzle")!;
+        // Taken under the file's offset, and kept with it.
+        expect(corner().at).toEqual([100, 30]);
+        expect(corner().offset).toEqual([20, 0]);
+        expect(nozzle().offset).toBeUndefined();
+        expect(placeWaitsForOffset(state, job.id)).toBe(false);
+        // The offset measured: the camera's place moves by the difference, the nozzle's does not.
+        state = await backend.topSettings({ offset: [21, 0.5] });
+        expect(corner().at).toEqual([101, 30.5]);
+        expect(corner().offset).toEqual([20, 0]);
+        expect(nozzle().at).toEqual([80, 30]);
+        // Taken back: so is the move.
+        state = await backend.topSettings({ clear: ["offset"] });
+        expect(corner().at).toEqual([100, 30]);
+    });
+
+    test("with no offset known the camera still takes the board's place; what puts the nozzle there waits for it", async () => {
+        const backend = new MockBackend({ timers: false });
+        const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
+        await marlinRig(backend, "\n[top_camera]\nfiducial = \"bright\"\n");
+        await backend.connect("/dev/ttyACM1", "openpnp-marlin");
+        const { components } = await backend.components(job.id);
+        const part = components.find((entry) => !entry.fiducial)!;
+        await backend.command("G0 X80 Y30");
+        // No refusal: the place is the head's own, with the picture's center on the corner.
+        let state = await backend.topCorner(job.id, "bottom left");
+        const corner = () => state.references.find((entry) => entry.by === "corner")!;
+        expect(corner().at).toEqual([80, 30]);
+        expect(corner().offset).toEqual([0, 0]);
+        expect(topOffsetKnown(state)).toBe(false);
+        expect(placeWaitsForOffset(state, job.id)).toBe(true);
+        // The camera goes back to a part by it; the nozzle cannot, nor a plan.
+        await backend.pnpGoto({ job: job.id, ref: part.ref, camera: true });
+        await expect(backend.pnpGoto({ job: job.id, ref: part.ref })).rejects.toMatchObject({ status: 400, message: expect.stringContaining("Measure offset") });
+        await expect(backend.pnpPlan(job.id)).rejects.toMatchObject({ status: 400 });
+        // Measured: the place follows, and the plan is made.
+        state = await backend.topSettings({ offset: [20, 0] });
+        expect(corner().at).toEqual([100, 30]);
+        expect(placeWaitsForOffset(state, job.id)).toBe(false);
+        expect((await backend.pnpPlan(job.id)).fit.marks).toBe(1);
     });
 });
 

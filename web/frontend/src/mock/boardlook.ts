@@ -86,15 +86,27 @@ export function applyEstimate(estimate: BoardEstimate, point: Board): Board {
     return { x: t.x + estimate.shift[0], y: t.y + estimate.shift[1] };
 }
 
-/** The search's stops over a box for the picture's center, a picture apart less the overlap, nearest the start first, as the backend's search_stops. */
-export function searchStops(box: SearchBox, view: [number, number], start: Board): Board[] {
+/** A quick scan's stops lie this share of the board's shorter side apart, as the backend's QUICK_SHARE. */
+export const QUICK_SHARE = 0.6;
+
+/**
+ * The search's stops over a box for the picture's center, a picture apart
+ * less the overlap, nearest the start first, as the backend's search_stops.
+ * With `coarse` (mm) a quick scan of a box much larger than the board: the
+ * stops that far apart, never closer than the pictures' own grid (the
+ * backend goes on to the lattice between them; the mock's board is found
+ * on the first).
+ */
+export function searchStops(box: SearchBox, view: [number, number], start: Board, coarse: number | null = null): Board[] {
     const [x0, y0, x1, y1] = [Math.min(box[0], box[2]), Math.min(box[1], box[3]), Math.max(box[0], box[2]), Math.max(box[1], box[3])];
-    const stepX = Math.max(view[0] * (1 - SEARCH_OVERLAP), 0.1);
-    const stepY = Math.max(view[1] * (1 - SEARCH_OVERLAP), 0.1);
+    const stepX = Math.max(view[0] * (1 - SEARCH_OVERLAP), coarse ?? 0, 0.1);
+    const stepY = Math.max(view[1] * (1 - SEARCH_OVERLAP), coarse ?? 0, 0.1);
     const nx = Math.max(1, Math.ceil((x1 - x0) / stepX - 1e-9));
     const ny = Math.max(1, Math.ceil((y1 - y0) / stepY - 1e-9));
     if (nx * ny > MAX_STOPS) {
-        throw new Error(`the box needs ${nx * ny} stops of the camera's picture, more than ${MAX_STOPS}: draw a smaller box`);
+        throw new Error(coarse !== null
+            ? `a scan of where boards lie needs ${nx * ny} stops for a board this small, more than ${MAX_STOPS}: give [top_camera] board_area in the machine file (where boards are put), draw a box on the camera's picture (Shift and a drag), or take a corner of the board`
+            : `the box needs ${nx * ny} stops of the camera's picture, more than ${MAX_STOPS}: draw a smaller box`);
     }
     const cx = (x0 + x1) / 2;
     const cy = (y0 + y1) / 2;

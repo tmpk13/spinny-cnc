@@ -35,6 +35,25 @@ export function referencesOf(placing: PlacingState | null, jobId: string | null)
     return jobId === null ? [] : (placing?.references ?? []).filter((entry) => entry.job === jobId);
 }
 
+/** How a reference is taken through the top camera: its place is the head's with the picture's center on the point, plus the camera's offset. */
+const CAMERA_TAKEN: ReadonlySet<string> = new Set(["camera", "fiducial", "look", "corners", "corner"]);
+
+/** Whether the top camera's offset from the nozzle is known: measured, or given in the machine's file. */
+export function topOffsetKnown(placing: PlacingState | null): boolean {
+    return (placing?.top?.offset ?? null) !== null || (placing?.document?.top?.offset ?? null) !== null;
+}
+
+/**
+ * Whether a job's place on the machine waits for the top camera's offset:
+ * references of it were taken through the camera while nothing says where
+ * the camera sits from the nozzle. The camera can find the board and go
+ * back to it all the same; what puts the nozzle on the board (a plan, a
+ * run) cannot until the offset is measured, and the places follow it then.
+ */
+export function placeWaitsForOffset(placing: PlacingState | null, jobId: string | null): boolean {
+    return !topOffsetKnown(placing) && referencesOf(placing, jobId).some((entry) => CAMERA_TAKEN.has(entry.by ?? "nozzle"));
+}
+
 /** What the head panel's badge says of the G-code machine placed with. */
 export function placingBadge(placing: PlacingState | null): string {
     if (!placing || placing.machine === null) {
@@ -196,7 +215,7 @@ export const PLACING_SETUP: Setup = {
             {
                 label: "Reference",
                 done: referencesOf(placing, jobId).length > 0,
-                hint: "Pick a part, put the nozzle or the top camera over it, and press Nozzle here or Camera here; or take a corner of the board with the top camera (Corner here, Board place, By camera).",
+                hint: "Find the board with the top camera (Board place, By camera: Scan the bed, then Use as board place); or pick a part, put the nozzle or the top camera over it, and press Nozzle here or Camera here.",
                 panel: "pnp-refs",
             },
             { label: "Place", done: placing?.progress?.state === "done", hint: "Press Plan, check it, then Run.", panel: "pnp-run" },

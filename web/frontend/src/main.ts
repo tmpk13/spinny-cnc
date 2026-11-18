@@ -387,14 +387,15 @@ function main(): void {
     // The look for the board, one panel for every camera; the pick and
     // place board drawing follows the camera and threshold it shows.
     let pnpPanels: PnpPanels | null = null;
+    // Start is the picture's own button: pressed for the Find board panel
+    // and for Auto, so the camera starts with what its settings say.
+    const startCamera = (camera: "head" | "top"): void => Array.from(panel(camera === "top" ? "pnp-top-view" : "camera-view").querySelectorAll<HTMLButtonElement>(".picture-actions button"))
+        .find((press) => press.textContent === "Start")?.click();
     const find = mountFindBoard(place.parts.find, ctx, {
         page: "run",
         boxes: { head: () => vision.view.box(), top: () => pnpPanels?.topBox() ?? null },
         onChange: () => pnpPanels?.boardChanged(),
-        // Start is the picture's own button: pressed for the panel, so the
-        // camera starts with what its settings say.
-        start: (camera) => Array.from(panel(camera === "top" ? "pnp-top-view" : "camera-view").querySelectorAll<HTMLButtonElement>(".picture-actions button"))
-            .find((press) => press.textContent === "Start")?.click(),
+        start: startCamera,
     });
     // Placing with a G-code machine is a part of the Run panel, under the
     // job's run, shown with such a machine only.
@@ -448,7 +449,7 @@ function main(): void {
     // operator left them.
     mountPageSettings(tabTools, mountPanels(panel("app")));
     // Each area's views, once the layout layer can put one on its page.
-    mountViewBars(ctx, { use: panel("views-use"), setup: panel("views-setup") });
+    mountViewBars(ctx, { use: panel("views-use"), setup: panel("views-setup") }, { auto: { startCamera } });
     // The two sides: the handle between them side by side, the keys that
     // swap them, the links between them (and to the other tabs showing
     // them), and the Use side's panels' links to what they run on.

@@ -4,7 +4,7 @@ import { turned } from "../src/kinematics.ts";
 import { estimateOf, jobSize } from "../src/mock/boardlook.ts";
 import { TOP_TRUTH } from "../src/mock/pnp.ts";
 import type { BoardGuess, BoardLook } from "../src/types.ts";
-import { cornersText, knownText, mountFindBoard, mountGuessGraph, pickedCamera, shownGuesses, stretchText } from "../src/views/findboard.ts";
+import { cornersText, knownText, mountFindBoard, mountGuessGraph, pickedCamera, searchWill, shownGuesses, stretchText } from "../src/views/findboard.ts";
 import { lookText } from "../src/views/vision.ts";
 import { click, findButton, runUntilIdle, settle, setup } from "./harness.ts";
 
@@ -260,10 +260,12 @@ describe("the Find board panel", () => {
         const pick = root.querySelector('select[aria-label="Camera that looks for the board"]') as HTMLSelectElement;
         expect(pick.value).toBe("top");
         expect(pickedCamera(store.get(), "head")).toBe("head");
-        click(root, "Look for board");
+        // With a box drawn the search is named for it, and loads the board itself.
+        expect(searchWill(store.get(), "top", true)).toBe("box");
+        click(root, "Search the box");
         await twice();
-        click(root, "Search");
         await twice();
+        expect(calls.map((call) => call.name).filter((name) => name === "topBoard" || name === "topSearch")).toEqual(["topBoard", "topSearch"]);
         expect(calls.find((call) => call.name === "topSearch")?.args[0]).toEqual(searchBox);
         for (let t = 0; t < 60 && store.get().placing?.top?.routine?.state === "running"; t += 0.1) {
             backend.step(0.1);
@@ -278,7 +280,7 @@ describe("the Find board panel", () => {
         // starts where the board was found, tells pcbv, and says so.
         expect(look?.known).toBeNull();
         expect(root.querySelector(".find-known")?.classList.contains("hidden")).toBe(true);
-        click(root, "Search");
+        click(root, "Search the box");
         await twice();
         for (let t = 0; t < 60 && store.get().placing?.top?.routine?.state === "running"; t += 0.1) {
             backend.step(0.1);

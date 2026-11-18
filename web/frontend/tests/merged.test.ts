@@ -97,6 +97,30 @@ describe("Board place", () => {
         expect(root.querySelectorAll("h2").length).toBe(1);
     });
 
+    test("a G-code pick and place machine: by camera leads and is open, by hand and by marks go", async () => {
+        const { ctx, root, store, backend } = setup();
+        const place = mountBoardPlace(root, ctx);
+        const fold = (key: "hand" | "find" | "align"): HTMLDetailsElement => place.parts[key].closest("details")!;
+        // A laser, or nothing connected: by hand leads, the camera's way folded.
+        expect(fold("hand").classList.contains("hidden")).toBe(false);
+        expect(fold("find").open).toBe(false);
+        store.set({ snapshot: await backend.connect("/dev/ttyACM1", "opulo-lumen-rev5") });
+        await ctx.refreshPlacing();
+        expect(fold("hand").classList.contains("hidden")).toBe(true);
+        expect(fold("align").classList.contains("hidden")).toBe(true);
+        expect(fold("find").classList.contains("hidden")).toBe(false);
+        expect(fold("find").open).toBe(true);
+        // The page's own opening is not kept as the operator's choice.
+        fold("find").dispatchEvent(new Event("toggle"));
+        expect(localStorage.getItem("spinny.place.find")).toBeNull();
+        // Folded by hand, it stays folded.
+        fold("find").open = false;
+        fold("find").dispatchEvent(new Event("toggle"));
+        expect(localStorage.getItem("spinny.place.find")).toBe("0");
+        store.set({ placing: { ...store.get().placing! } });
+        expect(fold("find").open).toBe(false);
+    });
+
     test("a fold opened or closed stays so in this browser", () => {
         const { ctx, root } = setup();
         mountBoardPlace(root, ctx);

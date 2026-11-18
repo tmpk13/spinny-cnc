@@ -6,6 +6,13 @@
 // machine's parts or fiducials: pnprefs.ts). Its head says where the
 // selected job is and how it was placed.
 //
+// A G-code pick and place machine places a board by its references alone,
+// which its top camera takes or a part under the nozzle does: the job's
+// own offset and the marks of this project's machines say nothing there,
+// so those two ways go, and By camera, the way to start from, is open at
+// first (elsewhere it is folded until pressed: By hand leads). A fold
+// pressed keeps as the operator left it.
+//
 // Each way is a fold holding a box whose id is the panel it was (`find`,
 // `align`, `pnp-refs`), so links and steps naming those still find it, and
 // the view that fills the box is the one that always did. Once the views
@@ -16,6 +23,15 @@ import { el, readStored, writeStored } from "../dom.ts";
 import { formatFixed } from "../format.ts";
 import type { AppState } from "../state.ts";
 import type { Ctx } from "./context.ts";
+import { gcodePlacing } from "./placing.ts";
+
+/** The ways a G-code pick and place machine has no use for. */
+const NOT_GCODE: ReadonlySet<string> = new Set(["hand", "align"]);
+
+/** Whether a way's fold is open before the operator has pressed it: as the list says, and By camera with a G-code machine. */
+export function openAtFirst(way: (typeof PLACE_WAYS)[number], state: AppState): boolean {
+    return way.key === "find" ? gcodePlacing(state) : way.open;
+}
 
 /** The ways to place the board, in the panel's order: the key, the box's id, the fold's title, open at first or not. */
 export const PLACE_WAYS = [
@@ -67,24 +83,41 @@ export function mountBoardPlace(root: HTMLElement, ctx: Ctx): BoardPlace {
     root.append(el("div", { class: "panel-head" }, el("h2", {}, "Board place"), line));
     const parts = {} as Record<PlaceWay, HTMLElement>;
     const extras = {} as Record<PlaceWay, HTMLElement>;
+    const folds = {} as Record<PlaceWay, HTMLDetailsElement>;
+    const keyOf = (way: PlaceWay): string => `spinny.place.${way}`;
     for (const way of PLACE_WAYS) {
-        const key = `spinny.place.${way.key}`;
         const box = el("div", { id: way.id, class: "place-part stack" });
         const extra = el("span", { class: "place-extras" });
-        const fold = el("details", { class: "place-way stack", open: (readStored(key) ?? (way.open ? "1" : "0")) === "1" },
-            el("summary", { title: "fold or unfold" }, el("h3", {}, way.title), extra),
+        const summary = el("summary", { title: "fold or unfold" }, el("h3", {}, way.title), extra);
+        const fold = el("details", { class: "place-way stack", open: (readStored(keyOf(way.key)) ?? (openAtFirst(way, ctx.store.get()) ? "1" : "0")) === "1" },
+            summary,
             box,
-        );
-        fold.addEventListener("toggle", () => writeStored(key, fold.open ? "1" : "0"));
+        ) as HTMLDetailsElement;
+        // Kept when the operator folds it, not when the machine's kind does:
+        // a fold standing as it would at first, with nothing kept yet, is
+        // the page's own doing.
+        fold.addEventListener("toggle", () => {
+            if (readStored(keyOf(way.key)) !== null || fold.open !== openAtFirst(way, ctx.store.get())) {
+                writeStored(keyOf(way.key), fold.open ? "1" : "0");
+            }
+        });
         root.append(fold);
         parts[way.key] = box;
         extras[way.key] = extra;
+        folds[way.key] = fold;
     }
 
     // A way whose view hides its box (references with no pick and place
     // machine) takes its fold with it: the stylesheet, by :has.
     const render = (state: AppState): void => {
         line.textContent = placeLine(state);
+        const gcode = gcodePlacing(state);
+        for (const way of PLACE_WAYS) {
+            folds[way.key].classList.toggle("hidden", gcode && NOT_GCODE.has(way.key));
+            if (readStored(keyOf(way.key)) === null) {
+                folds[way.key].open = openAtFirst(way, state);
+            }
+        }
     };
     ctx.store.subscribe(render, ["job", "align", "camera", "placing", "snapshot"]);
 
