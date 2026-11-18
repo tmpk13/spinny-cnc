@@ -71,8 +71,9 @@ notes/views.md.
   panel's head. The panel layer only takes a section's direct
   `.panel-head`, and setup links go to the section named in FACT_RULES
   (`machine`, `job-machine`), so nested heads would be neither.
-- The jog's go-to rows, Here is, the feed and Motors, Home and Unlock fold
-  under More, open as last left across redraws.
+- The jog's go-to rows, Here is, the zero buttons and the feed fold under
+  More, open as last left across redraws. Home, Unlock and Motors came
+  out of it on 2026-11-17 (notes/views.md, "Home is in the head").
 
 ## Cameras on two sides
 
@@ -83,7 +84,11 @@ notes/views.md.
   its routines, the log) is on the Cameras page, as are the pick and place
   Head panel's moves and tuning and the Machine view. The buttons are the
   same nodes the settings views made, handed to the picture's panel, so
-  Start still sends the device typed on the Setup side first.
+  Start still sends the device typed on the Setup side first. Since
+  2026-11-17 each camera's picture is mounted a second time on the
+  Cameras page (`camera-picture`, `pnp-camera-picture`,
+  `pnp-top-picture`): notes/views.md, "A camera's picture beside its
+  settings".
 - A view polls while its own page shows, alone or side by side
   (`onShownPage`: the node's `main.page` has `data-up`; a node on no page,
   as in the unit tests, counts as shown). Asking `activePage()` would stop

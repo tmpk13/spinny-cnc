@@ -872,3 +872,7 @@
 - Every view of every area within 40 controls and 200 words in its first view, checked by `mise run test-budget` (docs/ui/budget.json, 31 screens).
 - On a narrow window a step's own panel comes before the preview: Run is in a phone's first view.
 - In the rail a side's name is a heading; a ticked box and a slider are drawn in ink; a panel alone in its column in a view has no fold.
+- Each camera's picture shows on its view of the Cameras page, beside the settings that change it (a second mount; the live numbers, color picks and crops there have a picture to work on).
+- Home is in the Machine panel's head, in sight in every step, and leads until a G-code machine is homed; Unlock shows there while in alarm; Motors is out of the jog's More.
+- A camera's picture keeps inside its panel in a step or a view, however far its grip is dragged or wide the window is.
+- The jog's steps are fields: the board's X and Y at the end of the Fine, Normal, Coarse row, a joint's between its moves; a number typed is that axis's step at the size picked, kept by the browser.

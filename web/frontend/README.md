@@ -199,7 +199,8 @@ laser's or spindle's buttons and the markers in one; in a view it shows
 the position and opens the rest on Jog, and in a step it is docked along
 the foot. The jog (`src/views/jog.ts`) has one step size, Fine, Normal or
 Coarse, for every axis, each axis taking its own step for it from the
-machine file. The top bar (`src/views/statusbar.ts`) is the machine as one
+machine file; each step is a field, and a number typed is that axis's
+step at the size picked. Home and Unlock are in the panel's head. The top bar (`src/views/statusbar.ts`) is the machine as one
 button with a menu (connect, disconnect, switch, home), Connect while
 nothing is connected, a chip for a run under way, and Stop. Inside a
 panel, what every run uses is in view and the rest under a More

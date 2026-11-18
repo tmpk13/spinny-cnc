@@ -32,10 +32,33 @@ what was not obvious.
   way to run, not a need. They are in the row, ringed with a dashed line,
   and the Run panel says what each is set to with a link to its step.
 - **One step size for every axis** (Q46 A): Fine is each axis's smallest
-  choice, Coarse its largest, Normal the step its file starts it on. A
-  step typed for one axis holds at every size until cleared, which keeps
-  what the per-axis choosers could do (X by 10 while Y by 1). The board's
-  X and Y lost their bars: the pad moves them and says their steps.
+  choice, Coarse its largest, Normal the step its file starts it on. The
+  board's X and Y lost their bars: the pad moves them.
+- **A step is a field** (the user, 2026-11-17: the numbers at the end of
+  the size's row "should instead be input boxes that show the distance
+  number that can also be set"). The board's X and Y fields end the
+  size's row, a joint's sits between its two moves where its step was
+  said, and the row of own steps under More is gone. A number typed is
+  that axis's step at the size picked, not at every size as the old own
+  step was: a field that shows the step has to change when another size
+  is pressed, or it reads as broken. Typed steps are kept by the browser
+  under a name made of the bar, its unit and the file's choices
+  (`stepsKey`), so a step typed for the laser's table in degrees is not
+  the LumenPnP's A, and a file whose choices change starts from its own
+  again. The file's own number typed, a blank or a zero keeps nothing.
+  Shift with a jog key is the Fine step, typed or the file's.
+- **Home is in the head** (the user, 2026-11-17: Home was "way too hidden
+  away"; it sat under the jog's More, itself behind the dock's Jog, and
+  the fold's name did not say it). Home is the jog's, drawn in its head,
+  which the Machine panel takes over: in sight in every step with the
+  dock shut. It is drawn as the next action (ink) while a G-code machine
+  is not homed, since that machine's steps have a Home step that needs
+  it; a machine of this project's with endstops gets a plain button, as
+  it may be run from a position named by hand. Unlock is there too, shown
+  only while the machine is in alarm: it has nothing to clear otherwise
+  (the firmware answers `error:5 not now`), and in the fold it was out
+  of sight exactly when it was needed. Motors is a row under the bars.
+  Zero here, go to, set position and the feed stay under More (Q62).
 - **Color for states** (Q44 A): the pages' colors are off unless turned
   on; `.btn-primary` is ink (`--strong` on `--panel`, so it is the one
   light button of the dark theme); a choice or a switch that is on is
@@ -75,8 +98,35 @@ what was not obvious.
   job now and then does not need a control on every row.
 - **A camera starts where it is set up.** Start and Stop belong to the
   picture's panel in the Run area; a camera's own panel on the Cameras
-  page has a pair too (the one that can be pressed), since that page has
-  no picture panel and a camera could not be started on it.
+  page has a pair too (the one that can be pressed), and the picture
+  beside it there has none of its own.
+- **A camera's picture beside its settings** (the user, 2026-11-17: "need
+  to be able to see the camera on the camera settings page"). The
+  Cameras page had no picture, yet three things on it wait for one: the
+  live numbers measure the frames a picture shows, a color is picked by
+  a click on the picture, a crop is drawn on it. Each camera's view now
+  leads with its picture (3fr) and has the settings over the stack
+  beside it. It is a second mount of the same picture (`mountVisionView`
+  and camview's `bottomPanel` and `topPanel`, each called per panel),
+  not the Run area's node moved: side by side both pages show, and a node
+  is in one place; the Find board panel presses Start through the Run
+  panel's own row. The two share the camera's key, so a pick armed or a
+  nozzle box drawn is taken on either and the live numbers hear both;
+  each keeps its own height, turn and switches (`store`: `head.setup`,
+  `up.setup`, `top.setup`), since Overlay off to measure the camera alone
+  is not how the Run area wants it; and only the Run area's draws the
+  search box, which is the one the search reads.
+- **A picture keeps inside its panel** (the user, 2026-11-17: the camera
+  view "can be enlarged past the length of the border"). In a view the
+  panel has the height its column gives it, while the picture's box had
+  the height its grip was dragged to (up to 80 rem) or its own shape at
+  the panel's full width, and ran on past the panel's foot with the
+  buttons under it. The panels of pictures (`.picture-panel`) lay their
+  rows in a flex column in a view, and the box alone gives height up;
+  `fit()` already letterboxes the picture in whatever box it has. A grip
+  let go keeps the height the box shows at, not the one the pointer
+  reached. With every panel shown, or on a narrow window, the panel
+  grows with the box as before.
 - **The key list opens on the differences.** 160 keys with their help is
   a reference; the keys where the file and the board differ are what asks
   for a decision. A search looks through every key whatever the box says,
@@ -133,7 +183,9 @@ what was not obvious.
   All panels (whole).
 - `machine-more` holds the jog, the tool and the markers; the pick and
   place head's quick buttons stay out of it, under the position, so the
-  Home step shows Home by fiducial without the jog.
+  Home step shows Home by fiducial without the jog. Home and Unlock are
+  in the head (`.jog-machine`, not a `.button-row`: the rule that puts
+  Hold to move and Cancel away with the jog shut matches those).
 - A part inside a shut dock is reached by a `spinny:show` event bubbling
   from the node: `goToPanel` and the search dispatch it, the Machine
   panel and the preview's View row open on it.

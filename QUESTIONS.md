@@ -360,4 +360,11 @@ Why it matters: finding the nozzle's center is bad (TODO.md) and no picture of a
 - B. Yes, but I lower the nozzle myself and say when: no Z move by the program.
 - C. No: the finder stays as it is.
 Applied: nothing; no Z move is made without an answer.
+Answer: yes
+
+## Q62. Which of the jog's rows should stay folded under More?
+Why it matters: you asked for Home's items out of that fold; Home, Unlock and Motors came out, and each row shown takes height from the work while the dock is open.
+- A. Zero here, go to, set position and the feed stay under More (recommended): they are used now and then, and the open dock stays about a third of the window.
+- B. Everything out, no More in the jog: all in sight once Jog is pressed, and the dock scrolls on a small window.
+Applied: A, in ba0f813.
 Answer:

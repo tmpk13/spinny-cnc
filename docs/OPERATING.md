@@ -27,18 +27,25 @@ counterclockwise seen from above, otherwise set `$dir_invert`. Check steps
 per unit at low speed before the first job. The Machine panel lies along
 the foot of every step of the Run area as a dock: the position always in
 view, and the jog, the tool's buttons and the markers on a press of *Jog*.
+*Home* is in the panel's head, beside *Jog*, on a machine that can home,
+so it is one press away in every step; *Unlock* shows there while the
+machine is in alarm.
 One step size serves every axis: *Fine*, *Normal* or *Coarse*, each axis
 taking its own step for it from the machine file (its smallest choice,
-the one it starts on, its largest), and each axis says the step it moves
-by. On a machine with a board pad the pad comes
+the one it starts on, its largest). Every step is a field showing the
+distance a press moves by: the board's X and Y at the end of the size's
+row, a joint's between its two moves. A number typed there is that
+axis's step at the size picked (X 2.5 mm at *Normal* while *Fine* and
+*Coarse* stay the file's), kept by the browser; the field cleared, the
+file's step is back, and a field holding a typed step is drawn in bold.
+On a machine with a board pad the pad comes
 first: eight arrows around the head's X and Y on the board, the corners
 moving X and Y together (the arrow keys
 move along one axis at a time). Every joint is a line under it: where it
-is now, and its two moves with the step between them. A step of an
-axis's own (X 10 mm while Y stays at 1) is typed under *More*, where the
-zero buttons, going to a place, declaring the position, the feed and the
-motors are too; a step typed for an axis holds at every size until its
-field is cleared. PageUp and PageDown never scroll the
+is now, and its two moves with its step between them, and *Motors*
+under the lines. Under *More* are the
+zero buttons, going to a place, declaring the position and the feed.
+PageUp and PageDown never scroll the
 page (a mill's file binds them to Z); a text area keeps them. *Cancel*
 in the panel's head, or Escape, stops a move (Escape also leaves a text
 field, so the next arrow key jogs). Shift held with a jog key jogs by the
@@ -388,7 +395,7 @@ under the row, and a press on any step goes to the panel that does it.
 The Job area has views the same way, as tabs: *Jobs* (the list, the
 preview and the picked job), *Draw*, *Assistant* and *JSON*. So have the
 Machines page (*Machine*, *Keys*, *Import*) and the Cameras page (a view a
-camera, and *Head and bed*). A link, a setup step or the search going to
+camera, its picture beside its settings, and *Head and bed*). A link, a setup step or the search going to
 a panel the view shown does not hold brings up the view that holds it.
 
 ### Edits not applied
@@ -658,7 +665,11 @@ so what the camera sees follows the pointer, a line showing the move; a
 double-click brings a point to the crosshair (both once the camera's
 scale is measured). The grip under the picture makes its box taller or
 shorter, kept per camera; a double-click on the grip gives the picture
-its own shape back. *Overlay* switches the page's marks over it (the
+its own shape back. In a step or a view the box stops at its panel's
+edge however far the grip is dragged, the buttons under it staying in
+the panel. Each camera's picture shows a second time on its view of the
+Cameras page, beside the settings that change it; that one keeps its own
+height and switches and draws no search box. *Overlay* switches the page's marks over it (the
 crosshair, the circle a spot is looked for within, a spot found with its
 ellipse and box, a search box, the board where the looks put it, the
 known points below) and pcbv's pose of a loaded board; the marks keep
@@ -747,7 +758,8 @@ brightness over it in dB; *Brightness*, the mean level from 0 to 255,
 and its spread; and the share *Clipped* to pure black and white, with a
 histogram of the levels under them. Sharpness grows with contrast too,
 so compare one focus with another at one exposure. The numbers come
-only while the camera runs and its picture is on screen, and they are of
+only while the camera runs and its picture is on screen (the one beside
+the controls on the Cameras page serves), and they are of
 the JPEG the page is sent, which smooths some of the sensor's noise
 away; with a board loaded and *Overlay* on, pcbv's own marks are drawn
 into that JPEG and count as edges, so *Overlay* off measures the camera
@@ -1070,8 +1082,8 @@ Steps panel's *Place parts with a G-code machine*):
    `[port] match = ["lumen"]`, another machine by its file's `url` or
    words); pick it and press *Connect*. The status bar shows the
    firmware's name (M115) and the machine's.
-2. Home, in the Machine panel (*Home* under its fold *Go to, set
-   position, motors*).
+2. Home, in the Machine panel (*Home* in its head, drawn as the next
+   thing to press until the machine is homed).
 3. Pick or upload the board (a `.kicad_pcb`) in the Parts panel, pick a
    part, put the nozzle over it with the Machine panel's jog (or the top camera,
    *with the top camera* on *Go to part*), and press *Nozzle here* or
@@ -1499,8 +1511,7 @@ axis's and the probe's first, by what the machine does:
 
 An axis with a switch at one end or both (`endstop` under its section in
 the machine file, with `endstop_pin`; [MACHINES.md](MACHINES.md#pins))
-can be homed: *Home* in the Machine panel (under *Go to, set position,
-motors*), or `home`, `home R` or `home R+`
+can be homed: *Home* in the Machine panel's head, or `home`, `home R` or `home R+`
 in the console, finds the switch and declares the axis to read
 `home_pos` there. The cycle, and the halt `endstop_halt` asks for, are
 in [PROTOCOL.md](https://github.com/tmpk13/spinny-firmware/blob/main/docs/PROTOCOL.md#endstops-and-homing). The readout's *Homed*

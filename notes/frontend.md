@@ -178,8 +178,9 @@ rather than `setRangeText`, which the test DOM does not have.
 
 One step size (Fine, Normal, Coarse) serves every axis since 2026-11-17
 (notes/views.md): `levelStep` gives each axis its own step for it, and a
-step typed for an axis under More (`typed`, by bar) wins over the size
-while it is there. The board's X and Y have no bars: the pad moves them,
+step typed in an axis's field (`own`, by `stepsKey` and size, kept under
+`spinny.jog.steps`) stands in for the file's at that size. The board's X
+and Y have no bars: the pad moves them, their fields end the size's row,
 and the keyboard reads X's step for left and right and Y's for up and
 down. The cancel button sits in the panel's head, outside the
 fieldset the connection disables, so it is locked on its own with

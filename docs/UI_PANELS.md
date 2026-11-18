@@ -225,7 +225,8 @@ Where it differs from the plan above:
   pictures as panels of their own, each with Start, Stop and Look once,
   rather than one Camera panel with a camera chooser. Each camera's
   settings are a panel of its own on the Cameras page, not one Cameras
-  panel.
+  panel. Since 2026-11-17 each picture shows a second time there, beside
+  its camera's settings ([notes/views.md](../notes/views.md)).
 - **The Machine panel on Job too**, for the Draw panel's Here; it has no
   travel height there (that is Height's on Run).
 - **Run follows the machine.** Panels the machine connected cannot use
