@@ -1010,10 +1010,17 @@ class PickCamera:
         self.client.close()
 
     def frame(self, width: int, overlay: bool) -> bytes:
+        return self.frame_and_age(width, overlay)[0]
+
+    def frame_and_age(self, width: int, overlay: bool) -> tuple[bytes, dict]:
+        """The picture, and what pcbv says of when it was taken: its
+        `frame` number and its `age_ms`. A camera that stops delivering for
+        a while answers its last picture again, older each time, which a
+        caller that just moved the head must not take for the new place."""
         if not self.client.running:
             raise PnpError(f"the {self.label} is not running")
-        _, data = self.client.frame(width=width, overlay=overlay)
-        return data
+        reply, data = self.client.frame(width=width, overlay=overlay)
+        return data, {key: reply[key] for key in ("frame", "age_ms") if isinstance(reply.get(key), (int, float))}
 
     def state(self) -> dict:
         """The settings (places as lists), whether it runs, its latest

@@ -594,6 +594,24 @@ def test_the_top_camera_looks_once_for_its_mark_spot(client):
     assert look is not None and (look.get("spot") or look).get("found") is True
 
 
+class PictureTopCamera(DeviceTopCamera):
+    """A top camera whose pcbv answers pictures, each with its number and age."""
+
+    def frame(self, width=None, overlay=False, quality=80):
+        return {"width": 640, "height": 360, "frame": 7, "age_ms": 12}, b"\xff\xd8 top picture \xff\xd9"
+
+
+def test_the_top_cameras_picture_says_its_number_and_age(client):
+    # The route once asked the top camera for a method only the board
+    # camera had, and answered 500 for every picture: the view stayed empty.
+    rig(client, profile(rest=TOP))
+    client.backend.top.client = PictureTopCamera(client.fake, CAMERA_OFFSET, [])
+    response = client.get("/api/pnp/top/frame.jpg?width=640&overlay=0")
+    assert response.status_code == 200, response.text
+    assert response.content == b"\xff\xd8 top picture \xff\xd9"
+    assert response.headers["X-Frame-Number"] == "7" and response.headers["X-Frame-Age-Ms"] == "12"
+
+
 def test_the_top_camera_measures_its_offset_and_finds_the_fiducials(client):
     job_id = rig(client, profile(rest=TOP))
     with_top_camera(client, job_id)
