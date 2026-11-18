@@ -983,6 +983,11 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             tuning=lambda: _look_tuning(self.top.settings()), options=lambda: _look_options(self.top.settings()),
             crop=lambda: self.top.crop("measure"), board_crop=self.top.board_crop,
         )
+        # The machine and the top camera's offset the top look's places
+        # were made with (placing_part's _settle_top_look moves them when
+        # the offset in use changes); None until the look first looks.
+        self._top_look_offset: tuple[str | None, tuple[float, float]] | None = None
+        self._top_look_settle = threading.Lock()
         self._head_rest = RestTracker()
         self._top_rest = RestTracker()
         # The parts a placing run has put on the board now on the G-code

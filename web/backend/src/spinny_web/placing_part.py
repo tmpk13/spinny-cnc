@@ -49,7 +49,7 @@ from .openpnp import GcodeMachine, Plan, board_fit, declare_line, goto_lines, ne
 from .placer import Placement, PlaceSetup, fiducial_fit
 from .pnp import CameraPlace, PnpError
 from .log import log
-from .topcam import APPROACH_MM, Found
+from .topcam import APPROACH_MM, SCALE_NEEDED, Found
 from .crops import crop_box_mm
 from .vision import VisionError, scale_range
 
@@ -85,6 +85,53 @@ PICTURE_ROLL_DEG = 0.3
 # pictures at half the true scale with a high share of their pads paired;
 # the design keeps those out while a camera somewhat off it still locks.
 DESIGN_SCALE_SPREAD = 1.5
+
+
+# What a board's place says when the top camera's offset from the nozzle is
+# not known at all (none measured, none in the machine file) and the place
+# is asked for in a frame its references were not taken in. A reference
+# taken through the camera is then where the head stood with the picture's
+# center on the point; one taken by the nozzle is the nozzle's place.
+NOZZLE_NEEDS_OFFSET = (
+    "the board's place was taken by the top camera, whose offset from the nozzle is not measured:"
+    " put the nozzle on a mark, press Nozzle on mark, then Measure offset"
+)
+CAMERA_NEEDS_OFFSET = (
+    "the board's references were taken by the nozzle, and the top camera's offset from it is not measured:"
+    " take the board's place with the camera (Search, a corner, Camera here), or put the nozzle on a mark,"
+    " press Nozzle on mark, then Measure offset"
+)
+MIXED_NEEDS_OFFSET = (
+    "the board's place was taken by the top camera for some references and by the nozzle for others, and the"
+    " camera's offset from the nozzle is not measured, so they cannot be set against each other:"
+    " put the nozzle on a mark, press Nozzle on mark, then Measure offset"
+)
+
+
+def reference_offset(entry: dict) -> tuple[float, float] | None:
+    """The top camera's offset a reference was taken with: every reference
+    taken through the camera keeps it (0, 0 when none was known). None for
+    one taken by the nozzle or typed, and for one kept before references
+    carried it."""
+    offset = entry.get("offset")
+    if not isinstance(offset, (list, tuple)) or len(offset) != 2:
+        return None
+    if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in offset):
+        return None
+    return (float(offset[0]), float(offset[1]))
+
+
+def reference_place(entry: dict, offset: tuple[float, float]) -> tuple[float, float]:
+    """Where a reference lies on the machine with the top camera's offset
+    in use now, `offset`. One taken through the camera was the head's place
+    plus the offset in use then, so it moves by how far the offset has
+    moved since: an offset measured after the board was found is applied
+    to the place found. Any other reference is where it was taken."""
+    at = (float(entry["at"][0]), float(entry["at"][1]))
+    taken = reference_offset(entry)
+    if taken is None:
+        return at
+    return (at[0] + offset[0] - taken[0], at[1] + offset[1] - taken[1])
 
 
 def take_corner(look, job_id: str, name: str, job_point: tuple[float, float], machine: tuple[float, float], middle: tuple[float, float], angle: float | None, by: str = "edges") -> Callable[[], None]:
@@ -202,12 +249,13 @@ class PlacingPart:
         camera = self._up_place(machine)
         connected = self.gcode.connected and self._gcode_id is not None and self._gcode_id == machine_id
         link = self.gcode.state()
+        offset, _ = self._top_offset_in_use(machine)
         return {
             "machine": machine_id,
             "name": machine.name if machine is not None else None,
             "document": machine.document() if machine is not None else None,
             "angle": config.get("angle"),
-            "references": [dict(entry) for entry in config.get("references", [])],
+            "references": [self._reference_now(entry, offset) for entry in config.get("references", [])],
             "taken": dict(config.get("taken", {})),
             "boards": int(config.get("boards", 0)) if isinstance(config.get("boards", 0), int) else 0,
             "camera": {**camera.to_dict(), "measured": isinstance(config.get("camera"), dict) and bool(config["camera"].get("position"))},
@@ -215,6 +263,22 @@ class PlacingPart:
             **link,
             "connected": connected,
         }
+
+    @staticmethod
+    def _reference_now(entry: dict, offset: tuple[float, float]) -> dict:
+        """A reference as the page gets it: `at` where it lies with the top
+        camera's offset in use now (reference_place); the offset it was
+        taken with stays beside it. One whose place does not read is given
+        as kept."""
+        shown = dict(entry)
+        if reference_offset(entry) is None:
+            return shown
+        try:
+            at = reference_place(entry, offset)
+        except (KeyError, TypeError, ValueError, IndexError):
+            return shown
+        shown["at"] = [round(at[0], 4), round(at[1], 4)]
+        return shown
 
     def publish_placing(self) -> dict:
         state = self.placing_state()
@@ -455,6 +519,9 @@ class PlacingPart:
         if job.design is None or not job.design.board or path is None:
             raise ValueError("the job was not imported from a KiCad board file kept here: the camera has nothing to look for")
         self.top_look.stop()
+        # What the look kept of before (corners, a place found) is brought
+        # onto the offset in use before the board's poses are read by it.
+        self._settle_top_look(machine)
         board = self._top_board_settings(job_id)
         # pcbv keeps the board crop through loads; sent again so a crop
         # changed in the file since the start holds for this look.
@@ -525,7 +592,8 @@ class PlacingPart:
     def _top_look_place(self, captured: float) -> PictureFrame | str:
         """Where the top camera's picture lay on the machine for a frame
         taken at `captured`: the head's place as last read or moved to,
-        plus the camera's offset, once the move there has had time to end."""
+        plus the camera's offset in use, once the move there has had time
+        to end."""
         if self.gcode.running:
             return "a placing run is moving the head"
         position = self.gcode.position
@@ -535,11 +603,12 @@ class PlacingPart:
             return "the head's place is not known: jog it, or read the position"
         if captured < quiet:
             return "the head is moving"
-        try:
-            machine = self.placing_machine()
-            offset = self._top_offset(machine)
-        except (ValueError, LookupError, HTTPException):
-            return "the top camera's offset is not known: Measure offset first"
+        machine = self._placing_machine_or_none()
+        if machine is None:
+            return "the placing machine's file does not read"
+        # With no offset known the picture's place is the head's: the
+        # look's places are then the camera's own (_top_offset_in_use).
+        offset = self._settle_top_look(machine)
         return PictureFrame((here[0] + offset[0], here[1] + offset[1]), self._top_roll(machine), self.top.settings().mirror)
 
     def top_search(self, body: BoardSearchBody) -> dict:
@@ -550,7 +619,7 @@ class PlacingPart:
             raise ValueError("no board loaded: press Look for board first")
         job = self._job(self.top_look.job)
         _, diagonal = self._board_size(job)
-        offset = self._top_offset(machine)
+        offset = self._settle_top_look(machine)
         settings = self.top.settings()
         roll = self._top_roll(machine)
         width, height, scale = self._look_scale(self.top.client, settings.mm_per_px, self.top_look.scale_seen or self._design_top_scale())
@@ -660,7 +729,7 @@ class PlacingPart:
         if self.top_look.job is None:
             raise ValueError("no board loaded: press Look for board first")
         job = self._job(self.top_look.job)
-        offset = self._top_offset(machine)
+        offset = self._settle_top_look(machine)
         settings = self.top.settings()
         roll = self._top_roll(machine)
         width, height, scale = self._look_scale(self.top.client, settings.mm_per_px, self.top_look.scale_seen or self._design_top_scale())
@@ -711,9 +780,11 @@ class PlacingPart:
             # by the posterior), not again as references; corners kept as
             # references the look no longer holds (taken before a restart)
             # count among the references.
-            fit = self._board_fit(job.id, self.job_parts(job.id)["components"], corners=not look.corners_of(job.id))
+            # The look's places are the camera's: with no offset known,
+            # references taken by the nozzle say nothing of them.
+            fit = self._board_fit(job.id, self.job_parts(job.id)["components"], corners=not look.corners_of(job.id), frame="camera")
             references = measured_known("references", fit.rotation, fit.shift, fit.rms, fit.marks, middle)
-        except Exception:  # no references, or none of the job's parts: nothing known from them
+        except Exception:  # no references, none of the job's parts, or none in the camera's frame: nothing known from them
             references = None
         taken = corners_known(look.corners_of(job.id), middle, corner_mm, diagonal) if corners else None
         return known_place(taken, look.found_known(job.id), references)
@@ -722,7 +793,10 @@ class PlacingPart:
         """The board's place the top camera's look found, else the place
         the corners taken of it give, kept as the job's references: the two
         parts furthest apart (fiducials first) where it puts them, by
-        `look` or `corners`; Find fiducials then refines them."""
+        `look` or `corners`; Find fiducials then refines them. Each keeps
+        the camera's offset the place was made with, so an offset measured
+        after moves it (reference_place)."""
+        offset = self._settle_top_look(self._placing_machine_or_none())
         consensus = self.top_look.consensus
         best = consensus.best if self.top_look.job == body.job and consensus.found else None
         by = "look"
@@ -754,7 +828,7 @@ class PlacingPart:
             ]
             for part in pair:
                 at = best.apply((float(part["x"]), float(part["y"])))
-                kept.append({"job": body.job, "ref": part["ref"], "at": [round(at[0], 4), round(at[1], 4)], "by": by})
+                kept.append({"job": body.job, "ref": part["ref"], "at": [round(at[0], 4), round(at[1], 4)], "by": by, "offset": list(offset)})
             config["references"] = kept
         self._save_config()
         return self.publish_placing()
@@ -769,21 +843,25 @@ class PlacingPart:
         job = self._job(body.job)
         point = self._corner_point(job, body.corner)
         here = self._here(machine)
-        offset = self._top_offset(machine)
+        offset = self._settle_top_look(machine)
         middle, _ = self._board_size(job)
         at = (float(here["x"]) + offset[0], float(here["y"]) + offset[1])
         self.top_look.add_corner(job.id, body.corner, point, at, middle)
-        self._keep_corner(job.id, body.corner, point, at, None)
+        self._keep_corner(job.id, body.corner, point, at, None, offset)
         return self.publish_placing()
 
-    def _keep_corner(self, job_id: str, name: str, point: tuple[float, float], at: tuple[float, float], angle: float | None) -> None:
+    def _keep_corner(self, job_id: str, name: str, point: tuple[float, float], at: tuple[float, float], angle: float | None, offset: tuple[float, float]) -> None:
         """A corner taken of the job's board kept as one of its references
         (`by` corner): its place in the job's frame (`point`) paired with
         where it lies on the machine, in place of one taken of that corner
         before; a corner found by its edges keeps the board's turn they
-        showed, which a lone reference is turned by."""
+        showed, which a lone reference is turned by. `offset` is the top
+        camera's it was taken with, kept beside it (reference_place)."""
         ref = f"corner {name}"
-        entry: dict = {"job": job_id, "ref": ref, "at": [round(at[0], 4), round(at[1], 4)], "by": "corner", "point": [round(point[0], 4), round(point[1], 4)]}
+        entry: dict = {
+            "job": job_id, "ref": ref, "at": [round(at[0], 4), round(at[1], 4)], "by": "corner",
+            "point": [round(point[0], 4), round(point[1], 4)], "offset": list(offset),
+        }
         if angle is not None:
             entry["angle"] = round(angle, 4)
         with self._config_lock:
@@ -801,11 +879,11 @@ class PlacingPart:
         point = self._corner_point(job, body.corner)
         settings = self.top.settings()
         if settings.mm_per_px <= 0.0:
-            raise ValueError("the top camera's scale is not measured: Measure offset first")
+            raise ValueError(SCALE_NEEDED)
         if not self.top.client.running:
             raise ValueError("the top camera is not running: start it first")
         here = self._here(machine)
-        offset = self._top_offset(machine)
+        offset = self._settle_top_look(machine)
         frame = PictureFrame((float(here["x"]) + offset[0], float(here["y"]) + offset[1]), self._top_roll(machine), settings.mirror)
         corner, rotation, marks = self._edge_corner(
             self.top.client, "top", self.top_look, body.corner, frame, settings, crop=self.top.crop("edges"), uncropped=self.top._no_crops,
@@ -817,7 +895,7 @@ class PlacingPart:
         before = self.top.findings.read("references")
         undo = take_corner(self.top_look, job.id, body.corner, point, corner, middle, rotation)
         # A corner taken is also one of the board's references.
-        self._keep_corner(job.id, body.corner, point, corner, rotation)
+        self._keep_corner(job.id, body.corner, point, corner, rotation, offset)
         changes = self.top.findings.since(before, "references", (job.id,))
         self.publish_message("info", self.top.findings.apply("corner", words, changes, {**marks, "points": [{"at": list(corner), "label": body.corner}]}, undo))
         return self.publish_placing()
@@ -919,6 +997,53 @@ class PlacingPart:
             return machine.top.offset
         raise ValueError("the top camera's offset is not known: give [top_camera] offset in the machine file, or Measure offset")
 
+    def _top_offset_in_use(self, machine: GcodeMachine | None) -> tuple[tuple[float, float], bool]:
+        """The top camera's offset its looks go by, and whether one is
+        known: as measured, else as the machine's design has it, else 0, 0
+        and False. With none known a place the camera takes is the
+        camera's own: where the head stood with the picture's center on
+        the point. Finding a board needs no more than that; the offset is
+        applied when it is measured (reference_place, _settle_top_look)."""
+        top = self.top.settings()
+        if top.offset is not None:
+            return (float(top.offset[0]), float(top.offset[1])), True
+        if machine is not None and machine.top is not None and machine.top.offset is not None:
+            return (float(machine.top.offset[0]), float(machine.top.offset[1])), True
+        return (0.0, 0.0), False
+
+    def _placing_machine_or_none(self) -> GcodeMachine | None:
+        """The placing machine's file, or None with none that reads."""
+        try:
+            return self.placing_machine()
+        except (ValueError, LookupError, HTTPException):
+            return None
+
+    def _settle_top_look(self, machine: GcodeMachine | None) -> tuple[float, float]:
+        """The top camera's offset in use, with the places its look holds
+        (corners taken, boards found, guesses) brought onto it first: they
+        were made with the offset in use then, and when that has moved
+        since (Measure offset, a typed one, an Undo, the file's) they move
+        by the difference and the guesses start over, said once. The first
+        call, and one for another machine, only notes the offset."""
+        offset, _ = self._top_offset_in_use(machine)
+        machine_id = machine.id if machine is not None else None
+        with self._top_look_settle:
+            made = self._top_look_offset
+            self._top_look_offset = (machine_id, offset)
+            if made is None or made[0] != machine_id:
+                return offset
+            dx, dy = offset[0] - made[1][0], offset[1] - made[1][1]
+            if abs(dx) < 1e-9 and abs(dy) < 1e-9:
+                return offset
+            moved = self.top_look.shift(dx, dy)
+        if moved:
+            self.publish_message(
+                "info",
+                f"the top camera's offset moved by X {dx:+.3f} Y {dy:+.3f} mm:"
+                " the corners and the place found moved with it, the guesses start over",
+            )
+        return offset
+
     def _top_roll(self, machine: GcodeMachine) -> float:
         """The turn of the top camera's picture, degrees: as measured with
         its scale, else as the machine's design has it, else the settings'
@@ -931,14 +1056,19 @@ class PlacingPart:
     def pnp_fiducials(self, body: PnpFiducialsBody) -> dict:
         """Finds the board's fiducials with the top camera where the
         references put them and keeps them as the job's references; on the
-        top camera's routine thread."""
+        top camera's routine thread. The camera goes by its offset in use,
+        measured or not: the camera goes to a place and reads one off its
+        own picture, so the offset drops out of the looking, and each
+        fiducial keeps the one it was found with (reference_place). Only
+        the scale has to be measured."""
         machine = self._placing_idle()
         if machine.top is None:
             raise ValueError(f"{machine.name}'s file has no [top_camera] table")
         top = machine.top
         parts = self.job_parts(body.job)["components"]
         fiducials = [part for part in parts if part.get("fiducial")]
-        guess = self._board_fit(body.job, parts)
+        offset, _ = self._top_offset_in_use(machine)
+        guess = self._board_fit(body.job, parts, frame="camera")
         mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
 
         def done(found: list[Found]) -> str:
@@ -947,16 +1077,20 @@ class PlacingPart:
             words = f"{len(found)} fiducials found: the board is turned {fit.rotation:+.3f} degrees on the machine{rms}"
             # Kept at once and logged with the references they replaced.
             before = self.top.findings.read("references")
-            self._keep_fiducials(body.job, found, fit)
+            self._keep_fiducials(body.job, found, fit, offset)
             points = [{"at": list(entry.seen), "label": entry.ref} for entry in found]
             return self.top.findings.apply("fiducials", words, self.top.findings.since(before, "references", (body.job,)), {"points": points})
 
-        self.top.find_fiducials(mover, fiducials, guess.apply, top.fiducial, top.within, top.z, done)
+        self.top.find_fiducials(mover, fiducials, guess.apply, top.fiducial, top.within, top.z, done, offset=offset)
         return self.placing_state()
 
-    def _keep_fiducials(self, job_id: str, found: list[Found], fit) -> None:
+    def _keep_fiducials(self, job_id: str, found: list[Found], fit, offset: tuple[float, float] | None = None) -> None:
         """The fiducials found become the job's references: with two or
-        more, the ones given by hand give way to them."""
+        more, the ones given by hand give way to them. `offset` is the top
+        camera's they were found with, kept beside each (reference_place);
+        left out, the one in use now (a placing run's, the measured one)."""
+        if offset is None:
+            offset, _ = self._top_offset_in_use(self._placing_machine_or_none())
         with self._config_lock:
             config = self._placing_config()
             refs = {entry.ref for entry in found}
@@ -964,7 +1098,7 @@ class PlacingPart:
                 entry for entry in config.get("references", [])
                 if not (entry.get("job") == job_id and (entry.get("ref") in refs or (len(found) > 1 and entry.get("by") != "fiducial")))
             ]
-            kept.extend({"job": job_id, "ref": entry.ref, "at": [entry.seen[0], entry.seen[1]], "by": "fiducial"} for entry in found)
+            kept.extend({"job": job_id, "ref": entry.ref, "at": [entry.seen[0], entry.seen[1]], "by": "fiducial", "offset": list(offset)} for entry in found)
             config["references"] = kept
         self.top.fiducials = {
             "job": job_id,
@@ -1002,13 +1136,18 @@ class PlacingPart:
 
     def pnp_reference(self, body: PnpReferenceBody) -> dict:
         """A reference: a part's place in the job paired with where it is on
-        the machine, read off it when not given."""
+        the machine, read off it when not given. One read with the top
+        camera's picture center on the part keeps the camera's offset it
+        was taken with (0, 0 with none known: the head's place), and moves
+        with the offset after (reference_place)."""
         self._part(body.job, body.ref)
         machine = self.placing_machine()
+        taken: tuple[float, float] | None = None
         if body.at is None:
             offset = (0.0, 0.0)
             if body.camera:
-                offset = self._top_offset(machine)
+                offset, _ = self._top_offset_in_use(machine)
+                taken = offset
             here = self._here(self._placing_idle())
             at = (float(here["x"]) + offset[0], float(here["y"]) + offset[1])
         else:
@@ -1017,7 +1156,10 @@ class PlacingPart:
             at = (float(body.at[0]), float(body.at[1]))
         config = self._placing_config()
         kept = [entry for entry in config.get("references", []) if not (entry.get("job") == body.job and entry.get("ref") == body.ref)]
-        kept.append({"job": body.job, "ref": body.ref, "at": [round(at[0], 4), round(at[1], 4)], "by": "camera" if body.camera else "nozzle"})
+        entry: dict = {"job": body.job, "ref": body.ref, "at": [round(at[0], 4), round(at[1], 4)], "by": "camera" if body.camera else "nozzle"}
+        if taken is not None:
+            entry["offset"] = list(taken)
+        kept.append(entry)
         config["references"] = kept
         self._save_config()
         return self.publish_placing()
@@ -1032,21 +1174,33 @@ class PlacingPart:
         self._save_config()
         return self.publish_placing()
 
-    def _board_fit(self, job_id: str, parts: list[dict], corners: bool = True):
+    def _board_fit(self, job_id: str, parts: list[dict], corners: bool = True, frame: str = "nozzle"):
         """Where the job's board lies on the machine, from its references:
         parts taken by hand, the fiducials found (two or more outdo the
         rest), and the corners taken of its board (each a reference of its
         own, `point` its place in the job; left out with `corners` false).
         One reference alone is turned by the typed angle, else by the turn
-        a corner's edges showed."""
+        a corner's edges showed.
+
+        Each reference is read with the top camera's offset in use now
+        (reference_place). While no offset is known at all, the ones taken
+        through the camera are the camera's places (the head's, with the
+        picture's center on the point) and the others the nozzle's, a
+        distance apart nothing here knows: `frame` says whose places the
+        caller goes by ("nozzle" to put the nozzle on the board, "camera"
+        to put the picture's center there, the answer then to be used with
+        the offset in use), and a fit whose references are of the other
+        kind, or of both, is refused. With an offset known both are one."""
         by_ref = {part["ref"]: part for part in parts}
         pairs = []
         turns = []
+        frames: set[str] = set()
+        offset, known = self._top_offset_in_use(self._placing_machine_or_none())
         entries = [entry for entry in self._placing_config().get("references", []) if entry.get("job") == job_id]
         found = [entry for entry in entries if entry.get("by") == "fiducial" and entry.get("ref") in by_ref]
         for entry in found if len(found) > 1 else entries:
             try:
-                at = (float(entry["at"][0]), float(entry["at"][1]))
+                at = reference_place(entry, offset)
                 if entry.get("by") == "corner":
                     if not corners:
                         continue
@@ -1061,6 +1215,11 @@ class PlacingPart:
             except (KeyError, TypeError, ValueError, IndexError):
                 continue
             pairs.append((point, at))
+            frames.add("camera" if reference_offset(entry) is not None else "nozzle")
+        if not known and len(frames) > 1:
+            raise ValueError(MIXED_NEEDS_OFFSET)
+        if not known and frames and frame not in frames:
+            raise ValueError(NOZZLE_NEEDS_OFFSET if frame == "nozzle" else CAMERA_NEEDS_OFFSET)
         angle = self._placing_config().get("angle")
         typed = float(angle) if isinstance(angle, (int, float)) and not isinstance(angle, bool) else None
         if typed is None and len(pairs) == 1 and isinstance(turns[0], (int, float)):
@@ -1071,14 +1230,16 @@ class PlacingPart:
         """The nozzle, or the top camera's picture center, over a part's place
         on the machine: X and Y only, as a goto goes across. The nozzle goes
         up to the safe height first only from below it (on a seesaw Z from
-        above it too); it never comes down."""
+        above it too); it never comes down. The camera goes by its offset
+        in use, known or not: over a place it took itself the offset drops
+        out."""
         machine = self._placing_idle()
         parts = self.job_parts(body.job)["components"]
         part = self._part(body.job, body.ref, parts)
-        fit = self._board_fit(body.job, parts)
+        fit = self._board_fit(body.job, parts, frame="camera" if body.camera else "nozzle")
         x, y = fit.apply((float(part["x"]), float(part["y"])))
         if body.camera:
-            offset = self._top_offset(machine)
+            offset, _ = self._top_offset_in_use(machine)
             x, y = x - offset[0], y - offset[1]
         self._head_lines(machine, goto_lines(machine, self._here(machine), {"x": x, "y": y}))
         return self.publish_placing()

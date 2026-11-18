@@ -763,8 +763,10 @@ def test_a_run_that_looks_with_the_top_camera_needs_it_running(client):
     client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
     response = client.post("/api/pnp/run", json={"job": job_id, "refs": ["R1"]})
     assert response.status_code == 400 and "top camera is not running" in response.text
+    # Find fiducials goes by the offset in use (the file's here): it is the
+    # scale it cannot do without.
     response = client.post("/api/pnp/fiducials", json={"job": job_id})
-    assert response.status_code == 400 and "offset is not measured" in response.text
+    assert response.status_code == 400 and "scale is not measured" in response.text
 
 
 def outlined_job(client) -> str:
@@ -1158,7 +1160,8 @@ def test_a_corner_taken_is_a_reference_go_to_part_and_a_plan_place_the_board_by(
         return [entry for entry in response.json()["references"] if entry["job"] == job_id]
 
     refs = take("bottom left", (150.0, 80.0))
-    assert refs == [{"job": job_id, "ref": "corner bottom left", "at": [150.0, 80.0], "by": "corner", "point": [0.0, 0.0]}]
+    # Kept with the camera's offset it was taken with.
+    assert refs == [{"job": job_id, "ref": "corner bottom left", "at": [150.0, 80.0], "by": "corner", "point": [0.0, 0.0], "offset": [34.0, -9.0]}]
     # One corner: the board shifted, not turned. R1 lies 1 mm along X from it.
     client.post("/api/pnp/goto", json={"job": job_id, "ref": "R1"})
     assert client.fake.position[:2] == pytest.approx((151.0, 80.0), abs=1e-6)
@@ -1184,7 +1187,7 @@ def test_a_corner_taken_is_a_reference_go_to_part_and_a_plan_place_the_board_by(
     known = client.backend._top_known(job, 2.0)
     assert known is not None and known.source == "references" and known.place.rotation == pytest.approx(2.0, abs=0.01)
     # A corner found by its edges turns a lone reference by the turn they showed.
-    client.backend._keep_corner(job_id, "top right", (40.0, 30.0), (190.0, 110.0), 5.0)
+    client.backend._keep_corner(job_id, "top right", (40.0, 30.0), (190.0, 110.0), 5.0, (34.0, -9.0))
     client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [0.0, 0.0]})
     client.delete(f"/api/pnp/references?job={job_id}&ref=R1")
     client.delete(f"/api/pnp/references?job={job_id}&ref=corner%20bottom%20left")

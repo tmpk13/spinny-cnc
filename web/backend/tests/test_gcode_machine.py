@@ -488,9 +488,10 @@ def test_the_top_camera_goes_over_a_part_and_takes_a_reference_by_the_designed_o
     start = len(client.fake.lines)
     assert client.post("/api/pnp/goto", json={"job": job_id, "ref": "R1", "camera": True}).status_code == 200
     assert sent(client, start) == ["M114", "G0 Z5 F600", "G0 X80 Y-10 F3000", "M400", "M114"]
-    # The camera's crosshair over R2 now: the reference is the nozzle's place for it.
+    # The camera's crosshair over R2 now: the reference is the nozzle's
+    # place for it, kept with the offset that made it so.
     state = client.post("/api/pnp/references", json={"job": job_id, "ref": "R2", "camera": True}).json()
-    assert {"job": job_id, "ref": "R2", "at": [100.0, 50.0], "by": "camera"} in state["references"]
+    assert {"job": job_id, "ref": "R2", "at": [100.0, 50.0], "by": "camera", "offset": [20.0, 60.0]} in state["references"]
 
 
 def test_the_up_cameras_place_is_set_by_hand(client):

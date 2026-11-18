@@ -59,7 +59,7 @@ import statistics
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable
 
 import numpy as np
@@ -277,6 +277,19 @@ class Estimate:
             "rival": round(self.rival, 4),
             "roll_off": round(self.roll_off, 4) if self.roll_off is not None else None,
         }
+
+
+def shifted(place: Estimate, dx: float, dy: float) -> Estimate:
+    """A place of the board moved `dx`, `dy` mm on the machine, its turn
+    kept: the shift, the board's middle and the machine point under the
+    picture's center move; what is said in the job's frame stays."""
+    under = place.place
+    return replace(
+        place,
+        shift=(place.shift[0] + dx, place.shift[1] + dy),
+        center=(place.center[0] + dx, place.center[1] + dy),
+        place=(under[0] + dx, under[1] + dy) if under is not None else None,
+    )
 
 
 @dataclass
@@ -1258,6 +1271,23 @@ class BoardLook:
         self.end_record("searched")
         self.restart()
         self._changed = True
+
+    def shift(self, dx: float, dy: float) -> bool:
+        """The camera's offset from the tool is now `dx`, `dy` mm further
+        along X and Y than when this look's places were made: each was the
+        head's place plus the offset, so the corners taken and the places
+        boards were found at move by as much, and the guesses start over on
+        the pictures to come (their looks were weighed where the old offset
+        put the pictures). The record open ends, as its poses' places were
+        the old offset's. False when the look held no place to move."""
+        with self._lock:
+            held = bool(self.corners or self.found_places or self.consensus.guesses)
+            self.corners = [replace(corner, machine=(corner.machine[0] + dx, corner.machine[1] + dy)) for corner in self.corners]
+            self.found_places = {job: shifted(place, dx, dy) for job, place in self.found_places.items()}
+        self.end_record("searched")
+        self.restart()
+        self._changed = True
+        return held
 
     def _forget_known(self) -> None:
         self.known = None

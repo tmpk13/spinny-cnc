@@ -48,6 +48,10 @@ LOOK_TRIES = 2
 DEFAULT_STEP = 2.0
 MAX_STEP = 20.0
 OFFSET_LIMIT = 500.0
+# What a look says when it cannot go: by the measured offset with none
+# measured, or by an offset given with no scale to turn pixels into mm.
+OFFSET_NEEDED = "the top camera's offset is not measured: put the nozzle on a mark, then Measure offset"
+SCALE_NEEDED = "the top camera's scale is not measured: Measure camera, or a search that finds a board, measures it"
 # Measure camera: the picture's scale, roll and mirror from the head's
 # moves alone, over any surface with texture (pictures.fit_camera). A first
 # move of PROBE_MM along X tells the scale roughly; the grid's step then
@@ -233,19 +237,28 @@ class TopCamera(PickCamera):
         routine: str = "looking",
         step: str = "",
         progress: RoutineProgress | None = None,
+        offset: Point | None = None,
     ) -> Point | None:
         """Where the spot of `shade` nearest `point` (a place of the tip)
         is, looked for within `within` mm of it from the head's place over
         it at `z` (the travel height when None), of about `size` (length,
         width) or `diameter` when given; with `center` the head moves onto
         the spot and looks again, so the picture's middle measures it. None
-        when there is none. The mover has begun."""
+        when there is none. The mover has begun.
+
+        `offset` is the picture's center from the tip to go by, in place of
+        the measured one: `point` and the answer are then places made with
+        it (a board's place taken through this camera under an offset not
+        measured yet), and only the scale has to be measured."""
         settings = self.settings()
-        if not settings.measured or settings.offset is None:
-            raise PnpError("the top camera's offset is not measured: put the nozzle on a mark, then Measure offset")
+        if offset is None:
+            if not settings.measured or settings.offset is None:
+                raise PnpError(OFFSET_NEEDED)
+            offset = settings.offset
+        elif settings.mm_per_px <= 0.0:
+            raise PnpError(SCALE_NEEDED)
         if not self.client.running:
             raise PnpError("the top camera is not running: start it first")
-        offset = settings.offset
         head = (point[0] - offset[0], point[1] - offset[1])
         mover.lift()
         mover.go(head)
@@ -291,10 +304,12 @@ class TopCamera(PickCamera):
         within: float,
         z: float | None,
         progress: RoutineProgress | None = None,
+        offset: Point | None = None,
     ) -> list[Found]:
         """Each fiducial (`ref`, `x`, `y` in the job, `diameter`) found
         where `guess` puts it on the machine, centered in the picture; a
-        PnpError names the one that is not there."""
+        PnpError names the one that is not there. `offset` as look_at's:
+        `guess` and the places found are then made with it."""
         found: list[Found] = []
         for fiducial in fiducials:
             ref = str(fiducial["ref"])
@@ -305,7 +320,7 @@ class TopCamera(PickCamera):
             seen = self.look_at(
                 mover, expected, shade, within, z,
                 diameter=float(diameter) if isinstance(diameter, (int, float)) else None,
-                center=True, routine="finding fiducials", step=ref, progress=progress,
+                center=True, routine="finding fiducials", step=ref, progress=progress, offset=offset,
             )
             if seen is None:
                 raise PnpError(f"fiducial {ref} is not within {within:g} mm of where the board's place puts it: a reference closer to it, or a wider [top_camera] within")
@@ -510,20 +525,26 @@ class TopCamera(PickCamera):
         within: float,
         z: float | None,
         done: Callable[[list[Found]], str],
+        offset: Point | None = None,
     ) -> None:
         """Starts the fiducial routine on its own thread; `done` hears what
         was found, keeps it (and logs it, findings.py) and answers the line
-        to say of it."""
+        to say of it. With `offset` (look_at's) the routine goes by it and
+        needs only the scale measured: the fiducials' places are the
+        camera's own under that offset, moved when a truer one is measured."""
         if not fiducials:
             raise ValueError("the board has no fiducials: footprints whose reference starts FID or whose name says Fiducial")
-        if not self.settings().measured:
-            raise ValueError("the top camera's offset is not measured: put the nozzle on a mark, then Measure offset")
+        settings = self.settings()
+        if offset is None and not settings.measured:
+            raise ValueError(OFFSET_NEEDED)
+        if offset is not None and settings.mm_per_px <= 0.0:
+            raise ValueError(SCALE_NEEDED)
         steps = ("lifting", *[str(f["ref"]) for f in fiducials], "fitting", "done")
 
         def body(progress: RoutineProgress) -> None:
             mover.begin()
             self._step(progress, "lifting")
-            found = self.locate_fiducials(mover, fiducials, guess, shade, within, z, progress)
+            found = self.locate_fiducials(mover, fiducials, guess, shade, within, z, progress, offset)
             self._step(progress, "fitting")
             self._message("info", done(found))
 
@@ -548,7 +569,7 @@ class TopCamera(PickCamera):
         fiducial where the file says. The switches find home to a few
         hundredths; the fiducial ties the numbers to the bed itself."""
         if not self.settings().measured:
-            raise ValueError("the top camera's offset is not measured: put the nozzle on a mark, then Measure offset")
+            raise ValueError(OFFSET_NEEDED)
         if not self.client.running:
             raise ValueError("the top camera is not running: start it first")
 

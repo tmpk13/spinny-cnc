@@ -289,3 +289,31 @@ panel with a picture or model of the machine on which the area is chosen.
 - The search's stops are the top camera's mosaic tiles (a search keeps a
   picture a stop since 026ec94), read again when the look's scan version
   changes. Untested on hardware.
+
+## The top camera's offset applied after (2026-11-18)
+
+Finding a board needed the offset first only on paper: the camera goes
+to a place and reads it off its own picture, so the offset drops out
+until the nozzle has to go there.
+
+- A reference taken through the camera (`by` camera, fiducial, look,
+  corners, corner) keeps `offset`, the one in use then; it is read as
+  `at + (offset now - offset then)` (`reference_place`). Corrected at
+  reading, not rewritten on a change: the offset changes on four paths
+  (Measure offset on its thread, a typed one, an Undo, the file), and a
+  reference kept before has no `offset` and stays put.
+- Every change moves them, a second measurement too: right while the
+  camera sits where it did; a camera remounted mid-board wants the
+  board found again anyway.
+- With none known (none measured, none in the file) the offset is 0, 0
+  and the places are the camera's own. `_board_fit(frame=)` then refuses
+  the nozzle over camera places, the camera over nozzle places, and a
+  mix; with any offset known nothing is refused. The file's `bed` and
+  `board_area` are then read as the head's places.
+- Find fiducials goes by the offset in use and needs only the scale.
+  Home by fiducial and a placing run keep needing the measured one:
+  they tie the nozzle's own numbers.
+- The look's corners and places found move (`BoardLook.shift`), its
+  guesses start over: moving every look, frame, hypothesis and mosaic
+  picture was more to get wrong than one stop to confirm. Kept per
+  machine: another machine's offset only replaces the note.
