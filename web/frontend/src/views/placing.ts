@@ -188,9 +188,9 @@ export const PLACING_SETUP: Setup = {
                 label: "Home",
                 done: placing?.homed === true,
                 hint: placing?.document?.top?.home_fiducial
-                    ? "Press Home by fiducial in the Machine panel: it homes, then ties the numbers to the bed's homing fiducial; or Home, under the jog's Go to, set position, motors."
-                    : "Press Home in the Machine panel, under the jog's Go to, set position, motors.",
-                panel: "pnp-jog",
+                    ? "Press Home by fiducial in the Machine panel: it homes, then ties the numbers to the bed's homing fiducial; or Home, in the panel's head."
+                    : "Press Home in the Machine panel's head.",
+                panel: "machine",
             },
             { label: "Board", done: parts > 0, hint: "Pick or upload a board (.kicad_pcb) in the Parts panel.", panel: "pnp-parts" },
             {

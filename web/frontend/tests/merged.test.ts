@@ -52,8 +52,14 @@ describe("the Machine panel", () => {
         expect(root.contains(findButton(root, "Test beam"))).toBe(true);
         expect(root.querySelector("#markers")!.closest("details")?.querySelector("summary")?.textContent).toBe("Markers");
         expect(panel.head.classList.contains("hidden")).toBe(true);
-        // The jog's rarely used rows fold under More.
-        expect(root.querySelector("#jog details.jog-more summary")?.textContent).toBe("More: own steps, zero, go to, motors");
+        // The jog's rarely used rows fold under More; Motors is out of it, with the bars.
+        expect(root.querySelector("#jog details.jog-more summary")?.textContent).toBe("More: zero, go to, set position");
+        const motors = Array.from(root.querySelectorAll("#jog button")).find((each) => each.textContent?.startsWith("Motors"))!;
+        expect(motors.closest("details")).toBeNull();
+        // Home and Unlock are in the panel's head, in sight with the jog shut.
+        expect(heads[0]!.contains(findButton(root, "Home"))).toBe(true);
+        expect(heads[0]!.contains(findButton(root, "Unlock"))).toBe(true);
+        expect(findButton(root, "Home").closest(".machine-more")).toBeNull();
     });
 });
 

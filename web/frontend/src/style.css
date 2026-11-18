@@ -2033,8 +2033,8 @@ button.badge.state {
     width: 7.5rem;
 }
 
-/* The step size every axis moves by, with what the pad moves by at it
-   said beside it. */
+/* The step size every axis moves by, and at the end of its row what the
+   pad moves by at it: a field each for X and Y. */
 .jog-size {
     display: flex;
     flex-wrap: wrap;
@@ -2047,9 +2047,42 @@ button.badge.state {
 }
 
 .jog-pad-steps {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
     font-size: 0.8rem;
+}
+
+.jog-pad-steps .labeled.inline {
+    gap: 0.3rem;
+}
+
+/* A step as a field: the distance a press moves by, which can be typed.
+   One typed in place of the machine file's is set apart from it. */
+.jog-step {
+    flex: none;
+    padding-inline: 0.35rem;
+    font-family: var(--mono);
     font-variant-numeric: tabular-nums;
-    white-space: nowrap;
+    text-align: center;
+}
+
+.jog-step[data-own] {
+    border-color: var(--strong);
+    color: var(--strong);
+    font-weight: 700;
+}
+
+/* Home and Unlock in the head of the jog (of the Machine panel, once it
+   takes the head over); with neither showing, no room is kept for them. */
+.jog-machine {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.jog-machine:not(:has(> :not(.hidden))) {
+    display: none;
 }
 
 /* The pad beside the joints' bars where there is room for both, over them
@@ -2155,30 +2188,15 @@ button.badge.state {
     white-space: nowrap;
 }
 
-/* The step a press moves the axis by, between its two moves; one typed
-   for the axis itself is set apart from the step size's. */
+/* The step a press moves the axis by, between its two moves: its field
+   and its unit. */
 .axis-bar-step {
-    flex: none;
-    min-width: 3.75rem;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 0.8rem;
-    font-variant-numeric: tabular-nums;
-    text-align: center;
-    white-space: nowrap;
-}
-
-.axis-bar-step[data-own] {
-    color: var(--strong);
-    font-weight: 700;
-}
-
-/* Under More: a step of each axis's own, a field an axis. */
-.jog-own-steps {
     display: flex;
-    flex-wrap: wrap;
+    flex: none;
     align-items: center;
-    gap: 0.4rem 0.75rem;
+    gap: 0.3rem;
+    font-size: 0.8rem;
+    white-space: nowrap;
 }
 
 .btn-axis {

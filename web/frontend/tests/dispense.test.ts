@@ -55,7 +55,9 @@ describe("units and controls on a dispenser", () => {
         const labels = Array.from(jog.querySelectorAll("button")).map((b) => b.textContent);
         expect(labels).toContain("Extrude");
         expect(labels).toContain("Retract");
-        expect(jog.querySelector('[data-axis="a"]')?.textContent).toContain("0.5 mm");
+        // Its step is a field, in mm as the joint is.
+        expect((jog.querySelector('[data-axis="a"] .axis-bar-step input') as HTMLInputElement).value).toBe("0.5");
+        expect(jog.querySelector('[data-axis="a"] .axis-bar-step')?.textContent).toBe("mm");
         expect(jog.querySelector('[data-axis="a"]')?.textContent).not.toContain("deg");
     });
 });

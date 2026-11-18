@@ -13,7 +13,7 @@ import { droText, mountDro } from "../src/views/dro.ts";
 import { mountJobs } from "../src/views/jobs.ts";
 import { progressText } from "../src/views/run.ts";
 import { findButton } from "./harness.ts";
-import { anyOf, barPlace, fineStep, holdPiece, HOLD_TICK_MS, keyAction, LEVEL_KEY, levelStep, mountJog, parseLevel } from "../src/views/jog.ts";
+import { anyOf, barPlace, fineStep, holdPiece, HOLD_TICK_MS, keyAction, LEVEL_KEY, levelStep, mountJog, parseLevel, readSteps, STEPS_KEY, stepsKey, stepsText } from "../src/views/jog.ts";
 import { confirmSettle } from "../src/confirm.ts";
 import { MAX_BEAM_MS, mountLaser } from "../src/views/laser.ts";
 import { changedBootSettings, mountConfig } from "../src/views/config.ts";
@@ -304,17 +304,25 @@ describe("job selection", () => {
     });
 });
 
-/** Types a step of its own for an axis of the jog, in its field under More. */
-function ownStep(root: ParentNode, title: string, value: string): HTMLInputElement {
-    const field = root.querySelector(`input[aria-label="${title} step"]`) as HTMLInputElement;
+/** An axis's step field of the jog: the board's at the end of the size's row, a joint's in its bar. */
+function stepField(root: ParentNode, title: string): HTMLInputElement {
+    return root.querySelector(`input[aria-label="${title} step"]`) as HTMLInputElement;
+}
+
+/** Types a step for an axis of the jog in its field, as its step at the size picked. */
+function typeStep(root: ParentNode, title: string, value: string): HTMLInputElement {
+    const field = stepField(root, title);
     field.value = value;
     field.dispatchEvent(new Event("input", { bubbles: true }));
     return field;
 }
 
 describe("jog", () => {
-    // The step size is kept per browser, and every test file shares the storage.
-    afterEach(() => localStorage.removeItem(LEVEL_KEY));
+    // The step size and the steps typed are kept per browser, and every test file shares the storage.
+    afterEach(() => {
+        localStorage.removeItem(LEVEL_KEY);
+        localStorage.removeItem(STEPS_KEY);
+    });
 
     test("keys map to board jogs and cancel", () => {
         const pad = defaultControls(POLAR_LASER);
@@ -335,11 +343,16 @@ describe("jog", () => {
         calls.length = 0;
         // One step size for every axis, each axis taking its own step for it:
         // Coarse is the radius's and the board's 10 mm and the table's 90 deg.
+        // Every step is a field showing the distance, with its unit beside it.
         const radius = root.querySelector('[data-axis="r"]')!;
-        expect(radius.querySelector(".axis-bar-step")?.textContent).toBe("1 mm");
+        expect(stepField(root, "Radius").value).toBe("1");
+        expect(radius.querySelector(".axis-bar-step")?.textContent).toBe("mm");
+        expect(root.querySelector('[data-axis="a"] .axis-bar-step')?.textContent).toBe("deg");
         click(root, "Coarse");
-        expect(radius.querySelector(".axis-bar-step")?.textContent).toBe("10 mm");
-        expect(root.querySelector(".jog-pad-steps")?.textContent).toBe("X 10 mm, Y 10 mm");
+        expect(stepField(root, "Radius").value).toBe("10");
+        // The board's are at the end of the size's row.
+        expect(stepField(root, "Board X").closest(".jog-size")).not.toBeNull();
+        expect([stepField(root, "Board X").value, stepField(root, "Board Y").value]).toEqual(["10", "10"]);
         click(radius, "Radius -");
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dr: -10, feed: null });
@@ -385,8 +398,8 @@ describe("jog", () => {
         }
         // The board has no bars: its moves are the pad's, its steps the size's or ones typed for it.
         expect(root.querySelector('.axis-bar[data-axis="x"]')).toBeNull();
-        ownStep(root, "Board X", "10");
-        expect(root.querySelector(".jog-pad-steps")?.textContent).toBe("X 10 mm, Y 1 mm");
+        typeStep(root, "Board X", "10");
+        expect([stepField(root, "Board X").value, stepField(root, "Board Y").value]).toEqual(["10", "1"]);
         click(pad, "X+ Y-");
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 10, dy: -1, feed: null });
@@ -432,17 +445,18 @@ describe("jog", () => {
         expect(barPlace("h", "mm", { ...connected().machine!, joint: { r: 0, a: 0, z: 0 } })).toBe("-.--- mm");
     });
 
-    test("a step typed for an axis is that axis's step at every size, until its field is cleared", async () => {
+    test("a step typed in an axis's field is its step at the size picked, kept until the field is cleared", async () => {
         const { store, ctx, root, calls, api } = setup();
         await api.connect("/dev/ttyACM0");
         store.set({ snapshot: connected() });
         mountJog(root, ctx);
-        const custom = ownStep(root, "Board X", "2.5");
+        const boardX = typeStep(root, "Board X", "2.5");
+        expect(boardX.hasAttribute("data-own")).toBe(true);
         click(root, "X+");
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 2.5, dy: 0, feed: null });
         calls.length = 0;
-        // The arrow keys take it, and the Y bar keeps its own step.
+        // The arrow keys take it, and Y keeps its own step.
         document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: -2.5, dy: 0, feed: null });
@@ -451,27 +465,108 @@ describe("jog", () => {
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 0, dy: 1, feed: null });
         calls.length = 0;
-        // Another size leaves the typed step the axis's: only the others follow.
+        // It was typed for Normal: Coarse still has the machine file's step, and says so.
         click(root, "Coarse");
+        expect(boardX.value).toBe("10");
+        expect(boardX.hasAttribute("data-own")).toBe(false);
         click(root, "X-");
         await settle();
-        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: -2.5, dy: 0, feed: null });
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: -10, dy: 0, feed: null });
         calls.length = 0;
-        // A typed step that is no step, or a field cleared, gives the axis back to the size.
-        ownStep(root, "Board X", "0");
+        // Shift with a jog key is the fine step, whatever the size picked.
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", shiftKey: true, bubbles: true }));
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 0.1, dy: 0, feed: null });
+        calls.length = 0;
+        // Back at Normal the typed step is still there, and this browser keeps it.
+        click(root, "Normal");
+        expect(boardX.value).toBe("2.5");
+        expect(boardX.hasAttribute("data-own")).toBe(true);
+        expect(readSteps(localStorage.getItem(STEPS_KEY)).get(stepsKey("x", "mm", [0.1, 1, 10]))).toEqual([null, 2.5, null]);
+        // A typed step that is no step gives the axis back to the machine file's, shown once the field is left.
+        typeStep(root, "Board X", "0");
         click(root, "X+");
         await settle();
-        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 10, dy: 0, feed: null });
-        expect(custom.value).toBe("0");
-        // A joint's bar marks a step of its own.
-        const step = root.querySelector('[data-axis="r"] .axis-bar-step')!;
-        expect(step.hasAttribute("data-own")).toBe(false);
-        ownStep(root, "Radius", "3");
-        expect(step.textContent).toBe("3 mm");
-        expect(step.hasAttribute("data-own")).toBe(true);
-        ownStep(root, "Radius", "");
-        expect(step.textContent).toBe("10 mm");
-        expect(step.hasAttribute("data-own")).toBe(false);
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "board", dx: 1, dy: 0, feed: null });
+        boardX.dispatchEvent(new Event("blur"));
+        expect(boardX.value).toBe("1");
+        expect(readSteps(localStorage.getItem(STEPS_KEY)).size).toBe(0);
+        calls.length = 0;
+        // A joint's field is between its two moves, marked while it holds a typed step.
+        const radius = typeStep(root, "Radius", "3");
+        expect(radius.closest(".axis-bar-buttons")).not.toBeNull();
+        expect(radius.hasAttribute("data-own")).toBe(true);
+        click(root, "Radius +");
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dr: 3, feed: null });
+        typeStep(root, "Radius", "");
+        expect(radius.hasAttribute("data-own")).toBe(false);
+        radius.dispatchEvent(new Event("blur"));
+        expect(radius.value).toBe("1");
+        // Enter leaves the field, so the next arrow key jogs.
+        typeStep(root, "Radius", "4");
+        radius.focus();
+        radius.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        expect(document.activeElement).not.toBe(radius);
+        expect(radius.value).toBe("4");
+    });
+
+    test("the steps typed are read back when the page opens, each for the axis and choices it was typed for", async () => {
+        const kept = new Map([[stepsKey("r", "mm", [0.1, 1, 10]), [0.02, null, 25] as [number | null, number | null, number | null]]]);
+        localStorage.setItem(STEPS_KEY, stepsText(kept));
+        localStorage.setItem(LEVEL_KEY, "2");
+        const { store, ctx, root, calls, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountJog(root, ctx);
+        expect(stepField(root, "Radius").value).toBe("25");
+        // The board's X has the same choices but is another axis: its step is the file's.
+        expect(stepField(root, "Board X").value).toBe("10");
+        click(root, "Radius +");
+        await settle();
+        expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dr: 25, feed: null });
+        click(root, "Fine");
+        expect(stepField(root, "Radius").value).toBe("0.02");
+        // Text that is no record of steps, and steps that are none, are left out.
+        expect(readSteps("nonsense").size).toBe(0);
+        expect(readSteps('{"a": [0, -1, "x"], "b": [null, 2], "c": 5}')).toEqual(new Map([["b", [null, 2, null]]]));
+    });
+
+    test("Home and Unlock sit in the head: Home on a machine that can home, Unlock while it is in alarm", async () => {
+        const { store, ctx, root, calls, api } = setup();
+        mountJog(root, ctx);
+        const home = findButton(root, "Home");
+        const unlock = findButton(root, "Unlock");
+        // In the head, outside the rows a fold or a shut dock keeps out of sight.
+        expect(home.closest(".panel-head")).not.toBeNull();
+        expect(unlock.closest(".panel-head")).not.toBeNull();
+        expect(home.title).not.toBe("");
+        expect(unlock.title).not.toBe("");
+        // A machine with no endstop has nothing to home, and one at rest no alarm to clear.
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        expect(home.classList.contains("hidden")).toBe(true);
+        expect(unlock.classList.contains("hidden")).toBe(true);
+        // One that reports what is homed can home: one press.
+        store.set({ snapshot: connected({ homed: "" }) });
+        expect(home.classList.contains("hidden")).toBe(false);
+        expect(home.disabled).toBe(false);
+        home.click();
+        await settle();
+        expect(calls.some((c) => c.name === "home")).toBe(true);
+        // In alarm Unlock shows, and goes again once the alarm is cleared.
+        store.set({ snapshot: connected({ state: "Alarm", alarm: 4, homed: "" }) });
+        expect(unlock.classList.contains("hidden")).toBe(false);
+        calls.length = 0;
+        unlock.click();
+        await settle();
+        expect(calls.some((c) => c.name === "unlock")).toBe(true);
+        store.set({ snapshot: connected({ homed: "" }) });
+        expect(unlock.classList.contains("hidden")).toBe(true);
+        // With no machine connected Home is locked, with its reason.
+        store.set({ snapshot: { connected: false, url: null, firmware: null, machine: machine({ homed: "" }), run: null } });
+        expect(home.disabled).toBe(true);
+        expect(home.dataset["reason"]).toBe("connect first");
     });
 
     test("the cross slide moves on its own step and can be zeroed", async () => {
@@ -491,7 +586,7 @@ describe("jog", () => {
         calls.length = 0;
 
         // A step typed for the slide is the slide's own: the board step stays at 1 mm.
-        ownStep(root, "Cross slide", "0.05");
+        typeStep(root, "Cross slide", "0.05");
         click(slide, "Z+");
         await settle();
         expect(calls.find((c) => c.name === "jog")?.args[0]).toEqual({ kind: "joint", dz: 0.05, feed: null });

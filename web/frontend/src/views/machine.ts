@@ -1,6 +1,7 @@
 // The Machine panel: one panel for the machine's controls where four stood
 // before (Position, Jog, Laser, Markers). Where the head is, the jog with
-// its buttons in the panel's head, the tool's quick buttons (the beam's
+// its buttons in the panel's head (Home and Unlock among them, so they are
+// in sight in every view), the tool's quick buttons (the beam's
 // test and off, or the spindle's start and stop), a box a pick and place
 // head's own quick buttons go in, and the markers folded at the foot. Each
 // part is the view it always was, mounted in a box of its own whose id is
@@ -74,7 +75,7 @@ export function mountMachine(root: HTMLElement, ctx: Ctx, page: string, ids: Mac
 
     // The parts' own heads: their titles go (the panel's names them all),
     // and what else they held joins the panel's head: the position's age,
-    // the jog's Fine, Hold to move and Cancel.
+    // the jog's Home and Unlock, its Hold to move and Cancel.
     for (const box of [dro, jog]) {
         for (const own of childrenWith(box, "panel-head")) {
             for (const child of Array.from(own.children)) {

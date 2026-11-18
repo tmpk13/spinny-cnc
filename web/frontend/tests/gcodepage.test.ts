@@ -73,8 +73,20 @@ describe("a G-code machine's controls", () => {
         expect(titles).toEqual(["X", "Y", "Nozzle height", "N1 turn"]);
         expect(root.querySelector('.jog-pad[data-axis="board"]')).not.toBeNull();
         expect(root.textContent).toContain("N1 down");
-        expect(Array.from(root.querySelectorAll("button")).some((each) => each.textContent === "Unlock")).toBe(false);
-        expect(findButton(root, "Home").classList.contains("hidden")).toBe(false);
+        // It has no alarm to clear: Unlock never shows. Home is in the head, and until the machine is homed it leads.
+        expect(findButton(root, "Unlock").classList.contains("hidden")).toBe(true);
+        const home = findButton(root, "Home");
+        expect(home.classList.contains("hidden")).toBe(false);
+        expect(home.closest(".panel-head")).not.toBeNull();
+        expect(home.closest("details")).toBeNull();
+        await ctx.refreshPlacing();
+        expect(store.get().placing?.homed).toBe(false);
+        expect(home.classList.contains("btn-primary")).toBe(true);
+        home.click();
+        await settle();
+        await ctx.refreshPlacing();
+        expect(store.get().placing?.homed).toBe(true);
+        expect(home.classList.contains("btn-primary")).toBe(false);
         expect(root.querySelector(".travel-row")).toBeNull();
     });
 

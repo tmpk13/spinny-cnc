@@ -1,15 +1,19 @@
 // Jog panel, drawn from the machine's controls (controls.ts). One step
 // size serves every axis: Fine, Normal or Coarse, each axis taking its own
 // step for it from the machine file (its smallest choice, the one it
-// starts on, its largest), so the pad and the bars all follow one pick and
-// say the step they move by. On a machine with a board pad, the pad comes
-// first: eight arrows around where the head is on the board, the corners
-// moving X and Y together; the arrow keys drive it. Then a bar per joint:
-// where it is, its step, its minus and plus. Under More: a step of its own
-// typed for any axis (which is that axis's step at every size while it is
-// there), the zero buttons, the feed field, goto fields, Center, motors
-// and unlock. The cancel button sits in the panel's head, away from every
-// move. Which joints there are, what they are called, how they step and
+// starts on, its largest), so the pad and the bars all follow one pick.
+// Every step is a field that shows the distance a press moves by: the
+// board's X and Y at the end of the size's row, a joint's between its
+// minus and plus. A number typed there is that axis's step at the size
+// picked, kept by this browser; the field cleared, the file's again. On a
+// machine with a board pad, the pad comes first: eight arrows around where
+// the head is on the board, the corners moving X and Y together; the arrow
+// keys drive it. Then a bar per joint: where it is, its step, its minus
+// and plus, and Motors under them. Under More: the zero buttons, the feed
+// field, goto fields, Center and the place named by hand. In the panel's
+// head, in sight whether or not the rest is: Home, on a machine that can
+// home, Unlock while the machine is in alarm, and the cancel button, away
+// from every move. Which joints there are, what they are called, how they step and
 // whether the feed applies is the machine file's; the panel only draws it,
 // and draws it again when the controls change. Escape cancels a jog or
 // goto from anywhere but a dialog while a machine is connected, and leaves
@@ -21,7 +25,7 @@
 
 import { askConfirm } from "../confirm.ts";
 import { controlOf, controlsOf, sameControls, unitOf } from "../controls.ts";
-import { activePage, button, el, inputHasFocus, labeled, lockFieldset, modalOpen, numberField, onEnter, readStored, replace, setLocked, svgIcon, writeStored } from "../dom.ts";
+import { activePage, button, el, inputHasFocus, labeled, lockFieldset, lockFor, modalOpen, numberField, onEnter, readStored, replace, setLocked, svgIcon, writeStored } from "../dom.ts";
 import { formatDeg, formatMm, parseNumber } from "../format.ts";
 import { gotoPlanText, type PlanInput, type PlanWant } from "../gotoplan.ts";
 import { profileOf } from "../profile.ts";
@@ -137,6 +141,54 @@ export function levelStep(choices: number[], start: number, level: StepLevel): n
     return level === 2 ? Math.max(...choices) : start;
 }
 
+/** The steps typed for a step size, as this browser keeps them. */
+export const STEPS_KEY = "spinny.jog.steps";
+
+/** An axis's typed steps by size: Fine, Normal, Coarse; null where the machine file's step stands. */
+export type OwnSteps = [number | null, number | null, number | null];
+
+/**
+ * Names an axis's typed steps in what this browser keeps: its bar, its
+ * unit and the choices its machine file gives it, so a step typed for one
+ * machine's axis is never another machine's, and a file whose choices
+ * change starts from its own steps again.
+ */
+export function stepsKey(id: BarId, unit: string, choices: number[]): string {
+    return `${id} ${unit} ${choices.join(",")}`;
+}
+
+/** The typed steps kept, by `stepsKey`; text that is not such a record, and any step that is not above zero, is left out. */
+export function readSteps(text: string | null): Map<string, OwnSteps> {
+    const steps = new Map<string, OwnSteps>();
+    let kept: unknown = null;
+    try {
+        kept = JSON.parse(text ?? "null");
+    } catch {
+        // Nothing kept, or something unreadable: no typed steps.
+    }
+    if (kept === null || typeof kept !== "object" || Array.isArray(kept)) {
+        return steps;
+    }
+    for (const [key, value] of Object.entries(kept)) {
+        if (!Array.isArray(value)) {
+            continue;
+        }
+        const own = [0, 1, 2].map((at) => {
+            const step: unknown = value[at];
+            return typeof step === "number" && Number.isFinite(step) && step > 0 ? step : null;
+        }) as OwnSteps;
+        if (own.some((step) => step !== null)) {
+            steps.set(key, own);
+        }
+    }
+    return steps;
+}
+
+/** The typed steps as the text this browser keeps. */
+export function stepsText(steps: Map<string, OwnSteps>): string {
+    return JSON.stringify(Object.fromEntries(steps));
+}
+
 /**
  * The distance a held jog sends for `seconds` since its last piece, at
  * `rate` per second: at least a tick's worth, so the first piece fills the
@@ -187,10 +239,11 @@ export interface JogOptions {
  * bars as any other machine file does.
  */
 export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () => boolean = () => true, options: JogOptions = {}): void {
-    // The step size every axis moves by, and a step typed for one axis,
-    // which is that axis's step while it is there; both kept across a redraw.
+    // The step size every axis moves by, and the steps typed for an axis
+    // at a size, which stand in for the machine file's; both kept by this
+    // browser.
     let level: StepLevel = parseLevel(readStored(LEVEL_KEY));
-    const typed = new Map<BarId, number>();
+    const own = readSteps(readStored(STEPS_KEY));
     const feedInput = numberField({ placeholder: "default", min: 0 });
     const feed = (): number | null => parseNumber(feedInput.value);
     const cancelButton = button("Cancel", () => cancel(), "btn btn-danger btn-small urgent");
@@ -204,8 +257,15 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
     }, "btn btn-quiet btn-small btn-toggle");
     smoothButton.setAttribute("aria-pressed", String(smooth));
     smoothButton.title = "hold a jog button or key to move until let go; the step is then the distance per second";
+    // Home and Unlock are the machine's, not a move's: in the head, in
+    // sight while the jog's rows are not. Only a machine with an endstop
+    // reports what is homed, and only that one has anything to home; a
+    // G-code machine homes as its file says. Unlock shows while there is
+    // an alarm to clear.
+    const home = button("Home", () => ctx.call(ctx.api.home()), "btn btn-small hidden");
+    const unlock = button("Unlock", () => ctx.call(ctx.api.unlock()), "btn btn-small hidden", "clear the alarm so the machine moves again");
     const body = el("fieldset", { class: "panel-body" });
-    root.append(el("div", { class: "panel-head" }, el("h2", {}, "Jog"), el("div", { class: "button-row" }, smoothButton, cancelButton)), body);
+    root.append(el("div", { class: "panel-head" }, el("h2", {}, "Jog"), el("div", { class: "jog-machine" }, home, unlock), el("div", { class: "button-row" }, smoothButton, cancelButton)), body);
 
     let controls: Controls = controlsOf(ctx.store.get());
     let drawn: Controls | null = null;
@@ -219,11 +279,11 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
     // Each bar's place readout, the unit it reads in, and whether it says
     // the unit (the pad's middle does not: its tooltip does), by bar.
     const places = new Map<BarId, { node: HTMLElement; unit: "mm" | "deg"; bare?: boolean }>();
-    // Where each bar says the step it moves by, with what gives the step.
-    const stepSays = new Map<BarId, { node: HTMLElement; unit: string; axis: AxisControl | undefined }>();
+    // Each bar's step field, with what gives the step and the name its
+    // typed steps are kept under.
+    const stepFields = new Map<BarId, { field: HTMLInputElement; unit: string; axis: AxisControl | undefined; key: string }>();
 
     let motors: HTMLButtonElement | null = null;
-    let home: HTMLButtonElement | null = null;
     // The travel height, a host value: written when the field changes, and
     // filled from the settings while it is not being typed in.
     const travelField = numberField({ step: 0.5, placeholder: "off", width: "6rem" });
@@ -246,18 +306,74 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
     const startOf = (axis?: AxisControl): number => (axis?.steps ? axis.step ?? axis.steps[0]! : controls.pad_step);
     // Shift held with a jog key: the fine step for that jog.
     let shiftJog = false;
-    /** The step a bar moves by: the fine one under Shift, else one typed for it, else its step at the size picked. */
-    const stepOf = (id: BarId, axis?: AxisControl): number => shiftJog ? fineStep(choicesOf(axis)) : typed.get(id) ?? levelStep(choicesOf(axis), startOf(axis), level);
+    /** The machine file's step for a bar at a size. */
+    const fileStep = (axis: AxisControl | undefined, at: StepLevel): number => levelStep(choicesOf(axis), startOf(axis), at);
+    /** The step typed for a bar at a size; null where the file's stands. */
+    const ownStep = (id: BarId, at: StepLevel): number | null => {
+        const key = stepFields.get(id)?.key;
+        return key === undefined ? null : own.get(key)?.[at] ?? null;
+    };
+    /** The step a bar moves by at a size: the one typed for it there, else the file's. */
+    const stepAt = (id: BarId, axis: AxisControl | undefined, at: StepLevel): number => ownStep(id, at) ?? fileStep(axis, at);
+    /** The step a bar moves by now: at the size picked, or under Shift at Fine. */
+    const stepOf = (id: BarId, axis?: AxisControl): number => stepAt(id, axis, shiftJog ? 0 : level);
 
-    /** Every bar's step in words again, after the size or a typed step changed. */
-    function showSteps(): void {
-        for (const [id, { node, unit, axis }] of stepSays) {
-            const text = `${stepOf(id, axis)} ${unit}`;
-            if (node.textContent !== text) {
-                node.textContent = text;
+    /** Every step field's number again, after the size or a typed step changed; a field being typed in keeps its text unless `force`. */
+    function showSteps(force = false): void {
+        for (const [id, { field, unit, axis }] of stepFields) {
+            if (force || field !== document.activeElement) {
+                const text = String(stepAt(id, axis, level));
+                if (field.value !== text) {
+                    field.value = text;
+                }
             }
-            node.toggleAttribute("data-own", typed.has(id));
+            const typed = ownStep(id, level) !== null;
+            field.toggleAttribute("data-own", typed);
+            // A field holding no number says so in its tooltip (numberField): that one stays.
+            if (field.getAttribute("aria-invalid") !== "true") {
+                const size = LEVELS[level]!.toLowerCase();
+                field.title = typed
+                    ? `the ${size} step, ${unit}, typed here; the machine file's is ${fileStep(axis, level)}: clear the field for it`
+                    : `the ${size} step, ${unit}: a press moves by it; type another to change it`;
+            }
         }
+    }
+
+    /**
+     * A bar's step as a field: it shows the distance a press moves by at
+     * the size picked, and a number typed is that bar's step at that size
+     * from then on, kept by this browser. Cleared, or holding no step, it
+     * goes back to the machine file's. Enter leaves the field, so the
+     * next arrow key jogs.
+     */
+    function stepField(id: BarId, title: string, unit: string, axis: AxisControl | undefined): HTMLInputElement {
+        const field = numberField({ min: 0, width: "4.25rem" });
+        field.classList.add("jog-step");
+        field.setAttribute("aria-label", `${title} step`);
+        const key = stepsKey(id, unit, choicesOf(axis));
+        stepFields.set(id, { field, unit, axis, key });
+        field.addEventListener("input", () => {
+            const value = parseNumber(field.value);
+            const steps: OwnSteps = [...(own.get(key) ?? [null, null, null])];
+            // The file's own step typed is no step of the browser's to keep.
+            steps[level] = value !== null && value > 0 && value !== fileStep(axis, level) ? value : null;
+            if (steps.some((step) => step !== null)) {
+                own.set(key, steps);
+            } else {
+                own.delete(key);
+            }
+            writeStored(STEPS_KEY, stepsText(own));
+            showSteps();
+        });
+        field.addEventListener("blur", () => showSteps(true));
+        field.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                field.blur();
+                showSteps(true);
+            }
+        });
+        return field;
     }
 
     // --- holding a jog -----------------------------------------------------
@@ -399,8 +515,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
     ): HTMLDivElement {
         const place = el("span", { class: "axis-bar-at", title: `where ${title} is now` }, barPlace(id, unit === "deg" ? "deg" : "mm", null));
         places.set(id, { node: place, unit: unit === "deg" ? "deg" : "mm" });
-        const step = el("span", { class: "axis-bar-step", title: "the step a press moves it by, at the step size picked; a step typed for this axis under More is marked" });
-        stepSays.set(id, { node: step, unit, axis });
+        const step = el("span", { class: "axis-bar-step" }, stepField(id, title, unit, axis), el("span", { class: "muted" }, unit));
         const head = el("div", { class: "axis-bar-head" },
             el("span", { class: "axis-bar-letter" }, letter),
             el("span", { class: "axis-bar-title" }, title),
@@ -419,33 +534,12 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
         );
     }
 
-    /** A field for a step of an axis's own, under More: typed, it is that axis's step at every size; blank, the size's. */
-    function ownStep(id: BarId, title: string, unit: string): HTMLLabelElement {
-        const field = numberField({ placeholder: "custom", min: 0, width: "5.5rem" });
-        field.setAttribute("aria-label", `${title} step`);
-        field.title = `a step of its own for ${title}, ${unit}; blank: the step size picked`;
-        const kept = typed.get(id);
-        if (kept !== undefined) {
-            field.value = String(kept);
-        }
-        field.addEventListener("input", () => {
-            const value = parseNumber(field.value);
-            if (value !== null && value > 0) {
-                typed.set(id, value);
-            } else {
-                typed.delete(id);
-            }
-            showSteps();
-        });
-        return labeled(title, field, "labeled inline");
-    }
-
     /** The step size every axis moves by: one of three, each axis taking its own step for it. */
     function sizeRow(): HTMLDivElement {
         const row = choiceRow<StepLevel>([0, 1, 2], level, (value) => {
             level = value;
             writeStored(LEVEL_KEY, String(value));
-            showSteps();
+            showSteps(true);
         }, (value) => LEVELS[value]!, undefined, (value) => `every axis by its ${LEVELS[value]!.toLowerCase()} step${value === 0 ? "; Shift with a jog key does the same" : ""}`);
         row.setAttribute("role", "group");
         row.setAttribute("aria-label", "Step size");
@@ -480,13 +574,13 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
         return el("div", { class: "jog-pad", "data-axis": "board" }, ...cells);
     }
 
-    /** What the pad moves by at the size picked, in words beside it: X and Y each. */
-    function padSays(): HTMLSpanElement {
-        const x = el("span", {});
-        const y = el("span", {});
-        stepSays.set("x", { node: x, unit: "mm", axis: undefined });
-        stepSays.set("y", { node: y, unit: "mm", axis: undefined });
-        return el("span", { class: "muted jog-pad-steps", title: "what an arrow moves the head by on the board" }, "X ", x, ", Y ", y);
+    /** What the pad moves by at the size picked, at the end of the size's row: a field each for X and Y, mm. */
+    function padSteps(): HTMLSpanElement {
+        return el("span", { class: "jog-pad-steps" },
+            labeled("X", stepField("x", "Board X", "mm", undefined), "labeled inline"),
+            labeled("Y", stepField("y", "Board Y", "mm", undefined), "labeled inline"),
+            el("span", { class: "muted" }, "mm"),
+        );
     }
 
     /** The servos the state fits, as their bars. */
@@ -743,9 +837,9 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
         drawnController = profile.controller ?? "spinny";
         const bars = el("div", { class: "axis-bars" });
         places.clear();
-        stepSays.clear();
+        stepFields.clear();
         // The step size over everything it sets, with what the pad moves by at it.
-        const size = el("div", { class: "jog-size" }, sizeRow(), controls.pad ? padSays() : null);
+        const size = el("div", { class: "jog-size" }, sizeRow(), controls.pad ? padSteps() : null);
         const pad = controls.pad ? boardPad() : null;
         for (const axis of controls.axes) {
             bars.append(bar(axis.axis, axis.letter, axis.label, axis.note, unitOf(axis.axis, profile), axis, (sign) => jogAxis(axis, sign), (sign) => holdAxis(axis, sign)));
@@ -758,12 +852,6 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
         }
 
         const rows: HTMLElement[] = [];
-        // A step of an axis's own, the pad's X and Y among them, in each axis's unit.
-        rows.push(el("div", { class: "jog-own-steps" },
-            el("span", { class: "choice-label", title: "a step typed here is that axis's step at every size; blank, the step size picked gives it" }, "Own steps"),
-            ...(controls.pad ? [ownStep("x", "Board X", "mm"), ownStep("y", "Board Y", "mm")] : []),
-            ...controls.axes.map((axis) => ownStep(axis.axis, axis.label, unitOf(axis.axis, profile))),
-        ));
         const zeros = controls.axes.filter((axis) => axis.zero).map((axis) => button(`Set ${axis.letter}=0 here`, () => declare(axis), "btn btn-quiet btn-small", `call this place ${axis.letter} 0`));
         if (zeros.length > 0) {
             rows.push(el("div", { class: "button-row jog-zeros" }, ...zeros));
@@ -797,25 +885,17 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
         }
 
         motors = button("Motors", () => toggleMotors(), "btn btn-quiet", "power the motors on or off");
-        // Only a machine with an endstop reports what is homed, and only
-        // that one has anything to home; a G-code machine homes as its file says.
-        home = button("Home", () => ctx.call(ctx.api.home()), "btn btn-quiet hidden");
         home.title = gcode ? "home the machine (its file's home line, G28)" : "home every axis with an endstop";
-        const bottom = el("div", { class: "button-row" },
-            motors,
-            home,
-            gcode ? null : button("Unlock", () => ctx.call(ctx.api.unlock()), "btn btn-quiet", "clear an alarm so the machine moves again"),
-        );
-        // The size, the pad and the bars in view; steps of an axis's own,
-        // zeroing, going to a place, naming one, the feed and the motors
-        // under More, open as it was left.
-        const fold = el("details", { class: "more jog-more stack" }, el("summary", { title: "fold or unfold" }, "More: own steps, zero, go to, motors"), ...rows, bottom);
+        // The size, the pad, the bars and the motors in view; zeroing,
+        // going to a place, naming one and the feed under More, open as it
+        // was left.
+        const fold = el("details", { class: "more jog-more stack" }, el("summary", { title: "fold or unfold" }, "More: zero, go to, set position"), ...rows);
         fold.open = moreOpen;
         fold.addEventListener("toggle", () => {
             moreOpen = fold.open;
         });
-        replace(body, size, el("div", { class: "jog-moves" }, pad, bars), fold);
-        showSteps();
+        replace(body, size, el("div", { class: "jog-moves" }, pad, bars), el("div", { class: "button-row jog-motors" }, motors), fold);
+        showSteps(true);
         show(ctx.store.get());
     }
 
@@ -828,9 +908,13 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
         if (motors) {
             motors.textContent = state.snapshot.machine?.enabled ? "Motors off" : "Motors on";
         }
-        if (home) {
-            home.classList.toggle("hidden", typeof state.snapshot.machine?.homed !== "string" && profileOf(state.snapshot).controller !== "gcode");
-        }
+        const gcode = profileOf(state.snapshot).controller === "gcode";
+        home.classList.toggle("hidden", typeof state.snapshot.machine?.homed !== "string" && !gcode);
+        lockFor(home, [!state.snapshot.connected, "connect first"]);
+        // A G-code machine's run starts from its home: until it is homed,
+        // Home is the next thing to press, and drawn as that.
+        home.classList.toggle("btn-primary", gcode && state.snapshot.connected && state.placing?.homed === false);
+        unlock.classList.toggle("hidden", gcode || state_ !== "Alarm");
         const machine = state.snapshot.connected ? state.snapshot.machine : null;
         for (const [id, { node, unit, bare }] of places) {
             const text = barPlace(id, unit, machine, bare !== true);
