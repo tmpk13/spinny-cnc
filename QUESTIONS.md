@@ -368,3 +368,17 @@ Why it matters: you asked for Home's items out of that fold; Home, Unlock and Mo
 - B. Everything out, no More in the jog: all in sight once Jog is pressed, and the dock scrolls on a small window.
 Applied: A, in ba0f813.
 Answer:
+
+## Q63. Should Auto home a laser or a mill that has endstops?
+Why it matters: Auto homes a G-code pick and place machine, whose steps have a Home step. A home of this project's firmware renumbers an axis, which moves the frame a height map was probed in, and its endstops have not run on hardware yet.
+- A. No (recommended): Auto homes a G-code machine only; a laser or a mill is homed with Home in the Machine panel's head.
+- B. Yes, when no joint is homed yet: one press less, and a map probed before it no longer fits.
+Applied: A.
+Answer:
+
+## Q64. When the camera finds the board away from where its references put it, should Auto take the camera's place by itself?
+Why it matters: references are kept per job from one session to the next, so a new board of the same job has the old one's; but references taken by hand with the nozzle may be the more exact ones.
+- A. No (recommended): Auto stops and says how far apart they are (over 1 mm); Use as board place takes the camera's. The same on a laser: the place found becomes marks, and Apply, which moves the whole job, stays a press.
+- B. Yes: the newest look wins, and the old references are dropped without a press.
+Applied: A.
+Answer:

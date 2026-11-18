@@ -876,3 +876,6 @@
 - Home is in the Machine panel's head, in sight in every step, and leads until a G-code machine is homed; Unlock shows there while in alarm; Motors is out of the jog's More.
 - A camera's picture keeps inside its panel in a step or a view, however far its grip is dragged or wide the window is.
 - The jog's steps are fields: the board's X and Y at the end of the Fine, Normal, Coarse row, a joint's between its moves; a number typed is that axis's step at the size picked, kept by the browser.
+- Auto in the Run area's steps: does what the page can by itself (connect, home a G-code machine, start the camera, find the board, take its place, center its fiducials), says what it does and stops where a person is needed; it never starts a run. The human in the loop item's picture with the drawn offset, Adjust and the folding side bar are not built.
+- Find by camera without the offset first: a top camera's search plans by the file's scale, places taken through the camera keep the offset they were taken with and follow one measured later.
+- The quick scan has a name: Search reads Scan the bed with nothing known of the board's place; By camera is open at first with a G-code machine.

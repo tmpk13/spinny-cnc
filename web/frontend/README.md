@@ -187,7 +187,12 @@ state; the Job area's are Jobs, Draw, Assistant and JSON; Machines and
 Cameras have theirs. `src/views/viewbar.ts` lists them across the top of
 each side's pane, opens a stepped area where the work stands and follows
 it until a step is pressed, and shows All panels, the area whole, as the
-layout tools arranged it. A view is a layout of its own that
+layout tools arranged it. The Run area's steps have Auto there too:
+`src/views/autosteps.ts` says the next thing the page can do by itself
+from the state (`autoMove`: connect, home a G-code machine, find the
+board with the camera) and does them one after another, each a request a
+button of the step sends, stopping where a person is needed and before a
+run. A view is a layout of its own that
 `src/views/panels.ts` puts on the page in place of the operator's
 (`setView`), which is set aside and stays the one kept; a link, a setup
 step or the search going to a panel a view keeps out of sight brings up
@@ -331,7 +336,7 @@ classDiagram
         measuredBy(entries, target, name, now)  the routine result that still holds
     }
     class views {
-        context statusbar tabs split links setuplinks facts steps fit areaviews viewbar runstart overview banner machine dro jog laser markers mill jobs jobjson calibrate center heightmap focushere previewpanel vision picture camview cameracontrols camerapick camlog boardplace align pnp device auto console settingslist cam config editor toasts
+        context statusbar tabs split links setuplinks facts steps fit areaviews viewbar autosteps runstart overview banner machine dro jog laser markers mill jobs jobjson calibrate center heightmap focushere previewpanel vision picture camview cameracontrols camerapick camlog boardplace align pnp device auto console settingslist cam config editor toasts
     }
     class align {
         fitRigid(pairs) rotation, shift, scale, rms, residuals

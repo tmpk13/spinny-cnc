@@ -385,6 +385,24 @@ marks, has *Back* too, and puts the step's panel before the picture). *All panel
 panel of the area at once, arranged with the layout tools below; pressed
 again it gives the steps back.
 
+*Auto*, beside *Next*, does the steps the page can do by itself, from the
+first one not done, showing the step it is on and saying what it does in
+a line under the step's: it connects the machine found, homes a G-code
+machine, starts the camera, looks for the board (loading the job's board
+and searching, a scan of the bed with nothing known of its place), takes
+the place found as the board's and centers its fiducials. It stops where
+a person is needed, with the reason: a board to pick, a board the camera
+does not find, a place the camera sees more than a millimeter from where
+references kept from before put the board (*Use as board place* takes
+the camera's; it never replaces references by itself). On a laser or a
+mill it looks with the head camera once *Find mark* has measured it,
+keeps the place found as marks and leaves *Apply* to you, since the whole
+job moves; the heights stay yours, a probe touching the board. It never
+starts a run: it ends on the last step, ready. Everything it sends is the
+request a button of the step sends, each once in a run of Auto; pressed
+while it goes, the button is *Stop Auto*, which also stops a search it
+began.
+
 With all panels shown the area also has the Steps panel, which follows a
 common setup as a row of numbered circles: *Probe and follow a height
 map*, *Mill a board*, *Measure the camera offset* or *Place parts* (only
@@ -900,8 +918,17 @@ out under the panel as a map of where it looked, like a full scan's.
 as the job's references (two parts far apart; *Find fiducials* then makes
 them exact), with the head camera as marks under *By marks*.
 
-*Search* moves the camera over a box in steps of its picture until the
-board is found, then checks it: the picture's center goes over the
+*Search* loads the selected job's board when it is not loaded yet, then
+moves the camera in steps of its picture until the
+board is found, and is named for where it would look: *Search the box*
+with a box drawn, *Search* about a place known (corners taken, a place
+found before, the marks or references) or about where the camera stands,
+and *Scan the bed* with the top camera when nothing says where the board
+is and the machine's file says where boards lie (`[top_camera] bed`, or
+`board_area` first): the quick scan, at stops spaced by the board's size.
+A board too small for the bed in 400 stops is refused with what narrows
+the scan: a board area in the file, a box, or a corner taken. Once the
+board is found the search checks it: the picture's center goes over the
 board's middle (or the part of the board with the most pads and holes in
 view) and the looks there, searched afresh, must agree with the place
 found; a check that disagrees or sees nothing sends the search on (three
@@ -1209,12 +1236,28 @@ under *By references* (or
 *find fiducials first* on a run) fits the board on its fiducials,
 footprints FID* or named Fiducial, from where the references put them.
 A board with no references at all is found under the Board place panel's
-*By camera* with the top camera picked (Looking for the board, above): *Look for
-board* with the board's job picked, *Search* (over a box drawn on the top
-camera's picture, or where corners taken put the board), then *Use as
+*By camera* (open at first with such a machine; the job's own offset and
+the marks, which say nothing here, are not shown) with the top camera
+picked (Looking for the board, above): *Scan the bed* with the board's
+job picked (*Search* once a box is drawn, corners are taken or a place is
+known), then *Use as
 board place* keeps where the looks put the board (else where the corners
 put it) as two references (the two parts furthest apart), which *Find
-fiducials* then makes exact. The Board panel's drawing shows where each guess
+fiducials* then makes exact.
+
+None of this needs the camera's offset first. A search plans its stops by
+the scale measured, else the file's `mm_per_px`, else the one pcbv reads
+off a board it has locked on, and a board found measures the scale. A
+place taken through the camera (a look, a corner, *Camera here*, a
+fiducial found) is kept with the offset in use then, the one measured,
+else the file's, else none, and is read with the one in use now: when
+*Measure offset* finds the camera a little off its design, every such
+place moves by the difference, and nothing has to be found again (the
+look's corners and the place it found move too; its guesses start over).
+With no offset known at all the camera still finds the board and goes
+back to its parts; a plan, a run and the nozzle's *Go to part* wait for
+*Measure offset*, and say so. *Find fiducials* needs the scale measured,
+not the offset; *Home by fiducial* still needs both. The Board panel's drawing shows where each guess
 says the camera's picture lies on the board, green once found. A
 feeder with `pocket` has each pocket looked at before its pick (an empty
 one is passed over), one with `marks` has its marks found once a run and

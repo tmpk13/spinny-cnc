@@ -145,6 +145,64 @@ what was not obvious.
   say**; with the rail listing the Setup areas beside every view, the
   plain link was one more thing to read on every panel.
 
+## Auto and the Board step (2026-11-18)
+
+- **Auto is the page pressing its own buttons** (src/views/autosteps.ts).
+  The steps are the page's (what is done is read from its state), and
+  every act is a request a button of the step sends, so there is no
+  second copy of homing, searching or placing to keep right on hardware.
+  `autoMove(state, memory)` says the next move from the state and what
+  this run tried; `autoRunner` does the moves. A backend routine was the
+  other way: it would have needed the page's notion of a step.
+- **Each act once in a run.** An act whose goal is still not met after it
+  ran stops Auto with what it said; a machine is not moved twice for one
+  press. A wait is only for a routine the state shows running.
+- **It never starts a run, and never replaces a place by itself** (Q64).
+  References are kept per job across sessions, so a new board of the
+  same job would be placed where the old one lay: with references there
+  Auto still looks, and passes when the camera sees the board within
+  `AGREE_MM` (1 mm) of them, stops and says how far otherwise. On a laser
+  the place found becomes marks and Apply stays a press, as the whole job
+  moves.
+- **It homes a G-code machine only** (Q63): that machine's steps have a
+  Home step. A home of this project's firmware renumbers an axis and
+  moves the frame a height map was probed in, and its endstops have not
+  run on hardware. Heights are not Auto's either: a probe touches the
+  board and a focus is set by eye.
+- **A camera is started through its picture's Start**, as the Find board
+  panel does, so it starts with the settings typed there.
+- **Search is named for where it would look** (`searchWill` in
+  findboard.ts): the user asked where the quick scan button was. It was
+  Search, with nothing known, inside By camera, which was folded. Now it
+  reads Scan the bed in that case, Search the box with a box drawn, and
+  By camera is open at first with a G-code machine, where By hand and By
+  marks (the job's offset, this project's marks) say nothing and are not
+  shown. The page's guess of "nothing known" is from what it can see
+  (corners, a place found, references); the backend also keeps places
+  found before a Clear guesses, so the name can say bed where the search
+  starts from one.
+- **Search loads the board itself** and is the dark button; Look for
+  board is the look from where the camera stands.
+- **The lock the user met was the page's, not the backend's**: Search
+  was locked until the top camera's scale was measured ("Measure offset
+  first"), while the backend plans by the file's `mm_per_px` or a lock's
+  scale. The page now locks only with no scale from any of them. What the
+  offset is needed for, and how places follow it, is in
+  notes/pnp-device.md.
+- **A LumenPnP's whole bed is too many stops for a small board**: the
+  quick scan's two lattices pass 400 stops under about 54 mm on the
+  board's shorter side. The refusal now says what narrows it (a board
+  area in the file, a box, a corner); it said "draw a smaller box" to
+  someone who had drawn none.
+- **A fold's `toggle` fires for the page's own opening too**, so the Board
+  place folds keep a state only when it differs from how the fold stands
+  at first, or once one is kept.
+- The mock twins the scan of the bed (its first lattice only), a scale
+  kept from a board found and references carrying their offset; it does
+  not move its look's corners when the offset changes.
+- Run's Board step is at the budget (40 controls; the pick and place one
+  39 and 190 words): the next control there goes under a fold.
+
 ## The layer and a view
 
 - `setView(page, spec | null)`: the spec's columns map to the page's
