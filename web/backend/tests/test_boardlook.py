@@ -583,6 +583,15 @@ def test_a_quick_scan_of_a_bed_puts_a_stop_well_inside_the_board_wherever_it_lie
         search_stops(bed, (20.6, 11.6), (60.0, 175.0))
 
 
+def test_a_bed_scan_too_large_for_a_small_board_says_what_narrows_it():
+    # A LumenPnP's whole bed and a board 14 mm on its shorter side: over a
+    # thousand stops. No box was drawn, so "a smaller box" would name nothing.
+    bed = (24.0, 66.0, 456.0, 552.0)
+    with pytest.raises(ValueError, match="board_area") as refused:
+        search_stops(bed, (20.6, 11.6), (60.0, 175.0), boardlook.QUICK_SHARE * 14.0)
+    assert "take a corner" in str(refused.value) and "smaller box" not in str(refused.value)
+
+
 def test_a_weak_lock_is_refused_before_the_vote_and_kept_in_the_record():
     board = seen()
     raw = {**board.pose((170.0, 95.0), 0.0, False, 0.02, 1280, 720, 1), "inliers": 9, "expected": 27, "unsure": 0}

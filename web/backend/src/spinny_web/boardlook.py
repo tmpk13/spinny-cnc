@@ -1697,7 +1697,14 @@ def search_stops(box: Box, view: tuple[float, float], start: Point, coarse: floa
         first = _lattice(x0, y0, x1, y1, step_x, step_y)
         then = _lattice(x0, y0, x1, y1, step_x, step_y, between=True)
         if len(first) + len(then) > MAX_STOPS:
-            raise ValueError(f"the box needs {len(first) + len(then)} stops of the camera's picture, more than {MAX_STOPS}: draw a smaller box")
+            # Asked for by a search with nothing known, not by a box drawn:
+            # what narrows it is said, since "a smaller box" names nothing
+            # the operator drew.
+            raise ValueError(
+                f"a scan of where boards lie needs {len(first) + len(then)} stops for a board this small, more than {MAX_STOPS}:"
+                " give [top_camera] board_area in the machine file (where boards are put), draw a box on the camera's picture"
+                " (Shift and a drag), or take a corner of the board"
+            )
         ordered = _path(first, start)
         return ordered + _path(then, ordered[-1])
     nx = max(1, math.ceil((x1 - x0) / step_x - 1e-9))
