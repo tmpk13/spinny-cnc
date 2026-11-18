@@ -232,9 +232,28 @@ export interface CameraViews {
     top: PictureView;
 }
 
-export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement }, ctx: Ctx): CameraViews {
-    // The pictures show while their page does.
-    const visible = (): boolean => onShownPage(roots.bottom) && document.visibilityState !== "hidden";
+/** The panels the pick and place cameras' pictures go in. */
+export interface CameraRoots {
+    /** The Run area's: the bottom camera's picture and the top camera's. */
+    bottom: HTMLElement;
+    top: HTMLElement;
+    /** The Cameras page's, each beside its camera's settings: the same pictures over again, so a setting can be seen working; left out, none. */
+    setup?: { bottom: HTMLElement; top: HTMLElement };
+}
+
+/** A camera's picture mounted in a panel: the picture, and what draws the panel again from the state. */
+interface PicturePanel {
+    picture: PictureView;
+    render(state: AppState): void;
+}
+
+/**
+ * The bottom camera's and the top camera's pictures in `roots`. The views
+ * answered are the Run area's, whose boxes and marks the placing uses; the
+ * Cameras page's are pictures only, keeping their own height and switches
+ * and drawing no search box.
+ */
+export function mountCameraViews(roots: CameraRoots, ctx: Ctx): CameraViews {
     const jog = async (mm: [number, number]): Promise<void> => {
         if (Math.hypot(mm[0], mm[1]) < 0.001) {
             return;
@@ -243,79 +262,97 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
         // project's: a joint jog moves either.
         await ctx.call(ctx.api.jog({ kind: "joint", dr: Number(mm[0].toFixed(4)), dz: Number(mm[1].toFixed(4)) }));
     };
+    const panels: { bottom: PicturePanel[]; top: PicturePanel[] } = { bottom: [], top: [] };
 
-    const bottom = mountPicture({
-        key: "up",
-        label: "Bottom camera",
-        rides: false,
-        running: (state) => state.pnp?.running === true,
-        frameUrl: (width, overlay) => ctx.api.pnpFrameUrl(width, overlay),
-        pcbvOverlay: () => false,
-        size: (state) => frameSize(state.pnp?.frame, state.pnp?.size),
-        calibration: bottomCalibration,
-        orientation: bottomOrientation,
-        center: () => null,
-        marks: (state, shown) => {
-            const size = frameSize(state.pnp?.frame, state.pnp?.size) ?? [1280, 720];
-            const gcode = gcodePlacing(state);
-            const crop = partCrop(state);
-            const known = bottomKnown(state, gcode);
-            return [
-                ...reachMark(crop?.mm ?? null, bottomCalibration(state), size, crop?.name ? `parts of class ${crop.name} are looked for within this circle` : "parts are looked for within this circle"),
-                ...knownMarks(known.points, known.center, bottomCalibration(state), shown),
-            ];
-        },
-        spots: (state) => (state.pnp ? shownSpots(state.pnp.routine, state.pnp.look) : null),
-        edges: () => ctx.api.cameraEdges("up"),
-        // Fixed to the machine, the camera sees the nozzle: what it found moves with the head.
-        follow: (state) => bottomHead(state, gcodePlacing(state)),
-        applied: (state) => (state.pnp ? state.pnp.applied ?? null : undefined),
-        undo: (id) => undoEntry(ctx, id),
-        move: jog,
-        noScale: "the bottom camera's scale is not measured yet: Center nozzle first",
-        visible,
-        crops: machineCrops(ctx, "up_camera", UP_TASKS, (state) => state.placing?.document?.camera_crops, (state) => state.pnp?.routine),
-    }, ctx);
-    const bottomEmpty = el("p", { class: "muted camera-view-empty" }, "The bottom camera is not running.");
-    // The part class whose crop the picture rings and a Look once at a
-    // part keeps to: the machine file's [[part_class]] tables.
-    const cropPick = el("select", { class: "field", "aria-label": "Bottom camera crop" }) as HTMLSelectElement;
-    cropPick.title = "the part class whose crop the picture rings and Look once at a part keeps to; a run looks at each part within its own class's crop";
-    const cropField = labeled("Crop", cropPick, "labeled inline");
-    cropPick.addEventListener("change", () => {
-        writeStored(CROP_KEY, cropPick.value);
-        bottom.render(ctx.store.get());
-    });
-    bottom.caption.append(cropField);
-    let cropOptions = "";
+    /**
+     * The bottom camera's picture in the panel `root`, asked for while the
+     * panel's page shows; `setup` is the one beside the camera's settings.
+     */
+    function bottomPanel(root: HTMLElement, setup: boolean): PicturePanel {
+        const visible = (): boolean => onShownPage(root) && document.visibilityState !== "hidden";
+        const picture = mountPicture({
+            key: "up",
+            ...(setup ? { store: "up.setup" } : {}),
+            label: "Bottom camera",
+            rides: false,
+            running: (state) => state.pnp?.running === true,
+            frameUrl: (width, overlay) => ctx.api.pnpFrameUrl(width, overlay),
+            pcbvOverlay: () => false,
+            size: (state) => frameSize(state.pnp?.frame, state.pnp?.size),
+            calibration: bottomCalibration,
+            orientation: bottomOrientation,
+            center: () => null,
+            marks: (state, shown) => {
+                const size = frameSize(state.pnp?.frame, state.pnp?.size) ?? [1280, 720];
+                const gcode = gcodePlacing(state);
+                const crop = partCrop(state);
+                const known = bottomKnown(state, gcode);
+                return [
+                    ...reachMark(crop?.mm ?? null, bottomCalibration(state), size, crop?.name ? `parts of class ${crop.name} are looked for within this circle` : "parts are looked for within this circle"),
+                    ...knownMarks(known.points, known.center, bottomCalibration(state), shown),
+                ];
+            },
+            spots: (state) => (state.pnp ? shownSpots(state.pnp.routine, state.pnp.look) : null),
+            edges: () => ctx.api.cameraEdges("up"),
+            // Fixed to the machine, the camera sees the nozzle: what it found moves with the head.
+            follow: (state) => bottomHead(state, gcodePlacing(state)),
+            applied: (state) => (state.pnp ? state.pnp.applied ?? null : undefined),
+            undo: (id) => undoEntry(ctx, id),
+            move: jog,
+            noScale: "the bottom camera's scale is not measured yet: Center nozzle first",
+            visible,
+            crops: machineCrops(ctx, "up_camera", UP_TASKS, (state) => state.placing?.document?.camera_crops, (state) => state.pnp?.routine),
+        }, ctx);
+        const empty = el("p", { class: "muted camera-view-empty" }, setup ? "The bottom camera is not running: Start is in its panel." : "The bottom camera is not running.");
+        // The part class whose crop the picture rings and a Look once at a
+        // part keeps to: the machine file's [[part_class]] tables.
+        const cropPick = el("select", { class: "field", "aria-label": "Bottom camera crop" }) as HTMLSelectElement;
+        cropPick.title = "the part class whose crop the picture rings and Look once at a part keeps to; a run looks at each part within its own class's crop";
+        const cropField = labeled("Crop", cropPick, "labeled inline");
+        cropPick.addEventListener("change", () => {
+            writeStored(CROP_KEY, cropPick.value);
+            // The class picked is one for every picture of the camera.
+            renderAll(ctx.store.get());
+        });
+        picture.caption.append(cropField);
+        let cropOptions = "";
 
-    /** The crop list: the file's own crop, then each part class with its crop. */
-    function renderCrop(state: AppState): void {
-        const document = gcodePlacing(state) ? state.placing?.document ?? null : null;
-        const classes = document?.classes ?? [];
-        cropField.classList.toggle("hidden", classes.length === 0);
-        const options = JSON.stringify([document?.crop ?? null, classes]);
-        if (options !== cropOptions) {
-            cropOptions = options;
-            const own = document?.crop ? `file's crop, ${formatFixed(document.crop, 2)} mm` : "pcbv's own reach";
-            cropPick.replaceChildren(
-                el("option", { value: "" }, own),
-                ...classes.map((entry) => el("option", { value: entry.name }, `${entry.name}, ${formatFixed(entry.crop, 2)} mm`)),
-            );
+        /** The crop list: the file's own crop, then each part class with its crop. */
+        function renderCrop(state: AppState): void {
+            const document = gcodePlacing(state) ? state.placing?.document ?? null : null;
+            const classes = document?.classes ?? [];
+            cropField.classList.toggle("hidden", classes.length === 0);
+            const options = JSON.stringify([document?.crop ?? null, classes]);
+            if (options !== cropOptions) {
+                cropOptions = options;
+                const own = document?.crop ? `file's crop, ${formatFixed(document.crop, 2)} mm` : "pcbv's own reach";
+                cropPick.replaceChildren(
+                    el("option", { value: "" }, own),
+                    ...classes.map((entry) => el("option", { value: entry.name }, `${entry.name}, ${formatFixed(entry.crop, 2)} mm`)),
+                );
+            }
+            cropPick.value = partCrop(state)?.name ?? "";
         }
-        cropPick.value = partCrop(state)?.name ?? "";
+        root.append(
+            el("div", { class: "panel-head" }, el("h2", {}, setup ? "Bottom camera picture" : "Bottom camera view"),
+                helpMark(ctx, "Drag the picture to move the head; double-click a point to bring it to the crosshair; Ctrl and the wheel zoom. The grip under the picture sets its height.")),
+            el("div", { class: "panel-body" },
+                picture.root,
+                empty,
+            ),
+        );
+        return {
+            picture,
+            render(state) {
+                renderCrop(state);
+                picture.render(state);
+                empty.classList.toggle("hidden", state.pnp?.running === true);
+            },
+        };
     }
-    roots.bottom.append(
-        el("div", { class: "panel-head" }, el("h2", {}, "Bottom camera view"),
-            helpMark(ctx, "Drag the picture to move the head; double-click a point to bring it to the crosshair; Ctrl and the wheel zoom. The grip under the picture sets its height.")),
-        el("div", { class: "panel-body" },
-            bottom.root,
-            bottomEmpty,
-        ),
-    );
 
     // The picked part's shape, asked for once a part is picked.
-    const shapes = partShapes(ctx, () => top.render(ctx.store.get()));
+    const shapes = partShapes(ctx, () => panels.top.forEach((panel) => panel.picture.render(ctx.store.get())));
     const shapeOf = (state: AppState, calibration: Calibration | null, size: [number, number]): Mark[] => {
         const job = state.job;
         const ref = state.pnpPart;
@@ -325,51 +362,6 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
         const shape = shapes.get(job, ref);
         return shape ? shapeMarks(shape, boardTurn(state), calibration, size) : [];
     };
-
-    const top = mountPicture({
-        key: "top",
-        label: "Top camera",
-        rides: true,
-        running: (state) => state.placing?.top?.running === true,
-        frameUrl: (width, overlay) => ctx.api.topFrameUrl(width, overlay),
-        pcbvOverlay: (state) => (state.placing?.top?.board_look?.job ?? null) !== null,
-        size: (state) => frameSize(state.placing?.top?.frame, state.placing?.top?.size),
-        calibration: topCalibration,
-        orientation: topOrientation,
-        center: topCenter,
-        marks: (state, shown) => {
-            const topState = state.placing?.top;
-            const size = frameSize(topState?.frame, topState?.size) ?? [1280, 720];
-            const calibration = topCalibration(state);
-            const look = topState?.board_look;
-            const job = look?.job && state.job?.id === look.job ? state.job : null;
-            return [
-                ...reachMark(state.placing?.document?.top?.within ?? null, calibration, size, "marks and fiducials are looked for within this circle"),
-                ...boardMarks(state.job, roughOf(state.job, look?.corners), topCenter(state), calibration, size, "rough"),
-                ...boardMarks(job, look?.estimate ?? null, topCenter(state), calibration, size),
-                ...knownMarks(topKnown(state), topCenter(state), calibration, shown),
-                ...shapeOf(state, calibration, size),
-                ...nozzleBoxMarks(topState?.nozzle_box, shown),
-            ];
-        },
-        spots: (state) => (state.placing?.top ? shownSpots(state.placing.top.routine, state.placing.top.look) : null),
-        edges: () => ctx.api.cameraEdges("top"),
-        applied: (state) => (state.placing?.top ? state.placing.top.applied ?? null : undefined),
-        undo: (id) => undoEntry(ctx, id),
-        move: jog,
-        noScale: "the top camera's scale is not measured yet: Measure offset first",
-        visible: () => visible() && gcodePlacing(ctx.store.get()),
-        boxes: true,
-        crops: machineCrops(ctx, "top_camera", TOP_TASKS, (state) => state.placing?.document?.top?.crops, (state) => state.placing?.top?.routine),
-    }, ctx);
-    const topEmpty = el("p", { class: "muted camera-view-empty" }, "The top camera is not running.");
-    // The nozzle's place in the top camera's picture, drawn by hand: the
-    // nozzle rides on the head with the camera, so it stays put there.
-    const nozzleBox = button("Nozzle box", () => armBox("top", "the nozzle", (box) => void keepNozzleBox(box)), "btn btn-quiet btn-small",
-        "drag a box on the picture around where the nozzle generally shows; it stays drawn there, kept with the top camera");
-    const clearNozzle = button("Clear nozzle box", () => into(ctx, "placing", ctx.api.topSettings({ clear: ["nozzle_box"] })), "btn btn-quiet btn-small",
-        "forget the nozzle's box");
-    top.caption.append(nozzleBox, clearNozzle);
 
     async function keepNozzleBox(box: [number, number, number, number]): Promise<void> {
         const topState = ctx.store.get().placing?.top;
@@ -382,32 +374,105 @@ export function mountCameraViews(roots: { bottom: HTMLElement; top: HTMLElement 
         await into(ctx, "placing", ctx.api.topSettings({ nozzle_box: shares }));
     }
 
-    roots.top.append(
-        el("div", { class: "panel-head" }, el("h2", {}, "Top camera view"),
-            helpMark(ctx, "Drag the picture to move the head; double-click a point to bring it to the crosshair; Ctrl and the wheel zoom; Shift and a drag draw the box a board search keeps to; Nozzle box, then a drag, marks where the nozzle shows.")),
-        el("div", { class: "panel-body" },
-            top.root,
-            topEmpty,
-        ),
-    );
-
-    function render(state: AppState): void {
-        renderCrop(state);
-        bottom.render(state);
-        top.render(state);
-        const topState = state.placing?.top;
-        lockFor(nozzleBox, [topState?.running !== true, "start the top camera first"]);
-        clearNozzle.classList.toggle("hidden", !topState?.nozzle_box);
-        bottomEmpty.classList.toggle("hidden", state.pnp?.running === true);
-        topEmpty.classList.toggle("hidden", state.placing?.top?.running === true);
-        // The top camera is a G-code machine's: its panel shows with one.
-        roots.top.classList.toggle("hidden", !gcodePlacing(state));
+    /**
+     * The top camera's picture in the panel `root`, shown with a G-code
+     * machine and asked for while the panel's page shows; `setup` is the
+     * one beside the camera's settings, which draws no search box.
+     */
+    function topPanel(root: HTMLElement, setup: boolean): PicturePanel {
+        const visible = (): boolean => onShownPage(root) && document.visibilityState !== "hidden";
+        const picture = mountPicture({
+            key: "top",
+            ...(setup ? { store: "top.setup" } : {}),
+            label: "Top camera",
+            rides: true,
+            running: (state) => state.placing?.top?.running === true,
+            frameUrl: (width, overlay) => ctx.api.topFrameUrl(width, overlay),
+            pcbvOverlay: (state) => (state.placing?.top?.board_look?.job ?? null) !== null,
+            size: (state) => frameSize(state.placing?.top?.frame, state.placing?.top?.size),
+            calibration: topCalibration,
+            orientation: topOrientation,
+            center: topCenter,
+            marks: (state, shown) => {
+                const topState = state.placing?.top;
+                const size = frameSize(topState?.frame, topState?.size) ?? [1280, 720];
+                const calibration = topCalibration(state);
+                const look = topState?.board_look;
+                const job = look?.job && state.job?.id === look.job ? state.job : null;
+                return [
+                    ...reachMark(state.placing?.document?.top?.within ?? null, calibration, size, "marks and fiducials are looked for within this circle"),
+                    ...boardMarks(state.job, roughOf(state.job, look?.corners), topCenter(state), calibration, size, "rough"),
+                    ...boardMarks(job, look?.estimate ?? null, topCenter(state), calibration, size),
+                    ...knownMarks(topKnown(state), topCenter(state), calibration, shown),
+                    ...shapeOf(state, calibration, size),
+                    ...nozzleBoxMarks(topState?.nozzle_box, shown),
+                ];
+            },
+            spots: (state) => (state.placing?.top ? shownSpots(state.placing.top.routine, state.placing.top.look) : null),
+            edges: () => ctx.api.cameraEdges("top"),
+            applied: (state) => (state.placing?.top ? state.placing.top.applied ?? null : undefined),
+            undo: (id) => undoEntry(ctx, id),
+            move: jog,
+            noScale: "the top camera's scale is not measured yet: Measure offset first",
+            visible: () => visible() && gcodePlacing(ctx.store.get()),
+            boxes: !setup,
+            crops: machineCrops(ctx, "top_camera", TOP_TASKS, (state) => state.placing?.document?.top?.crops, (state) => state.placing?.top?.routine),
+        }, ctx);
+        const empty = el("p", { class: "muted camera-view-empty" }, setup ? "The top camera is not running: Start is in its panel." : "The top camera is not running.");
+        // The nozzle's place in the top camera's picture, drawn by hand: the
+        // nozzle rides on the head with the camera, so it stays put there.
+        const nozzleBox = button("Nozzle box", () => armBox("top", "the nozzle", (box) => void keepNozzleBox(box)), "btn btn-quiet btn-small",
+            "drag a box on the picture around where the nozzle generally shows; it stays drawn there, kept with the top camera");
+        const clearNozzle = button("Clear nozzle box", () => into(ctx, "placing", ctx.api.topSettings({ clear: ["nozzle_box"] })), "btn btn-quiet btn-small",
+            "forget the nozzle's box");
+        picture.caption.append(nozzleBox, clearNozzle);
+        const box = setup ? "" : " Shift and a drag draw the box a board search keeps to;";
+        root.append(
+            el("div", { class: "panel-head" }, el("h2", {}, setup ? "Top camera picture" : "Top camera view"),
+                helpMark(ctx, `Drag the picture to move the head; double-click a point to bring it to the crosshair; Ctrl and the wheel zoom;${box} Nozzle box, then a drag, marks where the nozzle shows.`)),
+            el("div", { class: "panel-body" },
+                picture.root,
+                empty,
+            ),
+        );
+        return {
+            picture,
+            render(state) {
+                picture.render(state);
+                const topState = state.placing?.top;
+                lockFor(nozzleBox, [topState?.running !== true, "start the top camera first"]);
+                clearNozzle.classList.toggle("hidden", !topState?.nozzle_box);
+                empty.classList.toggle("hidden", topState?.running === true);
+                // The top camera is a G-code machine's: its panels show with one.
+                root.classList.toggle("hidden", !gcodePlacing(state));
+            },
+        };
     }
-    ctx.store.subscribe((state) => render(state), ["pnp", "placing", "snapshot", "job", "components", "pnpPart"]);
-    render(ctx.store.get());
+
+    function renderAll(state: AppState): void {
+        for (const panel of [...panels.bottom, ...panels.top]) {
+            panel.render(state);
+        }
+    }
+
+    panels.bottom.push(bottomPanel(roots.bottom, false));
+    panels.top.push(topPanel(roots.top, false));
+    if (roots.setup) {
+        panels.bottom.push(bottomPanel(roots.setup.bottom, true));
+        panels.top.push(topPanel(roots.setup.top, true));
+    }
+    ctx.store.subscribe((state) => renderAll(state), ["pnp", "placing", "snapshot", "job", "components", "pnpPart"]);
+    renderAll(ctx.store.get());
     globalThis.addEventListener?.("pagehide", () => {
-        bottom.stop();
-        top.stop();
+        for (const panel of [...panels.bottom, ...panels.top]) {
+            panel.picture.stop();
+        }
     });
-    return { bottom, top };
+    // Drawing the Run area's top picture again draws the Cameras page's
+    // too: the two show one camera.
+    const top = panels.top[0]!.picture;
+    return {
+        bottom: panels.bottom[0]!.picture,
+        top: { ...top, render: (state) => panels.top.forEach((panel) => panel.picture.render(state)) },
+    };
 }

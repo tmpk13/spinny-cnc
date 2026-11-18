@@ -329,32 +329,34 @@ export function machineViews(): AreaView[] {
 }
 
 /**
- * The Cameras page's views: a camera each, its settings beside its picture
- * controls, lens and colors, and changes, and the pick and place head and
- * bed. The bar lists the ones the machine connected has.
+ * The Cameras page's views: a camera each, its picture as large as the
+ * window allows and beside it its settings over its picture controls,
+ * lens and colors, and changes, so a setting is seen working where it is
+ * changed; and the pick and place head and bed. The bar lists the ones
+ * the machine connected has.
  */
 export function cameraViews(): AreaView[] {
-    const cols = "minmax(20rem, 2fr) minmax(0, 3fr)";
+    const cols = "minmax(0, 3fr) minmax(22rem, 2fr)";
     return [
         {
             id: "head-camera",
             label: "Head camera",
-            tip: "the camera on the head: its device, its place and scale, its routines",
-            columns: [["camera"], [["camera-controls", "camera-sight", "camera-changes"]]],
+            tip: "the camera on the head: its picture, its device, its place and scale, its routines",
+            columns: [["camera-picture"], ["camera", ["camera-controls", "camera-sight", "camera-changes"]]],
             cols,
         },
         {
             id: "bottom-camera",
             label: "Bottom camera",
-            tip: "the camera looking up at the nozzle, and the nozzle seen by it",
-            columns: [["pnp-camera", "pnp-nozzle"], [["pnp-camera-controls", "pnp-camera-sight", "pnp-camera-changes"]]],
+            tip: "the camera looking up at the nozzle: its picture, its settings, and the nozzle seen by it",
+            columns: [["pnp-camera-picture"], ["pnp-camera", "pnp-nozzle", ["pnp-camera-controls", "pnp-camera-sight", "pnp-camera-changes"]]],
             cols,
         },
         {
             id: "top-camera",
             label: "Top camera",
-            tip: "a pick and place machine's camera on its head",
-            columns: [["pnp-top"], [["pnp-top-controls", "pnp-top-sight", "pnp-top-changes"]]],
+            tip: "a pick and place machine's camera on its head: its picture and its settings",
+            columns: [["pnp-top-picture"], ["pnp-top", ["pnp-top-controls", "pnp-top-sight", "pnp-top-changes"]]],
             cols,
         },
         {

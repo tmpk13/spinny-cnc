@@ -171,10 +171,16 @@ function headCenter(state: AppState): [number, number] | null {
     return board && offset ? [board.x + offset[0], board.y + offset[1]] : null;
 }
 
-/** The head camera's picture as a panel of its own, with the pose and the look under it. */
-export function mountVisionView(root: HTMLElement, ctx: Ctx, visible: () => boolean): PictureView {
+/**
+ * The head camera's picture as a panel of its own, with the look under
+ * it. `setup` is the one on the Cameras page, beside the camera's
+ * settings: the same picture over again, so a setting can be seen
+ * working, keeping its own height and switches and drawing no search box.
+ */
+export function mountVisionView(root: HTMLElement, ctx: Ctx, visible: () => boolean, setup = false): PictureView {
     const picture = mountPicture({
         key: "head",
+        ...(setup ? { store: "head.setup" } : {}),
         label: "Head camera",
         rides: true,
         running: (state) => state.camera?.running === true,
@@ -206,13 +212,14 @@ export function mountVisionView(root: HTMLElement, ctx: Ctx, visible: () => bool
         },
         noScale: "the camera's scale is not measured yet: Find mark first",
         visible,
-        boxes: true,
+        boxes: !setup,
     }, ctx);
-    const empty = el("p", { class: "muted camera-view-empty" }, "The camera is not running.");
+    const empty = el("p", { class: "muted camera-view-empty" }, setup ? "The camera is not running: Start is in its panel." : "The camera is not running.");
     const lookLine = el("p", { class: "muted vision-look" });
+    const box = setup ? "" : "; Shift and a drag draw the box a board search keeps to";
     root.append(
-        el("div", { class: "panel-head" }, el("h2", {}, "Head camera view"),
-            helpMark(ctx, "Drag the picture to move the head; double-click a point to bring it to the crosshair; Ctrl and the wheel zoom; Shift and a drag draw the box a board search keeps to.")),
+        el("div", { class: "panel-head" }, el("h2", {}, setup ? "Head camera picture" : "Head camera view"),
+            helpMark(ctx, `Drag the picture to move the head; double-click a point to bring it to the crosshair; Ctrl and the wheel zoom${box}.`)),
         el("div", { class: "panel-body" },
             picture.root,
             empty,
@@ -242,14 +249,19 @@ export interface VisionPanel {
  * view panel); without one the picture goes in a box of its own appended
  * to `root`. The picture controls and the lens and colors folds are panels
  * of their own in `folds` (stacked with this one by the markup); without
- * them they fold inside this panel.
+ * them they fold inside this panel. `setupRoot` is a panel on this one's
+ * own page for the picture over again, where the settings are changed.
  */
-export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement, folds?: CameraFolds): VisionPanel {
+export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement, folds?: CameraFolds, setupRoot?: HTMLElement): VisionPanel {
     const badge = el("span", { class: "badge vision-badge" }, "stopped");
     const pictureRoot = viewRoot ?? el("div", { class: "stack" });
     // The fold, once made: the picture asks whether it is open.
     let folded: HTMLDetailsElement | null = null;
     const view = mountVisionView(pictureRoot, ctx, () => visibleView());
+    /** The picture beside the settings is in view: its page up, its panel neither folded nor away. */
+    const visibleSetup = (): boolean => setupRoot !== undefined && onShownPage(setupRoot) && document.visibilityState !== "hidden"
+        && !setupRoot.hasAttribute("data-collapsed") && !setupRoot.classList.contains("hidden");
+    const setupView = setupRoot ? mountVisionView(setupRoot, ctx, visibleSetup, true) : null;
     const poseLine = explain(explain(explain(el("p", { class: "muted vision-pose" }, poseText(null)), "pose"), "inliers"), "rms");
     const start = button("Start", () => startCamera(), "btn btn-primary");
     start.title = "start the camera with these settings";
@@ -494,7 +506,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
     // or the picture shows, straight from the API so a backend gone quiet
     // is not a toast three times a second.
     async function poll(): Promise<void> {
-        if (!visible() && !visibleView()) {
+        if (!visible() && !visibleView() && !visibleSetup()) {
             return;
         }
         try {
@@ -559,6 +571,7 @@ export function mountVision(root: HTMLElement, ctx: Ctx, viewRoot?: HTMLElement,
         stop() {
             clearInterval(pollTimer);
             view.stop();
+            setupView?.stop();
             pick.stop();
         },
     };

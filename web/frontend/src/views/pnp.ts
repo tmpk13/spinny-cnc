@@ -560,6 +560,8 @@ export interface PnpRoots {
     view: HTMLElement;
     /** A G-code machine's top camera's picture. */
     topView: HTMLElement;
+    /** The two pictures over again beside their cameras' settings (the Cameras page); left out, none. */
+    setupViews?: { bottom: HTMLElement; top: HTMLElement };
     /** A G-code machine's top camera. */
     top: HTMLElement;
     /** The board's place on a G-code machine. */
@@ -613,7 +615,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         mountMachineView(roots.machineView, ctx);
     }
     mountPnpRun(roots.run, ctx);
-    const views = mountCameraViews({ bottom: roots.view, top: roots.topView }, ctx);
+    const views = mountCameraViews({ bottom: roots.view, top: roots.topView, ...(roots.setupViews ? { setup: roots.setupViews } : {}) }, ctx);
     mountTopCamera(roots.top, ctx, () => visible() && gcodePlacing(ctx.store.get()), roots.topFolds, { picture: roots.topView, home: roots.quick });
     // The board drawing shows the look of the camera this panel picks.
     if (shared === null && roots.find === undefined) {

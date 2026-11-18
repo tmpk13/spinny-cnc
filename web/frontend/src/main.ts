@@ -371,7 +371,7 @@ function main(): void {
     // Its first two steps: the machine to connect, the job to run.
     mountRunConnect(panel("run-connect"), ctx);
     mountRunJob(panel("run-job"), ctx);
-    const vision = mountVision(panel("camera"), ctx, panel("camera-view"), { controls: panel("camera-controls"), sight: panel("camera-sight"), changes: panel("camera-changes") });
+    const vision = mountVision(panel("camera"), ctx, panel("camera-view"), { controls: panel("camera-controls"), sight: panel("camera-sight"), changes: panel("camera-changes") }, panel("camera-picture"));
     mountAlign(place.parts.align, ctx);
     // The Setup side's Checklist: what the machine knows, where each value
     // came from; the calibration tests beside it.
@@ -411,6 +411,7 @@ function main(): void {
         quick: machine.head,
         view: panel("pnp-view"),
         topView: panel("pnp-top-view"),
+        setupViews: { bottom: panel("pnp-camera-picture"), top: panel("pnp-top-picture") },
         top: panel("pnp-top"),
         refs: place.parts.refs,
         feeders: panel("pnp-feeders"),

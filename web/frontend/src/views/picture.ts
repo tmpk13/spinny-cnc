@@ -638,8 +638,15 @@ export function frameShown(key: string, frame: ShownFrame): void {
 }
 
 export interface PictureOptions {
-    /** Names the picture's kept height, zoom and box: `head`, `up` or `top`. */
+    /** Names the camera whose picture this is, for a pick armed on it and for whoever measures its frames: `head`, `up` or `top`. */
     key: string;
+    /**
+     * Names what this picture keeps for itself in the browser (its height,
+     * its turn, its crosshair, its switches, its box): left out, `key`. A
+     * second picture of the same camera on another page names its own, so
+     * each is left as it was set where it is used.
+     */
+    store?: string;
     /** The picture in words, for its alternative text and its caption. */
     label: string;
     /** The camera rides on the head (it sees the machine move against it), or is fixed and sees the nozzle. */
@@ -753,16 +760,17 @@ function remPx(): number {
 }
 
 export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
-    const heightKey = `spinny.picture.${options.key}.height`;
-    const boxKey = `spinny.picture.${options.key}.box`;
-    const overlayKey = `spinny.picture.${options.key}.overlay`;
-    const uprightKey = `spinny.picture.${options.key}.upright`;
-    const turnKey = `spinny.picture.${options.key}.turn`;
-    const crosshairKey = `spinny.picture.${options.key}.crosshair`;
-    const crosshairSizeKey = `spinny.picture.${options.key}.crosshair.size`;
-    const followKey = `spinny.picture.${options.key}.follow`;
-    const edgesKey = `spinny.picture.${options.key}.edges`;
-    const arrowsKey = `spinny.picture.${options.key}.arrows`;
+    const store = options.store ?? options.key;
+    const heightKey = `spinny.picture.${store}.height`;
+    const boxKey = `spinny.picture.${store}.box`;
+    const overlayKey = `spinny.picture.${store}.overlay`;
+    const uprightKey = `spinny.picture.${store}.upright`;
+    const turnKey = `spinny.picture.${store}.turn`;
+    const crosshairKey = `spinny.picture.${store}.crosshair`;
+    const crosshairSizeKey = `spinny.picture.${store}.crosshair.size`;
+    const followKey = `spinny.picture.${store}.follow`;
+    const edgesKey = `spinny.picture.${store}.edges`;
+    const arrowsKey = `spinny.picture.${store}.arrows`;
     let zoom = 1;
     // The edge view: on when switched on (kept per camera), the edges last
     // read and when, and whether a request is out.
@@ -1232,6 +1240,14 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     });
     grip.addEventListener("pointerup", () => {
         if (gripFrom !== null && held !== null) {
+            // A panel of a set height holds the box within it (the
+            // stylesheet's doing): dragged past that, the height kept is
+            // the one the box shows at, not the one the pointer reached.
+            const shown = box.getBoundingClientRect().height / remPx();
+            if (shown > 0 && shown < held) {
+                held = Math.max(MIN_BOX_REM, shown);
+                fit();
+            }
             writeStored(heightKey, held.toFixed(2));
         }
         gripFrom = null;

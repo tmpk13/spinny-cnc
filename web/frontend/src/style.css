@@ -6885,9 +6885,48 @@ table.find-guesses tr.elsewhere td {
 
     /* The work takes the height its column has, and gives height up to an
        opened dock: the preview's box follows its panel, not the window. */
-    .grid[data-view] > .column > :is(.preview-panel, #camera-view, #pnp-view, #pnp-top-view, #pnp-board):not([data-collapsed], [data-height]) {
+    .grid[data-view] > .column > :is(.preview-panel, .picture-panel, #pnp-board):not([data-collapsed], [data-height]) {
         flex: 1 1 0;
         min-height: 12rem;
+    }
+
+    /* A camera's picture keeps inside its panel. The panel has the height
+       its column gives it, so its rows are laid in a column of their own
+       and the picture's box, alone among them, gives up the height the
+       rows around it need: a box dragged tall by its grip, or a wide one
+       in a short window, stops at the panel's edge instead of running on
+       past it. The picture is fitted inside whatever box that leaves. */
+    .grid[data-view] > .column > .picture-panel:not([data-collapsed], [data-height]) {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .grid[data-view] > .column > .picture-panel:not([data-collapsed], [data-height]) > * {
+        flex: none;
+    }
+
+    .grid[data-view] > .column > .picture-panel:not([data-collapsed], [data-height]) > .panel-body {
+        display: flex;
+        flex: 0 1 auto;
+        flex-direction: column;
+        min-height: 0;
+    }
+
+    .grid[data-view] > .column > .picture-panel:not([data-collapsed], [data-height]) > .panel-body > * {
+        flex: none;
+    }
+
+    .grid[data-view] > .column > .picture-panel:not([data-collapsed], [data-height]) > .panel-body > .picture-view {
+        flex: 0 1 auto;
+        min-height: 0;
+    }
+
+    .grid[data-view] > .column > .picture-panel:not([data-collapsed], [data-height]) .picture-view > * {
+        flex: none;
+    }
+
+    .grid[data-view] > .column > .picture-panel:not([data-collapsed], [data-height]) .picture-view > .picture-box {
+        flex: 0 1 auto;
     }
 
     .grid[data-view] > .column > .preview-panel {
