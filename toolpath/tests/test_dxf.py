@@ -169,3 +169,32 @@ def test_what_is_refused():
 def test_the_fixture_the_page_twin_is_checked_against_is_current():
     fixture = HERE / "data" / "dxf-samples.json"
     assert json.loads(fixture.read_text()) == json.loads(json.dumps(dxf.samples())), "run: mise run dxf-fixture"
+
+
+def _ellipse(start: str, end: str) -> list[tuple[float, float]]:
+    """The one path of a drawing of one ellipse: center at the origin, a
+    major axis 10 long along X, half as wide, from `start` to `end`."""
+    text = (
+        "0\nSECTION\n2\nENTITIES\n"
+        f"0\nELLIPSE\n8\n0\n10\n0\n20\n0\n30\n0\n11\n10\n21\n0\n31\n0\n40\n0.5\n41\n{start}\n42\n{end}\n"
+        "0\nENDSEC\n0\nEOF\n"
+    )
+    (layer,) = dxf.read(text).layers
+    (path,) = layer.paths
+    return path
+
+
+def test_a_full_ellipse_whose_end_is_written_a_hair_past_two_pi_is_whole():
+    # 2 pi written with fewer digits can round up past it, as twelve
+    # significant digits do: still the whole ellipse, not a sliver of it.
+    for end in ("6.283185307179586", "6.28318530718", "6.28319", "6.2832"):
+        path = _ellipse("0", end)
+        assert path[0] == path[-1], end
+        assert min(p[0] for p in path) == pytest.approx(-10.0), end
+        assert min(p[1] for p in path) == pytest.approx(-5.0), end
+        assert max(p[1] for p in path) == pytest.approx(5.0), end
+    # A part of one stays that part, however small.
+    quarter = _ellipse("0", "1.5707963267948966")
+    assert near(quarter[0], (10.0, 0.0)) and near(quarter[-1], (0.0, 5.0), 1e-9)
+    sliver = _ellipse("1", "1.00001")
+    assert math.dist(sliver[0], sliver[-1]) < 1e-3
