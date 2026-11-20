@@ -1419,3 +1419,36 @@ def test_a_run_that_stops_with_the_vacuum_on_does_not_leave_it_shown_off(client)
     assert state["progress"]["state"] == "error", state["progress"]
     assert "M107" not in client.fake.lines[-3:]
     assert state["vacuum"]["on"] is not False
+
+
+def test_a_run_asked_for_while_a_slots_find_moves_the_head_waits_for_it(client):
+    # A slot's find moves the head on its request's own thread; a run asked
+    # for meanwhile once started at once, its lines sent between the
+    # find's moves (a pick's move across, then the find's, then the pick's
+    # descent: the nozzle down where the find had taken the head).
+    import threading
+
+    from spinny_web.app import PnpPlanBody
+
+    job_id, camera = tape_rig(client, profile(rest=TOP + BUS + 'pocket = "bright"\n'), advanced=lambda: 1)
+    started: list[bool] = []
+    runs: list[threading.Thread] = []
+    looks = camera.spot
+
+    def spot(*args, **kwargs):
+        if not runs:
+            thread = threading.Thread(target=lambda: client.backend.pnp_run(PnpPlanBody(job=job_id, refs=["R1"])), daemon=True)
+            runs.append(thread)
+            thread.start()
+            thread.join(0.5)
+            started.append(client.backend.gcode.running)
+        return looks(*args, **kwargs)
+
+    camera.spot = spot
+    # The picture's center put near the part in slot 3's window.
+    client.backend.gcode.command(f"G0 X{60.0 - CAMERA_OFFSET[0]} Y{30.0 - CAMERA_OFFSET[1]}", 2.0)
+    answer = client.post("/api/pnp/bus/slot", json={"address": 3, "by": "camera", "find": True})
+    runs[0].join(10.0)
+    wait_for(lambda: not client.get("/api/pnp/placing").json()["running"])
+    assert started == [False], "a run started while a slot's find was moving the head"
+    assert answer.status_code == 200, answer.text

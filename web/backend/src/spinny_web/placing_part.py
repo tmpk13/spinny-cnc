@@ -324,6 +324,9 @@ class PlacingPart:
     def _head_lines(self, machine: GcodeMachine, lines: list[str]) -> None:
         """Moves of the head, run to their end, the place read after."""
         with self._move_lock:
+            # A run started since the request's own check has the head.
+            if self.gcode.running:
+                raise HTTPException(status_code=409, detail="a placing run is under way")
             self._gcode_run_lines(machine, lines, "Jog")
             self._gcode_position(machine)
         self._publish_gcode_state()
@@ -1325,7 +1328,14 @@ class PlacingPart:
     def pnp_run(self, body: PnpPlanBody) -> dict:
         """Places the job's parts on the machine on its own thread: each pick
         from where a camera finds it, read by the vacuum, looked at and
-        corrected over the up camera, as the machine file asks (placer.py)."""
+        corrected over the up camera, as the machine file asks (placer.py).
+        The checks and the start are made holding the head, so moves under
+        way (a goto, a slot's find) end before the run's first line, and a
+        request after them sees the run (_head_lines, _find_in_slot)."""
+        with self._move_lock:
+            return self._start_run(body)
+
+    def _start_run(self, body: PnpPlanBody) -> dict:
         if self.gcode.running:
             raise HTTPException(status_code=409, detail="a placing run is already under way")
         machine = self._found_slots(self._placing_idle())
@@ -1608,9 +1618,10 @@ class PlacingPart:
             raise ValueError("find needs the feeder's pocket shade")
         top = machine.top
         mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
-        mover.check()
         try:
             with self._move_lock:
+                # Checked holding the head: a run started since has it.
+                mover.check()
                 mover.begin()
                 head = mover.here()
                 seen = self.top.look_at(
