@@ -101,8 +101,13 @@ fitted to the head's moves; the rms says how well it follows the head.
   higher, worth about 0.02 in u and 0.04 mm here); and that the ring's
   center lies on the bottom camera's picture-center line, as the two
   shares agreeing says.
-- The routine's nozzle part (a Center nozzle first, N1 down to Z 4) was
-  not run within the routine on the machine; only the X/Y looks were.
+- The whole routine (the user approved N1 going down over the bottom
+  camera) ran once that evening: 14.3 s, the nozzle centered at
+  (241.4417, 215.3326), 0.028 and 0.022 mm from the place kept two hours
+  before, and the offset (24.0588, 64.1673): 0.025 and 0.020 off the X/Y
+  runs, the same as the nozzle's place moved. The looks across hold to a
+  few um; the nozzle's centering (its lit end's wander, about 0.03 mm)
+  is what the offset's repeat rests on.
 
 ## The routine's choices
 
@@ -134,3 +139,15 @@ fitted to the head's moves; the rms says how well it follows the head.
   the user's.
 - M114 answers X to two decimals, so a place read back is up to 0.005 mm
   off the one asked for; the routines go by the places they asked for.
+
+## The virtual LumenPnP
+
+- Its cameras see each other (virtual_camera.py): the top camera the
+  bottom camera's ring light at 1.4 times its bed scale, the bottom camera
+  the top camera's lens at 3.4 times its tip scale, so a share comes out
+  (0.29, about the LumenPnP's). Neither leans, so the two looks agree.
+- Run end to end through pcbv (`mise run virtual-pnp`, a backend on its
+  own data directory): the offset came out (23.8842, 64.928) against the
+  world's (23.884, 64.928), the design offset plus its error less the
+  tip's runout. With no top camera scale measured the share is the
+  bottom camera's alone.

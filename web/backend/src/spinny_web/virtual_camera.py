@@ -12,6 +12,13 @@ measured from (a dark disk), each board laid on the bed (dark, with its
 fiducials bright) and the parts let go (dark). With the ring light off
 both pictures are dim.
 
+Over each other the two cameras see each other, for Offset by bottom
+camera: the top camera the bottom camera's ring light (a bright ring
+round a dark lens), the bottom camera the top camera's lens (a dark disc
+in its bright ring light), each drawn at the scale its depth gives
+(TOP_AT_RING, BOTTOM_AT_LENS) and moving by that scale as the head moves.
+Neither camera leans here, so the two looks agree.
+
 Each camera is placed a little off what the machine file says (a scale,
 a roll, the bottom camera mirrored, its place and the top camera's offset
 a few tenths of a millimeter out) so that centering the nozzle and
@@ -65,6 +72,18 @@ TOP_ERROR = (0.37, -0.28)
 RUNOUT = (0.03, -0.02)
 # The tip is down on a part or the board at or below this far under the safe height, mm.
 TOUCH_DEPTH = 15.0
+# The two cameras seen by each other: the bottom camera's ring light, its
+# inner and outer edges (mm about its place), seen by the top camera at
+# TOP_AT_RING times its scale at the bed (it lies deeper); the top
+# camera's lens and its ring light, mm across, seen by the bottom camera at
+# BOTTOM_AT_LENS times its scale at the tip; the lights' shade. The two
+# factors put the tip 0.29 of the way up from the bottom camera to the top,
+# about where a LumenPnP's is.
+RING_INNER, RING_OUTER = 8.0, 9.5
+TOP_AT_RING = 1.4
+LENS, LENS_LIGHT = 6.0, 14.0
+BOTTOM_AT_LENS = 3.4
+LIGHT = 250
 
 
 # --- drawing -----------------------------------------------------------------------------
@@ -271,8 +290,11 @@ class Camera:
     width: int = WIDTH
     height: int = HEIGHT
 
-    def to_px(self, mm: Point) -> Point:
-        u, v = to_picture(mm, self.roll, self.mirror, self.scale)
+    def to_px(self, mm: Point, scale: float | None = None) -> Point:
+        """A displacement from the point at the picture's center as a place
+        in the picture, at the camera's scale or `scale` (mm a pixel at
+        another depth)."""
+        u, v = to_picture(mm, self.roll, self.mirror, scale or self.scale)
         return (self.width / 2.0 + u, self.height / 2.0 + v)
 
     def shades(self) -> tuple[float, bytearray]:
@@ -281,8 +303,13 @@ class Camera:
         light = 1.0 if machine is None or machine.light > 0 else DIM
         return light, bytearray([round(BRIGHT * light)]) * (self.width * self.height)
 
-    def draw(self, raster: bytearray, mm: list[Point], origin: Point, shade: int) -> None:
-        fill_polygon(raster, self.width, self.height, [self.to_px((x - origin[0], y - origin[1])) for x, y in mm], shade)
+    def draw(self, raster: bytearray, mm: list[Point], origin: Point, shade: int, scale: float | None = None) -> None:
+        fill_polygon(raster, self.width, self.height, [self.to_px((x - origin[0], y - origin[1]), scale) for x, y in mm], shade)
+
+    def reaches(self, point: Point, origin: Point, across: float, scale: float) -> bool:
+        """Whether something `across` mm wide at `point` shows in the picture
+        centered on `origin`, at `scale` mm a pixel."""
+        return math.dist(point, origin) < math.hypot(self.width, self.height) / 2.0 * scale + across
 
     def picture(self) -> bytearray:
         raise NotImplementedError
@@ -303,6 +330,12 @@ class BottomCamera(Camera):
         if machine is None:
             return raster
         at = machine.bed()
+        # The top camera's lens in its ring light, far above the tip.
+        lens = (at[0] + self.world.top.offset[0], at[1] + self.world.top.offset[1])
+        far = self.scale * BOTTOM_AT_LENS
+        if self.reaches(lens, self.place, LENS_LIGHT, far):
+            self.draw(raster, disk(lens, LENS_LIGHT / 2.0), self.place, round(LIGHT * light), far)
+            self.draw(raster, disk(lens, LENS / 2.0), self.place, round(DARK * light), far)
         self.draw(raster, disk(machine.tip(at), TIP / 2.0), self.place, round(DARK * light))
         part = machine.held_part(at)
         if part is not None:
@@ -329,6 +362,13 @@ class TopCamera(Camera):
             return any(math.dist(point, center) < reach for point in points) or (
                 min(p[0] for p in points) <= center[0] <= max(p[0] for p in points) and min(p[1] for p in points) <= center[1] <= max(p[1] for p in points)
             )
+
+        # The bottom camera's ring light round its dark lens, below the bed.
+        ring = self.world.bottom.place
+        deep = self.scale * TOP_AT_RING
+        if self.reaches(ring, center, 2.0 * RING_OUTER, deep):
+            self.draw(raster, disk(ring, RING_OUTER, 96), center, round(LIGHT * light), deep)
+            self.draw(raster, disk(ring, RING_INNER, 96), center, round(DARK * light), deep)
 
         for board in self.world.boards:
             if near(board.outline):

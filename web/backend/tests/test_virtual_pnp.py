@@ -14,12 +14,14 @@ import time
 import urllib.request
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from spinny_web import virtual_pnp
 from spinny_web.gcode_link import GcodeLink, firmware_of
 from spinny_web.openpnp import parse
-from spinny_web.virtual_camera import COS, ZIGZAG, World, fill_polygon, jpeg, serve_camera
+from spinny_web.pictures import round_edge
+from spinny_web.virtual_camera import BOTTOM_AT_LENS, COS, RING_INNER, TOP_AT_RING, ZIGZAG, World, fill_polygon, jpeg, serve_camera
 from spinny_web.virtual_pnp import HELD_READING, OPEN_READING, AIR_READING, VirtualMarlin, serve, to_picture
 
 REPO = Path(__file__).resolve().parents[3]
@@ -288,6 +290,25 @@ def test_the_bottom_camera_sees_the_tip_where_the_head_puts_it():
     # With the light off the window is dim.
     world.machine.light = 0
     assert max(camera.picture()) < 100
+
+
+def test_over_each_other_the_cameras_see_the_ring_light_and_the_lens():
+    # Offset by bottom camera's looks: each camera sees the other where the
+    # head puts it, at the scale of its depth.
+    world = world_over((0.0, 0.0, 31.5))
+    top, bottom = world.top, world.bottom
+    head = (bottom.place[0] - top.offset[0] + 0.4, bottom.place[1] - top.offset[1] - 0.3)
+    send(world.machine, f"G1 X{head[0]:.4f} Y{head[1]:.4f}")
+    at = world.machine.bed()
+    look = (at[0] + top.offset[0], at[1] + top.offset[1])
+    found = round_edge(np.frombuffer(bytes(top.picture()), dtype=np.uint8).reshape(top.height, top.width))
+    assert found is not None
+    expected = to_picture((bottom.place[0] - look[0], bottom.place[1] - look[1]), top.roll, top.mirror, top.scale * TOP_AT_RING)
+    assert (found.dx, found.dy) == pytest.approx(expected, abs=0.3)
+    assert found.radius == pytest.approx(RING_INNER / (top.scale * TOP_AT_RING), rel=0.02)
+    x, y, _ = dark_center(bottom.picture(), bottom.width, 120)
+    u, v = to_picture((look[0] - bottom.place[0], look[1] - bottom.place[1]), bottom.roll, bottom.mirror, bottom.scale * BOTTOM_AT_LENS)
+    assert (x, y) == pytest.approx((bottom.width / 2 + u, bottom.height / 2 + v), abs=0.3)
 
 
 def test_the_bottom_camera_sees_a_held_part_over_the_tip():
