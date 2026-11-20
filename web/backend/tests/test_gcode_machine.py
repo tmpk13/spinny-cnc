@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import time
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -112,16 +113,23 @@ def board_job(client) -> str:
 
 
 def test_the_lumenpnp_file_reads_with_its_safe_height_and_pump_and_valve():
-    lumen = parse(LUMEN.read_text(encoding="utf-8"), "opulo-lumen-rev5")
-    assert lumen.top is not None and lumen.top.home_fiducial == (60.91, 175.23)
+    text = LUMEN.read_text(encoding="utf-8")
+    lumen = parse(text, "opulo-lumen-rev5")
+    # The operator calibrates this file (the cameras' places, the top
+    # camera's offset and scale, the park place): those numbers are checked
+    # against what the file itself says, so a new calibration is not a
+    # failure here.
+    file = tomllib.loads(text)
+    up, top = file["up_camera"], file["top_camera"]
+    assert lumen.top is not None and lumen.top.home_fiducial == tuple(top["home_fiducial"])
     assert lumen.safe_z == 31.5 and lumen.move == "G1" and lumen.axes == ("X", "Y", "Z", "A")
     assert lumen.pick == ("M106 P1 S180", "M106") and lumen.place == ("M107 P1", "M107")
-    assert lumen.light_on == ("M150 P255 R255 U255 B255",) and lumen.park == (42.328, 411.916)
+    assert lumen.light_on == ("M150 P255 R255 U255 B255",) and lumen.park == tuple(file["motion"]["park"])
     # Opulo's bottom camera seen by N1, and its top camera's offset from N1.
-    assert lumen.camera_position == (61.92, 219.82) and lumen.camera_z == 4.0
-    assert lumen.top is not None and lumen.top.offset == (23.544, 65.188)
+    assert lumen.camera_position == tuple(up["position"]) and lumen.camera_z == up["z"]
+    assert lumen.top is not None and lumen.top.offset == tuple(top["offset"])
     # Its top camera shows the bed upside down, as Opulo's OpenPnP has it (flipped in X and Y).
-    assert lumen.top.roll == 180.0 and lumen.top.mm_per_px == 0.0161 and lumen.top.bed == (24.0, 66.0, 456.0, 552.0)
+    assert (lumen.top.roll, lumen.top.mm_per_px, lumen.top.bed) == (top["roll"], top["mm_per_px"], tuple(top["bed"]))
     assert lumen.travel == (0.0, 0.0, 433.0, 487.0) and lumen.top.board_area is None and not lumen.top.board_area_only
     assert lumen.vacuum is not None and lumen.vacuum.part_on is None
     assert lumen.vacuum.reading(["echo:i2c-reply: from:109 bytes:1 data:233", "ok"]) == 233.0
