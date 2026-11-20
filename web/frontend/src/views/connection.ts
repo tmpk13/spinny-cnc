@@ -219,9 +219,18 @@ export function mountConnection(root: HTMLElement, ctx: Ctx): void {
         renderRecent();
     }
 
+    // Drawn again only when what the buttons show changes: the snapshots
+    // come at 10 Hz, and a button replaced between a press and its release
+    // takes no click.
+    let drawnRecent = "";
     function renderRecent(): void {
         const recent = readRecent(readStored(RECENT_KEY));
         const snapshot = ctx.store.get().snapshot;
+        const key = JSON.stringify([recent, snapshot.connected, snapshot.url ?? null]);
+        if (key === drawnRecent) {
+            return;
+        }
+        drawnRecent = key;
         recentHead.classList.toggle("hidden", recent.length === 0);
         recentRow.classList.toggle("hidden", recent.length === 0);
         replace(recentRow, ...recent.map((entry) => {
