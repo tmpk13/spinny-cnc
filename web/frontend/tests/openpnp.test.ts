@@ -359,6 +359,22 @@ describe("reading an OpenPnP setup", () => {
     });
 });
 
+describe("a strip OpenPnP has fed to its end", () => {
+    test("is left out with a warning, not written as a part past its last one", () => {
+        // 200 to 240 mm at a 4 mm pitch: 11 parts.
+        for (const counts of ['feed-count="11" max-feed-count="11"', 'feed-count="11"', 'feed-count="14"']) {
+            const machine = readMachine(MACHINE.replace('feed-count="3"', counts));
+            const { items, warnings } = machineItems(machine);
+            expect(items.find((item) => item.id === "feeder:10k-strip")).toBeUndefined();
+            expect(warnings.some((warning) => warning.startsWith("feeder 10k strip"))).toBe(true);
+        }
+        // One part left: the eleventh, at 242 (2 mm past the last hole), the head's place 23.544 further.
+        const last = machineItems(readMachine(MACHINE.replace('feed-count="3"', 'feed-count="10"'))).items.find((item) => item.id === "feeder:10k-strip");
+        expect(last?.value).toContain("X 265.544");
+        expect(last?.value).toContain("1 parts");
+    });
+});
+
 describe("the import on the Config page", () => {
     test("reads the files picked, shows each value with its box, and makes the machine file", async () => {
         const { mountOpenPnpImport } = await import("../src/views/openpnpimport.ts");

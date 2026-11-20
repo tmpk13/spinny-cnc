@@ -445,6 +445,8 @@ function feederOf(node: XmlNode, nozzleOffset: Place): OpenPnpFeeder {
         const most = number(node.attrs["max-feed-count"]);
         const eia = node.attrs["standard-eia-481"] === "true";
         const total = most > 0 ? most : Math.max(1, Math.round(span / partPitch) + 1);
+        // Fed to its end, the next part would lie past the strip's last.
+        const used = fed >= total ? `OpenPnP has fed all ${total} of its parts` : null;
         return {
             ...base,
             at,
@@ -452,7 +454,7 @@ function feederOf(node: XmlNode, nozzleOffset: Place): OpenPnpFeeder {
             count: Math.max(1, total - fed),
             rotation: (turn * 180) / Math.PI + (eia ? 90 : 0) + location.rotation,
             note: fed > 0 ? `starts at OpenPnP's next part, #${fed + 1}` : null,
-            unplaced: first.x === 0 && first.y === 0 && first.z === 0 ? "its reference hole is not set in the file" : null,
+            unplaced: first.x === 0 && first.y === 0 && first.z === 0 ? "its reference hole is not set in the file" : used,
         };
     }
     if (kind === "PhotonFeeder") {
