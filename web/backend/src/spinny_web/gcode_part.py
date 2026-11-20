@@ -489,7 +489,11 @@ class GcodePart:
                 self.gcode.command(line, machine.timeout * HOME_TIMEOUTS)
             finally:
                 self.gcode.busy = None
-            self.gcode.homed = True
+            # A home of some axes leaves the others' numbers as they were,
+            # Z's among them: only a home of X, Y and Z makes the machine
+            # homed, which _lift_before_home trusts Z by.
+            if not letters or set(machine.axes[:3]) <= set(letters):
+                self.gcode.homed = True
             self._gcode_position(machine)
         return self._publish_gcode_state()
 

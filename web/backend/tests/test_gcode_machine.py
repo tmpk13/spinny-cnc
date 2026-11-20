@@ -402,6 +402,19 @@ def test_a_home_lifts_the_nozzles_first_once_this_link_homed_the_machine(client)
     assert sent(client, start) == ["M114", "G28", "M114"]
 
 
+def test_a_home_of_one_axis_leaves_the_height_untrusted(client):
+    connect(client, "rig")
+    # X alone homed: Z still reads what it was powered on as, so the whole
+    # home after it sends nothing before its own line.
+    start = len(client.fake.lines)
+    client.post("/api/home", json={"axes": "R"})
+    assert sent(client, start) == ["G28 X", "M114"]
+    start = len(client.fake.lines)
+    client.post("/api/home", json={})
+    assert sent(client, start) == ["G28", "M114"]
+    assert client.get("/api/pnp/placing").json()["homed"] is True
+
+
 def test_the_console_sends_a_line_as_typed(client):
     connect(client, "rig")
     assert client.post("/api/command", json={"line": "M114"}).json()["lines"][-1] == "ok"
