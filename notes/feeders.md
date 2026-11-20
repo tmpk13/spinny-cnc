@@ -87,15 +87,14 @@ The plan these were built from is [docs/FEEDERS.md](../docs/FEEDERS.md).
   `_found_slots`'s search is done, so the bus code and `_found_slots`'s
   `except` stay as they were. The newest answer stands: a scan of every
   address replaces it all, and a scan by id or a search forgets an id it
-  asked that did not answer. Kept only the first answer, a feeder taken
+  asked that did not answer. Were the first answer kept, a feeder taken
   out of its slot would still show its place known. `_close_gcode`
   forgets all of it (a disconnect, another machine connected, a lost link
   connected again), and it is read only while that machine is connected.
 - A bus feeder whose file names its `slot` has its place known whatever
-  the bus answered, as the contract between the agents has it. Moved to
-  another slot, a run's advance at the file's address fails and leaves
-  its parts out; the check shows where it answered and calls it no
-  problem.
+  the bus answered: the file says where it is. Moved to another slot, a
+  run's advance at the file's address fails and leaves its parts out; the
+  check shows the address it answered at but names no problem.
 - `append_table` (cam.py, beside `set_value`) refuses a null rather than
   leave its key out: TOML has no null, and a key dropped without a word
   would hide a value the page meant to set. The new table goes at the
