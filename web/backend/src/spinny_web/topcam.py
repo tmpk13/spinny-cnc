@@ -51,7 +51,7 @@ MAX_STEP = 20.0
 OFFSET_LIMIT = 500.0
 # What a look says when it cannot go: by the measured offset with none
 # measured, or by an offset given with no scale to turn pixels into mm.
-OFFSET_NEEDED = "the top camera's offset is not measured: put the nozzle on a mark, then Measure offset"
+OFFSET_NEEDED = "the top camera's offset is not measured: Offset by bottom camera, or a mark (Nozzle on mark, then Measure offset)"
 SCALE_NEEDED = "the top camera's scale is not measured: Measure camera, or a search that finds a board, measures it"
 # Measure camera: the picture's scale, roll and mirror from the head's
 # moves alone, over any surface with texture (pictures.fit_camera). A first

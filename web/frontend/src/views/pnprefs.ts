@@ -293,7 +293,7 @@ export function mountPnpRefs(root: HTMLElement, ctx: Ctx, onShape: () => void = 
         lockFor(findFiducials, [!connected, "connect the machine first"], [busy, "the machine is busy"], [device?.top?.running !== true, "start the top camera first"],
             [!((device?.top?.mm_per_px ?? 0) > 0), "the top camera's scale is not measured: Measure camera, or a search that finds a board, measures it"], [!job, "pick a board job first"]);
         fitLine.textContent = fitText(fit, refs.length, device?.angle)
-            + (placeWaitsForOffset(device, job?.id ?? null) ? " Taken by the camera, whose offset from the nozzle is not known: placing waits for Measure offset, and the place follows it." : "");
+            + (placeWaitsForOffset(device, job?.id ?? null) ? " Taken by the camera, whose offset from the nozzle is not known: placing waits for the offset (Offset by bottom camera, or Measure offset), and the place follows it." : "");
         fiducialLine.textContent = fiducialText(device?.top, job?.id ?? null);
         const angleText = device?.angle === null || device?.angle === undefined ? "" : String(device.angle);
         if (angle !== document.activeElement && (angle.value === angleShown || angleShown === "")) {

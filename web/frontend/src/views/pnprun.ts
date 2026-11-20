@@ -263,7 +263,7 @@ export function mountPnpRun(root: HTMLElement, ctx: Ctx): void {
         fiducialsFirst.disabled = !measured || !hasFiducials;
         // The nozzle cannot be put on a board whose place only the camera knows.
         const waits: [boolean, string] = [placeWaitsForOffset(device, job?.id ?? null),
-            "the board's place was taken by the top camera, whose offset from the nozzle is not known: Measure offset first"];
+            "the board's place was taken by the top camera, whose offset from the nozzle is not known: Offset by bottom camera or Measure offset first"];
         lockFor(planButton, [!job, "pick a board job first"], [!device?.machine, "no G-code machine to place with: connect one from the top bar"], waits);
         lockFor(run, [!connected, "connect the machine first"], [running, "a run is under way"], [!job, "pick a board job first"], waits);
         setLocked(stop, !running, "no run under way");

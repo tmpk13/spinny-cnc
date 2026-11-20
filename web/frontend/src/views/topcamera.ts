@@ -242,7 +242,7 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
                 [!connected, "connect the machine first"],
                 [running || moving || busy, "the machine is busy"],
                 [top?.running !== true, "start the top camera first"],
-                [!(top?.mm_per_px && top.mm_per_px > 0), "the top camera's offset is not measured: Measure offset first"]);
+                [!(top?.mm_per_px && top.mm_per_px > 0), "the top camera's offset is not measured: Offset by bottom camera or Measure offset first"]);
         }
         fiducialLine.textContent = home ? `the bed's fiducial at X ${home[0]} Y ${home[1]}` : "no homing fiducial in the machine file";
         setLocked(abort, !busy, "no routine under way");

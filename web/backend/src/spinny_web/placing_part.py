@@ -95,17 +95,17 @@ DESIGN_SCALE_SPREAD = 1.5
 # center on the point; one taken by the nozzle is the nozzle's place.
 NOZZLE_NEEDS_OFFSET = (
     "the board's place was taken by the top camera, whose offset from the nozzle is not measured:"
-    " put the nozzle on a mark, press Nozzle on mark, then Measure offset"
+    " measure it: Offset by bottom camera, or a mark (Nozzle on mark, then Measure offset)"
 )
 CAMERA_NEEDS_OFFSET = (
     "the board's references were taken by the nozzle, and the top camera's offset from it is not measured:"
-    " take the board's place with the camera (Search, a corner, Camera here), or put the nozzle on a mark,"
-    " press Nozzle on mark, then Measure offset"
+    " take the board's place with the camera (Search, a corner, Camera here), or measure the offset:"
+    " Offset by bottom camera, or a mark (Nozzle on mark, then Measure offset)"
 )
 MIXED_NEEDS_OFFSET = (
     "the board's place was taken by the top camera for some references and by the nozzle for others, and the"
     " camera's offset from the nozzle is not measured, so they cannot be set against each other:"
-    " put the nozzle on a mark, press Nozzle on mark, then Measure offset"
+    " measure it: Offset by bottom camera, or a mark (Nozzle on mark, then Measure offset)"
 )
 
 # A feeder bus slot's place taken with the top camera goes by its measured
@@ -1035,7 +1035,7 @@ class PlacingPart:
             return (float(top.offset[0]), float(top.offset[1]))
         if machine.top is not None and machine.top.offset is not None:
             return machine.top.offset
-        raise ValueError("the top camera's offset is not known: give [top_camera] offset in the machine file, or Measure offset")
+        raise ValueError("the top camera's offset is not known: give [top_camera] offset in the machine file, or measure it (Offset by bottom camera, Measure offset)")
 
     def _top_offset_in_use(self, machine: GcodeMachine | None) -> tuple[tuple[float, float], bool]:
         """The top camera's offset its looks go by, and whether one is

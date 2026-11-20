@@ -8126,7 +8126,7 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, `${device.name}'s file has no [gcode] home command`);
         }
         if (!this.topMeasured()) {
-            throw new ApiError(400, "the top camera's offset is not measured: put the nozzle on a mark, then Measure offset");
+            throw new ApiError(400, "the top camera's offset is not measured: Offset by bottom camera, or a mark (Nozzle on mark, then Measure offset)");
         }
         this.topHomeFirst = home;
         this.beginTop("home", home ? ["homing", "looking", "declaring", "done"] : ["looking", "declaring", "done"], device, null);
@@ -9384,7 +9384,7 @@ export class MockBackend implements Api, EventFeed {
         // With no offset known the camera's places are the head's, not the
         // nozzle's: a fit is of one frame, the one asked for.
         if (!this.topOffsetInUse().known && used.some((entry) => (entry.offset !== undefined) !== (frame === "camera"))) {
-            throw new ApiError(400, "the board's place was taken by the top camera, whose offset from the nozzle is not known: put the nozzle on a mark, press Nozzle on mark, then Measure offset");
+            throw new ApiError(400, "the board's place was taken by the top camera, whose offset from the nozzle is not known: measure it: Offset by bottom camera, or a mark (Nozzle on mark, then Measure offset)");
         }
         const pairs: [[number, number], [number, number]][] = used.map((entry) => [designOf(entry)!, this.referenceAt(entry)]);
         const angle = this.placing().angle ?? (used.length === 1 ? used[0]!.angle ?? null : null);
@@ -9468,7 +9468,7 @@ export class MockBackend implements Api, EventFeed {
         }
         if (fiducials) {
             if (!this.topMeasured()) {
-                throw new ApiError(502, "finding the fiducials: the top camera's offset is not measured: put the nozzle on a mark, then Measure offset");
+                throw new ApiError(502, "finding the fiducials: the top camera's offset is not measured: Offset by bottom camera, or a mark (Nozzle on mark, then Measure offset)");
             }
             // The mock board lies where the references put it: the fiducials
             // are found there, and the plan is made on them.
@@ -9682,7 +9682,7 @@ export class MockBackend implements Api, EventFeed {
         if (device.top?.offset) {
             return [device.top.offset[0], device.top.offset[1]];
         }
-        throw new ApiError(400, "the top camera's offset is not known: give [top_camera] offset in the profile, or Measure offset");
+        throw new ApiError(400, "the top camera's offset is not known: give [top_camera] offset in the profile, or measure it (Offset by bottom camera, Measure offset)");
     }
 
     private deviceLines(device: MockDevice, lines: string[]): void {
