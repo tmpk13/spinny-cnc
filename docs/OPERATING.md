@@ -1148,7 +1148,9 @@ Steps panel's *Place parts with a G-code machine*):
    typed). *Save* writes it as a `[[feeder]]` at the end of the machine
    file, its comments kept. Feeders picked in the list (a press, Shift,
    Ctrl or Cmd) get a row of buttons under it: *Feed* moves each picked
-   feeder on the bus once, *Count again* counts them from their first part.
+   feeder on the bus once, *Identify* makes each one flash in turn (to see
+   which feeder in the machine is which), *Count again* counts them from
+   their first part.
    A scanned row whose slot has no place shows *Slot here*: with the top
    camera's offset measured it takes the place where the camera's picture
    center is, the height from the other slots (take the first slot with
@@ -1157,7 +1159,15 @@ Steps panel's *Place parts with a G-code machine*):
    rest: the other way, *Find the part, then slot* (the camera centers on
    the part in the pick window first, for a feeder with a `pocket` shade),
    *Camera over slot* (the head goes across at the safe height so the
-   picture's center is over the slot's place, to check it) and *Keep slot*.
+   picture's center is over the slot's place, to check it), *Keep slot*,
+   *Identify* (that feeder flashes) and *Set address*, which writes a new
+   address into the slot's floor, the lowest one free offered; the file's
+   `[[slot]]` for the old address, and any feeder pinned to it, moves with
+   it, since the place is the slot's. A feeder whose slot's floor has no
+   address answers no scan: with only one such feeder in, the panel's
+   *More: address a new slot* gives it one (every feeder that answers is set
+   up first, so it alone answers). Both writes ask first, naming the
+   address.
 5. *Plan*, in the Placing part of the Run panel, makes the placement program from the references and the
    feeders and shows it; nothing moves (it works with the machine
    disconnected too, for the one last connected). *Run* places the

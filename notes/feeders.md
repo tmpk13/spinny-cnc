@@ -176,7 +176,9 @@ was not obvious, and why it is the way it is.
   file stays without), and its bus a feeder no file names
   (`MOCK_BUS_LOOSE`, address 3), so the budget's Feeders shot, which opens
   the mock's board and scans, is measured full: a part no feeder holds,
-  three feeders, three scanned rows. It measured 39 controls and 154 words.
+  three feeders, three scanned rows: 40 controls and 161 words with the
+  More of item 5, the budget's limit, so the next control there goes
+  under a fold.
 - **The feeders table's place cell wraps.** With every cell on one line,
   the place pushed what a feeder has given, where the check's want shows,
   out of the side panel's width.
@@ -188,3 +190,24 @@ was not obvious, and why it is the way it is.
   scan's answer: a slot taken since the scan would otherwise still ask
   for Slot here and offer no Camera over slot. The page no longer writes a
   slot's text (`withSlot` went): the backend is the slots' one writer.
+- **Identify and the two floor writes.** Identify sits with Feed in the
+  picks' row (the picked feeders on the bus flash in turn) and under a
+  scanned row (that id). Set address is under a row, Address a new slot
+  under the panel's More: both write to the hardware and are not undone
+  by a press, so both ask first, the address in the question and on the
+  button. The address offered is the lowest no feeder answered at in the
+  last scan and no `[[slot]]` names; the page does not know the file's
+  `max_address` (the document carries no bus profile), so the backend's
+  refusal says the range.
+- **The mock's bus models the floors.** `MOCK_BUS_LOOSE` units may have no
+  address (the LumenPnP has one: Address a new slot finds it) or no floor
+  chip (`floor: false`: the write fails); an address written is kept by
+  the feeder's id (`busFloors`) and outdoes the file's slot and the
+  fixture's address. Identify and program act on that state directly,
+  not through packets.
+- **A test's afterEach must not set a shared knob to anything but what
+  tests/setup.ts sets.** bun runs every file in one process: a reset of
+  `confirmSettle.ms` to the page's 250 made every later file's confirm
+  ignore its press, and the failing run climbed past 6 GB before it was
+  killed; a green run peaks near 1 GB.
+

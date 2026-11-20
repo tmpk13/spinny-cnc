@@ -185,11 +185,15 @@ init = 2
 feed = 4
 status = 6
 find = 192
+identify = 193
+program_floor = 194
+unready = 195
 ok = 0
 wrong_id = 1
 unreachable = 2
 uninitialized = 3
 busy = 4
+fail = 5
 
 [controls]
 pad = true

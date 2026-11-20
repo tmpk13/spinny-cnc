@@ -4173,6 +4173,13 @@ table.device-feeders td:nth-child(3) {
     padding-right: 0.5rem;
 }
 
+/* A new address for a slot's floor, its field beside its button. */
+.bus-address {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
 table.device-feeders td[data-need] {
     color: var(--hold);
 }

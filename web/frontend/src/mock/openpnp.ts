@@ -100,7 +100,10 @@ export const BUS_DEFAULTS: MockBus = {
     tries: 3,
     max_address: 32,
     poll_ms: 50,
-    codes: { get_id: 0x01, init: 0x02, feed: 0x04, status: 0x06, find: 0xc0, ok: 0x00, wrong_id: 0x01, unreachable: 0x02, uninitialized: 0x03, busy: 0x04 },
+    codes: {
+        get_id: 0x01, init: 0x02, feed: 0x04, status: 0x06, find: 0xc0, identify: 0xc1, program_floor: 0xc2, unready: 0xc3,
+        ok: 0x00, wrong_id: 0x01, unreachable: 0x02, uninitialized: 0x03, busy: 0x04, fail: 0x05,
+    },
 };
 
 export interface MockVacuum {

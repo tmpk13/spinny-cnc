@@ -27,12 +27,19 @@
 // height from the other slots), else by the nozzle lowered onto the pick
 // point; the backend writes it. The top camera looks before anything is
 // lowered near the feeders, which is why it is the first way.
+//
+// Identify makes a feeder flash, to tell which feeder in the machine is
+// which row: the picked ones in turn, or a scanned row's. A slot's floor
+// keeps its bus address: Set address writes a new one for a scanned
+// feeder (its [[slot]] in the file moves with it), and Address a new slot,
+// under the panel's More, gives one to the feeder no scan can see because
+// its floor has none. Both write to the hardware, and ask first.
 
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, lockFor, numberField, replace, setLocked } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
-import type { BusFeeder, BusMissing, CamValue, FeederCheck, FeederCheckFeeder, FeederSummary } from "../types.ts";
+import type { BusFeeder, BusMissing, BusScan, CamValue, FeederCheck, FeederCheckFeeder, FeederSummary, PlacingState } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
 import { currentCheck, footprintName, refreshFeederCheck, watchFeederCheck } from "./feedercheck.ts";
 
@@ -148,6 +155,27 @@ export function draftValues(draft: FeederDraft): Record<string, CamValue> {
     return { id: draft.id, ...parts, bus_id: draft.busId ?? "", advance: draft.advance ?? 4 };
 }
 
+/**
+ * The address a slot's floor is offered: the lowest that no feeder
+ * answered at in the last scan and no [[slot]] of the file names (the
+ * backend refuses one taken, or past the file's [bus] max_address).
+ */
+export function freeAddress(found: readonly BusFeeder[], slots: readonly { address: number }[]): number {
+    const taken = new Set([...found.map((entry) => entry.address), ...slots.map((slot) => slot.address)]);
+    let address = 1;
+    while (taken.has(address) && address < 254) {
+        address += 1;
+    }
+    return address;
+}
+
+/** What an Identify answered, in a line: the feeders that flashed, and why the others did not. */
+export function identifyText(identified: readonly string[], missing: readonly BusMissing[], names: ReadonlyMap<string, string>): string {
+    const flashed = identified.map((id) => names.get(id) ?? id);
+    const said = flashed.length > 0 ? [`${flashed.join(", ")} ${flashed.length === 1 ? "flashes" : "flash in turn"}`] : [];
+    return [...said, ...missing.map((entry) => `${entry.feeder}: ${entry.reason}`)].join("; ");
+}
+
 /** How a slot's place is taken: the top camera's picture center on its pick point, or the nozzle on it. */
 export type SlotWay = "camera" | "nozzle";
 
@@ -210,13 +238,24 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
     const scan = button("Scan bus", () => scanBus(), "btn");
     const scanList = el("ul", { class: "groups bus-scan hidden", "aria-label": "Feeders found on the bus" });
     const missingList = el("ul", { class: "device-references bus-missing-list hidden" });
-    const busBox = el("div", { class: "stack hidden" }, el("div", { class: "button-row" }, scan), missingList, scanList);
+    // A slot whose floor has no address: its feeder answers no scan.
+    const newAddress = numberField({ min: 1, max: 254, step: 1, width: "4.5rem" });
+    newAddress.setAttribute("aria-label", "Address for the new slot");
+    const addressNew = button("Address a new slot", () => programSlot(null), "btn btn-small",
+        "write the address into the floor of the slot whose feeder has no address: every feeder that answers is set up first, so that one alone answers");
+    const busMore = el("details", { class: "more stack bus-more-fold" },
+        el("summary", { title: "fold or unfold" }, "More: address a new slot"),
+        el("p", { class: "muted hint" }, "A feeder whose slot's floor has no address answers no scan. With only one such feeder in, this gives its slot an address."),
+        el("div", { class: "button-row" }, labeled("Address", newAddress, "labeled inline"), addressNew),
+    );
+    const busBox = el("div", { class: "stack hidden" }, el("div", { class: "button-row" }, scan), missingList, scanList, busMore);
     const note = el("p", { class: "muted hint" });
     const pickLine = el("span", { class: "muted", title: "a press on a feeder picks it; Shift a run of them, Ctrl or Cmd adds or drops one" });
     const feed = button("Feed", () => feedPicked(), "btn btn-small", "advance each picked feeder's tape once, by its advance");
     const countAgain = button("Count again", () => countPicked(), "btn btn-quiet btn-small", "count the picked feeders from their first part again");
+    const identify = button("Identify", () => identifyPicked(), "btn btn-quiet btn-small", "make each picked feeder on the bus flash in turn, to see which is which");
     const clearPicks = button("Clear", () => setPicked(new Set(), null), "btn btn-quiet btn-small", "pick no feeder: the scan asks every address");
-    const pickButtons = [feed, countAgain, clearPicks];
+    const pickButtons = [feed, identify, countAgain, clearPicks];
     const pickRow = el("div", { class: "button-row feeder-picks" }, pickLine, ...pickButtons);
     const listBox = el("div", { class: "pnp-parts-box" }, list);
     // The parts of the board picked that no feeder holds.
@@ -256,14 +295,10 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
         const names = pickedFeeders(ctx.store.get()).map((feeder) => feeder.id);
         const answer = await ctx.call(ctx.api.pnpBusScan(names.length > 0 ? names : undefined));
         if (answer) {
-            const { feeders, missing: unanswered, ...state } = answer;
-            found = feeders;
-            missing = unanswered ?? [];
-            ctx.store.set({ placing: state });
-            drawScan(ctx.store.get());
+            tookScan(answer);
             // The backend now knows where the bus answered for these feeders.
             void refreshFeederCheck(ctx, true);
-            if (feeders.length === 0 && missing.length === 0) {
+            if (found.length === 0 && missing.length === 0) {
                 ctx.toast("info", "no feeder answered on the bus");
             }
         }
@@ -288,6 +323,61 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
             if ((await into(ctx, "placing", ctx.api.pnpResetFeeders(feeder.id))) === undefined) {
                 return;
             }
+        }
+    }
+
+    /** The feeders picked on the bus flash in turn; what answered is said. */
+    async function identifyPicked(): Promise<void> {
+        const names = pickedFeeders(ctx.store.get()).filter((feeder) => feeder.bus_id).map((feeder) => feeder.id);
+        await identifyAll({ feeders: names });
+    }
+
+    async function identifyAll(request: { feeders?: string[]; ids?: string[] }): Promise<void> {
+        const answer = await ctx.call(ctx.api.pnpBusIdentify(request));
+        if (answer) {
+            const { identified, missing: unanswered, ...state } = answer;
+            ctx.store.set({ placing: state });
+            const names = new Map((state.document?.feeders ?? []).filter((feeder) => feeder.bus_id).map((feeder) => [feeder.bus_id!, feeder.id]));
+            ctx.toast(unanswered.length > 0 ? "error" : "info", identifyText(identified, unanswered, names));
+        }
+    }
+
+    /** A scan's answer taken: its rows, its missing, and the placing state it carries. */
+    function tookScan(answer: PlacingState & BusScan): void {
+        const { feeders, missing: unanswered, ...state } = answer;
+        found = feeders;
+        missing = unanswered ?? [];
+        ctx.store.set({ placing: state });
+        drawScan(ctx.store.get());
+    }
+
+    /**
+     * Writes an address into a slot's floor, once the operator says so:
+     * the slot of the scanned feeder of id `feeder`, or with none the one
+     * whose feeder has no address. The answer is the scan again.
+     */
+    async function programSlot(feeder: { id: string; name: string; address: number; field: HTMLInputElement } | null): Promise<void> {
+        const field = feeder?.field ?? newAddress;
+        const address = parseNumber(field.value);
+        if (address === null || !Number.isInteger(address) || address < 1 || address > 254) {
+            ctx.toast("error", "address: a whole number, 1 to 254");
+            return;
+        }
+        const slots = ctx.store.get().placing?.document?.slots ?? [];
+        const moves = feeder !== null && slots.some((slot) => slot.address === feeder.address);
+        const question = feeder !== null
+            ? `Write address ${address} into the floor of the slot feeder ${feeder.name} sits in? It answers at ${address} from then on${moves ? `, and the file's [[slot]] ${feeder.address} becomes [[slot]] ${address}` : ""}.`
+            : `Write address ${address} into the floor of the slot whose feeder has no address? Every feeder that answers is set up first; leave in only one feeder with no address.`;
+        if (!(await askConfirm(question, `Write address ${address}`))) {
+            return;
+        }
+        const answer = await ctx.call(ctx.api.pnpBusProgram(feeder !== null ? { address, feeder: feeder.id } : { address }));
+        if (answer) {
+            const { address: written, id, ...scanned } = answer;
+            tookScan(scanned);
+            ctx.toast("info", `feeder ${(scanned.document?.feeders ?? []).find((entry) => entry.bus_id === id)?.id ?? id} answers at address ${written}`);
+            await ctx.refreshMachines();
+            void refreshFeederCheck(ctx, true);
         }
     }
 
@@ -536,6 +626,16 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
                 rowButtons.push({ press: findPart, camera: true });
                 more.push(findPart);
             }
+            const flash = button("Identify", () => identifyAll({ ids: [entry.id] }), "btn btn-quiet btn-small", `make the feeder at address ${entry.address} flash, to see which it is`);
+            rowButtons.push({ press: flash, camera: false });
+            more.push(flash);
+            // A new address for its slot's floor, the lowest free one offered.
+            const field = numberField({ value: freeAddress(found, doc?.slots ?? []), min: 1, max: 254, step: 1, width: "4.5rem" });
+            field.setAttribute("aria-label", `New address for address ${entry.address}`);
+            const setAddress = button("Set address", () => programSlot({ id: entry.id, name: feeder?.id ?? entry.id, address: entry.address, field }), "btn btn-quiet btn-small",
+                `write a new address into the floor of the slot at address ${entry.address}; its [[slot]] place moves with it`);
+            rowButtons.push({ press: setAddress, camera: false });
+            more.push(el("span", { class: "bus-address" }, field, setAddress));
             if (placed) {
                 const over = button("Camera over slot", () => into(ctx, "placing", ctx.api.pnpBusOverSlot(entry.address)), "btn btn-quiet btn-small",
                     `the top camera's picture center over address ${entry.address}'s slot place, at the safe height: nothing is lowered`);
@@ -583,6 +683,9 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
             form = null;
         }
         scanList.classList.toggle("hidden", found.length === 0);
+        if (document.activeElement !== newAddress) {
+            newAddress.value = String(freeAddress(found, doc?.slots ?? []));
+        }
         lockRows(state);
     }
 
@@ -595,6 +698,7 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
         for (const { press, camera } of rowButtons) {
             lockFor(press, [!connected, "connect the machine first"], [busy, "the machine is busy"], [camera && !measured, "measure the top camera's offset first (Cameras, Top camera)"]);
         }
+        lockFor(addressNew, [!connected, "connect the machine first"], [busy, "the machine is busy"]);
     }
 
     let drawn = "";
@@ -660,7 +764,10 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
             press.hidden = chosen.length === 0;
         }
         feed.hidden = chosen.length === 0 || doc?.bus !== true;
-        lockFor(feed, [!connected, "connect the machine first"], [busy, "the machine is busy"], [onBus.length === 0, "none of the picked feeders is on the bus"]);
+        identify.hidden = feed.hidden;
+        for (const press of [feed, identify]) {
+            lockFor(press, [!connected, "connect the machine first"], [busy, "the machine is busy"], [onBus.length === 0, "none of the picked feeders is on the bus"]);
+        }
         setLocked(countAgain, busy, "the machine is placing");
         scan.textContent = chosen.length > 0 ? `Scan ${onBus.length} picked` : "Scan bus";
         scan.title = chosen.length > 0

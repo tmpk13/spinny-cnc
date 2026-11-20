@@ -2286,6 +2286,8 @@ export class MockBackend implements Api, EventFeed {
      * machine disconnects, as the backend keeps it for the feeder check.
      */
     private busSeen = new Map<string, number>();
+    /** The addresses written into slots' floors since the mock started, by the feeder's id: its feeders sit there from then on. */
+    private busFloors = new Map<string, number>();
     /** The device's top camera: its settings, whether it runs, its routine, and the fiducials last found. */
     private topConfig: TopSettings = { ...TOP_DEFAULTS };
     private topRunning = false;
@@ -9742,10 +9744,18 @@ export class MockBackend implements Api, EventFeed {
     private fakeBus(device: MockDevice): Map<number, string> {
         const bus = new Map<number, string>();
         const loose = MOCK_BUS_LOOSE[device.id] ?? [];
-        for (const unit of loose) {
-            bus.set(unit.address, unit.id);
+        // A floor written since (Set address, Address a new slot) outdoes the rest.
+        for (const [id, address] of this.busFloors) {
+            if (loose.some((unit) => unit.id === id) || device.feeders.some((feeder) => feeder.bus_id === id)) {
+                bus.set(address, id);
+            }
         }
-        const placed = (id: string): boolean => loose.some((unit) => unit.id === id);
+        const placed = (id: string): boolean => loose.some((unit) => unit.id === id) || this.busFloors.has(id);
+        for (const unit of loose) {
+            if (unit.address !== null && !this.busFloors.has(unit.id)) {
+                bus.set(unit.address, unit.id);
+            }
+        }
         const free = [...device.slots.map((slot) => slot.address), ...Array.from({ length: 254 }, (_, index) => index + 1)];
         for (const feeder of device.feeders) {
             if (feeder.bus_id !== null && feeder.slot !== null && !placed(feeder.bus_id)) {
@@ -9759,6 +9769,154 @@ export class MockBackend implements Api, EventFeed {
             }
         }
         return bus;
+    }
+
+    /** The feeders on the mock's bus whose slot's floor gives no address: they answer only Photon's 0xC3, while not initialized. */
+    private busUnaddressed(device: MockDevice): string[] {
+        const answering = new Set(this.fakeBus(device).values());
+        return (MOCK_BUS_LOOSE[device.id] ?? []).filter((unit) => unit.address === null && !answering.has(unit.id)).map((unit) => unit.id);
+    }
+
+    /** A feeder's id on the bus as the backend's check_id takes it: 24 hex digits, upper case; 400 otherwise. */
+    private busId(text: string): string {
+        const value = text.trim().toUpperCase();
+        if (!/^[0-9A-F]{24}$/.test(value)) {
+            throw new ApiError(400, `a feeder's id is 24 hex digits, not '${text}'`);
+        }
+        return value;
+    }
+
+    /**
+     * Feeders flash one after another, as the backend's pnp_bus_identify:
+     * the file's by name and others by their ids on the bus; one answers
+     * wherever it sits, with no address too. `missing` names each that did
+     * not, or that has no bus_id.
+     */
+    async pnpBusIdentify(request: { feeders?: string[]; ids?: string[] }): Promise<PlacingState & { identified: string[]; missing: BusMissing[] }> {
+        const device = this.gcodeIdle();
+        const names = request.feeders ?? [];
+        const ids = request.ids ?? [];
+        if (names.length === 0 && ids.length === 0) {
+            throw new ApiError(400, "name the feeders to identify, or their ids on the bus");
+        }
+        if (device.bus === null) {
+            throw new ApiError(400, `${device.name}'s file has no [bus] table`);
+        }
+        const unknown = names.find((name) => !device.feeders.some((feeder) => feeder.id === name));
+        if (unknown !== undefined) {
+            throw new ApiError(404, `${device.name}'s file has no feeder '${unknown}'`);
+        }
+        const named = new Map(device.feeders.filter((feeder) => feeder.bus_id !== null).map((feeder) => [feeder.bus_id!, feeder.id]));
+        const missing: BusMissing[] = [];
+        const wanted = new Map<string, string>();
+        for (const name of names) {
+            const feeder = device.feeders.find((entry) => entry.id === name)!;
+            if (feeder.bus_id === null) {
+                missing.push({ feeder: name, id: null, reason: "not on the bus: its file gives no bus_id" });
+            } else if (!wanted.has(feeder.bus_id)) {
+                wanted.set(feeder.bus_id, name);
+            }
+        }
+        for (const text of ids) {
+            const id = this.busId(text);
+            if (!wanted.has(id)) {
+                wanted.set(id, named.get(id) ?? id);
+            }
+        }
+        const present = new Set([...this.fakeBus(device).values(), ...this.busUnaddressed(device)]);
+        const identified: string[] = [];
+        for (const [id, name] of wanted) {
+            if (present.has(id)) {
+                identified.push(id);
+            } else {
+                missing.push({ feeder: name, id, reason: "did not answer to its id: is it in a slot?" });
+            }
+        }
+        this.emitPlacing();
+        return { ...this.placingStateOf(), identified, missing };
+    }
+
+    /**
+     * A slot's bus address written into its floor, as the backend's
+     * pnp_bus_program: the slot of the feeder of id `feeder` (Set address),
+     * or of the one feeder that answers at no address (Address a new slot,
+     * every feeder at an address set up first). The file's [[slot]] for the
+     * old address, and every feeder pinned to it, moves to the new one
+     * (Q67). The answer is the scan again, with the address and the id.
+     */
+    async pnpBusProgram(request: { address: number; feeder?: string }): Promise<PlacingState & BusScan & { address: number; id: string }> {
+        const device = this.gcodeIdle();
+        const { address } = request;
+        if (device.bus === null) {
+            throw new ApiError(400, `${device.name}'s file has no [bus] table`);
+        }
+        const bus = device.bus;
+        if (!(Number.isInteger(address) && address >= 1 && address <= bus.max_address && address !== bus.host && address !== bus.broadcast)) {
+            throw new ApiError(400, `a slot's address is 1 to [bus] max_address ${bus.max_address}, not ${address}`);
+        }
+        let id = request.feeder !== undefined ? this.busId(request.feeder) : null;
+        const named = new Map(device.feeders.filter((feeder) => feeder.bus_id !== null).map((feeder) => [feeder.bus_id!, feeder.id]));
+        const onBus = this.fakeBus(device);
+        let old: number | null = null;
+        if (id !== null) {
+            old = [...onBus.entries()].find(([, at]) => at === id)?.[0] ?? null;
+        } else {
+            // Every feeder that answers at an address is initialized, so it does not answer 0xC3.
+            for (const at of onBus.keys()) {
+                this.busReady.add(at);
+            }
+        }
+        const other = onBus.get(address) ?? null;
+        if (other !== null && other !== id) {
+            throw new ApiError(409, `feeder ${named.get(other) ?? other} answers at address ${address}: pick another`);
+        }
+        if (address !== old && device.slots.some((slot) => slot.address === address)) {
+            throw new ApiError(409, `the machine file's [[slot]] ${address} is another slot's place: pick another address`);
+        }
+        if (id === null) {
+            const unaddressed = this.busUnaddressed(device);
+            if (unaddressed.length > 1) {
+                throw new ApiError(409, "more than one feeder has no address: leave one in");
+            }
+            if (unaddressed.length === 0) {
+                throw new ApiError(409, "no feeder without an address answered (two or more answering at once garble each other, which Marlin's M485 shows as none): leave one in");
+            }
+            id = unaddressed[0]!;
+        }
+        if (old === null && !this.busUnaddressed(device).includes(id)) {
+            throw new ApiError(502, `the slot's address was not written: no feeder answered to the id ${id}: is it in a slot?`);
+        }
+        if ((MOCK_BUS_LOOSE[device.id] ?? []).some((unit) => unit.id === id && unit.floor === false)) {
+            throw new ApiError(502, "the slot's address was not written: the slot's floor did not take the address: no floor chip, or the write did not read back");
+        }
+        this.busFloors.set(id, address);
+        if (old !== null) {
+            this.busReady.delete(old);
+        }
+        this.busReady.add(address);
+        const moved = old !== null && old !== address && this.renumberSlot(device, old, address);
+        const said = moved ? `; [[slot]] ${old} is [[slot]] ${address} in the machine file now` : "";
+        this.message("info", `feeder ${named.get(id) ?? id} answers at bus address ${address}${said}`);
+        const scan = await this.pnpBusScan();
+        return { ...scan, address, id };
+    }
+
+    /** The file's [[slot]] for an address, and every feeder pinned to it by `slot`, moved to another address; whether the file had one. */
+    private renumberSlot(device: MockDevice, old: number, address: number): boolean {
+        const index = device.slots.findIndex((slot) => slot.address === old);
+        if (index < 0) {
+            return false;
+        }
+        let text = setValue(this.machineText(device.id), ["slot", index, "address"], address);
+        device.feeders.forEach((feeder, number) => {
+            if (feeder.slot === old) {
+                text = setValue(text, ["feeder", number, "slot"], address);
+            }
+        });
+        this.machineTexts.set(device.id, text);
+        this.machineWritten(device.id);
+        this.emitChanged("machines", device.id);
+        return true;
     }
 
     /** A packet on the mock's bus answered as its feeders answer: find, id, initialize, feed and status. */

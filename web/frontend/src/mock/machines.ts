@@ -60,12 +60,26 @@ count = 50
 `;
 
 /**
- * Feeders on a mock machine's bus that its file does not name, by the
- * file's id: a Photon feeder's id and the address its slot's floor gives
- * it. The LumenPnP has one in slot 3, so a scan finds a feeder to add.
+ * A feeder on a mock machine's bus that its file does not name: its id,
+ * the address its slot's floor gives it (null for a floor never
+ * programmed: it answers no address, only Photon's 0xC3 while not
+ * initialized), and whether its slot has a floor chip to write (true when
+ * left out).
  */
-export const MOCK_BUS_LOOSE: Record<string, { id: string; address: number }[]> = {
-    "opulo-lumen-rev5": [{ id: "2122232425262728292A2B2C", address: 3 }],
+export interface MockBusUnit {
+    id: string;
+    address: number | null;
+    floor?: boolean;
+}
+
+/**
+ * The feeders on each mock machine's bus that its file does not name, by
+ * the file's id. The LumenPnP has one in slot 3, which a scan finds for Add
+ * feeder, and one in a slot whose floor has no address, for Address a new
+ * slot.
+ */
+export const MOCK_BUS_LOOSE: Record<string, MockBusUnit[]> = {
+    "opulo-lumen-rev5": [{ id: "2122232425262728292A2B2C", address: 3 }, { id: "3132333435363738393A3B3C", address: null }],
 };
 
 /**

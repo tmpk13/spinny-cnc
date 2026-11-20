@@ -177,6 +177,9 @@ describe("HttpApi feeder routes", () => {
         await api.pnpBusSlot({ address: 3, by: "camera", find: true });
         await api.pnpBusSlot({ address: 4, by: "nozzle" });
         await api.pnpBusOverSlot(3);
+        await api.pnpBusIdentify({ feeders: ["c-100n"], ids: ["AABBCCDDEEFF001122334455"] });
+        await api.pnpBusProgram({ address: 7, feeder: "AABBCCDDEEFF001122334455" });
+        await api.pnpBusProgram({ address: 8 });
         expect(calls.map((call) => [call.method, call.url.replace("http://host", ""), call.body])).toEqual([
             ["POST", "/api/pnp/feeders/check", { job: "a1" }],
             ["POST", "/api/pnp/feeders/check", { job: "a 1", refs: ["R1", "C2"] }],
@@ -184,6 +187,9 @@ describe("HttpApi feeder routes", () => {
             ["POST", "/api/pnp/bus/slot", { address: 3, by: "camera", find: true }],
             ["POST", "/api/pnp/bus/slot", { address: 4, by: "nozzle" }],
             ["POST", "/api/pnp/bus/over-slot", { address: 3 }],
+            ["POST", "/api/pnp/bus/identify", { feeders: ["c-100n"], ids: ["AABBCCDDEEFF001122334455"] }],
+            ["POST", "/api/pnp/bus/program", { address: 7, feeder: "AABBCCDDEEFF001122334455" }],
+            ["POST", "/api/pnp/bus/program", { address: 8 }],
         ]);
     });
 });

@@ -7,6 +7,7 @@ import type {
     AutoConversation,
     AutoSettings,
     AutoSettingsUpdate,
+    BusMissing,
     BusScan,
     BusSlot,
     CalibrateRequest,
@@ -426,6 +427,10 @@ export interface Api {
     pnpBusSlot(request: { address: number; by: "camera" | "nozzle"; find?: boolean }): Promise<PlacingState & { slot: BusSlot }>;
     /** The head moved at the safe height so the top camera's picture center is over a slot's place: only X and Y. */
     pnpBusOverSlot(address: number): Promise<PlacingState>;
+    /** Feeders flash one after another to tell which is which: the file's by name, others by their ids on the bus; `missing` names those that did not answer. */
+    pnpBusIdentify(request: { feeders?: string[]; ids?: string[] }): Promise<PlacingState & { identified: string[]; missing: BusMissing[] }>;
+    /** A slot's bus address written into its floor: the slot of the feeder with that id on the bus (Set address), or of the one feeder with no address (Address a new slot); answered with the scan again. */
+    pnpBusProgram(request: { address: number; feeder?: string }): Promise<PlacingState & BusScan & { address: number; id: string }>;
     /** A reference for a part: where it is on the machine, read off it when `at` is left out. */
     pnpReference(request: { job: string; ref: string; at?: [number, number]; camera?: boolean }): Promise<PlacingState>;
     pnpDropReferences(job: string, ref?: string): Promise<PlacingState>;
@@ -1353,6 +1358,14 @@ export class HttpApi implements Api {
 
     pnpBusOverSlot(address: number): Promise<PlacingState> {
         return this.request<PlacingState>("POST", "/api/pnp/bus/over-slot", { address });
+    }
+
+    pnpBusIdentify(request: { feeders?: string[]; ids?: string[] }): Promise<PlacingState & { identified: string[]; missing: BusMissing[] }> {
+        return this.request<PlacingState & { identified: string[]; missing: BusMissing[] }>("POST", "/api/pnp/bus/identify", request);
+    }
+
+    pnpBusProgram(request: { address: number; feeder?: string }): Promise<PlacingState & BusScan & { address: number; id: string }> {
+        return this.request<PlacingState & BusScan & { address: number; id: string }>("POST", "/api/pnp/bus/program", request);
     }
 
     pnpReference(request: { job: string; ref: string; at?: [number, number]; camera?: boolean }): Promise<PlacingState> {

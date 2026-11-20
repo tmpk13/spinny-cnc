@@ -14,7 +14,8 @@ import { autoMemory, autoMove } from "../src/views/autosteps.ts";
 import { into } from "../src/views/context.ts";
 import { checkLine, feedersDone, feedersLine, refreshFeederCheck, refsText } from "../src/views/feedercheck.ts";
 import { setPickedToPlace } from "../src/views/partsfilter.ts";
-import { advanceFor, draftProblem, draftValues, feederIdFor, feederPlaceText, feederTakenText, looseGroups, matchWords, mountPnpFeeders, slotTip, slotWay } from "../src/views/pnpfeeders.ts";
+import { MOCK_BUS_LOOSE } from "../src/mock/machines.ts";
+import { advanceFor, draftProblem, draftValues, feederIdFor, feederPlaceText, feederTakenText, freeAddress, identifyText, looseGroups, matchWords, mountPnpFeeders, slotTip, slotWay } from "../src/views/pnpfeeders.ts";
 import { connectGcode, parseDevice } from "./gcoderig.ts";
 import { dialogButton, findButton, settle, setup } from "./harness.ts";
 
@@ -586,5 +587,108 @@ describe("a slot's place, by the top camera or the nozzle", () => {
         findButton(row, "Camera over slot").click();
         await settled();
         expect(calls.filter((call) => call.name === "pnpBusOverSlot").map((call) => call.args)).toEqual([[3]]);
+    });
+});
+
+describe("identify a feeder, program a slot's address", () => {
+    test("the address offered, and what an identify answered, in words", () => {
+        const found = [{ address: 1, id: "A", feeder: null, slot: true }, { address: 2, id: "B", feeder: null, slot: false }];
+        expect(freeAddress(found, [{ address: 3 }])).toBe(4);
+        expect(freeAddress([], [])).toBe(1);
+        const names = new Map([["0102", "c-100n"]]);
+        expect(identifyText(["0102"], [], names)).toBe("c-100n flashes");
+        expect(identifyText(["0102", "0304"], [{ feeder: "c-1u", id: "0506", reason: "did not answer to its id: is it in a slot?" }], names))
+            .toBe("c-100n, 0304 flash in turn; c-1u: did not answer to its id: is it in a slot?");
+    });
+
+    test("the mock's identify: by name and by id, a feeder with no address too; the ones not there named", async () => {
+        const { backend } = setup();
+        await backend.connect("/dev/ttyACM1", "opulo-lumen-rev5");
+        const answer = await backend.pnpBusIdentify({ feeders: ["tp-9mm2", "c-100n-0402"], ids: ["3132333435363738393a3b3c", "AABBCCDDEEFF001122334455"] });
+        expect(answer.identified).toEqual(["0102030405060708090A0B0C", "3132333435363738393A3B3C"]);
+        expect(answer.missing).toEqual([
+            { feeder: "c-100n-0402", id: null, reason: "not on the bus: its file gives no bus_id" },
+            { feeder: "AABBCCDDEEFF001122334455", id: "AABBCCDDEEFF001122334455", reason: "did not answer to its id: is it in a slot?" },
+        ]);
+        await expect(backend.pnpBusIdentify({})).rejects.toThrow("name the feeders to identify, or their ids on the bus");
+        await expect(backend.pnpBusIdentify({ feeders: ["nope"] })).rejects.toThrow("Opulo LumenPnP (Rev05, Marlin)'s file has no feeder 'nope'");
+        await expect(backend.pnpBusIdentify({ ids: ["12"] })).rejects.toThrow("a feeder's id is 24 hex digits, not '12'");
+    });
+
+    test("Set address moves a feeder, and its [[slot]] and the feeders pinned to it with it (Q67)", async () => {
+        const { backend } = setup();
+        await backend.connect("/dev/ttyACM1", "opulo-lumen-rev5");
+        // r-10k-0603 is pinned to slot 2, whose place the file has.
+        await expect(backend.pnpBusProgram({ address: 1, feeder: "1112131415161718191A1B1C" })).rejects.toThrow("feeder tp-9mm2 answers at address 1: pick another");
+        await expect(backend.pnpBusProgram({ address: 26, feeder: "1112131415161718191A1B1C" })).rejects.toThrow("a slot's address is 1 to [bus] max_address 25, not 26");
+        const answer = await backend.pnpBusProgram({ address: 7, feeder: "1112131415161718191a1b1c" });
+        expect([answer.address, answer.id]).toEqual([7, "1112131415161718191A1B1C"]);
+        expect(answer.feeders.find((entry) => entry.id === "1112131415161718191A1B1C")).toEqual({ address: 7, id: "1112131415161718191A1B1C", feeder: "r-10k-0603", slot: true });
+        const doc = (await backend.placingState()).document!;
+        expect(doc.slots?.map((slot) => slot.address)).toEqual([1, 7]);
+        expect(doc.feeders.find((feeder) => feeder.id === "r-10k-0603")?.slot).toBe(7);
+        // An address another [[slot]] names is refused, as is a feeder not there.
+        const file = await backend.machineFile("opulo-lumen-rev5");
+        await backend.saveMachineFile("opulo-lumen-rev5", `${file.text}\n[[slot]]\naddress = 5\nat = [130.0, 30.0, 12.0]\n`);
+        await expect(backend.pnpBusProgram({ address: 5, feeder: "2122232425262728292A2B2C" })).rejects.toThrow("the machine file's [[slot]] 5 is another slot's place: pick another address");
+        await expect(backend.pnpBusProgram({ address: 9, feeder: "AABBCCDDEEFF001122334455" })).rejects.toThrow("the slot's address was not written: no feeder answered to the id AABBCCDDEEFF001122334455: is it in a slot?");
+    });
+
+    test("Address a new slot: the one feeder with no address gets it; none, or two, are refused", async () => {
+        const { backend } = setup();
+        await backend.connect("/dev/ttyACM1", "opulo-lumen-rev5");
+        await expect(backend.pnpBusProgram({ address: 2 })).rejects.toThrow("feeder r-10k-0603 answers at address 2: pick another");
+        const kept = MOCK_BUS_LOOSE["opulo-lumen-rev5"]!;
+        try {
+            MOCK_BUS_LOOSE["opulo-lumen-rev5"] = [...kept, { id: "4142434445464748494A4B4C", address: null }];
+            await expect(backend.pnpBusProgram({ address: 9 })).rejects.toThrow("more than one feeder has no address: leave one in");
+            MOCK_BUS_LOOSE["opulo-lumen-rev5"] = [{ id: "5152535455565758595A5B5C", address: null, floor: false }];
+            await expect(backend.pnpBusProgram({ address: 9 })).rejects.toThrow("the slot's floor did not take the address: no floor chip, or the write did not read back");
+        } finally {
+            MOCK_BUS_LOOSE["opulo-lumen-rev5"] = kept;
+        }
+        const answer = await backend.pnpBusProgram({ address: 9 });
+        expect(answer.id).toBe("3132333435363738393A3B3C");
+        expect(answer.feeders.find((entry) => entry.address === 9)?.id).toBe("3132333435363738393A3B3C");
+        await expect(backend.pnpBusProgram({ address: 10 })).rejects.toThrow("no feeder without an address answered");
+    });
+
+    test("in the panel: Identify the picked feeders or a row's, Set address and Address a new slot ask first, naming the address", async () => {
+        const { root, calls } = await lumenPanel();
+        findButton(root, "Scan bus").click();
+        await settled();
+        // The picked feeders on the bus.
+        const rows = Array.from(root.querySelectorAll<HTMLTableRowElement>(".device-feeders tbody tr"));
+        rows[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        rows[2]!.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true }));
+        findButton(root.querySelector(".feeder-picks")!, "Identify").click();
+        await settled();
+        expect(calls.filter((call) => call.name === "pnpBusIdentify").at(-1)?.args[0]).toEqual({ feeders: ["tp-9mm2"] });
+        // A row's own.
+        let row = root.querySelector<HTMLElement>(".bus-scan li[data-address='3']")!;
+        findButton(row, "Identify").click();
+        await settled();
+        expect(calls.filter((call) => call.name === "pnpBusIdentify").at(-1)?.args[0]).toEqual({ ids: ["2122232425262728292A2B2C"] });
+        // Set address offers the lowest address no feeder and no slot has.
+        row = root.querySelector<HTMLElement>(".bus-scan li[data-address='2']")!;
+        expect(row.querySelector<HTMLInputElement>("input[aria-label='New address for address 2']")?.value).toBe("4");
+        findButton(row, "Set address").click();
+        await settle();
+        expect(document.querySelector("dialog[open]")?.textContent).toContain("Write address 4 into the floor of the slot feeder r-10k-0603 sits in? It answers at 4 from then on, and the file's [[slot]] 2 becomes [[slot]] 4.");
+        dialogButton("Write address 4").click();
+        await settled();
+        expect(calls.filter((call) => call.name === "pnpBusProgram").at(-1)?.args[0]).toEqual({ address: 4, feeder: "1112131415161718191A1B1C" });
+        expect(root.querySelector(".bus-scan li[data-address='4']")?.textContent).toContain("r-10k-0603");
+        // Address a new slot, under the panel's More.
+        const more = root.querySelector<HTMLDetailsElement>(".bus-more-fold")!;
+        expect(more.querySelector("summary")?.textContent).toBe("More: address a new slot");
+        expect(more.querySelector<HTMLInputElement>("input")?.value).toBe("2");
+        findButton(more, "Address a new slot").click();
+        await settle();
+        expect(document.querySelector("dialog[open]")?.textContent).toContain("Write address 2 into the floor of the slot whose feeder has no address?");
+        dialogButton("Write address 2").click();
+        await settled();
+        expect(calls.filter((call) => call.name === "pnpBusProgram").at(-1)?.args[0]).toEqual({ address: 2 });
+        expect(root.querySelector(".bus-scan li[data-address='2']")?.textContent).toContain("3132333435363738393A3B3C");
     });
 });
