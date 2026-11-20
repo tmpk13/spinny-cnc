@@ -1261,7 +1261,10 @@ not the offset; *Home by fiducial* still needs both. The Board panel's drawing s
 says the camera's picture lies on the board, green once found. A
 feeder with `pocket` has each pocket looked at before its pick (an empty
 one is passed over), one with `marks` has its marks found once a run and
-its places moved to follow them.
+its places moved to follow them. A feeder that advances (one on the bus,
+or one with `feed` lines) advances first and has its pocket looked at
+after, so the look sees the part the tape brought; a pocket seen empty
+makes the next try advance again.
 
 The *Machine view* panel (Setup side, Cameras page) draws the machine from
 above in its file's X and Y: the head's reach (`[motion] travel`), the
@@ -1282,7 +1285,12 @@ With `part_on` in the file's `[vacuum]`, a pick that holds nothing, a
 part not on the nozzle over the bottom camera, one off by too much or of the
 wrong size is let go at `[motion] discard` (or back in its pocket) and
 the next pocket tried, up to `pick_tries`; the part is then left out and
-listed, and *Run the rest* places what the last run did not. A part still
+listed, and *Run the rest* places what the last run did not. A feeder
+that advances takes nothing back: its next advance would carry a part put
+back in its pocket off loose, so without a `discard` place such a pick
+stops the run with the nozzle as it is, whatever it holds still on it.
+Set `[motion] discard` (a place the top camera shows clear) before a run
+from such a feeder. A part still
 on the nozzle after its place (with `part_off`) stops the run, and so do
 two parts left out one after another.
 
@@ -1306,7 +1314,12 @@ feeder presents its part at and press *Slot here* by its address, or let
 feeder's slot is found by its id when a run starts (*Keep slot* writes it
 into the machine file instead); *Feed* moves a feeder's tape on once, to see it
 work. A run advances each feeder on the bus before its pick and waits for
-it; a feeder that does not answer leaves its part out. None of it has
+it; a feeder that does not answer leaves its part out. A feeder whose
+slot's floor was never programmed (its light blue) answers from address
+0, and one in a slot with no floor chip (red) from 255: it has no
+address, *Scan bus* does not list it, and a run leaves its parts out with
+a message saying so (it is never fed: a feed to 255 would move every
+feeder). None of it has
 run on a LumenPnP yet: try *Scan bus* and *Feed* before a run.
 
 ### A virtual LumenPnP

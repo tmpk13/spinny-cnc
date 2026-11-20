@@ -9,17 +9,21 @@ On the machine's run thread:
    from them again (two or more give its turn too), kept as the job's
    references, and the parts planned again on it.
 3. Each part: its feeder's marks once in the run (the feeder's places
-   follow them); its pocket looked at when the feeder says so (an empty
-   one is passed over); the pick; the vacuum read with the part held; the
-   look over the up camera with the nozzle turned to the angle the part
-   goes down at, its offset, angle and size checked, the angle corrected
-   and looked at again; the place; the vacuum read once it let go.
-   A pick that will not do (no part held, nothing on the nozzle, a part
-   too far off, turned too far, or of the wrong size) lets the part go at
-   the discard place, or back into its pocket, and takes the next pocket,
-   up to the profile's pick_tries; then the part is left out, named in the
-   progress with why. A part that stays on the nozzle after its place
-   stops the run: it would be let go somewhere else.
+   follow them); a feeder that advances (on the feeder bus, or told to by
+   its feed lines) moves its tape on; its pocket looked at when the
+   feeder says so (an empty one is passed over, and a feeder that
+   advances advances again); the pick; the vacuum read with the part
+   held; the look over the up camera with the nozzle turned to the angle
+   the part goes down at, its offset, angle and size checked, the angle
+   corrected and looked at again; the place; the vacuum read once it let
+   go. A pick that will not do (no part held, nothing on the nozzle, a
+   part too far off, turned too far, or of the wrong size) lets the part
+   go at the discard place, or back into its pocket, and takes the next
+   pocket, up to the profile's pick_tries; then the part is left out,
+   named in the progress with why. A part that stays on the nozzle after
+   its place stops the run: it would be let go somewhere else. So does a
+   pick that will not do from a feeder that advances when the file has no
+   discard place: put back, the part would ride off loose on the tape.
 4. The tail lines.
 
 Places on the machine are the head's with the nozzle's tip turned to 0
@@ -76,6 +80,12 @@ FAILED_IN_A_ROW = 2
 
 class Rejected(Exception):
     """A pick that will not do: the part goes back and the next pocket is tried."""
+
+
+def advances(feeder: Feeder) -> bool:
+    """Whether a feeder moves its tape on before each pick: one on the
+    feeder bus, or one with feed lines."""
+    return feeder.bus_id is not None or bool(feeder.feed)
 
 
 def fiducial_fit(found: list[Found], angle: float) -> Fit:
@@ -223,6 +233,16 @@ class Placement:
                 emptied = True
                 break
             point = self._pocket(feeder, index)
+            if tries > 1:
+                self._doing(ctx, f"try {tries} of {machine.pick_tries}")
+            # The tape moves on before the look: a look first would see the
+            # pocket the last pick emptied, or the part about to move away.
+            if advances(feeder):
+                try:
+                    self._advance(ctx, feeder, block.ref)
+                except BusError as exc:
+                    reason = f"feeder {feeder.id} did not advance: {exc}"
+                    break
             if feeder.pocket is not None:
                 seen = self._look_in_pocket(ctx, mover, feeder, block, point, index)
                 if seen is None:
@@ -232,16 +252,8 @@ class Placement:
                     ctx.progress.note(f"{reason}, passed over", block.ref, "warning")
                     continue
                 point = (seen[0], seen[1], point[2])
-            if tries > 1:
-                self._doing(ctx, f"try {tries} of {machine.pick_tries}")
-            if feeder.bus_id is not None:
-                try:
-                    self._advance(ctx, feeder, block.ref)
-                except BusError as exc:
-                    reason = f"feeder {feeder.id} did not advance: {exc}"
-                    break
             ctx.progress.note(f"picking {part.get('value', '')} from {feeder.id} #{index + 1}".replace("  ", " "), block.ref)
-            for line in pick_lines(machine, feeder, pick_label(part, feeder, index), point):
+            for line in pick_lines(machine, feeder, pick_label(part, feeder, index), point, advance=False):
                 ctx.send(line)
             self._take(feeder, index)
             try:
@@ -249,7 +261,7 @@ class Placement:
                 lines = self._look(ctx, mover, block, feeder) if block.vision else block.place
             except Rejected as exc:
                 reason = str(exc)
-                where = self._discard(ctx, point)
+                where = self._discard(ctx, feeder, block.ref, reason, point)
                 more = "trying the next pocket" if tries < machine.pick_tries else "left out"
                 self.setup.message("warning", f"{block.ref}: {reason}; {where}, {more}")
                 ctx.progress.note(f"{reason}; {where}, {more}", block.ref, "warning")
@@ -275,14 +287,20 @@ class Placement:
             raise GcodeLinkError(f"{FAILED_IN_A_ROW} parts in a row were left out, the last as {reason}: check the setup before going on")
 
     def _advance(self, ctx: RunContext, feeder: Feeder, ref: str) -> None:
-        """A feeder on the bus moves its tape on by one part before its pick."""
-        bus_profile = self.machine.bus
-        assert bus_profile is not None and feeder.bus_id is not None
-        if self._bus is None:
-            self._bus = FeederBus(bus_profile, send=ctx.send, stopped=lambda: self.link.stopping)
+        """A feeder that advances moves its tape on by one part, before its
+        pocket is looked at and picked from: one on the bus is told to feed
+        and waited for, then its feed lines, when it has any, are sent (a
+        look after them waits for their moves, as every look does)."""
         self._doing(ctx, f"feeder {feeder.id} advancing")
-        address = self._bus.advance(feeder.bus_id, round(feeder.advance * 10), feeder.slot)
-        ctx.progress.note(f"feeder {feeder.id} advanced {num(feeder.advance)} mm (address {address})", ref)
+        if feeder.bus_id is not None:
+            bus_profile = self.machine.bus
+            assert bus_profile is not None
+            if self._bus is None:
+                self._bus = FeederBus(bus_profile, send=ctx.send, stopped=lambda: self.link.stopping)
+            address = self._bus.advance(feeder.bus_id, round(feeder.advance * 10), feeder.slot)
+            ctx.progress.note(f"feeder {feeder.id} advanced {num(feeder.advance)} mm (address {address})", ref)
+        for line in feeder.feed:
+            ctx.send(line)
 
     def _take(self, feeder: Feeder, index: int) -> None:
         self.taken[feeder.id] = max(self.taken.get(feeder.id, 0), index + 1)
@@ -376,10 +394,18 @@ class Placement:
                 " the part may still be on the nozzle, so the run stops before it is let go somewhere else"
             )
 
-    def _discard(self, ctx: RunContext, pocket: tuple[float, float, float]) -> str:
+    def _discard(self, ctx: RunContext, feeder: Feeder, ref: str, reason: str, pocket: tuple[float, float, float]) -> str:
         """Lets a held part go at the discard place, or back in its pocket;
-        what was done, in words."""
+        what was done, in words. A feeder that advances takes nothing back:
+        its next advance would carry a part put back off loose, so with no
+        discard place the run stops with the nozzle as it is (the part, if
+        it holds one, still on it), saying why (`ref` and `reason`)."""
         machine = self.machine
+        if machine.discard is None and advances(feeder):
+            raise GcodeLinkError(
+                f"{ref}: {reason}; the run stops with the nozzle as it is, since feeder {feeder.id} advances its tape"
+                " and a part put back in its pocket would ride off loose: set [motion] discard, where a rejected part is let go"
+            )
         target, where = (machine.discard, "let go at the discard place") if machine.discard is not None else (pocket, "put back in its pocket")
         # Put down as a place is, with the nozzle turned back to 0.
         for line in [safe_line(machine), *place_lines(machine, (target[0], target[1]), 0.0, target[2])]:

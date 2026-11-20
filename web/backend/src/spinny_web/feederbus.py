@@ -16,6 +16,14 @@ The header's bytes are named: `to`, `from`, `id` (the packet's number,
 which its answer carries back), `length` (the payload's) and `crc`
 (CRC-8, polynomial 0x07, over every other header byte and the payload, in
 order). Photon's header is to, from, id, length, crc.
+
+A feeder's address is its slot's: a Photon feeder reads it from the
+1-wire chip in the slot's floor. A floor never programmed gives 0, the
+host's own address, and a slot with no chip gives 255, the broadcast that
+every feeder hears. Neither is a slot's address, nor is one past the
+profile's last: a feeder answering from one has no address, and nothing
+meant for one feeder alone (initialize, feed, status) is ever sent there,
+since a feed to the broadcast moves every feeder that is initialized.
 """
 
 from __future__ import annotations
@@ -36,6 +44,17 @@ FEED_WAIT_FLOOR = 2.0
 
 class BusError(Exception):
     """A feeder that could not be found, initialized, or fed."""
+
+
+class NoAddress(BusError):
+    """A feeder that answers from an address no slot has: the host's or the
+    broadcast (what a slot's floor gives when it is not programmed, or has
+    no chip), or one past the profile's last. `address` is the one it
+    answered from."""
+
+    def __init__(self, address: int, text: str) -> None:
+        super().__init__(text)
+        self.address = address
 
 
 def crc8(data: bytes) -> int:
@@ -157,13 +176,36 @@ class FeederBus:
     def _code(self, answer: Packet) -> int:
         return answer.payload[0] if answer.payload else -1
 
+    def is_slot(self, address: int) -> bool:
+        """Whether a feeder can be spoken to alone at `address`: 1 to the
+        profile's last, and neither the host's nor the broadcast."""
+        profile = self.profile
+        return 1 <= address <= profile.max_address and address not in (profile.host, profile.broadcast)
+
+    def no_slot(self, address: int) -> str | None:
+        """Why a feeder answering from `address` has no slot's address, in
+        words, or None for one that has."""
+        profile = self.profile
+        if self.is_slot(address):
+            return None
+        if address == profile.broadcast:
+            return f"it has no address (it answers from {address}, the broadcast every feeder hears): its slot has no floor chip, or its floor is not programmed"
+        if address in (0, profile.host):
+            return f"it has no address (it answers from {address}, the host's): its slot's floor is not programmed"
+        return f"it answers from address {address}, past [bus] max_address {profile.max_address}: raise max_address, or program its slot's floor lower"
+
     def find(self, feeder_id: str) -> int | None:
-        """The address of the feeder with this id, asked of every feeder at once."""
+        """The address of the feeder with this id, asked of every feeder at
+        once; None when none answers. NoAddress, with why, for an answer
+        from an address no slot has."""
         if feeder_id in self.found:
             return self.found[feeder_id]
         answer = self.exchange(self.profile.broadcast, self.profile.find, bytes.fromhex(check_id(feeder_id)))
         if answer is None or self._code(answer) != self.profile.ok:
             return None
+        why = self.no_slot(answer.sender)
+        if why is not None:
+            raise NoAddress(answer.sender, why)
         self.found[feeder_id] = answer.sender
         return answer.sender
 
@@ -202,13 +244,20 @@ class FeederBus:
         """Moves the feeder's tape on by `tenths` of a millimeter and waits
         until it is done: the feeder found by its id (or at `address`),
         initialized once, told to feed (again after initializing, should it
-        say it was not), then asked until it says done. The address fed."""
+        say it was not), then asked until it says done. The address fed.
+        An address no slot has is refused before anything is sent there,
+        whatever gave it: a feed to the broadcast would move every feeder."""
         if not 1 <= tenths <= 255:
             raise BusError(f"a feed is 1 to 255 tenths of a mm, not {tenths}")
         if address is None:
             address = self.find(feeder_id)
             if address is None:
                 raise BusError(f"no feeder answered to the id {feeder_id}: is it in its slot?")
+        if not self.is_slot(address):
+            raise BusError(
+                f"address {address} is no slot's (1 to [bus] max_address {self.profile.max_address},"
+                " neither the host's nor the broadcast): a feed is never sent there"
+            )
         for attempt in range(2):
             if address not in self.ready:
                 self.initialize(address, feeder_id)

@@ -78,6 +78,12 @@ HELD_READING = 231
 READING_NOISE = 2
 FIRMWARE = "FIRMWARE_NAME:Marlin 2.1.2 (Opulo) SOURCE_CODE_URL:github.com/MarlinFirmware/Marlin MACHINE_TYPE:LumenPnP EXTRUDER_COUNT:0"
 NUMBER = re.compile(r"([A-Z])\s*([-+]?(?:\d+\.?\d*|\.\d+))?")
+# What M485 prints when no packet came back, and a Photon feeder's answer codes.
+PHOTON_TIMEOUT = "rs485-reply: TIMEOUT"
+PHOTON_OK = 0x00
+PHOTON_WRONG_ID = 0x01
+PHOTON_UNINITIALIZED = 0x03
+PHOTON_BUSY = 0x04
 
 
 def turn(point: Point, degrees: float) -> Point:
@@ -109,19 +115,59 @@ def picture_angle(direction: float, roll: float, mirror: bool) -> float:
     return angle
 
 
-class PhotonBus:
-    """Photon feeders on the RS-485 bus behind Marlin's M485: each answers
-    the find, its id, initialize, feed and status packets as a feeder does,
-    a feed taking `asks` status asks to finish. `feeders` maps an address
-    to the feeder's hardware id, as hex."""
+@dataclass
+class Photon:
+    """One Photon feeder in its slot: its hardware id, as hex; the address
+    byte the slot floor's chip holds (0 when it was never programmed, None
+    for a slot with no chip, which the feeder reads as 255); whether it was
+    initialized since it was put in; and the status asks its feed still
+    answers busy to."""
 
-    def __init__(self, feeders: dict[int, str], asks: int = 2) -> None:
-        self.feeders = dict(feeders)
-        self.ready: set[int] = set()
+    id: str
+    floor: int | None
+    initialized: bool = False
+    feeding: int = 0
+
+    @property
+    def address(self) -> int:
+        """Where it answers from, and what it hears besides the broadcast."""
+        return 255 if self.floor is None else self.floor
+
+
+class PhotonBus:
+    """Photon feeders on the RS-485 bus behind Marlin's M485, answering as
+    the feeders' firmware does: each hears the packets to its own address
+    and to 255, and answers from its own address. `feeders` maps an
+    address to the id (hex) of the feeder whose slot's floor holds it;
+    `unaddressed` are the ids of feeders in slots whose floor was never
+    programmed (address 0), `chipless` of feeders in slots with no floor
+    chip (255). A feed takes `asks` status asks to finish.
+
+    Two feeders answering at once garble each other on the wire, and
+    Marlin's M485 takes only a packet whose check holds, so it prints a
+    timeout then."""
+
+    def __init__(self, feeders: dict[int, str], asks: int = 2, unaddressed=(), chipless=()) -> None:
+        self.feeders: list[Photon] = [Photon(id=feeder.upper(), floor=address) for address, feeder in feeders.items()]
+        self.feeders += [Photon(id=feeder.upper(), floor=0) for feeder in unaddressed]
+        self.feeders += [Photon(id=feeder.upper(), floor=None) for feeder in chipless]
         self.asks = asks
-        self.feeding: dict[int, int] = {}
         # Every feed asked: (address, tenths of a mm).
         self.fed: list[tuple[int, int]] = []
+
+    @property
+    def ready(self) -> set[int]:
+        """The addresses of the feeders initialized."""
+        return {feeder.address for feeder in self.feeders if feeder.initialized}
+
+    def remove(self, feeder_id: str) -> None:
+        """Takes a feeder out of its slot."""
+        self.feeders = [feeder for feeder in self.feeders if feeder.id != feeder_id.upper()]
+
+    def forget(self) -> None:
+        """Every feeder forgets it was initialized, as after the bus's power was cut."""
+        for feeder in self.feeders:
+            feeder.initialized = False
 
     def answer(self, hex_packet: str) -> str:
         """The line Marlin prints for the packet's answer, or its timeout."""
@@ -129,40 +175,46 @@ class PhotonBus:
 
         packet = decode(hex_packet, HEADER_FIELDS)
         if packet is None or not packet.payload:
-            return "rs485-reply: TIMEOUT"
+            return PHOTON_TIMEOUT
         code, body = packet.payload[0], packet.payload[1:]
+        answers = []
+        for feeder in self.feeders:
+            if packet.to not in (feeder.address, 255):
+                continue
+            said = self._handle(feeder, code, body)
+            if said is not None:
+                # From the address it has once it has acted.
+                answers.append(Packet(to=packet.sender, sender=feeder.address, number=packet.number, payload=said))
+        if len(answers) != 1:
+            return PHOTON_TIMEOUT
+        return "rs485-reply: " + answers[0].encode(HEADER_FIELDS)
 
-        def reply(sender: int, payload: bytes) -> str:
-            return "rs485-reply: " + Packet(to=packet.sender, sender=sender, number=packet.number, payload=payload).encode(HEADER_FIELDS)
-
-        if packet.to == 255 and code == 0xC0:
-            wanted = body.hex().upper()
-            address = next((a for a, i in self.feeders.items() if i == wanted), None)
-            return reply(address, bytes([0])) if address is not None else "rs485-reply: TIMEOUT"
-        feeder = self.feeders.get(packet.to)
-        if feeder is None:
-            return "rs485-reply: TIMEOUT"
+    def _handle(self, feeder: Photon, code: int, body: bytes) -> bytes | None:
+        """What a feeder answers a command with (its payload), or None for no answer."""
+        own = bytes.fromhex(feeder.id)
+        mine = body[: len(own)] == own
         if code == 0x01:
-            return reply(packet.to, bytes([0]) + bytes.fromhex(feeder))
+            return bytes([PHOTON_OK]) + own
         if code == 0x02:
-            if body.hex().upper() != feeder:
-                return reply(packet.to, bytes([1]) + bytes.fromhex(feeder))
-            self.ready.add(packet.to)
-            return reply(packet.to, bytes([0]) + bytes.fromhex(feeder))
+            if not mine:
+                return bytes([PHOTON_WRONG_ID]) + own
+            feeder.initialized = True
+            return bytes([PHOTON_OK]) + own
         if code == 0x04:
-            if packet.to not in self.ready:
-                return reply(packet.to, bytes([3]))
-            self.feeding[packet.to] = self.asks
-            self.fed.append((packet.to, body[0]))
-            return reply(packet.to, bytes([0, 0x01, 0xF4]))
+            if not feeder.initialized:
+                return bytes([PHOTON_UNINITIALIZED]) + own
+            feeder.feeding = self.asks
+            self.fed.append((feeder.address, body[0] if body else 0))
+            return bytes([PHOTON_OK, 0x01, 0xF4])
         if code == 0x06:
-            left = self.feeding.get(packet.to, 0)
-            if left > 1:
-                self.feeding[packet.to] = left - 1
-                return reply(packet.to, bytes([4]))
-            self.feeding.pop(packet.to, None)
-            return reply(packet.to, bytes([0]))
-        return "rs485-reply: TIMEOUT"
+            if feeder.feeding > 1:
+                feeder.feeding -= 1
+                return bytes([PHOTON_BUSY])
+            feeder.feeding = 0
+            return bytes([PHOTON_OK])
+        if code == 0xC0:
+            return bytes([PHOTON_OK]) if mine else None
+        return None
 
 
 @dataclass
@@ -851,8 +903,8 @@ def main(argv: list[str] | None = None) -> int:
     for camera, address in ((world.bottom, args.bottom_camera), (world.top, args.top_camera)):
         if address != "off":
             print(f"  {camera.name} camera: http://{address}/snapshot", flush=True)
-    for address, feeder in sorted(machine.bus.feeders.items()):
-        print(f"  Photon feeder at address {address}: id {feeder}", flush=True)
+    for feeder in machine.bus.feeders:
+        print(f"  Photon feeder at address {feeder.address}: id {feeder.id}", flush=True)
     try:
         serve(machine, server)
     except KeyboardInterrupt:

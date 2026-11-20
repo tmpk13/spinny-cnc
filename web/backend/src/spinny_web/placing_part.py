@@ -1453,11 +1453,14 @@ class PlacingPart:
         for feeder in machine.feeders:
             if feeder in unplaced:
                 # A feeder the bus cannot find, for whatever reason, stays
-                # unplaced: the plan leaves its parts out and says why.
+                # unplaced: the plan leaves its parts out, and a reason the
+                # bus gave (a feeder with no address of its own, which is
+                # never fed) is said, since the plan cannot tell it.
                 try:
                     address = bus.find(feeder.bus_id or "")
-                except (BusError, GcodeLinkError):
+                except (BusError, GcodeLinkError) as exc:
                     address = None
+                    self.publish_message("warning", f"feeder {feeder.id}: {exc}; its parts are left out")
                 slot = by_address.get(address) if address is not None else None
                 if slot is not None:
                     feeder = replace(feeder, slot=address, at=slot_place(slot.at, slot.rotation, feeder.offset), rotation=feeder.rotation + slot.rotation)

@@ -1325,15 +1325,18 @@ def pick_label(part: dict, feeder: Feeder, index: int) -> str:
     return f"{part['ref']} {part.get('value', '')} from {feeder.id} #{index + 1}"
 
 
-def pick_lines(machine: GcodeMachine, feeder: Feeder, label: str, point: tuple[float, float, float]) -> list[str]:
+def pick_lines(machine: GcodeMachine, feeder: Feeder, label: str, point: tuple[float, float, float], advance: bool = True) -> list[str]:
     """The lines that take a part from its pocket: a comment saying which,
-    the feeder's own lines, up to the safe height, over the pocket with the
-    nozzle turned to 0, down, the vacuum on, and back up."""
-    advance = [f"; {feeder.id} advances {num(feeder.advance)} mm on the feeder bus"] if feeder.bus_id is not None else []
+    the feeder's own advance (its feed lines, and a comment for a feeder
+    the bus advances), up to the safe height, over the pocket with the
+    nozzle turned to 0, down, the vacuum on, and back up. With `advance`
+    false the advance is left out: a run sends it itself, before it looks
+    into the pocket the advance brings."""
+    bus = [f"; {feeder.id} advances {num(feeder.advance)} mm on the feeder bus"] if feeder.bus_id is not None else []
+    moves = [*bus, *feeder.feed] if advance else []
     return [
         f"; {label}".rstrip(),
-        *advance,
-        *feeder.feed,
+        *moves,
         safe_line(machine),
         move_xy(machine, (point[0], point[1]), 0.0),
         move_z(machine, point[2]),

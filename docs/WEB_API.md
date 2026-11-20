@@ -1159,12 +1159,17 @@ null).
 
 A run (placer.py) sends the init lines; with `fiducials` it finds the
 board's fiducials where the references put them and fits the board on
-them; then per part: the feeder's marks once, the pocket look, the pick,
+them; then per part: the feeder's marks once, the advance of a feeder
+that advances (one on the bus, or with `feed` lines, which the run sends
+here rather than with the pick), the pocket look, the pick,
 the vacuum read, the bottom camera's look, the place and the vacuum read once
-it let go. A pick that will not do (no part held, nothing on the nozzle,
+it let go. An empty pocket is counted taken and the next try advances
+again. A pick that will not do (no part held, nothing on the nozzle,
 too far off, turned too far, the wrong size) is let go at `discard` or in
 its pocket and the next pocket tried, up to `pick_tries`; then the part
-is left out and listed in `failed`. A part still on the nozzle after its
+is left out and listed in `failed`. From a feeder that advances, with no
+`discard`, it stops the run instead, the nozzle as it is: put back, the
+part would ride off loose on the tape. A part still on the nozzle after its
 place, or after a failed pick was let go, stops the run, and so do two parts left out one after another. The
 program from *plan* is the plan before the run; the run changes it where
 a camera or the vacuum says otherwise.
@@ -1193,7 +1198,7 @@ reference, the angle, a count) needs a G-code machine to keep it for.
 | `POST /api/pnp/vacuum` | `{"on": true, "read": true}`, either: the vacuum switched by the file's pick or place lines, then the sensor read by its `[vacuum] read` lines: `{"reply": [...], ...state}`, the reading in `vacuum.reading`; 502 when the pattern finds none |
 | `POST /api/pnp/boards/reset` | the count of boards finished back to 0 |
 | `POST /api/pnp/bus/scan` | every address from 1 to `max_address` asked for its feeder's id: `{"feeders": [{"address": 3, "id": "0102...", "feeder": "c-100n" or null, "slot": true}], "missing": [], ...state}`, `slot` saying the file has a `[[slot]]` for that address; with a body `{"feeders": ["c-100n", "c-1u"]}` only those of the file's feeders are looked for, each by its id (one question each), and `missing` names each that did not answer or has no `bus_id`, `{"feeder", "id", "reason"}`; 400 without `[bus]`, 404 for a feeder the file lacks |
-| `POST /api/pnp/bus/feed` | `{"feeder": "c-100n"}`: one advance of a feeder on the bus (found by its id when its slot is not given, initialized, fed, waited for); 404 for a feeder the file lacks, 502 when the feeder does not answer or refuses |
+| `POST /api/pnp/bus/feed` | `{"feeder": "c-100n"}`: one advance of a feeder on the bus (found by its id when its slot is not given, initialized, fed, waited for); 404 for a feeder the file lacks, 502 when the feeder does not answer, refuses, or has no address (below) |
 | `POST /api/pnp/feeders/reset` | `{"feeder": "id"}`, or `{}` for every one: counted from the first part again |
 | `POST /api/pnp/nozzle` | on a G-code machine, the bottom camera's nozzle routine (as above) with the nozzle turned to 0, its moves the file's move word and wait command, its place read with the position command; what it measures is kept as the placing state's `camera`. The routine shows in the bottom camera state with `"target": "gcode"` |
 | `POST /api/pnp/runout` | over the bottom camera, the tip found at six turns of the nozzle: the circle they lie on gives `camera.runout` (the tip off the turning axis at 0, mm), which places and looks then make up for; a tip going round the wrong way for `rotation_cw` fails naming it. Kind `runout` in the bottom camera's routine |
@@ -1234,7 +1239,14 @@ initializes it once (`init` with its id; a feeder answering
 of a mm, and asks `status` until it answers `ok` (`busy` while feeding,
 `unreachable` for a jam), waiting at most three times the time the feed's
 answer gave, two seconds at least. A feeder that does not advance leaves
-its part out. `[[slot]]` tables give where the feeder at each `address`
+its part out. A slot's address is 1 to `max_address`, neither `host` nor
+`broadcast`: a feeder that answers its find from another (a Photon
+feeder in a slot whose floor was never programmed answers from 0, one
+with no floor chip from 255) has no address, and its parts are left out
+with a warning message saying why. Nothing meant for one feeder
+(`init`, `feed`, `status`) is ever sent to such an address, whatever gave
+it: a feed to the broadcast moves every feeder that is initialized.
+`[[slot]]` tables give where the feeder at each `address`
 presents its part (`at`, `rotation`). Without the machine connected a plan
 leaves out the parts of a feeder whose slot is found at the run. The
 placing state's `document` has `bus` (true with a `[bus]`), `slots`, and

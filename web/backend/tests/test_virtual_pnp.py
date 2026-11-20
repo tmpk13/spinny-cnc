@@ -174,6 +174,29 @@ def test_the_photon_bus_answers_on_m485():
     assert answer is not None and answer.number == 7 and answer.payload == bytes([0]) + bytes.fromhex("AB" * 12)
 
 
+def test_photon_feeders_hear_their_own_address_and_the_broadcast_and_answer_from_their_floors():
+    from spinny_web.feederbus import HEADER_FIELDS, Packet, decode
+
+    first, blue, red = "AA" * 12, "BB" * 12, "CC" * 12
+    # At address 3; in a slot whose floor was never programmed; in one with no floor chip.
+    bus = virtual_pnp.PhotonBus({3: first}, unaddressed=[blue], chipless=[red])
+
+    def ask(to: int, payload: bytes):
+        reply = bus.answer(Packet(to=to, sender=0, number=1, payload=payload).encode(HEADER_FIELDS))
+        return decode(reply.split(":", 1)[1].strip(), HEADER_FIELDS)
+
+    # Each answers its find from its own address: the floor's, 0, or 255.
+    assert [ask(255, bytes([0xC0]) + bytes.fromhex(feeder)).sender for feeder in (first, blue, red)] == [3, 0, 255]
+    # The one whose floor says 0 hears what is sent to 0, the host's address.
+    assert ask(0, bytes([0x01])).payload == bytes([0]) + bytes.fromhex(blue)
+    # A feed to the broadcast moves every feeder initialized; their answers
+    # collide on the wire, and M485 prints a timeout.
+    assert ask(3, bytes([0x02]) + bytes.fromhex(first)).payload[0] == 0
+    assert ask(0, bytes([0x02]) + bytes.fromhex(blue)).payload[0] == 0
+    reply = bus.answer(Packet(to=255, sender=0, number=2, payload=bytes([0x04, 40])).encode(HEADER_FIELDS))
+    assert reply == "rs485-reply: TIMEOUT" and bus.fed == [(3, 40), (0, 40)] and bus.ready == {3, 0}
+
+
 # --- on a socket -------------------------------------------------------------------------------
 
 

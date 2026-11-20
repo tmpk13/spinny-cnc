@@ -4,6 +4,7 @@ scan and feed routes, against a fake Photon bus behind a fake Marlin."""
 
 from __future__ import annotations
 
+import re
 import time
 
 import pytest
@@ -14,7 +15,7 @@ from gcode_rig import connect, gcode_file, rig_backend
 
 from spinny_laser.machines import MachineError
 from spinny_web.app import create_app
-from spinny_web.feederbus import HEADER_FIELDS, BusError, FeederBus, Packet, crc8, decode, slot_place
+from spinny_web.feederbus import HEADER_FIELDS, BusError, FeederBus, NoAddress, Packet, crc8, decode, slot_place
 from spinny_web.jobs import Design, Group, Job
 from spinny_web.openpnp import board_fit, plan
 from spinny_web.openpnp import parse as parse_file
@@ -177,7 +178,7 @@ def test_a_feeder_is_found_initialized_fed_and_waited_for():
     codes = [decode(line[5:], HEADER_FIELDS).payload[0] for line in bus.sent[before:]]  # type: ignore[attr-defined]
     assert codes == [0x04, 0x06, 0x06]
     # A feeder that forgot it was initialized is initialized again.
-    fake.ready.clear()
+    fake.forget()
     assert bus.advance(C1U, 20) == 4 and len(fake.fed) == 3
     # Another feeder in the slot the profile names refuses.
     with pytest.raises(BusError, match="is 0102030405060708090A0B0C, not AABBCCDDEEFF001122334455"):
@@ -188,6 +189,37 @@ def test_a_feeder_is_found_initialized_fed_and_waited_for():
 
 def test_a_scan_lists_the_feeders_that_answer():
     assert bus_over(FakePhotonBus({3: C100N, 4: C1U})).scan() == [{"address": 3, "id": C100N}, {"address": 4, "id": C1U}]
+
+
+@pytest.mark.parametrize(
+    "fake, words",
+    [
+        (FakePhotonBus({}, unaddressed=[C1U]), "it has no address (it answers from 0, the host's): its slot's floor is not programmed"),
+        (FakePhotonBus({}, chipless=[C1U]), "it has no address (it answers from 255, the broadcast every feeder hears): its slot has no floor chip"),
+        (FakePhotonBus({40: C1U}), "it answers from address 40, past [bus] max_address 32"),
+    ],
+)
+def test_a_feeder_answering_from_an_address_no_slot_has_has_none_and_is_never_fed(fake, words):
+    bus = bus_over(fake)
+    with pytest.raises(NoAddress, match=re.escape(words)) as error:
+        bus.find(C1U)
+    assert error.value.address in (0, 255, 40) and bus.found == {}
+    # A feed by its id stops at the find: nothing but the find goes out,
+    # and that to the broadcast with the id, as finds do.
+    before = len(bus.sent)  # type: ignore[attr-defined]
+    with pytest.raises(NoAddress):
+        bus.advance(C1U, 20)
+    asked = [decode(line[5:], HEADER_FIELDS) for line in bus.sent[before:]]  # type: ignore[attr-defined]
+    assert [(packet.to, packet.payload[0]) for packet in asked] == [(255, 0xC0)] and fake.fed == []
+
+
+@pytest.mark.parametrize("address", [0, 255, 33])
+def test_a_feed_is_never_sent_to_an_address_no_slot_has_whatever_gave_it(address):
+    fake = FakePhotonBus({3: C100N})
+    bus = bus_over(fake)
+    with pytest.raises(BusError, match=f"address {address} is no slot's"):
+        bus.advance(C100N, 20, address=address)
+    assert bus.sent == [] and fake.fed == []  # type: ignore[attr-defined]
 
 
 # --- the routes and a run ------------------------------------------------------------------
@@ -215,12 +247,31 @@ def test_a_scan_of_the_feeders_picked_looks_for_each_by_its_id_and_names_the_mis
     asked = [line for line in client.fake.lines[before:] if line.startswith("M485")]
     assert len(asked) == 2 and all(decode(line[5:], HEADER_FIELDS).to == 255 for line in asked)
     # A feeder taken out of its slot is named, and why.
-    del client.fake.bus.feeders[4]
+    client.fake.bus.remove(C1U)
     answer = client.post("/api/pnp/bus/scan", json={"feeders": ["c-1u"]}).json()
     assert answer["feeders"] == [] and answer["missing"] == [{"feeder": "c-1u", "id": C1U, "reason": "did not answer to its id: is it in a slot?"}]
     assert client.post("/api/pnp/bus/scan", json={"feeders": ["nope"]}).status_code == 404
     # No list: every address is asked, as before.
     assert [entry["address"] for entry in client.post("/api/pnp/bus/scan").json()["feeders"]] == [3]
+
+
+def board_job(client) -> str:
+    """The board's job added, C1 and C2 placed by hand on the machine: its id."""
+    job = Job(name="board", source="kicad", groups=[Group(label="g", paths=[[(0.0, 0.0), (1.0, 0.0)]])], design=Design(shift=(-100.0, -70.0), rotation=0.0, board=True))
+    client.backend.store.add(job)
+    client.backend.store.keep_board(job.id, BOARD.encode())
+    client.post("/api/pnp/references", json={"job": job.id, "ref": "C1", "at": [200.0, 50.0]})
+    client.post("/api/pnp/references", json={"job": job.id, "ref": "C2", "at": [210.0, 50.0]})
+    return job.id
+
+
+def run_done(client, job_id: str) -> dict:
+    """A run sent and waited out: the placing state after it."""
+    assert client.post("/api/pnp/run", json={"job": job_id}).status_code == 200
+    deadline = time.monotonic() + 10.0
+    while client.get("/api/pnp/placing").json()["running"] and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return client.get("/api/pnp/placing").json()
 
 
 def test_the_bus_is_scanned_a_feeder_fed_and_a_run_advances_each_before_its_pick(client):
@@ -230,19 +281,11 @@ def test_the_bus_is_scanned_a_feeder_fed_and_a_run_advances_each_before_its_pick
     assert client.post("/api/pnp/bus/feed", json={"feeder": "c-100n"}).status_code == 200
     assert client.fake.bus.fed == [(3, 20)]
     assert client.post("/api/pnp/bus/feed", json={"feeder": "nope"}).status_code == 404
-    job = Job(name="board", source="kicad", groups=[Group(label="g", paths=[[(0.0, 0.0), (1.0, 0.0)]])], design=Design(shift=(-100.0, -70.0), rotation=0.0, board=True))
-    client.backend.store.add(job)
-    client.backend.store.keep_board(job.id, BOARD.encode())
-    client.post("/api/pnp/references", json={"job": job.id, "ref": "C1", "at": [200.0, 50.0]})
-    client.post("/api/pnp/references", json={"job": job.id, "ref": "C2", "at": [210.0, 50.0]})
+    job_id = board_job(client)
     # C2's feeder has no slot in the file: connected, the plan finds it at address 4.
-    planned = client.post("/api/pnp/plan", json={"job": job.id}).json()
+    planned = client.post("/api/pnp/plan", json={"job": job_id}).json()
     assert [entry["ref"] for entry in planned["parts"]] == ["C1", "C2"]
-    assert client.post("/api/pnp/run", json={"job": job.id}).status_code == 200
-    deadline = time.monotonic() + 10.0
-    while client.get("/api/pnp/placing").json()["running"] and time.monotonic() < deadline:
-        time.sleep(0.02)
-    state = client.get("/api/pnp/placing").json()
+    state = run_done(client, job_id)
     assert state["progress"]["state"] == "done", state["progress"]
     assert state["progress"]["placed"] == ["C1", "C2"]
     assert client.fake.bus.fed[-2:] == [(3, 20), (4, 40)]
@@ -250,3 +293,27 @@ def test_the_bus_is_scanned_a_feeder_fed_and_a_run_advances_each_before_its_pick
     assert "feeder c-1u advanced 4 mm (address 4)" in steps
     # C2 was picked at slot 4's place: 115, 400 turned, less nothing.
     assert "G0 X115 Y400 A0 F3000" in client.fake.lines
+
+
+def test_a_run_leaves_out_the_parts_of_a_feeder_with_no_address_and_says_why(client, monkeypatch):
+    # c-1u sits in a slot whose floor was never programmed: it answers
+    # its find from 0, the host's address.
+    client.fake.bus = FakePhotonBus({3: C100N}, unaddressed=[C1U])
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(client.backend, "publish_message", lambda level, text: messages.append((level, text)))
+    connect(client, "lumen")
+    job_id = board_job(client)
+    planned = client.post("/api/pnp/plan", json={"job": job_id}).json()
+    assert [entry["ref"] for entry in planned["parts"]] == ["C1"] and [entry["ref"] for entry in planned["skipped"]] == ["C2"]
+    said = "feeder c-1u: it has no address (it answers from 0, the host's): its slot's floor is not programmed; its parts are left out"
+    assert ("warning", said) in messages
+    messages.clear()
+    before = len(client.fake.lines)
+    state = run_done(client, job_id)
+    assert state["progress"]["state"] == "done", state["progress"]
+    assert state["progress"]["placed"] == ["C1"] and ("warning", said) in messages
+    # Only c-100n was fed, and nothing meant for one feeder went to 0 or 255.
+    assert client.fake.bus.fed == [(3, 20)]
+    packets = [decode(line[5:], HEADER_FIELDS) for line in client.fake.lines[before:] if line.startswith("M485")]
+    assert all(packet.payload[0] == 0xC0 for packet in packets if packet.to in (0, 255))
+

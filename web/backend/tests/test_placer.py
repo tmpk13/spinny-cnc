@@ -11,7 +11,7 @@ import time
 from dataclasses import replace
 
 import pytest
-from device_fakes import BoardTopCamera, DeviceTopCamera, DeviceUpCamera, FakeMarlin, LaggingUpCamera, SeenBoard, turn, wait_for
+from device_fakes import BoardTopCamera, DeviceTopCamera, DeviceUpCamera, FakeMarlin, FakePhotonBus, LaggingUpCamera, SeenBoard, turn, wait_for
 from fastapi.testclient import TestClient
 from gcode_rig import connect, gcode_file, rig_backend
 
@@ -21,7 +21,7 @@ from spinny_web import boardlook
 from spinny_web import camera as camera_module
 from spinny_web.camera import picture_to_machine
 from spinny_web.jobs import Design, Group, Job
-from spinny_web.openpnp import MARKS_NOTE, POCKET_NOTE, board_fit, plan, tip_shift, wrap
+from spinny_web.openpnp import MARKS_NOTE, POCKET_NOTE, board_fit, pick_lines, plan, tip_shift, wrap
 from spinny_web.openpnp import parse as parse_file
 from spinny_web.pnp import fit_circle, footprints_of, picture_angle_to_machine
 
@@ -1217,3 +1217,147 @@ def test_a_search_that_covers_its_box_without_the_board_ends_as_not_found(client
     assert f"{record['stops']} stops" in routine["error"] and record["message"] == routine["error"]
     summary = client.get(f"/api/searchlog/{record['id']}").json()["summary"]
     assert len(summary["stops"]) == record["stops"] and summary["pictures"] == [] and summary["truth"] is None
+
+
+# --- feeders that advance ----------------------------------------------------------------
+
+PHOTON = "0102030405060708090A0B0C"
+# A Photon feeder on the bus at address 3, giving R1 and R2 (refs outdo the
+# strip's words), its pick window at 60, 30.
+BUS = f"""[bus]
+poll_ms = 10
+[[slot]]
+address = 3
+at = [60.0, 30.0, -2.0]
+[[feeder]]
+id = "photon"
+refs = ["R1", "R2"]
+bus_id = "{PHOTON}"
+slot = 3
+size = [1.6, 0.8]
+"""
+FEED_LINE = "M42 P7 S255"
+
+
+class TapeTopCamera(DeviceTopCamera):
+    """A top camera over a feeder's pick window at `window`, with the
+    calibration mark at 120, 80 beside it: a part (bright, 1.6 by 0.8) shows
+    in the window once the feeder has advanced more times than the nozzle
+    has picked (M106), except after the advances `empty` names, counted from
+    1, which bring an empty pocket. `advanced` counts the advances so far;
+    `looks` keeps that count at each look for a bright part."""
+
+    def __init__(self, fake: FakeMarlin, window, advanced, empty=()) -> None:
+        super().__init__(fake, CAMERA_OFFSET, [])
+        self.window = window
+        self.advanced = advanced
+        self.empty = set(empty)
+        self.looks: list[int] = []
+
+    def spot(self, radius=None, polarity="dark", min_area=None, max_area=None, min_roundness=None, color=None):
+        count = self.advanced()
+        self.things = [("dark", 120.0, 80.0, 1.0, 1.0)]
+        if count > self.fake.lines.count("M106") and count not in self.empty:
+            self.things.append(("bright", *self.window, 1.6, 0.8))
+        if polarity == "bright":
+            self.looks.append(count)
+        return super().spot(radius, polarity, min_area, max_area, min_roundness, color)
+
+
+def tape_rig(client, text: str, advanced=None, empty=()) -> tuple[str, TapeTopCamera]:
+    """The machine file `text` connected with a Photon feeder at address 3
+    on its bus and the top camera over its window, measured: the job's id,
+    R1 placed at 100, 50, and the camera."""
+    job_id = rig(client, text)
+    client.fake.bus = FakePhotonBus({3: PHOTON})
+    camera = TapeTopCamera(client.fake, (60.1, 29.95), advanced or (lambda: len(client.fake.bus.fed)), empty)
+    client.backend.top.client = camera
+    measured_offset(client)
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    return job_id, camera
+
+
+def test_a_bus_feeder_advances_before_each_look_into_its_pocket(client):
+    # The run once looked first: it saw the pocket the last pick emptied,
+    # passed it over without advancing, and left every part out.
+    job_id, camera = tape_rig(client, profile(rest=TOP + BUS + 'pocket = "bright"\n'))
+    before = len(client.fake.lines)
+    state = run(client, {"job": job_id})
+    progress = state["progress"]
+    assert progress["state"] == "done", progress
+    assert progress["placed"] == ["R1", "R2"] and progress["failed"] == [] and state["taken"] == {"photon": 2}
+    # Each look came after its feed: the first saw one, the second two.
+    assert client.fake.bus.fed == [(3, 40), (3, 40)] and sorted(set(camera.looks)) == [1, 2]
+    # Picked where the part was seen, not at the window's middle (a pick
+    # turns the nozzle to 0; the looks' moves leave it as it is).
+    picks = [move for move in moves([line for line in client.fake.lines[before:] if " A0 " in line]) if move[0] < 70.0]
+    assert len(picks) == 2 and all(move == pytest.approx((60.1, 29.95), abs=0.01) for move in picks)
+    assert progress["sent"] == progress["total"]
+
+
+def test_a_pocket_seen_empty_after_a_feed_is_passed_over_and_the_feeder_advances_again(client):
+    job_id, camera = tape_rig(client, profile(rest=TOP + BUS + 'pocket = "bright"\n'), empty={1})
+    state = run(client, {"job": job_id, "refs": ["R1"]})
+    progress = state["progress"]
+    assert progress["state"] == "done", progress
+    assert progress["placed"] == ["R1"] and state["taken"] == {"photon": 2}
+    assert client.fake.bus.fed == [(3, 40), (3, 40)] and sorted(set(camera.looks)) == [1, 2]
+    assert "pocket #1 of photon looked empty, passed over" in [step["text"] for step in progress["steps"]]
+
+
+def test_a_feeders_feed_lines_reach_the_machine_before_the_look_into_its_pocket(client):
+    text = profile(feeder=f'feed = ["{FEED_LINE}", "G4 P100"]\npocket = "bright"', rest=TOP).replace("count = 10", "count = 0")
+    text = text.replace("at = [10.0, 20.0, -2.0]", "at = [60.0, 30.0, -2.0]")
+    job_id, camera = tape_rig(client, text, advanced=lambda: client.fake.lines.count(FEED_LINE))
+    state = run(client, {"job": job_id, "refs": ["R1"]})
+    progress = state["progress"]
+    assert progress["state"] == "done", progress
+    assert progress["placed"] == ["R1"] and set(camera.looks) == {1} and client.fake.lines.count(FEED_LINE) == 1
+    assert progress["sent"] == progress["total"]
+
+
+def test_the_plan_keeps_a_feeders_advance_in_its_pick_and_the_run_sends_it_before():
+    device = parse(profile(feeder=f'feed = ["{FEED_LINE}", "G4 P100"]'), "rig")
+    (feeder,) = device.feeders
+    lines = pick_lines(device, feeder, "R1 10k from res #1", (10.0, 20.0, -2.0))
+    # The program's text as it always read: the feed lines first.
+    assert lines == ["; R1 10k from res #1", FEED_LINE, "G4 P100", "G0 Z5 F600", "G0 X10 Y20 A0 F3000", "G0 Z-2 F600", "M400", "M106", "G0 Z5 F600"]
+    assert pick_lines(device, feeder, "R1 10k from res #1", (10.0, 20.0, -2.0), advance=False) == [lines[0], *lines[3:]]
+    program = plan(device, [part("R1", 1.0, 0.0)], board_fit([((0.0, 0.0), (100.0, 50.0))], 0.0), {})
+    assert program.blocks[0].pick == lines
+    # A bus feeder's advance is a comment in the program, left out with the flag too.
+    bus = parse(profile(rest=BUS), "rig")
+    photon = next(entry for entry in bus.feeders if entry.id == "photon")
+    assert pick_lines(bus, photon, "R1", (60.0, 30.0, -2.0))[1] == "; photon advances 4 mm on the feeder bus"
+    assert all("advances" not in line for line in pick_lines(bus, photon, "R1", (60.0, 30.0, -2.0), advance=False))
+
+
+def test_a_pick_rejected_from_a_feeder_that_advances_stops_the_run_with_no_discard_place(client):
+    job_id = rig(client, profile(rest=VACUUM + BUS))
+    client.fake.bus = FakePhotonBus({3: PHOTON})
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    # The pick holds nothing: put back, a part would ride off on the tape.
+    client.fake.readings = [20.0]
+    before = len(client.fake.lines)
+    state = run(client, {"job": job_id, "refs": ["R1"]})
+    progress = state["progress"]
+    assert progress["state"] == "error" and "set [motion] discard" in progress["error"], progress
+    assert progress["error"].startswith("R1: the vacuum read 20 with no part held") and "feeder photon advances its tape" in progress["error"]
+    # Nothing let go: the vacuum stays on, and the nozzle goes nowhere after.
+    sent = client.fake.lines[before:]
+    assert "M107" not in sent and sent[-1] == "M105" and client.fake.bus.fed == [(3, 40)]
+
+
+def test_a_pick_rejected_from_a_feeder_that_advances_goes_to_the_discard_place_and_it_advances_again(client):
+    job_id = rig(client, profile(motion="discard = [0.0, 0.0, -1.5]", rest=VACUUM + BUS))
+    client.fake.bus = FakePhotonBus({3: PHOTON})
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    client.fake.readings = [20.0, 5.0, 80.0, 5.0]
+    before = len(client.fake.lines)
+    state = run(client, {"job": job_id, "refs": ["R1"]})
+    progress = state["progress"]
+    assert progress["state"] == "done", progress
+    assert progress["placed"] == ["R1"] and client.fake.bus.fed == [(3, 40), (3, 40)]
+    # The window, the discard place, the window again, the place.
+    assert moves(client.fake.lines[before:]) == [(60.0, 30.0), (0.0, 0.0), (60.0, 30.0), (100.0, 50.0)]
+
