@@ -382,3 +382,27 @@ Why it matters: references are kept per job from one session to the next, so a n
 - B. Yes: the newest look wins, and the old references are dropped without a press.
 Applied: A.
 Answer:
+
+## Q65. What should a run do with a part it rejects from a feeder that advances, when the file has no discard place?
+Why it matters: today the part is put back at the pick point, and the next feed (a Photon feeder's, or `feed` lines) carries it away on the tape, loose in the feeder or the machine. The LumenPnP file ships its `[motion] discard` commented out.
+- A. Stop the run with the part still on the nozzle, saying to set `[motion] discard` (recommended): nothing is dropped where it cannot be found.
+- B. Put it back as now and go on: the run keeps going, and a part may end up loose.
+- C. Refuse to start a run that picks from such a feeder without a discard place: safe, but it also blocks runs where nothing would be rejected (no vacuum ranges, no vision).
+Applied: A, in the plan only (docs/FEEDERS.md item 1); not built yet.
+Answer:
+
+## Q66. Where should a slot taken with the top camera get its height?
+Why it matters: the camera gives X and Y but not the pick height, and lowering the nozzle at every slot is what the camera is meant to spare.
+- A. From the slots already in the file, which on the LumenPnP share one height; the first slot is taken with the nozzle (recommended): no new key, and one careful descent.
+- B. A new `[bus] slot_z` for every slot: typed once, but a second place where a slot's height lives.
+- C. Lower the nozzle at each slot, as Slot here does now.
+Applied: A, in the plan only (docs/FEEDERS.md item 3); not built yet.
+Answer:
+
+## Q67. When the page changes a programmed slot's bus address, should the slot's place in the machine file move to the new address?
+Why it matters: `[[slot]]` keys a place by address. The place belongs to the physical slot, so after a renumbering the old entry would describe a slot that no longer answers at that number.
+- A. Yes: Set address rewrites that `[[slot]]` table's `address` too (recommended), so the place stays with the slot it was measured at.
+- B. No: only the floor changes, and the place is taken again with the camera or the nozzle.
+- C. The page programs only slots with no address (OpenPnP's wizard case) and never renumbers one.
+Applied: A, in the plan only (docs/FEEDERS.md item 5c); not built yet.
+Answer:
