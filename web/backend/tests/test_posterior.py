@@ -919,3 +919,24 @@ def test_a_crop_keeps_a_hypothesis_from_being_missed_where_pcbv_did_not_look():
     assert float(posterior.features_in(hypothesis.mean, view)[0]) == 0.0
     assert posterior._seen_counts(hypothesis)[view.index] == 0.0
     assert posterior._evidence(hypothesis) == pytest.approx(before, abs=1e-6)
+
+
+def test_a_stretched_boards_place_puts_its_middle_where_it_says():
+    """With the board's stretch fitted, the place a hypothesis gives (a turn
+    and a shift, what parts are placed by) is the rigid one about the
+    board's middle: it puts the middle where the place says the middle
+    lies, and the pads near it where they are."""
+    truth = (1.004, 0.997)
+    middle = truth_middle()
+    box = (middle[0] - 25.0, middle[1] - 25.0, middle[0] + 25.0, middle[1] + 25.0)
+    posterior = Posterior(board(), box, stretch=True, sessions=1, scale=SCALE)
+    stretched = FakePcbv(stretch=truth)
+    for job in [(x, y) for x in (6.0, 20.0, 34.0) for y in (5.0, 15.0, 25.0)]:
+        look(posterior, stretched, machine_of(job, stretch=truth))
+    lead = posterior.lead
+    assert lead is not None
+    place = lead.estimate
+    assert math.dist(place.apply(MIDDLE), place.center) < 1e-6
+    assert math.dist(place.apply(MIDDLE), middle) < 0.05
+    pad = (21.0, 15.0)
+    assert math.dist(place.apply(pad), machine_of(pad, stretch=truth)) < 0.05

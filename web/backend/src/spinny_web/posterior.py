@@ -990,9 +990,13 @@ class Posterior(Consensus):
     def _guess(self, hypothesis: Hypothesis) -> Guess:
         """A hypothesis as the vote's guess, for the page and the search."""
         mean, cov = hypothesis.mean, hypothesis.cov
-        matrix = self.layout.matrix(mean)
+        # The place is rigid (a turn and a shift) about the board's middle:
+        # the stretch, fitted about the middle, is left out of it, else the
+        # place would miss its own middle by the stretch times the middle's
+        # distance from the job frame's origin.
+        c, s = math.cos(float(mean[0])), math.sin(float(mean[0]))
         middle = np.asarray(self.board.middle)
-        shift = mean[1:3] - matrix @ middle
+        shift = mean[1:3] - np.array([[c, -s], [s, c]]) @ middle
         members = [hypothesis.members[i] for i in sorted(hypothesis.members)]
         newest = members[-1] if members else None
         estimate = Estimate(
