@@ -362,6 +362,27 @@ def test_a_pcbv_that_died_starts_again_and_the_camera_with_it(pcbv):
         camera.shutdown()
 
 
+def test_a_slow_reply_never_passes_a_picture_from_before_the_rest_as_settled(monkeypatch):
+    monkeypatch.setattr(camera_module, "SETTLE_SECONDS", 0.1)
+    monkeypatch.setattr(camera_module, "FRESH_SECONDS", 0.6)
+    since = time.monotonic()
+    # The newest picture was taken while the head still moved, and none
+    # comes after it.
+    captured = since - 0.05
+
+    class Slow:
+        """pcbv tells the picture's age as it answers; the answer takes
+        0.3 s to arrive."""
+
+        def pose(self):
+            age = time.monotonic() - captured
+            time.sleep(0.3)
+            return {"state": "none", "frame": 1, "age_ms": age * 1000.0}
+
+    with pytest.raises(VisionError, match="no picture taken after"):
+        camera_module.wait_settled(Slow(), since)
+
+
 def test_pcbv_is_found_or_named(tmp_path):
     with pytest.raises(VisionError, match="not on PATH"):
         find_pcbv("no-such-program-anywhere")

@@ -255,6 +255,9 @@ def wait_settled(client: VisionClient, since: float | None = None) -> None:
         if now < wanted:
             time.sleep(wanted - now)
             continue
+        # pcbv tells the age as it answers, which is after this: the capture
+        # told from the time asked is never later than it was.
+        asked = time.monotonic()
         try:
             raw = client.pose()
         except VisionError as exc:
@@ -265,7 +268,7 @@ def wait_settled(client: VisionClient, since: float | None = None) -> None:
         if not isinstance(age, (int, float)) and raw:
             # A pcbv that tells no age: the settle time alone.
             return
-        if isinstance(age, (int, float)) and time.monotonic() - float(age) / 1000.0 >= wanted:
+        if isinstance(age, (int, float)) and asked - float(age) / 1000.0 >= wanted:
             return
         if time.monotonic() > deadline:
             raise VisionError(f"the camera gave no picture taken after the head came to rest within {FRESH_SECONDS:g} s")
