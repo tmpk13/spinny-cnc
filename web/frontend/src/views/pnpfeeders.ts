@@ -278,6 +278,24 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
     // The buttons of the rows that send the machine something, locked with
     // the machine's state.
     let rowButtons: { press: HTMLButtonElement; camera: boolean }[] = [];
+    // The machine the scan, the rows opened and the form are of.
+    let machineOf: string | null = ctx.store.get().placing?.machine ?? null;
+
+    /** Another machine in use: its bus has addresses and ids of its own, so the last one's scan and form go. */
+    function followMachine(state: AppState): void {
+        const machine = state.placing?.machine ?? null;
+        if (machine === machineOf) {
+            return;
+        }
+        machineOf = machine;
+        found = [];
+        missing = [];
+        openRows.clear();
+        form?.node.remove();
+        form = null;
+        looseKey = "";
+        scanKey = "";
+    }
 
     function setPicked(next: Set<string>, nextAnchor: string | null): void {
         picked = next;
@@ -778,6 +796,7 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
     }
 
     ctx.store.subscribe((state) => {
+        followMachine(state);
         render(state);
         drawScan(state);
     }, ["placing", "pnp", "feederCheck", "job", "components"]);

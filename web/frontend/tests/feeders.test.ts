@@ -692,3 +692,23 @@ describe("identify a feeder, program a slot's address", () => {
         expect(root.querySelector(".bus-scan li[data-address='2']")?.textContent).toContain("3132333435363738393A3B3C");
     });
 });
+
+describe("the scan's rows and the machine in use", () => {
+    test("another G-code machine connected drops the rows the last one's bus answered with", async () => {
+        const { root, store, ctx, backend } = await lumenPanel();
+        findButton(root, "Scan bus").click();
+        await settled();
+        expect(root.querySelectorAll(".bus-scan li").length).toBeGreaterThan(0);
+        // A second pick and place machine, whose file has a bus of its own.
+        await backend.saveMachineFile("lumen-two", (await backend.machineFile("opulo-lumen-rev5")).text);
+        store.set({ snapshot: await backend.connect("/dev/ttyACM2", "lumen-two") });
+        await ctx.refreshPlacing();
+        await settled();
+        expect(store.get().placing?.machine).toBe("lumen-two");
+        expect(store.get().placing?.document?.bus).toBe(true);
+        // Its bus has not been scanned: no row of the LumenPnP's, whose
+        // addresses and ids Slot here, Set address and Add feeder would use.
+        expect(root.querySelectorAll(".bus-scan li").length).toBe(0);
+        expect(root.querySelector(".bus-scan")?.classList.contains("hidden")).toBe(true);
+    });
+});
