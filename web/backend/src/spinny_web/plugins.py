@@ -32,7 +32,8 @@ from pydantic import BaseModel
 
 from .files import write_whole
 
-PLUGIN_ID = r"^[a-z0-9][a-z0-9_-]{0,63}$"
+# Matched whole (fullmatch): a `$` alone would let a line break follow.
+PLUGIN_ID = r"[a-z0-9][a-z0-9_-]{0,63}"
 MAX_SOURCE = 256 * 1024
 MAX_NAME = 80
 MAX_DESCRIPTION = 500
@@ -75,7 +76,7 @@ def _one_line(text: str, most: int) -> str:
 
 
 def check_id(plugin_id: str) -> str:
-    if not re.match(PLUGIN_ID, plugin_id):
+    if not re.fullmatch(PLUGIN_ID, plugin_id):
         raise PluginError("a plugin's id is 1 to 64 lower-case letters, digits, _ or -, starting with a letter or digit")
     return plugin_id
 
@@ -153,7 +154,7 @@ class PluginStore:
             registry = self._registry()
             out = []
             for path in sorted(self.folder.glob("*.js")) if self.folder.is_dir() else []:
-                if re.match(PLUGIN_ID, path.stem):
+                if re.fullmatch(PLUGIN_ID, path.stem):
                     try:
                         out.append(self._one(path.stem, registry)[0])
                     except (OSError, PluginNotFound):

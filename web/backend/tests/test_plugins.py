@@ -114,6 +114,8 @@ def test_deleting_takes_the_file_and_whether_it_was_on(client, tmp_path):
     [
         ("Big", SOURCE, 400, "a plugin's id is 1 to 64 lower-case letters"),
         ("-big", SOURCE, 400, "a plugin's id is 1 to 64 lower-case letters"),
+        # A line break after the id would end up in the file's name.
+        ("big%0A", SOURCE, 400, "a plugin's id is 1 to 64 lower-case letters"),
         ("big", "   \n", 400, "a plugin's source is empty"),
         ("big", "x" * (MAX_SOURCE + 1), 400, "a plugin is at most 256 KB"),
     ],
