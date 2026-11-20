@@ -668,7 +668,7 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
         } catch {
             scanData = null;
         }
-        if (scanShown.camera === camera && scanShown.version === version) {
+        if (scanShown !== null && scanShown.camera === camera && scanShown.version === version) {
             const urlOf = camera === "top" ? (index: number) => ctx.api.topScanUrl(index, version) : (index: number) => ctx.api.cameraScanUrl(index, version);
             mosaic.render(scanData, urlOf);
         }
@@ -941,6 +941,9 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
         scanHead.classList.toggle("hidden", scanned === null);
         scanLine.classList.toggle("hidden", scanned === null);
         if (scanned === null) {
+            // Emptied, the drawing shows no scan: the next one shown, the
+            // same one again too, is fetched and drawn anew.
+            scanShown = null;
             mosaic.render(null, () => "");
         } else {
             const where = scanned.job === job?.id ? "" : ` of ${state.jobs.find((entry) => entry.id === scanned.job)?.name ?? scanned.job}`;

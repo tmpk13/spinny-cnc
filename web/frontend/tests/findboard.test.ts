@@ -368,6 +368,42 @@ describe("the full scan's mosaic", () => {
         expect(root.querySelector(".mosaic .mosaic-outline")).not.toBeNull();
         expect(root.querySelector(".mosaic image")?.getAttribute("href")).toStartWith("data:image/svg+xml,");
     });
+
+    test("the mosaic comes back when the scan shows again after a state without it (another camera picked, or none known for a moment)", async () => {
+        const { store, ctx, root, api, backend } = setup();
+        await api.connect("/dev/ttyACM0");
+        await backend.applyMachine("cartesian-mill");
+        await ctx.refreshState();
+        const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
+        await ctx.refreshJobs();
+        await ctx.selectJob(job.id);
+        await ctx.refreshCamera();
+        mountFindBoard(root, ctx, { page: "test-scan-again", boxes: { head: () => null, top: () => null } });
+        store.set({ camera: await api.cameraStart() });
+        store.set({ camera: await api.cameraSettings({ mm_per_px: 0.02 }) });
+        click(root, "Look for board");
+        await twice();
+        const corner = root.querySelector('select[aria-label="Corner of the board"]') as HTMLSelectElement;
+        corner.value = "bottom left";
+        click(root, "Corner here");
+        await twice();
+        click(root, "Full scan");
+        await twice();
+        await twice();
+        const camera = store.get().camera!;
+        const pictures = camera.board_look!.scan!.pictures;
+        expect(root.querySelectorAll(".mosaic image").length).toBe(pictures);
+        // A state whose look holds no scan (the other camera's, or the look not known yet) empties the drawing.
+        store.set({ camera: { ...camera, board_look: { ...camera.board_look!, scan: null } } });
+        await twice();
+        expect(root.querySelectorAll(".mosaic image").length).toBe(0);
+        // The same scan again: its pictures are drawn again.
+        store.set({ camera });
+        await twice();
+        expect(root.querySelector(".find-scan")?.textContent).toContain(`${pictures} pictures taken at rest`);
+        expect(root.querySelectorAll(".mosaic image").length).toBe(pictures);
+        expect(root.querySelector(".mosaic-box")?.classList.contains("hidden")).toBe(false);
+    });
 });
 
 describe("the machine's skew", () => {
