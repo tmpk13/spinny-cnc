@@ -339,6 +339,31 @@ def test_the_oldest_records_go_past_the_count_and_the_room_but_never_one_being_w
     assert SearchLog(tmp_path / "log").state()["records"][0]["result"] == "unfinished"
 
 
+def test_two_prunes_at_once_take_out_one_record_not_two(tmp_path, monkeypatch):
+    monkeypatch.setattr(searchlog, "MAX_RECORDS", 3)
+    log = SearchLog(tmp_path / "log")
+    for _ in range(3):
+        record = log.begin("search", "top", {})
+        assert record is not None
+        record.close("not found")
+    # A record ending on one thread prunes while a record beginning on
+    # another does: the other's prune takes the oldest out first.
+    real_rmtree = searchlog.shutil.rmtree
+    raced: list = []
+
+    def rmtree(path, *args, **kwargs):
+        if not raced:
+            raced.append(path)
+            log._prune()
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(searchlog.shutil, "rmtree", rmtree)
+    fourth = log.begin("search", "top", {})
+    assert fourth is not None and raced
+    fourth.close("found")
+    assert len(log.ids()) == 3 and fourth.id in log.ids()
+
+
 def test_a_record_stops_writing_lines_when_full_and_pictures_past_its_share(tmp_path, monkeypatch):
     monkeypatch.setitem(searchlog.MAX_EVENTS, "look", 4)
     monkeypatch.setattr(searchlog, "MAX_PICTURES", 1)

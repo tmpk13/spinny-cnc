@@ -386,6 +386,10 @@ class SearchLog:
             return False
         try:
             shutil.rmtree(self.folder / record_id)
+        except FileNotFoundError:
+            # Another prune, on another thread, took it out first: it is
+            # gone all the same, and counts as gone.
+            return True
         except OSError as exc:
             log.warning("search log: cannot remove %s: %s", record_id, exc)
             return False
