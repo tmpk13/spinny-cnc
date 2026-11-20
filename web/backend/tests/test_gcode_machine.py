@@ -415,6 +415,21 @@ def test_a_home_of_one_axis_leaves_the_height_untrusted(client):
     assert client.get("/api/pnp/placing").json()["homed"] is True
 
 
+def test_a_machine_that_never_answers_its_identify_is_not_connected(tmp_path):
+    fake = FakeMarlin(position=(100.0, 50.0, 0.0))
+    answer = fake._do
+    fake._do = lambda code: None if code.startswith("M115") else answer(code)
+    backend = rig_backend(tmp_path, {"rig": PROFILE}, lambda url, baud: fake)
+    app = create_app(backend, frontend=tmp_path / "no-dist")
+    with TestClient(app) as client:
+        # Its answer, coming late, would be taken for the next line's: the
+        # link let go of it, so the connect fails rather than say connected.
+        response = client.post("/api/connect", json={"url": URL, "machine": "rig"})
+        assert response.status_code == 502 and "M115" in response.json()["detail"]
+        assert client.get("/api/state").json()["connected"] is False
+        assert fake.lines[-1] == "M115"
+
+
 def test_a_machine_connected_again_at_once_is_polled_by_one_thread(tmp_path):
     import threading
 

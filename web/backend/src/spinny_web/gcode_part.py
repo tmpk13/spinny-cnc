@@ -135,8 +135,13 @@ class GcodePart:
         try:
             self.gcode.firmware = firmware_of(self.gcode.command(IDENTIFY, 5.0)).get("firmware")
         except GcodeLinkError:
-            # Grbl and others do not take M115: the machine is still there.
-            pass
+            # Grbl and others refuse M115: the machine is still there. One
+            # that never answered it let the link go (its late answer would
+            # be taken for the next line's): not connected.
+            if not self.gcode.connected:
+                with self._lock:
+                    self._close_gcode()
+                raise
         try:
             # Before the first place is read: the skew changes the numbers.
             self._gcode_skew(machine)
