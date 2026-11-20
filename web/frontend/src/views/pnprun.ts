@@ -292,8 +292,10 @@ export function mountPnpRun(root: HTMLElement, ctx: Ctx): void {
             showWindow(true);
         }
         if (wasRunning && !running) {
-            if (progress?.state === "done" && repeat.checked) {
-                // The next board, once the operator says it is in place.
+            // The next board of the job that ran, once the operator says it
+            // is in place: another job picked during the run is not placed
+            // on it unasked.
+            if (progress?.state === "done" && repeat.checked && progress.job === job?.id) {
                 void runNow(false, true);
             }
         }
