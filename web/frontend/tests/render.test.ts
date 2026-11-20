@@ -10,7 +10,7 @@ import { Projector, frameOf, pxPerMm, type Camera } from "../src/camera.ts";
 import { previewOptions } from "../src/preview.ts";
 import type { PaintInput } from "../src/render/canvas2d.ts";
 import { packJob, unpackJob } from "../src/render/pack.ts";
-import { hardwareGl } from "../src/render/renderer.ts";
+import { Renderer, hardwareGl } from "../src/render/renderer.ts";
 import {
     type Item,
     type RenderJob,
@@ -317,5 +317,49 @@ describe("the WebGL painter", () => {
         expect(filters).toContain(1);
         expect(filters).toContain(2);
         painter.dispose();
+    });
+});
+
+/** A scene canvas that gives the context it is handed and fires the events a test names. */
+function glCanvas(gl: WebGL2RenderingContext): { canvas: HTMLCanvasElement; fire: (type: string) => void } {
+    const listeners = new Map<string, ((event: Event) => void)[]>();
+    const canvas = {
+        width: 0,
+        height: 0,
+        getContext: (kind: string) => (kind === "webgl2" ? gl : null),
+        addEventListener: (type: string, listener: (event: Event) => void) => {
+            listeners.set(type, [...(listeners.get(type) ?? []), listener]);
+        },
+        removeEventListener: (type: string, listener: (event: Event) => void) => {
+            listeners.set(type, (listeners.get(type) ?? []).filter((kept) => kept !== listener));
+        },
+    } as unknown as HTMLCanvasElement;
+    const fire = (type: string): void => {
+        for (const listener of listeners.get(type) ?? []) {
+            listener({ preventDefault: () => undefined } as unknown as Event);
+        }
+    };
+    return { canvas, fire };
+}
+
+describe("the renderer", () => {
+    const overlay = { width: 0, height: 0, getContext: () => null } as unknown as HTMLCanvasElement;
+
+    test("draws the scene again when a lost WebGL context comes back, blank as it comes", () => {
+        const { gl, calls } = recordingGl();
+        const { canvas, fire } = glCanvas(gl);
+        let asked = 0;
+        const renderer = new Renderer(canvas, overlay, { painter: "gl", layer: () => null, invalidate: () => { asked += 1; } }, stateWith({ job: renderJob() }));
+        expect(renderer.kind).toBe("gl");
+        renderer.frame();
+        expect(calls.some((call) => call.name === "drawArrays")).toBe(true);
+        fire("webglcontextlost");
+        fire("webglcontextrestored");
+        expect(asked).toBe(1);
+        calls.length = 0;
+        renderer.frame();
+        expect(calls.some((call) => call.name === "clear")).toBe(true);
+        expect(calls.some((call) => call.name === "drawArrays")).toBe(true);
+        renderer.dispose();
     });
 });

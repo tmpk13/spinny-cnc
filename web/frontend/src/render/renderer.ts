@@ -75,7 +75,12 @@ export class Renderer {
             }
             if (gl !== null) {
                 try {
-                    painter = new WebGLPainter(gl, scene, options.invalidate);
+                    // A context that comes back after a loss is blank: the
+                    // whole scene is drawn again, not only the overlay.
+                    painter = new WebGLPainter(gl, scene, () => {
+                        this.still = true;
+                        options.invalidate();
+                    });
                 } catch (error) {
                     console.warn(`preview: WebGL2 is there but cannot draw, drawing in 2D: ${String(error)}`);
                     single = true;
