@@ -382,13 +382,15 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
     // queue holds about a tick of motion. Let go: no more pieces, and on
     // this project's firmware the jog is cancelled, which stops what is
     // queued at once; a G-code machine runs out its last piece.
-    let hold: { timer: ReturnType<typeof setInterval>; started: number } | null = null;
+    // A piece on its way may be queued after a cancel sent at the release
+    // (the backend takes the two requests side by side), so a hold let go
+    // with a piece in flight is cancelled again once that piece is answered.
+    let hold: { timer: ReturnType<typeof setInterval>; started: number; inFlight: Promise<unknown> | null } | null = null;
     function startHold(piece: (seconds: number) => Promise<unknown>): void {
         stopHold();
-        let busy = false;
         let last = performance.now() - HOLD_TICK_MS;
         const tick = (): void => {
-            if (hold === null || busy) {
+            if (hold === null || hold.inFlight !== null) {
                 return;
             }
             if (!ctx.store.get().snapshot.connected || (performance.now() - hold.started) / 1000 > HOLD_LIMIT_S) {
@@ -398,16 +400,17 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
             const now = performance.now();
             const seconds = (now - last) / 1000;
             last = now;
-            busy = true;
-            piece(seconds).then(() => {
-                busy = false;
+            const own = hold;
+            const sent = piece(seconds).then(() => {
+                own.inFlight = null;
             }, (error: unknown) => {
-                busy = false;
+                own.inFlight = null;
                 stopHold();
                 ctx.toast("error", error instanceof Error ? error.message : String(error));
             });
+            own.inFlight = sent;
         };
-        hold = { timer: setInterval(tick, HOLD_TICK_MS), started: performance.now() };
+        hold = { timer: setInterval(tick, HOLD_TICK_MS), started: performance.now(), inFlight: null };
         tick();
     }
     function stopHold(): void {
@@ -415,9 +418,17 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
             return;
         }
         clearInterval(hold.timer);
+        const inFlight = hold.inFlight;
         hold = null;
         if (profileOf(ctx.store.get().snapshot).controller !== "gcode" && ctx.store.get().snapshot.connected) {
             void cancel();
+            if (inFlight !== null) {
+                void inFlight.then(() => {
+                    if (hold === null && ctx.store.get().snapshot.connected) {
+                        void cancel();
+                    }
+                });
+            }
         }
     }
     globalThis.addEventListener?.("blur", () => stopHold());
