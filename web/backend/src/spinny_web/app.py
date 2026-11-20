@@ -833,6 +833,15 @@ class TopOffsetBody(Finite):
     step: float = 2.0
 
 
+class TopFacingBody(Finite):
+    # Offset by bottom camera: how far the head moves along X and Y over the
+    # bottom camera to measure both cameras' looks across, mm; and whether
+    # the nozzle is centered over the bottom camera first (false: its place
+    # as kept, from Center nozzle).
+    step: float = 2.0
+    nozzle: bool = True
+
+
 class TopMeasureBody(Finite):
     # The grid's step, mm, for Measure camera: 0 lets a first small move
     # choose one that shifts the picture by a share of its height.
@@ -5717,6 +5726,11 @@ def create_app(
     def top_offset(body: TopOffsetBody | None = None):
         offset = body or TopOffsetBody()
         return guarded(lambda: backend.top_offset(offset.step))
+
+    @app.post("/api/pnp/top/offset/facing")
+    def top_offset_facing(body: TopFacingBody | None = None):
+        facing = body or TopFacingBody()
+        return guarded(lambda: backend.top_offset_facing(facing.step, facing.nozzle))
 
     @app.post("/api/pnp/top/measure")
     def top_measure(body: TopMeasureBody | None = None):

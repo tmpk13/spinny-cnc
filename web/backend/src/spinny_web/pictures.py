@@ -6,6 +6,10 @@ picture shifts (scale, roll, mirror) fitted to a grid of such shifts.
 The pictures come from pcbv as luma, a byte a pixel (`frame` with format
 gray), so the backend needs no image decoder.
 
+A round pattern's center (round_edge): where one camera looks into another
+across the machine, the circle that fits the strongest round edge in the
+picture, averaged over a few pictures (average_gray).
+
 How busy a picture is: the share of its pixels, at most BUSY_WIDTH px wide,
 where the luma changes by more than BUSY_CONTRAST between neighbors. On a
 LumenPnP's top camera over a populated, blue masked board and its bed
@@ -21,7 +25,7 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -370,3 +374,230 @@ def fit_lens(
     ]
     return LensFit(-k, -k * norm, rms, rms_lens, int(keep.sum() // 2), centers)
 
+
+
+# --- a round pattern's center ------------------------------------------------
+#
+# A camera looking into another one across the machine (the top camera down
+# into the bottom camera, far out of focus) sees soft concentric rings: the
+# other camera's ring light, its lens and the lens' barrel. The picture
+# compared with itself turned half round, and the point its gradients all
+# point at, both mix those rings, which lie at different depths and so shift
+# by different amounts as the head moves; a ring wider than the picture is
+# cut by its top and bottom edges as well, and that cut reads as symmetry
+# about the picture's middle row. On a LumenPnP's top camera over its bottom
+# camera (2026-11-19, 10 head places within 2 mm) the half turn followed the
+# head along Y to 12 px rms, the gradients' meeting point to 2 px, a circle
+# fitted to the ring light's inner edge alone to 0.9 px. That circle moved
+# 0.5 to 0.8 px from one picture to the next with the head still: the
+# pictures of a look are averaged (average_gray).
+#
+# The rays of ROUND_RAYS cross every radius about a first center; the edge
+# taken is the radius where the luma climbs (or falls) most steadily round
+# the circle, counting rays that leave the picture as nothing there, so a
+# ring mostly outside the picture is passed over; each ray's edge is then
+# the steepest place within ROUND_BAND of that radius, and a circle is
+# fitted to them, twice.
+
+ROUND_RAYS = 360
+# Of the measured picture, px: the smoothing before the edges are found,
+# and the least radius looked at as a share of the picture's height.
+ROUND_SMOOTH = 1.5
+ROUND_INNER = 0.04
+ROUND_BAND = 0.12
+# An edge that fewer rays than this find, or that climbs less than
+# ROUND_MIN_STEEPNESS luma a px averaged round its circle, is no circle to
+# go by (the LumenPnP's ring light: about 6); a ray's edge weaker than
+# ROUND_WEAK of the circle's is left out, as is one further from the
+# fitted circle than ROUND_OUTLIER times the rms (and at least
+# ROUND_OUTLIER_PX px).
+ROUND_MIN_RAYS = 40
+ROUND_MIN_STEEPNESS = 0.5
+ROUND_WEAK = 0.25
+ROUND_OUTLIER = 3.0
+ROUND_OUTLIER_PX = 1.0
+
+
+@dataclass
+class RoundEdge:
+    """A circle fitted to a picture's strongest round edge: its center, px
+    right and down from the picture's center (pcbv's spot's dx and dy), its
+    radius, the edge's points' rms from it (px), how many rays found the
+    edge, and how steep the edge is (luma a px, averaged round it)."""
+
+    dx: float
+    dy: float
+    radius: float
+    rms: float
+    rays: int
+    steepness: float
+
+    def scaled(self, factor: float) -> RoundEdge:
+        """The same circle in a picture `factor` times as wide."""
+        return replace(self, dx=self.dx * factor, dy=self.dy * factor, radius=self.radius * factor, rms=self.rms * factor)
+
+    def to_dict(self) -> dict:
+        return {
+            "dx": round(self.dx, 3),
+            "dy": round(self.dy, 3),
+            "radius": round(self.radius, 2),
+            "rms": round(self.rms, 3),
+            "rays": self.rays,
+            "steepness": round(self.steepness, 2),
+        }
+
+
+def smooth(gray: np.ndarray, sigma: float) -> np.ndarray:
+    """The picture blurred by a Gaussian of `sigma` px, its edges held."""
+    g = np.asarray(gray, dtype=np.float64)
+    if sigma <= 0.0:
+        return g
+    reach = max(1, int(math.ceil(3.0 * sigma)))
+    kernel = np.exp(-0.5 * (np.arange(-reach, reach + 1) / sigma) ** 2)
+    kernel /= kernel.sum()
+    padded = np.pad(g, reach, mode="edge")
+    rows = sum(kernel[i] * padded[:, i:i + g.shape[1]] for i in range(kernel.size))
+    return sum(kernel[i] * rows[i:i + g.shape[0], :] for i in range(kernel.size))
+
+
+def _bilinear(g: np.ndarray, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
+    """The picture at continuous places (pixel i spans i to i + 1, its center
+    at i + 0.5), NaN outside the pixels' centers."""
+    h, w = g.shape
+    x = xs - 0.5
+    y = ys - 0.5
+    inside = (x >= 0.0) & (x <= w - 1.0) & (y >= 0.0) & (y <= h - 1.0)
+    x0 = np.clip(np.floor(x).astype(int), 0, w - 2)
+    y0 = np.clip(np.floor(y).astype(int), 0, h - 2)
+    fx = np.clip(x - x0, 0.0, 1.0)
+    fy = np.clip(y - y0, 0.0, 1.0)
+    value = (
+        g[y0, x0] * (1.0 - fx) * (1.0 - fy) + g[y0, x0 + 1] * fx * (1.0 - fy)
+        + g[y0 + 1, x0] * (1.0 - fx) * fy + g[y0 + 1, x0 + 1] * fx * fy
+    )
+    return np.where(inside, value, np.nan)
+
+
+def gradient_center(gray: np.ndarray) -> tuple[float, float]:
+    """The point the picture's gradients point at most nearly (each one's
+    line weighted by its steepness squared over its distance from their
+    centroid, Parthasarathy's radial symmetry center), in continuous px
+    from the picture's top left: a first center for round_edge."""
+    g = np.asarray(gray, dtype=np.float64)
+    h, w = g.shape
+    a, b, c, d = g[:-1, :-1], g[:-1, 1:], g[1:, :-1], g[1:, 1:]
+    gx = ((b - a) + (d - c)) / 2.0
+    gy = ((c - a) + (d - b)) / 2.0
+    ys, xs = np.mgrid[1:h, 1:w].astype(np.float64)
+    steep = gx * gx + gy * gy
+    total = float(steep.sum())
+    if total <= 0.0:
+        return w / 2.0, h / 2.0
+    length = np.sqrt(steep) + 1e-12
+    nx, ny = -gy / length, gx / length
+    cx, cy = float((steep * xs).sum() / total), float((steep * ys).sum() / total)
+    weight = steep / np.sqrt((xs - cx) ** 2 + (ys - cy) ** 2 + 1.0)
+    a11, a12, a22 = (weight * nx * nx).sum(), (weight * nx * ny).sum(), (weight * ny * ny).sum()
+    along = nx * xs + ny * ys
+    b1, b2 = (weight * nx * along).sum(), (weight * ny * along).sum()
+    det = a11 * a22 - a12 * a12
+    if abs(det) < 1e-12:
+        return cx, cy
+    return float((a22 * b1 - a12 * b2) / det), float((a11 * b2 - a12 * b1) / det)
+
+
+def _circle(points: np.ndarray) -> tuple[float, float, float, np.ndarray]:
+    """The circle through points by least squares on its equation (Kasa's
+    fit): its center, its radius and each point's distance from it less
+    the radius."""
+    mx, my = points.mean(axis=0)
+    u, v = points[:, 0] - mx, points[:, 1] - my
+    suu, svv, suv = (u * u).sum(), (v * v).sum(), (u * v).sum()
+    rhs_u = 0.5 * ((u * u * u).sum() + (u * v * v).sum())
+    rhs_v = 0.5 * ((v * v * v).sum() + (v * u * u).sum())
+    det = suu * svv - suv * suv
+    if abs(det) < 1e-9:
+        raise ValueError("the edge's points lie on a line")
+    uc = (rhs_u * svv - rhs_v * suv) / det
+    vc = (rhs_v * suu - rhs_u * suv) / det
+    radius = math.sqrt(uc * uc + vc * vc + (suu + svv) / len(points))
+    cx, cy = uc + mx, vc + my
+    return cx, cy, radius, np.hypot(points[:, 0] - cx, points[:, 1] - cy) - radius
+
+
+def round_edge(gray: np.ndarray, near: tuple[float, float] | None = None) -> RoundEdge | None:
+    """The circle of the picture's strongest round edge (see above), about
+    `near` (continuous px from the top left; the gradients' meeting point
+    by default); None when no edge goes round far enough to fit."""
+    g = smooth(gray, ROUND_SMOOTH)
+    h, w = g.shape
+    cx, cy = near if near is not None else gradient_center(g)
+    angles = np.linspace(0.0, 2.0 * math.pi, ROUND_RAYS, endpoint=False)
+    cos, sin = np.cos(angles)[:, None], np.sin(angles)[:, None]
+    found: RoundEdge | None = None
+    for _ in range(2):
+        radii = np.arange(ROUND_INNER * h, math.hypot(w, h) / 2.0, 0.5)
+        values = _bilinear(g, cx + radii[None, :] * cos, cy + radii[None, :] * sin)
+        slope = np.gradient(values, 0.5, axis=1)
+        # Round the circle at each radius, rays outside the picture adding
+        # nothing: an edge most rays cross the same way stands out.
+        steady = np.nan_to_num(slope).sum(axis=0) / ROUND_RAYS
+        best = int(np.argmax(np.abs(steady)))
+        sign = 1.0 if steady[best] >= 0.0 else -1.0
+        strength = abs(float(steady[best]))
+        if strength < ROUND_MIN_STEEPNESS:
+            return found
+        band = np.abs(radii - radii[best]) <= ROUND_BAND * radii[best]
+        span = np.flatnonzero(band)
+        lo, hi = int(span[0]), int(span[-1]) + 1
+        within = sign * slope[:, lo:hi]
+        whole = ~np.isnan(within).any(axis=1)
+        points: list[tuple[float, float]] = []
+        for ray in np.flatnonzero(whole):
+            row = within[ray]
+            i = int(np.argmax(row))
+            # The steepest place away from the band's ends, on a ray whose
+            # edge is about as steep as the circle's.
+            if i == 0 or i == row.size - 1 or row[i] < ROUND_WEAK * strength:
+                continue
+            below, peak, above = row[i - 1], row[i], row[i + 1]
+            bend = below - 2.0 * peak + above
+            shift = 0.5 * (below - above) / bend if bend < 0.0 else 0.0
+            r = radii[lo + i] + 0.5 * shift
+            points.append((cx + r * float(cos[ray, 0]), cy + r * float(sin[ray, 0])))
+        if len(points) < ROUND_MIN_RAYS:
+            return found
+        array = np.asarray(points)
+        fx, fy, radius, off = _circle(array)
+        rms = float(np.sqrt(np.mean(off * off)))
+        keep = np.abs(off) <= max(ROUND_OUTLIER * rms, ROUND_OUTLIER_PX)
+        if keep.sum() >= ROUND_MIN_RAYS and not keep.all():
+            fx, fy, radius, off = _circle(array[keep])
+            rms = float(np.sqrt(np.mean(off * off)))
+        cx, cy = fx, fy
+        found = RoundEdge(dx=cx - w / 2.0, dy=cy - h / 2.0, radius=radius, rms=rms, rays=int(keep.sum()), steepness=strength)
+    return found
+
+
+def average_gray(client, count: int, since: float, width: int | None, stopped=None, limit: float = 3.0) -> tuple[np.ndarray, dict]:
+    """The mean of `count` of the camera's pictures as luma, each a frame of
+    its own taken `since` (time.monotonic()) or later (fresh_gray's), and
+    the last one's reply. pcbv numbers its frames; one told twice is asked
+    again."""
+    total: np.ndarray | None = None
+    taken = 0
+    last = None
+    reply: dict = {}
+    deadline = time.monotonic() + limit + count * 0.2
+    while taken < count:
+        gray, reply = fresh_gray(client, since, width, stopped, limit)
+        number = reply.get("frame")
+        if number is not None and number == last:
+            if time.monotonic() > deadline:
+                raise ValueError("the camera gave no new picture: is it still running?")
+            time.sleep(0.01)
+            continue
+        last = number
+        total = gray.astype(np.float64) if total is None else total + gray
+        taken += 1
+    return total / float(count), reply

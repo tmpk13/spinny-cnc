@@ -87,6 +87,11 @@ MAX_STEP = 10.0
 # them, the nearest within these limits in none.
 NOZZLE_ROUNDNESS = 0.5
 NOZZLE_MIN_AREA = 60.0
+# The top camera's lens as the bottom camera sees it with the top camera
+# over it: on a LumenPnP a dark disc 120 px across (9700 px, roundness
+# 0.98) inside the top camera's ring light, at 164 um a pixel there
+# (2026-11-19); this floor keeps out specks and glints.
+LENS_MIN_AREA = 500.0
 # The nozzle routine reaches every place it looks from moving toward +X
 # and +Y, from this far short of it, mm, so a drive's backlash neither
 # shortens the moves the scale is measured over nor leaves the head off
@@ -590,6 +595,15 @@ def nozzle_limits(size: str) -> dict:
     for a picture of `size` (WIDTHxHEIGHT; 1280x720 when it does not read)."""
     picture = picture_size(size) or (1280.0, 720.0)
     area = NOZZLE_MIN_AREA * picture[0] * picture[1] / (1280.0 * 720.0)
+    return {"min_area": round(area, 1), "min_roundness": NOZZLE_ROUNDNESS}
+
+
+def lens_limits(size: str) -> dict:
+    """The spot request's limits that keep a look up at the top camera's
+    lens to a round spot no smaller than LENS_MIN_AREA px of a 1280x720
+    picture, in proportion at other sizes (`size` as nozzle_limits')."""
+    picture = picture_size(size) or (1280.0, 720.0)
+    area = LENS_MIN_AREA * picture[0] * picture[1] / (1280.0 * 720.0)
     return {"min_area": round(area, 1), "min_roundness": NOZZLE_ROUNDNESS}
 
 
@@ -1290,49 +1304,84 @@ class UpCamera(PickCamera):
         mover.go((point[0] - TAKE_UP, point[1] - TAKE_UP))
         mover.go(point)
 
-    def _center(self, mover: Mover, step: float, progress: RoutineProgress, place: CameraPlace, keep: Callable[[CameraPlace], None], target: str | None = None) -> None:
+    def center_tip(self, mover: Mover, step: float, progress: RoutineProgress, place: CameraPlace, steps: bool = True) -> tuple[CameraPlace, Spot]:
+        """The nozzle's tip centered over the camera, as Center nozzle does it:
+        the place measured (the head's with the tip over the picture's
+        center, at the height it was seen from; the runout as it was) and the
+        spot it saw last, neither kept. `steps` false leaves the progress's
+        steps to the caller, a routine of another camera that centers the
+        nozzle on its way; its looks keep to the nozzle task all the same."""
         settings = self.settings()
-        self._over_camera(mover, progress, place)
+        shown = progress if steps else None
+        self._over_camera(mover, shown, place)
         polarity = settings.nozzle_spot
         # The runout is the nozzle's own and outlasts a new center.
         seen = CameraPlace(place.position, place.height, place.mm_per_px, place.roll, place.mirror, place.runout)
         # Every look, the first too, is from a place reached moving toward
         # +X and +Y (TAKE_UP).
         self._approach(mover, mover.here())
-        spot = self._spot(mover, progress, polarity, seen, "no nozzle in the picture: jog it over the bottom camera and center again")
+        spot = self._spot(mover, progress, polarity, seen, "no nozzle in the picture: jog it over the bottom camera and center again", "nozzle")
         if step > 0.0 or seen.mm_per_px <= 0.0:
-            self._step(progress, "scale")
+            self._step(shown, "scale")
             move = step if step > 0.0 else DEFAULT_STEP
             here = mover.here()
             self._approach(mover, (here[0] + move, here[1]))
-            along = self._spot(mover, progress, polarity, seen, f"the nozzle was not found after the move along X ({move:g} mm): try a shorter step")
+            along = self._spot(mover, progress, polarity, seen, f"the nozzle was not found after the move along X ({move:g} mm): try a shorter step", "nozzle")
             self._approach(mover, (here[0], here[1] + move))
-            across = self._spot(mover, progress, polarity, seen, f"the nozzle was not found after the move along Y ({move:g} mm): try a shorter step")
+            across = self._spot(mover, progress, polarity, seen, f"the nozzle was not found after the move along Y ({move:g} mm): try a shorter step", "nozzle")
             self._approach(mover, here)
             seen.mm_per_px, seen.roll, seen.mirror = calibrate((along.dx - spot.dx, along.dy - spot.dy), (across.dx - spot.dx, across.dy - spot.dy), move)
-            spot = self._spot(mover, progress, polarity, seen, "the nozzle was not found back where it started")
-        self._step(progress, "centering")
+            spot = self._spot(mover, progress, polarity, seen, "the nozzle was not found back where it started", "nozzle")
+        self._step(shown, "centering")
         for _ in range(CENTER_TRIES):
             off = picture_to_machine(spot.dx, spot.dy, seen.mm_per_px, seen.roll, seen.mirror)
             if math.hypot(*off) <= CENTER_TOLERANCE:
                 break
             here = mover.here()
             self._approach(mover, (here[0] - off[0], here[1] - off[1]))
-            spot = self._spot(mover, progress, polarity, seen, "the nozzle was not found while centering")
+            spot = self._spot(mover, progress, polarity, seen, "the nozzle was not found while centering", "nozzle")
         off = picture_to_machine(spot.dx, spot.dy, seen.mm_per_px, seen.roll, seen.mirror)
         here = mover.here()
         seen.position = (round(here[0] - off[0], 4), round(here[1] - off[1], 4))
         height = mover.height()
         if height is not None:
             seen.height = round(height, 4)
-        # Kept at once and logged with what it changed (findings.py).
+        return seen, spot
+
+    def _center(self, mover: Mover, step: float, progress: RoutineProgress, place: CameraPlace, keep: Callable[[CameraPlace], None], target: str | None = None) -> None:
+        seen, spot = self.center_tip(mover, step, progress, place)
+        self._message("info", self.keep_tip(mover, seen, spot, keep, target))
+
+    def keep_tip(self, mover: Mover, seen: CameraPlace, spot: Spot, keep: Callable[[CameraPlace], None], target: str | None = None) -> str:
+        """Keeps the place center_tip measured at once and logs it with what
+        it changed (findings.py): the words to say of it."""
+        position = seen.position
+        if position is None:
+            raise PnpError("the nozzle's place was not measured")
         before = self.findings.read(target)
         keep(seen)
         words = (
-            f"nozzle centered over the bottom camera at {mover.describe(seen.position)},"
+            f"nozzle centered over the bottom camera at {mover.describe(position)},"
             f" {seen.mm_per_px * 1000.0:.1f} um per pixel, roll {seen.roll:+.2f} degrees{', mirrored' if seen.mirror else ''}"
         )
-        self._message("info", self.findings.apply("nozzle", words, self.findings.since(before, target), marks={"spot": spot.to_dict()}))
+        return self.findings.apply("nozzle", words, self.findings.since(before, target), marks={"spot": spot.to_dict()})
+
+    def lens_look(self, routine: str, step: str, polarity: str | None = None) -> tuple[dict, str]:
+        """With the top camera over this one: the round spot nearest the
+        picture's center that is no speck (lens_limits), the top camera's
+        lens as this camera sees it, and the shade it was found in. Dark is
+        looked for first (a lens against its ring light on a LumenPnP), then
+        bright, unless `polarity` says which. The whole picture, with no
+        picked color: the nozzle's crop and color are the tip's."""
+        wait_settled(self.client)
+        reply: dict = {"found": False}
+        limits = lens_limits(self.settings().size)
+        for shade in (polarity,) if polarity is not None else ("dark", "bright"):
+            reply = self.client.spot(polarity=shade, **limits)
+            self._log_look(routine, step, reply, shade)
+            if reply.get("found"):
+                return reply, shade
+        return reply, polarity or "dark"
 
     def look_at_part(
         self,
@@ -1464,13 +1513,15 @@ class UpCamera(PickCamera):
         self.part_offset = self.look_at_part(mover, place, progress)
         self._message("info", f"the part sits X {self.part_offset['dx']:+.3f} Y {self.part_offset['dy']:+.3f} mm from the nozzle's center")
 
-    def _spot(self, mover: Mover, progress: RoutineProgress, polarity: str, place: CameraPlace, missing: str) -> Spot:
+    def _spot(self, mover: Mover, progress: RoutineProgress, polarity: str, place: CameraPlace, missing: str, task: str | None = None) -> Spot:
+        """The spot the finder takes for `task` (the routine's own task by
+        default), shown on `progress`; a PnpError says `missing` when none."""
         if mover.stopped():
             raise PnpError("stopped")
-        task = self.crop_tasks.get(progress.kind)
+        task = task or self.crop_tasks.get(progress.kind)
         limits = self.spot_limits(task)
         reply = self._find_spot(task, polarity=polarity, **limits)
-        routine = {"nozzle": "centering the nozzle", "runout": "measuring the runout"}.get(progress.kind, "looking at the part")
+        routine = "centering the nozzle" if task == "nozzle" and progress.kind != "runout" else {"runout": "measuring the runout"}.get(progress.kind, "looking at the part")
         self._log_look(routine, progress.step, reply, polarity)
         if not reply.get("found"):
             if "min_area" in limits:

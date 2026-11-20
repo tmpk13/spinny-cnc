@@ -30,12 +30,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from spinny_laser import machines as machine_files
 
-from .camera import CORNER_MM, LOOK_THRESHOLD, SETTLE_SECONDS, Spot, check_look, feature_limits, picture_to_machine, round_problem, spot_of
+from .camera import CORNER_MM, DONE, ERROR, LOOK_THRESHOLD, SETTLE_SECONDS, STOPPED, Spot, check_look, feature_limits, look_dict, picture_to_machine, round_problem, spot_of
 from .cameras import check_controls
 from .crops import crop_rows, cut
 from .openpnp import SHADES
-from .pictures import CameraMap, fit_camera, fit_lens, fresh_gray, phase_shift
-from .pnp import Mover, PickCamera, PnpError, RoutineProgress, calibrate
+from .pictures import CameraMap, RoundEdge, average_gray, fit_camera, fit_lens, fresh_gray, phase_shift, round_edge
+from .pnp import DEFAULT_STEP as NOZZLE_STEP
+from .pnp import NOZZLE_STEPS, TAKE_UP, CameraPlace, Mover, PickCamera, PnpError, RoutineProgress, UpCamera, calibrate
 from .vision import check_colors, check_lens
 
 Point = tuple[float, float]
@@ -76,6 +77,142 @@ APPROACH_MM = 0.3
 # a fixed 0.25 s left 1.1 px rms over the grid, 0.75 s 0.59 px.
 STILL_PX = 0.3
 STILL_SECONDS = 1.5
+
+# Offset by bottom camera: the offset without a mark, by the bottom camera.
+# The nozzle is centered over the bottom camera (Center nozzle's routine),
+# then with both nozzles up the head is brought over it, so the cameras face
+# each other, and each one's look across is centered: the top camera's
+# picture center on the bottom camera (the circle of its ring light's edge,
+# pictures.round_edge, over FACING_PICTURES pictures averaged), and the top
+# camera's lens on the bottom camera's picture center (pcbv's round spot,
+# UpCamera.lens_look). The nozzle's place less each of those head places is
+# an offset; neither is the one placing needs.
+#
+# A camera's picture center looks along a line through its lens, and on a
+# small camera the sensor sits a little off the lens' axis, so that line
+# leans a degree or two. Say the bottom camera's ring is at height zf, the
+# nozzle's tip where it was centered at zn and the top camera's lens at zt,
+# and the two lines lean k mm across per mm up apart. Looking down, the top
+# camera's line meets the bottom camera at zf, so that offset is off by
+# k (zn - zf); looking up, the bottom camera's line meets the top camera at
+# zt, off by k (zn - zt). The offset at the tip's height lies between them:
+# (1 - u) times the first plus u times the second, u = (zn - zf) / (zt - zf),
+# the share of the way up from the ring to the top camera the tip lies at.
+# A camera's mm a pixel grows with the distance from its lens, so the top
+# camera's scale at the board (zn) over its scale at the ring is 1 - u; the
+# bottom camera's at the tip over its scale at the top camera's lens is u
+# again, counted from its own lens: two estimates, the first kept, the
+# second a check. On a LumenPnP (2026-11-19) the two looks came out 2.07 mm
+# apart, and u 0.304 and 0.289.
+FACING_STEPS = ("nozzle", "moving", "scale", "centering", "done")
+FACING_STEP = 2.0
+FACING_MAX_STEP = 5.0
+FACING_PICTURES = 4
+# A look is centered once within this of the picture's center, mm, after
+# at most this many moves (the last look's remainder is added either way).
+FACING_TOLERANCE = 0.01
+FACING_TRIES = 4
+# How far a look's turn may lie from its camera's own before the look is
+# taken to follow something else, degrees; and how far the two estimates
+# of u may differ before the result is called doubtful.
+FACING_TURN_LIMIT = 15.0
+FACING_SHARE_GAP = 0.05
+
+
+def facing_result(
+    nozzle: Point, down: Point, up: Point, down_scale: float, up_scale: float, board_scale: float | None, tip_scale: float,
+) -> dict:
+    """The top camera's offset from Offset by bottom camera's places (see
+    above): `nozzle` the head's with the tip over the bottom camera, `down`
+    the head's with the top camera's picture center on the bottom camera,
+    `up` the head's with the top camera's lens on the bottom camera's
+    picture center. The scales, mm a pixel: the top camera's at the bottom
+    camera (`down_scale`) and at the board (`board_scale`, None when not
+    known), the bottom camera's at the top camera's lens (`up_scale`) and
+    at the tip (`tip_scale`). A PnpError when no share between 0 and 1
+    comes out of them."""
+    by_down = (nozzle[0] - down[0], nozzle[1] - down[1])
+    by_up = (nozzle[0] - up[0], nozzle[1] - up[1])
+    share_down = 1.0 - board_scale / down_scale if board_scale and down_scale > 0.0 else None
+    share_up = tip_scale / up_scale if tip_scale > 0.0 and up_scale > 0.0 else None
+    share = share_down if share_down is not None else share_up
+    if share is None or not 0.0 < share < 1.0:
+        said = "none" if share is None else f"{share:.2f}"
+        raise PnpError(
+            f"the cameras' scales do not put the nozzle's tip between them ({said} of the way up):"
+            " measure the top camera's picture over a board first (Measure camera)"
+        )
+    offset = ((1.0 - share) * by_down[0] + share * by_up[0], (1.0 - share) * by_down[1] + share * by_up[1])
+    return {
+        "offset": (round(offset[0], 4), round(offset[1], 4)),
+        "by_down": [round(by_down[0], 4), round(by_down[1], 4)],
+        "by_up": [round(by_up[0], 4), round(by_up[1], 4)],
+        "gap": round(math.hypot(by_down[0] - by_up[0], by_down[1] - by_up[1]), 4),
+        "share": round(share, 4),
+        "share_down": round(share_down, 4) if share_down is not None else None,
+        "share_up": round(share_up, 4) if share_up is not None else None,
+        "down_head": [round(down[0], 4), round(down[1], 4)],
+        "up_head": [round(up[0], 4), round(up[1], 4)],
+        "down_scale": round(down_scale, 7),
+        "up_scale": round(up_scale, 7),
+    }
+
+
+def facing_words(result: dict) -> str:
+    """What Offset by bottom camera says of its result."""
+    offset, by_down, by_up = result["offset"], result["by_down"], result["by_up"]
+    words = (
+        f"the top camera looks from X {offset[0]:+.3f} Y {offset[1]:+.3f} mm off the nozzle, by the bottom camera:"
+        f" looking down at it X {by_down[0]:+.3f} Y {by_down[1]:+.3f}, its lens seen from below X {by_up[0]:+.3f} Y {by_up[1]:+.3f}"
+        f" ({result['gap']:.2f} mm apart, the cameras' lean), the tip {result['share']:.2f} of the way up from the bottom camera to the top"
+    )
+    down, up = result.get("share_down"), result.get("share_up")
+    if down is not None and up is not None:
+        words += f" ({up:.2f} by the bottom camera's scales)"
+        if abs(down - up) > FACING_SHARE_GAP:
+            words += ": the two disagree, so the offset is doubtful; measure the top camera's picture over a board again (Measure camera)"
+    return words
+
+
+def _reach(mover: Mover, point: Point) -> None:
+    """The head to `point` from TAKE_UP short of it along X and Y, so the
+    drives' backlash is taken up the same way at every look."""
+    mover.go((point[0] - TAKE_UP, point[1] - TAKE_UP))
+    mover.go(point)
+
+
+def _check_turn(what: str, found: tuple[float, float, bool], roll: float | None, mirror: bool | None) -> None:
+    """A PnpError when the turn and mirror a look's moves showed (calibrate's)
+    are not the camera's own, `roll` and `mirror` (None: not known): the
+    look followed something that is not where it seemed."""
+    if roll is None:
+        return
+    if mirror is not None and found[2] != mirror:
+        raise PnpError(f"{what}: the picture moved {'mirrored' if found[2] else 'unmirrored'}, unlike the camera's own: the look followed something else")
+    apart = (found[1] - roll + 180.0) % 360.0 - 180.0
+    if abs(apart) > FACING_TURN_LIMIT:
+        raise PnpError(f"{what}: the picture turned {found[1]:+.1f} degrees against the camera's own {roll:+.1f}: the look followed something else")
+
+
+def _center_by(
+    mover: Mover, head: Point, first: Spot | RoundEdge, found: tuple[float, float, bool], look: Callable[[], Spot | RoundEdge], sign: float,
+) -> tuple[Point, Spot | RoundEdge]:
+    """The head's place that brings what a look sees onto the picture's
+    center, and the last look: `first` was seen with the head at `head`,
+    `found` is the look's scale, roll and mirror; `sign` 1 when the camera
+    rides on the head (the head moves by what is seen), -1 when what is
+    seen does (the head moves against it)."""
+    scale, roll, mirror = found
+    here, seen = head, first
+    for _ in range(FACING_TRIES):
+        off = picture_to_machine(seen.dx, seen.dy, scale, roll, mirror)
+        if math.hypot(*off) <= FACING_TOLERANCE:
+            break
+        here = (here[0] + sign * off[0], here[1] + sign * off[1])
+        _reach(mover, here)
+        seen = look()
+    off = picture_to_machine(seen.dx, seen.dy, scale, roll, mirror)
+    return (here[0] + sign * off[0], here[1] + sign * off[1]), seen
 
 
 def nearest_turn(degrees: float, near: float) -> float:
@@ -201,6 +338,7 @@ class TopCamera(PickCamera):
     routines = {
         "offset": "measuring the top camera's offset", "fiducials": "finding the fiducials", "search": "looking for the board",
         "scan": "scanning the board", "home": "homing by the fiducial", "picture": "measuring the top camera's picture",
+        "facing": "measuring the top camera's offset by the bottom camera",
     }
     crop_tasks = {"offset": "spot", "fiducials": "spot", "home": "spot", "search": "board", "scan": "board", "picture": "measure"}
     look_task = "spot"
@@ -212,6 +350,10 @@ class TopCamera(PickCamera):
         self.fiducials: dict | None = None
         # The numbers of the last Measure camera (CameraMap's and the run's).
         self.measured_picture: dict | None = None
+        # The numbers of the last Offset by bottom camera (facing_result's,
+        # with the looks' turns, the last ring and lens seen, and the offset
+        # it replaced).
+        self.facing: dict | None = None
 
     def settings(self) -> TopCameraSettings:
         return super().settings()
@@ -220,7 +362,7 @@ class TopCamera(PickCamera):
         return super().update(patch, clear)
 
     def state(self) -> dict:
-        return {**super().state(), "fiducials": self.fiducials, "measured_picture": self.measured_picture}
+        return {**super().state(), "fiducials": self.fiducials, "measured_picture": self.measured_picture, "facing": self.facing}
 
     # --- the look -----------------------------------------------------------------
 
@@ -377,20 +519,7 @@ class TopCamera(PickCamera):
         crop = self.crop("measure")
 
         def picture():
-            # The head still rings after a move: pictures are taken until
-            # two in a row agree within STILL_PX, for at most STILL_SECONDS.
-            gray, reply = fresh_gray(self.client, time.monotonic() + SETTLE_SECONDS + settle, MEASURE_WIDTH, mover.stopped)
-            gray = cut(gray, crop)
-            factor = _full_width(settings.size, reply) / float(reply["width"])
-            until = time.monotonic() + STILL_SECONDS
-            while time.monotonic() < until:
-                later, reply = fresh_gray(self.client, time.monotonic(), MEASURE_WIDTH, mover.stopped)
-                later = cut(later, crop)
-                dx, dy, _ = phase_shift(gray, later)
-                gray = later
-                if math.hypot(dx, dy) * factor <= STILL_PX:
-                    break
-            return gray, reply
+            return self._still(mover, settle, crop)
 
         def reach(point: Point) -> None:
             # Every place from the same side, so the axes' backlash is
@@ -515,6 +644,195 @@ class TopCamera(PickCamera):
         if kept_lens is not None:
             patch["lens"] = kept_lens
         self._message("info", self.findings.keep("camera", words, patch))
+
+    def _still(self, mover: Mover, settle: float = 0.0, crop=None):
+        """A picture of the head at rest, MEASURE_WIDTH px wide at most and
+        cut to `crop`, with pcbv's reply: the head still rings after a move,
+        so pictures are taken from SETTLE_SECONDS (and `settle`) after it
+        until two in a row agree within STILL_PX, for at most STILL_SECONDS."""
+        settings = self.settings()
+        gray, reply = fresh_gray(self.client, time.monotonic() + SETTLE_SECONDS + settle, MEASURE_WIDTH, mover.stopped)
+        gray = cut(gray, crop)
+        factor = _full_width(settings.size, reply) / float(reply["width"])
+        until = time.monotonic() + STILL_SECONDS
+        while time.monotonic() < until:
+            later, reply = fresh_gray(self.client, time.monotonic(), MEASURE_WIDTH, mover.stopped)
+            later = cut(later, crop)
+            dx, dy, _ = phase_shift(gray, later)
+            gray = later
+            if math.hypot(dx, dy) * factor <= STILL_PX:
+                break
+        return gray, reply
+
+    # --- the offset by the bottom camera ---------------------------------------------
+
+    def measure_offset_facing(
+        self,
+        mover: Mover,
+        up: UpCamera,
+        place: CameraPlace,
+        keep_place: Callable[[CameraPlace], None],
+        step: float,
+        guess: Point | None,
+        board_scale: float | None,
+        nozzle: bool = True,
+        target: str | None = None,
+    ) -> None:
+        """Starts Offset by bottom camera on its own thread (see FACING_STEPS
+        above): with `nozzle`, the nozzle is first centered over `up`, the
+        bottom camera, from `place` (its calibration on this machine) and
+        the place measured is kept through `keep_place` (logged against
+        `target`, as Center nozzle's); without, `place` is the nozzle's
+        place as kept. Then the two cameras look at each other with the head
+        at the travel height, `step` mm the scale moves, and the offset is
+        kept. `guess` is the file's offset, gone by while none is measured;
+        `board_scale` the top camera's mm a pixel at the board when the
+        settings have none measured."""
+        if not (math.isfinite(step) and 0.0 < step <= FACING_MAX_STEP):
+            raise ValueError(f"the step must be over 0 and at most {FACING_MAX_STEP:g} mm")
+        if not up.client.running:
+            raise ValueError("the bottom camera is not running: start it first")
+        if up.routine_active:
+            raise ValueError("a bottom camera routine is under way")
+        if nozzle and place.position is None:
+            raise ValueError("the bottom camera's place is not known: Center nozzle over it once by hand, or give [up_camera] position in the machine file")
+        if not nozzle and not place.measured:
+            raise ValueError("the nozzle is not centered over the bottom camera yet: center it first, or let this routine do it")
+        self._begin(
+            "facing", FACING_STEPS, mover,
+            lambda progress: self._facing(mover, progress, up, place, keep_place, step, guess, board_scale, nozzle, target),
+        )
+
+    def _facing(
+        self,
+        mover: Mover,
+        progress: RoutineProgress,
+        up: UpCamera,
+        place: CameraPlace,
+        keep_place: Callable[[CameraPlace], None],
+        step: float,
+        guess: Point | None,
+        board_scale: float | None,
+        nozzle: bool,
+        target: str | None,
+    ) -> None:
+        settings = self.settings()
+        mover.begin()
+        stood = mover.here()
+        if nozzle:
+            self._step(progress, "nozzle")
+            place = self._facing_nozzle(mover, up, place, keep_place, target)
+        nozzle_at = place.position
+        if nozzle_at is None or place.mm_per_px <= 0.0:
+            raise PnpError("the nozzle is not centered over the bottom camera")
+        self._step(progress, "moving")
+        mover.lift()
+        offset_now = settings.offset if settings.offset is not None else guess
+        # Over the bottom camera by the offset in use, else where the head
+        # stood when the routine began (put there by hand).
+        head = (nozzle_at[0] - offset_now[0], nozzle_at[1] - offset_now[1]) if offset_now is not None else stood
+        self._step(progress, "scale")
+        lens_shade: list[str | None] = [None]
+
+        def look_down() -> Spot | RoundEdge:
+            return self._facing_down(mover, progress)
+
+        def look_up() -> Spot | RoundEdge:
+            spot, lens_shade[0] = self._facing_up(mover, progress, up, lens_shade[0])
+            return spot
+
+        looks = []
+        for move in ((0.0, 0.0), (step, 0.0), (0.0, step)):
+            _reach(mover, (head[0] + move[0], head[1] + move[1]))
+            looks.append((look_down(), look_up()))
+        (down0, up0), (down_x, up_x), (down_y, up_y) = looks
+        # The top camera rides on the head over a bottom camera that stays
+        # put: what it sees moves against the head's moves. The top camera's
+        # lens, seen from below, moves with them.
+        try:
+            down_map = calibrate((down0.dx - down_x.dx, down0.dy - down_x.dy), (down0.dx - down_y.dx, down0.dy - down_y.dy), step)
+        except ValueError as exc:
+            raise PnpError(f"the top camera looking down at the bottom camera: {exc}") from None
+        try:
+            up_map = calibrate((up_x.dx - up0.dx, up_x.dy - up0.dy), (up_y.dx - up0.dx, up_y.dy - up0.dy), step)
+        except ValueError as exc:
+            raise PnpError(f"the bottom camera looking up at the top camera: {exc}") from None
+        top_roll = settings.roll if settings.mm_per_px > 0.0 else None
+        _check_turn("the top camera looking down at the bottom camera", down_map, top_roll, settings.mirror if top_roll is not None else None)
+        _check_turn("the bottom camera looking up at the top camera", up_map, place.roll, place.mirror)
+        self._step(progress, "centering")
+        # The picture's center on the bottom camera: the head moves by what
+        # is seen. The lens on the bottom camera's center: against it.
+        down, last_down = _center_by(mover, head, down0, down_map, look_down, 1.0)
+        up_head, last_up = _center_by(mover, head, up0, up_map, look_up, -1.0)
+        board = settings.mm_per_px if settings.mm_per_px > 0.0 else board_scale
+        result = facing_result(nozzle_at, down, up_head, down_map[0], up_map[0], board, place.mm_per_px)
+        offset = result["offset"]
+        if any(abs(v) > OFFSET_LIMIT for v in offset):
+            raise PnpError(f"the offset came out {offset[0]:.1f}, {offset[1]:.1f} mm: is the top camera over the bottom camera?")
+        self.facing = {
+            **result,
+            "nozzle": [round(nozzle_at[0], 4), round(nozzle_at[1], 4)],
+            "down_roll": round(down_map[1], 3),
+            "up_roll": round(up_map[1], 3),
+            "ring": last_down.to_dict(),
+            "lens": {"dx": round(last_up.dx, 3), "dy": round(last_up.dy, 3), "shade": lens_shade[0]},
+            "before": list(settings.offset) if settings.offset is not None else None,
+        }
+        self._message("info", self.findings.keep("offset", facing_words(result), {"offset": offset}))
+
+    def _facing_nozzle(self, mover: Mover, up: UpCamera, place: CameraPlace, keep_place: Callable[[CameraPlace], None], target: str | None) -> CameraPlace:
+        """The nozzle centered over the bottom camera as Center nozzle does,
+        shown as that camera's own routine while it runs, and kept."""
+        shown = RoutineProgress(kind="nozzle", steps=NOZZLE_STEPS, step=NOZZLE_STEPS[0], target=mover.name, crop=up.crop_state("nozzle"))
+        up.progress = shown
+        try:
+            seen, tip = up.center_tip(mover, NOZZLE_STEP, shown, place)
+            words = up.keep_tip(mover, seen, tip, keep_place, target)
+        except Exception as exc:
+            shown.state = STOPPED if self.aborting() else ERROR
+            shown.error = "stopped" if self.aborting() else str(exc)
+            raise
+        finally:
+            up._publish()
+        shown.step, shown.state = "done", DONE
+        up._publish()
+        self._message("info", words)
+        return seen
+
+    def _facing_down(self, mover: Mover, progress: RoutineProgress) -> RoundEdge:
+        """The bottom camera's ring as the top camera sees it: the circle
+        of its strongest round edge in FACING_PICTURES pictures averaged,
+        px of the full size picture."""
+        if mover.stopped():
+            raise PnpError("stopped")
+        self._still(mover)
+        gray, reply = average_gray(self.client, FACING_PICTURES, time.monotonic(), MEASURE_WIDTH, mover.stopped)
+        found = round_edge(gray)
+        factor = _full_width(self.settings().size, reply) / float(reply["width"])
+        seen = found.scaled(factor) if found is not None else None
+        look = {"found": False} if seen is None else {
+            "found": True, "dx": seen.dx, "dy": seen.dy, "major": 2.0 * seen.radius, "minor": 2.0 * seen.radius, "fill": 0.0,
+        }
+        self._log_look("measuring the offset by the bottom camera", progress.step, look, "ring")
+        if seen is None:
+            raise PnpError("the top camera sees no ring: is it over the bottom camera, with the light on?")
+        progress.spot = spot_of(look)
+        self._publish()
+        return seen
+
+    def _facing_up(self, mover: Mover, progress: RoutineProgress, up: UpCamera, shade: str | None) -> tuple[Spot, str]:
+        """The top camera's lens as the bottom camera sees it (lens_look),
+        drawn over the bottom camera's picture, and the shade it was found
+        in; the first look's shade is kept for the rest."""
+        if mover.stopped():
+            raise PnpError("stopped")
+        reply, found_shade = up.lens_look("measuring the offset by the bottom camera", progress.step, shade)
+        up.look = look_dict(reply, found_shade)
+        up._publish()
+        if not reply.get("found"):
+            raise PnpError("the bottom camera sees no lens over it: is the top camera over the bottom camera, with the light on?")
+        return spot_of(reply), found_shade
 
     def find_fiducials(
         self,

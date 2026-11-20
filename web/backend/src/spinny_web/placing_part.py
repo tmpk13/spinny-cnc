@@ -50,7 +50,7 @@ from .openpnp import Feeder, GcodeMachine, Plan, board_fit, declare_line, feeder
 from .placer import Placement, PlaceSetup, fiducial_fit
 from .pnp import CameraPlace, PnpError
 from .log import log
-from .topcam import APPROACH_MM, SCALE_NEEDED, Found
+from .topcam import APPROACH_MM, FACING_STEP, SCALE_NEEDED, Found
 from .crops import crop_box_mm
 from .vision import VisionError, scale_range
 
@@ -955,6 +955,23 @@ class PlacingPart:
         mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
         profile = machine.top
         self.top.measure_offset(mover, step, profile.z if profile is not None else None, profile.offset if profile is not None else None)
+        return self.placing_state()
+
+    def top_offset_facing(self, step: float = FACING_STEP, nozzle: bool = True) -> dict:
+        """Offset by bottom camera: the top camera's offset from the nozzle
+        by the bottom camera, no mark (topcam.measure_offset_facing), on the
+        top camera's routine thread. With `nozzle` the nozzle is centered
+        over the bottom camera first and its place kept as Center nozzle
+        keeps it; without, the place kept is used."""
+        machine = self._placing_idle()
+        mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
+        profile = machine.top
+        self.top.measure_offset_facing(
+            mover, self.pnp, self._up_place(machine), self._keep_up_place, step,
+            guess=profile.offset if profile is not None else None,
+            board_scale=profile.mm_per_px if profile is not None else None,
+            nozzle=nozzle, target="up place",
+        )
         return self.placing_state()
 
     def top_measure(self, step: float = 0.0, approach: float | None = None, settle: float = 0.0) -> dict:
