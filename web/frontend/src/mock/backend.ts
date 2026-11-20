@@ -10383,6 +10383,11 @@ export class MockBackend implements Api, EventFeed {
     }
 
     async pnpResetFeeders(feeder?: string): Promise<PlacingState> {
+        // A run counts its feeders' parts on from its own count and writes
+        // it after every pick: a reset made now would be written over.
+        if (this.deviceSession !== null) {
+            throw new ApiError(409, "a placing run is under way: count the feeders again once it ends");
+        }
         if (feeder === undefined) {
             this.placing().taken = {};
         } else {

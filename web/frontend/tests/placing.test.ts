@@ -174,6 +174,8 @@ describe("a G-code machine in the mock", () => {
         expect(backend.pnpProgramUrl(job.id).startsWith("data:text/plain")).toBe(true);
         await backend.pnpRun(job.id);
         await expect(backend.home()).rejects.toMatchObject({ status: 409 });
+        // The run counts its feeders on from its own count: a reset now would be written over.
+        await expect(backend.pnpResetFeeders()).rejects.toMatchObject({ status: 409 });
         runDevice(backend);
         const state = await backend.placingState();
         expect(state.progress?.state).toBe("done");
