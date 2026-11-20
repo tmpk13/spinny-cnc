@@ -406,3 +406,11 @@ Why it matters: the last place is what both camera pictures show afterward, and 
 - C. The top camera's picture centered on the bottom camera's ring (the look down's place): the ring is centered in the top camera's picture, but this is 0.6 mm from where placing would put the camera.
 Applied: A, in 3057f13.
 Answer:
+
+## Q69. Should the LumenPnP file's `[motion] skew` become 0.0018, as the calibration card measured?
+Why it matters: the card, measured before and after a quarter turn, shows the head's Y travel leaning 0.00184 (0.106 degrees) toward +X, so the file's 0.0023 leaves the axes 0.026 degrees out of square; but every place measured with 0.0023 (the bottom camera's place, feeder slots, references) moves by 0.00046 times its Y, 0.14 mm at Y 300, and has to be measured again. The card covered one 100 mm square of the bed (X 248 to 349, Y 265 to 366); Measure camera had said 0.0020 elsewhere. notes/calibration.md has the measurement.
+- A. Write 0.0018 and measure the places again (recommended): square to the card's reading, which separates the card's own error from the machine's.
+- B. Leave 0.0023: nothing moves; a 100 mm board's far corner stays about 0.05 mm off square.
+- C. Measure the card at another place on the bed first, to see whether the lean is the same across the bed.
+Applied: nothing yet, since writing it moves the places measured before it; asked on the phone (#403).
+Answer:
