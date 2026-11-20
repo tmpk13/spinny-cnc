@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import type { JogRequest } from "../src/types.ts";
-import { mountJog } from "../src/views/jog.ts";
+import { HOLD_TICK_MS, mountJog } from "../src/views/jog.ts";
 import { connected, findButton, settle, setup } from "./harness.ts";
 
 const SMOOTH_KEY = "spinny.jog.smooth";
@@ -13,6 +13,8 @@ const SMOOTH_KEY = "spinny.jog.smooth";
 afterEach(() => {
     localStorage.removeItem(SMOOTH_KEY);
 });
+
+const ticks = (count: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, count * HOLD_TICK_MS));
 
 describe("hold to move", () => {
     test("a piece still on its way when the button is let go is cancelled once it is queued", async () => {
@@ -46,6 +48,27 @@ describe("hold to move", () => {
         expect(answered).toBeGreaterThanOrEqual(0);
         expect(calls.slice(answered + 1).some((call) => call.name === "jogCancel")).toBe(true);
         expect(calls.filter((call) => call.name === "jog").length).toBe(1);
+        store.set({ snapshot: { ...connected(), connected: false } });
+    });
+
+    test("a held key let go after Shift stops the hold though its name changed", async () => {
+        localStorage.setItem(SMOOTH_KEY, "1");
+        const { store, ctx, root, calls, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountJog(root, ctx);
+        // Num Lock on: Shift with the keypad's 8 is the up arrow; let go of
+        // Shift first and the 8 comes up as "8".
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", code: "Numpad8", shiftKey: true, bubbles: true }));
+        await ticks(2.5);
+        expect(calls.some((call) => call.name === "jog")).toBe(true);
+        document.dispatchEvent(new KeyboardEvent("keyup", { key: "Shift", code: "ShiftLeft", bubbles: true }));
+        document.dispatchEvent(new KeyboardEvent("keyup", { key: "8", code: "Numpad8", bubbles: true }));
+        await settle();
+        const pieces = calls.filter((call) => call.name === "jog").length;
+        await ticks(3);
+        expect(calls.filter((call) => call.name === "jog").length).toBe(pieces);
+        expect(calls.some((call) => call.name === "jogCancel")).toBe(true);
         store.set({ snapshot: { ...connected(), connected: false } });
     });
 });

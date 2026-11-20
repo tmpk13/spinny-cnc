@@ -961,9 +961,14 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
     // One key jog at a time: a held or hammered key must not queue up moves.
     let keyJog: Promise<unknown> | null = null;
     // The key holding a jog under Hold to move: its release ends the hold.
-    let heldKey: string | null = null;
+    // A key's name can change while it is held (Shift let go first: the
+    // keypad's 8 goes down as the up arrow under Num Lock and comes up as
+    // "8"), so the key is known by where it is when the event says so.
+    let heldKey: { code: string; key: string } | null = null;
+    const isHeldKey = (event: KeyboardEvent): boolean => heldKey !== null
+        && (heldKey.code !== "" ? event.code === heldKey.code : event.key.toLowerCase() === heldKey.key);
     document.addEventListener("keyup", (event) => {
-        if (heldKey !== null && event.key.toLowerCase() === heldKey) {
+        if (isHeldKey(event)) {
             heldKey = null;
             stopHold();
         }
@@ -975,7 +980,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
         // A held key repeats: under Hold to move the hold goes on by
         // itself, and otherwise one press is one jog.
         if (event.repeat) {
-            if (heldKey !== null && event.key.toLowerCase() === heldKey) {
+            if (isHeldKey(event)) {
                 event.preventDefault();
             }
             return;
@@ -1012,7 +1017,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
         event.preventDefault();
         const axis = "axis" in action ? controlOf(controls, action.axis) : undefined;
         if (smooth && ctx.store.get().snapshot.connected) {
-            heldKey = event.key.toLowerCase();
+            heldKey = { code: event.code ?? "", key: event.key.toLowerCase() };
             const fineNow = event.shiftKey;
             const piece = "axis" in action
                 ? (axis ? holdAxis(axis, action.sign) : null)
