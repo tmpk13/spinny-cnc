@@ -17,7 +17,21 @@ from spinny_web import camera as camera_module
 from spinny_web.camera import picture_to_machine, wait_settled
 from spinny_web.jobs import Design, Group, Job
 from spinny_web.link import Link
-from spinny_web.pnp import UpCameraSettings, calibrate, footprint_drawings, footprints_of, job_components, parse_sexp, part_shape
+from spinny_web.pnp import (
+    NOZZLE_STEPS,
+    CameraPlace,
+    Mover,
+    RoutineProgress,
+    UpCamera,
+    UpCameraSettings,
+    calibrate,
+    footprint_drawings,
+    footprints_of,
+    job_components,
+    nozzle_limits,
+    parse_sexp,
+    part_shape,
+)
 from spinny_web.vision import VisionError
 
 REPO = Path(__file__).resolve().parents[3]
@@ -202,18 +216,25 @@ def client(tmp_path, fake):
 
 class UpStandIn:
     """An up camera fixed to the machine at `where` (the joints that put the
-    nozzle over its center), seeing the nozzle, and a part `part` mm off it
-    when one is held, through its true scale, roll and mirror."""
+    nozzle over its center), seeing the nozzle's tip (a round dark spot),
+    and a part `part` mm off it when one is held (a bright 1.6 by 0.8 mm
+    one), through its true scale, roll and mirror. `glare` adds bright and
+    dark specks fixed in the picture at those px from its center (a sliver
+    of 30 px, roundness 0.2), as a ring light's glare off the tip shows
+    nearer the center than the tip. Like pcbv it answers the spot of that
+    shade nearest the center within the limits asked for."""
 
-    def __init__(self, fake: FakeSerial, where, roll: float, mirror: bool, scale: float = 0.01, part=(0.12, -0.05)) -> None:
+    def __init__(self, fake: FakeSerial, where, roll: float, mirror: bool, scale: float = 0.01, part=(0.12, -0.05), glare=()) -> None:
         self.fake = fake
         self.where = where
         self.roll = roll
         self.mirror = mirror
         self.scale = scale
         self.part = part
+        self.glare = list(glare)
         self.running = True
         self.asked: list[str] = []
+        self.limits: list[dict] = []
 
     def _pixels(self, dx_mm: float, dy_mm: float) -> tuple[float, float]:
         radians = math.radians(-self.roll)
@@ -221,15 +242,23 @@ class UpStandIn:
         v = (dx_mm * math.sin(radians) + dy_mm * math.cos(radians)) / self.scale
         return ((-u if self.mirror else u), -v)
 
-    def spot(self, radius=None, polarity="dark"):
+    def spot(self, radius=None, polarity="dark", min_area=None, max_area=None, min_roundness=None, color=None):
         self.asked.append(polarity)
+        self.limits.append({"min_area": min_area, "min_roundness": min_roundness})
         nozzle = (self.fake.joint[0] - self.where[0], self.fake.z - self.where[1])
         if polarity == "bright":
             nozzle = (nozzle[0] + self.part[0], nozzle[1] + self.part[1])
-        dx, dy = self._pixels(*nozzle)
-        if math.hypot(dx, dy) > 350.0:
-            return {"found": False}
-        return {"found": True, "dx": dx, "dy": dy, "x": 640 + dx, "y": 360 + dy, "area": 900.0, "major": 160.0, "minor": 80.0, "contrast": 70.0}
+            shape = (1.6 / self.scale, 0.8 / self.scale)
+        else:
+            shape = (32.0, 30.0)
+        spots = [(*self._pixels(*nozzle), shape[0] * shape[1], *shape)] + [(u, v, 30.0, 15.0, 3.0) for u, v in self.glare]
+        found = None
+        for dx, dy, area, major, minor in spots:
+            if math.hypot(dx, dy) > 350.0 or (min_area is not None and area < min_area) or (min_roundness is not None and minor / major < min_roundness):
+                continue
+            if found is None or math.hypot(dx, dy) < math.hypot(found["dx"], found["dy"]):
+                found = {"found": True, "dx": dx, "dy": dy, "x": 640 + dx, "y": 360 + dy, "area": area, "major": major, "minor": minor, "contrast": 70.0}
+        return found or {"found": False}
 
     def pose(self):
         return {"state": "none", "width": 1280, "height": 720, "frame": 1, "age_ms": 4, "fps": 15.0, "spots": 0}
@@ -300,7 +329,125 @@ def test_a_nozzle_out_of_the_picture_ends_as_an_error(client, fake):
     fake.z = 0.0
     assert client.post("/api/pnp/nozzle", json={"step": 1.0}).status_code == 200
     state = wait_routine(client)
-    assert state["routine"]["state"] == "error" and "no nozzle in the picture" in state["routine"]["error"]
+    error = state["routine"]["error"]
+    assert state["routine"]["state"] == "error" and "no nozzle in the picture" in error
+    # The error says what the finder takes, so a tip it refuses is told.
+    assert "round and 60 px or more" in error
+
+
+def test_glare_nearer_the_center_than_the_tip_is_not_taken_for_it(client, fake):
+    # Specks of glare that stay put in the picture while the head moves, as
+    # near the center as 5 px: the nearest spot of any shape is one of
+    # them, and following it measures a nozzle that never moves.
+    where = (42.0, 17.5)
+    stand_in = UpStandIn(fake, where, roll=0.0, mirror=True, glare=[(5.0, -3.0), (-12.0, 8.0)])
+    client.backend.pnp.client = stand_in
+    assert client.put("/api/settings", json={"host": {"travel": 4}}).status_code == 200
+    client.put("/api/pnp/settings", json={"height": 2.0})
+    fake.joint = [41.4, 0.0]
+    fake.z = 17.9
+    assert client.post("/api/pnp/nozzle", json={"step": 1.0}).status_code == 200
+    state = wait_routine(client)
+    assert state["routine"]["state"] == "done", state["routine"]
+    assert state["position"] == pytest.approx(list(where), abs=0.02)
+    assert state["mm_per_px"] == pytest.approx(0.01, rel=0.01)
+    # Every look asked for a round spot of a tip's size.
+    assert stand_in.limits and all(asked == {"min_area": 60.0, "min_roundness": 0.5} for asked in stand_in.limits)
+    # Look once keeps to the same, so it shows what the routine will take.
+    fake.joint = [42.3, 0.0]
+    fake.z = 17.5
+    look = client.post("/api/pnp/look", json={"spot": "nozzle"}).json()["look"]
+    assert look["found"] and math.hypot(look["dx"], look["dy"]) == pytest.approx(30.0, abs=0.5)
+    assert stand_in.limits[-1] == {"min_area": 60.0, "min_roundness": 0.5}
+    # A look for the part keeps to no such shape.
+    client.post("/api/pnp/look", json={"spot": "part"})
+    assert stand_in.limits[-1] == {"min_area": None, "min_roundness": None}
+
+
+class PlayMover(Mover):
+    """A head with `play` mm of backlash on each axis: the nozzle moves only
+    once the place asked for is more than half the play away, so it stops
+    that far short of a place, on the side it came from."""
+
+    def __init__(self, start, play: float) -> None:
+        self.asked = list(start)
+        self.actual = list(start)
+        self.play = play
+
+    def begin(self) -> None:
+        pass
+
+    def stopped(self) -> bool:
+        return False
+
+    def here(self):
+        return (self.asked[0], self.asked[1])
+
+    def height(self):
+        return None
+
+    def lift(self) -> None:
+        pass
+
+    def lower(self, height: float) -> None:
+        pass
+
+    def halt(self) -> None:
+        pass
+
+    def go(self, point) -> None:
+        half = self.play / 2.0
+        for k in (0, 1):
+            self.asked[k] = point[k]
+            self.actual[k] = min(max(self.actual[k], point[k] - half), point[k] + half)
+
+
+class TipCamera:
+    """pcbv over a bottom camera at `where`, mirrored, `scale` mm a pixel,
+    seeing the tip where the mover's nozzle really is."""
+
+    running = True
+
+    def __init__(self, mover: PlayMover, where, scale: float) -> None:
+        self.mover = mover
+        self.where = where
+        self.scale = scale
+
+    def spot(self, radius=None, polarity="dark", min_area=None, max_area=None, min_roundness=None, color=None):
+        dx = -(self.mover.actual[0] - self.where[0]) / self.scale
+        dy = -(self.mover.actual[1] - self.where[1]) / self.scale
+        return {"found": True, "dx": dx, "dy": dy, "x": 640 + dx, "y": 360 + dy, "area": 400.0, "major": 24.0, "minor": 22.0, "contrast": 70.0}
+
+    def pose(self):
+        return {"state": "none", "width": 1280, "height": 720, "frame": 1, "age_ms": 0}
+
+
+def test_backlash_neither_shortens_the_scale_step_nor_moves_the_place():
+    # 0.06 mm of play, as a LumenPnP's Y has: a 1 mm step whose second
+    # move turns X round measures the scale 3 percent coarse unless every
+    # look is reached moving the same way.
+    camera = UpCamera({}, lambda: None, lambda: None, lambda kind, text: None)
+    mover = PlayMover((100.3, 50.2), play=0.06)
+    camera.client = TipCamera(mover, where=(100.0, 50.0), scale=0.0474)
+    kept: list[CameraPlace] = []
+    progress = RoutineProgress(kind="nozzle", steps=NOZZLE_STEPS, step="lifting")
+    camera._center(mover, 1.0, progress, CameraPlace(), kept.append)
+    assert kept[-1].mm_per_px == pytest.approx(0.0474, rel=0.002)
+    # Reached moving toward +X and +Y, the nozzle sits half the play short
+    # of the place asked for: the place kept is the one that puts it over
+    # the camera when it is reached that way again.
+    position = kept[-1].position
+    assert position is not None and position == pytest.approx((100.03, 50.03), abs=0.003)
+    mover.go((99.0, 49.0))
+    camera._approach(mover, position)
+    assert mover.actual == pytest.approx([100.0, 50.0], abs=0.003)
+
+
+def test_the_nozzles_limits_follow_the_pictures_size():
+    assert nozzle_limits("1280x720") == {"min_area": 60.0, "min_roundness": 0.5}
+    assert nozzle_limits("640x360") == {"min_area": 15.0, "min_roundness": 0.5}
+    assert nozzle_limits("1920x1080")["min_area"] == pytest.approx(135.0)
+    assert nozzle_limits("big") == nozzle_limits("1280x720")
 
 
 def test_the_up_camera_needs_an_xy_machine(client, fake):
