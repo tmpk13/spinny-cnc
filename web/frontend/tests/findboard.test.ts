@@ -337,6 +337,20 @@ describe("the full scan's mosaic", () => {
         expect(at(mirrored, 420, 180)[0] - at(mirrored, 320, 180)[0]).toBeCloseTo(-4, 6);
     });
 
+    test("another camera's scan of the same board, version and count draws its own pictures, not the last camera's", async () => {
+        const { mountMosaic } = await import("../src/views/mosaic.ts");
+        const mosaic = mountMosaic();
+        const tile = (index: number, x: number) => ({ index, center: [x, 20] as [number, number], roll: 0, mirror: false, width: 640, height: 360, mm_per_px: 0.04 });
+        // Each camera's scans count their versions from one backend start: a first scan of six pictures is version 8 on either.
+        const scan = (x: number) => ({ job: "j1", motion: "stop" as const, version: 8, started: 0, outline: null, estimate: null, pictures: [0, 1, 2, 3, 4, 5].map((index) => tile(index, x + 10 * index)) });
+        mosaic.render(scan(0), (index) => `/api/camera/scan/${index}.jpg?v=8`);
+        mosaic.render(scan(300), (index) => `/api/placing/top/scan/${index}.jpg?v=8`);
+        const images = Array.from(mosaic.root.querySelectorAll("image"));
+        expect(images.length).toBe(6);
+        expect(images[0]!.getAttribute("href")).toBe("/api/placing/top/scan/0.jpg?v=8");
+        expect(images[0]!.querySelector("title")?.textContent).toContain("its center at 300.00");
+    });
+
     test("Full scan waits for a rough place, then the mosaic shows each picture and the board found", async () => {
         const { store, ctx, root, api, backend, calls } = setup();
         await api.connect("/dev/ttyACM0");

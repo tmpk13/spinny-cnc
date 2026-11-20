@@ -63,7 +63,9 @@ export function mountMosaic(): MosaicView {
     function render(mosaic: ScanMosaic | null, urlOf: (index: number) => string): void {
         const tiles = mosaic?.pictures ?? [];
         root.classList.toggle("hidden", tiles.length === 0);
-        const key = mosaic ? `${mosaic.job}:${mosaic.version}:${tiles.length}` : "";
+        // The first picture's address names the camera too: each camera's
+        // scans count their versions alike.
+        const key = mosaic ? `${mosaic.job}:${mosaic.version}:${tiles.length}:${tiles.length > 0 ? urlOf(tiles[0]!.index) : ""}` : "";
         if (key === drawn) {
             return;
         }
