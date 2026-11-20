@@ -4265,6 +4265,12 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         return self.pnp.state()
 
     def pnp_abort(self) -> dict:
+        top = self.top.progress
+        if not self.pnp.routine_active and self.top.routine_active and top is not None and top.kind == "facing":
+            # Offset by bottom camera centers the nozzle shown as this
+            # camera's routine: this camera's Abort stops it.
+            self.top_abort()
+            return self.pnp.state()
         self.pnp.abort()
         if self.pnp.target == "gcode":
             # The routine waits on a move and its wait command: the machine

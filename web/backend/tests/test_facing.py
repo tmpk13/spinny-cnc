@@ -7,6 +7,7 @@ that cancels the lean, and the routine end to end."""
 from __future__ import annotations
 
 import math
+import time
 
 import numpy as np
 import pytest
@@ -134,12 +135,16 @@ class FacingUpCamera:
         self.running = True
         self.device = "/dev/video1"
         self.lens_looks = 0
+        # Seconds a look at the tip takes, so a test can act while the
+        # nozzle is being centered.
+        self.tip_seconds = 0.0
 
     def spot(self, radius=None, polarity="dark", min_area=None, max_area=None, min_roundness=None, color=None, crop=None):
         x, y, z = self.fake.bed_position
         if polarity != "dark":
             return {"found": False}
         if z <= self.tip_z + 0.5:
+            time.sleep(self.tip_seconds)
             line = bottom_line(TIP)
             u, v = to_picture((x - line[0], y - line[1]), BOTTOM_ROLL, True, bottom_scale(TIP))
             size = (24.0, 22.0)
@@ -330,3 +335,19 @@ def test_offset_by_the_bottom_camera_needs_the_bottom_camera_running_and_its_pla
     assert response.status_code == 400 and "center it first" in response.json()["detail"]
     response = client.post("/api/pnp/top/offset/facing", json={"step": 0})
     assert response.status_code == 400 and "step" in response.json()["detail"]
+
+
+def test_the_bottom_cameras_abort_stops_the_offset_while_it_centers_the_nozzle(client):
+    _, looking_up = rig(client)
+    measured_board(client)
+    looking_up.tip_seconds = 0.2
+    assert client.post("/api/pnp/top/offset/facing", json={}).status_code == 200
+    # The nozzle's centering shows as the bottom camera's routine, whose
+    # Abort stops the whole routine.
+    wait_for(lambda: (client.get("/api/pnp").json()["routine"] or {}).get("state") == "running")
+    response = client.post("/api/pnp/abort")
+    assert response.status_code == 200, response.text
+    wait_for(lambda: client.get("/api/pnp/placing").json()["top"]["routine"]["state"] != "running")
+    assert client.get("/api/pnp/placing").json()["top"]["routine"]["state"] == "stopped"
+    assert client.get("/api/pnp").json()["routine"]["state"] == "stopped"
+    assert client.get("/api/pnp/placing").json()["top"]["offset"] is None
