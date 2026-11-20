@@ -173,3 +173,48 @@ the map by focus, a cut that starts a group of another focus gets a dark
   written in docs/CALIBRATION.md. The cheapest needs no pcbv change: one
   dot moved across the picture by the machine, found place against the
   place the moves predict (a camera routine).
+
+## The burnt card on the LumenPnP (2026-11-20)
+
+First look with the card burnt into an aluminum plate, on the LumenPnP's
+bed: top camera only, X and Y moves at the safe height. The scripts, logs
+and pictures were kept outside the repository (a `var/surveys` folder).
+
+- The card lay turned 90 degrees (card +X along machine +Y). One look 16
+  mm each way from the nozzle target under the camera told which target
+  it was and which way the card lay.
+- A loose plate moves under the head's moves. Across three loops over the
+  fiducials it turned -0.024 and then -0.003 degrees as one piece (a rigid
+  fit leaves 3 um), and during a 5 x 5 grid of 1 mm moves it crept 17 um
+  in 25 s. Anything that uses the machine as the ruler (fiducial
+  distances, the scale by moves) needs the plate fastened; a single
+  picture (the lens) does not.
+- A fiducial centered and reached again from 0.3 mm short repeats to 0.1
+  to 2 um. Reached from the other side, the place moves 6 um in X and 10
+  um in Y: the head's own backlash. The nozzle showed about 0.06 mm over
+  the bottom camera (notes/nozzle-finder.md), so most of that is in the
+  tip, not the axes.
+- Positions come back with two decimals (M114), so the reported place can
+  be up to 5 um from the one sent. What is measured is the dot's offset
+  in the picture from the reported place, so the rounding does not enter.
+- The camera's scale at the card is 0.0168 to 0.0170 mm a pixel, against
+  0.01593 kept (Measure camera, 2026-11-19): the card lies farther from
+  the camera than what that was measured over. A scale belongs to a
+  height, so the kept one was left alone.
+- Lens. The 2 mm grid's dots (0.6 mm) fit to 0.37 px rms near the
+  picture's middle and 0.91 px at its edges. The 1 mm grid's dots (0.5 mm
+  drawn) burnt to about 0.65 mm and fit to 0.84 px, a few of them 4 to 13
+  px off. On this card the 2 mm grid is the better target. The old terms
+  (k1 0.0258), the 2 mm grid's and the 1 mm grid's straighten either
+  picture to within 0.1 px of each other. Adding a different scale per
+  axis (0.17 percent) or a perspective term gains under 0.1 px, so the
+  picture shows no tilt worth modeling. pcbv's own fits left 1.3 and 1.8
+  px, against 0.7 and 1.1 px from a circle fitted to each dot's edge:
+  its dot centers are noisier on brushed metal.
+- Fiducials, from the loop that closed within 2 um: the machine's numbers
+  give 100.27 mm per 100 mm of card along machine Y and 100.52 along
+  machine X. Opposite sides differ by about 0.1 mm, and the two lines
+  along machine X are 0.054 degrees apart. A gantry whose two Y sides move
+  differently gives that pattern, and so does a card burnt as a
+  trapezoid. Calipers on the rulers say whether the card is 100 mm; a
+  quarter turn of the card says whether the shape belongs to the card.

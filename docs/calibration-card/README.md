@@ -38,6 +38,9 @@ Coordinates are in mm from the plate's bottom left, with Y up.
 
 ## Using it
 
+- **Fasten it.** Tape or clamp the card to the bed. On a LumenPnP a
+  loose plate turned 0.026 degrees and crept 17 um in 25 s under the
+  head's moves, which spoils anything that uses the machine as the ruler.
 - **The burner's scale.** With calipers, check that the rulers' 0 and
   100 ticks lie 100.00 mm apart, along X and along Y. That says how true
   the machine that burnt the card was, and so how far the card can be
@@ -52,7 +55,9 @@ Coordinates are in mm from the plate's bottom left, with Y up.
   at 0.0161 mm a pixel, pcbv found 231 dots on the 1 mm grid and 45 on
   the 2 mm grid, and read the scale as 0.01610 mm a pixel from both. On
   the same pictures bent like a lens, the fit took the error from 5.4 px
-  to 0.33 px rms (1 mm) and from 4.4 px to 0.22 px (2 mm).
+  to 0.33 px rms (1 mm) and from 4.4 px to 0.22 px (2 mm). On a real
+  burnt card the 2 mm grid fit better: its dots came out rounder and
+  more even than the 1 mm grid's, which spread from 0.5 to about 0.65 mm.
 - **Camera to nozzle offset.** Use a NOZZLE target as the mark for
   *Nozzle on mark* and *Measure offset*.
 - **Placing.** Place real parts inside the TARGETS brackets, then
