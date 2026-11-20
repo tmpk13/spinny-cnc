@@ -22,7 +22,8 @@ from .files import write_whole
 
 MAX_ITEMS = 500
 MAX_TEXT = 500
-ITEM_ID = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
+# Matched whole (fullmatch): a `$` alone would let a line break follow.
+ITEM_ID = re.compile(r"[A-Za-z0-9_-]{1,40}")
 
 
 class TodoItem(BaseModel):
@@ -51,7 +52,7 @@ def checked(items: list[TodoItem]) -> list[TodoItem]:
     ids: set[str] = set()
     out: list[TodoItem] = []
     for item in items:
-        if not ITEM_ID.match(item.id):
+        if not ITEM_ID.fullmatch(item.id):
             raise ValueError("a to-do's id is 1 to 40 letters, digits, _ or -")
         if item.id in ids:
             raise ValueError(f"two to-dos have the id {item.id!r}")

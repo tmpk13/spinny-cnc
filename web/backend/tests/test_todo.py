@@ -46,6 +46,8 @@ def test_a_put_made_on_an_older_revision_is_refused_and_changes_nothing(client):
         ([{"id": "a", "text": "x" * (MAX_TEXT + 1)}], f"a to-do is 1 to {MAX_TEXT} characters"),
         ([{"id": "a", "text": "x"}, {"id": "a", "text": "y"}], "two to-dos have the id 'a'"),
         ([{"id": "../x", "text": "x"}], "a to-do's id is 1 to 40 letters, digits, _ or -"),
+        # A line break after an id would make "a" and "a\n" two to-dos.
+        ([{"id": "a\n", "text": "x"}], "a to-do's id is 1 to 40 letters, digits, _ or -"),
         ([{"id": f"i{n}", "text": "x"} for n in range(MAX_ITEMS + 1)], f"at most {MAX_ITEMS} to-dos"),
     ],
 )
