@@ -177,13 +177,18 @@ export function topOrientation(state: AppState): { roll: number; mirror: boolean
     return { roll: top.mm_per_px > 0 || designed === null ? top.roll : designed, mirror: top.mirror };
 }
 
-/** The machine point under the top camera's picture's center: the head's place plus the camera's offset, measured or the file's. */
+/**
+ * The machine point under the top camera's picture's center: the head's
+ * place plus the camera's offset, measured or the file's; with neither, the
+ * head's own place, as the backend's looks take it then (their places are
+ * the camera's own until an offset is known).
+ */
 export function topCenter(state: AppState): [number, number] | null {
     const placing = state.placing;
-    const offset = placing?.top?.offset ?? placing?.document?.top?.offset ?? null;
+    const offset = placing?.top?.offset ?? placing?.document?.top?.offset ?? [0, 0];
     const x = placing?.position?.x;
     const y = placing?.position?.y;
-    if (offset === null || x === undefined || y === undefined) {
+    if (x === undefined || y === undefined) {
         return null;
     }
     return [x + offset[0], y + offset[1]];

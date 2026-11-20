@@ -5,7 +5,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { cameraViews, viewPanels } from "../src/views/areaviews.ts";
-import { mountCameraViews } from "../src/views/camview.ts";
+import { mountCameraViews, topCenter } from "../src/views/camview.ts";
+import type { AppState } from "../src/state.ts";
 import { mountVision } from "../src/views/vision.ts";
 import { click, findButton, settle, setup } from "./harness.ts";
 
@@ -128,5 +129,20 @@ describe("the pick and place cameras' pictures beside their settings", () => {
             views.bottom.stop();
             views.top.stop();
         }
+    });
+});
+
+describe("the top camera's picture center", () => {
+    test("is the head's place plus the offset in use; with none known the head's own place, as the backend's looks take it", () => {
+        const state = (offset: [number, number] | null, fileOffset: [number, number] | null): AppState => ({
+            placing: { top: { offset }, document: { top: fileOffset === null ? {} : { offset: fileOffset } }, position: { x: 10, y: 20 } },
+        }) as unknown as AppState;
+        expect(topCenter(state([1, 2], [5, 6]))).toEqual([11, 22]);
+        expect(topCenter(state(null, [5, 6]))).toEqual([15, 26]);
+        // No offset measured and none in the machine file: the backend goes
+        // by 0, 0 and the places are the camera's own, so the board a look
+        // found and a box drawn are drawn about the head's own place.
+        expect(topCenter(state(null, null))).toEqual([10, 20]);
+        expect(topCenter({ placing: { top: { offset: null }, document: null, position: {} } } as unknown as AppState)).toBeNull();
     });
 });
