@@ -11,9 +11,10 @@ import { initialState, type AppState } from "../src/state.ts";
 import type { Component, FeederCheck, FeederCheckFeeder, Job, PlacingState } from "../src/types.ts";
 import { placingSteps, stepToOpen } from "../src/views/areaviews.ts";
 import { autoMemory, autoMove } from "../src/views/autosteps.ts";
+import { into } from "../src/views/context.ts";
 import { checkLine, feedersDone, feedersLine, refreshFeederCheck, refsText } from "../src/views/feedercheck.ts";
 import { setPickedToPlace } from "../src/views/partsfilter.ts";
-import { advanceFor, draftProblem, draftValues, feederIdFor, feederPlaceText, feederTakenText, looseGroups, matchWords, mountPnpFeeders } from "../src/views/pnpfeeders.ts";
+import { advanceFor, draftProblem, draftValues, feederIdFor, feederPlaceText, feederTakenText, looseGroups, matchWords, mountPnpFeeders, slotTip, slotWay } from "../src/views/pnpfeeders.ts";
 import { connectGcode, parseDevice } from "./gcoderig.ts";
 import { dialogButton, findButton, settle, setup } from "./harness.ts";
 
@@ -494,5 +495,96 @@ describe("adding a feeder", () => {
         dialogButton("Count again").click();
         await settled();
         expect(calls.filter((call) => call.name === "pnpResetFeeders").map((call) => call.args[0])).toEqual(["tp-9mm2", "c-100n-0402"]);
+    });
+});
+
+/** Puts the mock's head where a test wants it, as a jog would have left it. */
+function headAt(backend: MockBackend, x: number, y: number, z: number): void {
+    (backend as unknown as { deviceLink: { position: { x: number; y: number; z: number; rotation: number } } }).deviceLink.position = { x, y, z, rotation: 0 };
+}
+
+describe("a slot's place, by the top camera or the nozzle", () => {
+    test("by the nozzle: the head's X, Y and Z, written as a new [[slot]] at the file's end, or into the slot there", async () => {
+        const { backend } = setup();
+        await connectGcode(backend, "lumen", PROFILE);
+        headAt(backend, 120.5, 401.25, 9.5);
+        const answer = await backend.pnpBusSlot({ address: 4, by: "nozzle" });
+        expect(answer.slot).toEqual({ address: 4, at: [120.5, 401.25, 9.5], rotation: 0 });
+        expect((await backend.machineFile("lumen")).text).toEndWith("\n\n[[slot]]\naddress = 4\nat = [120.5, 401.25, 9.5]\n");
+        // Taken again: the slot's place changes, no second slot.
+        headAt(backend, 121, 401, 9.5);
+        await backend.pnpBusSlot({ address: 4, by: "nozzle" });
+        const doc = (await backend.placingState()).document!;
+        expect(doc.slots?.map((slot) => [slot.address, slot.at])).toEqual([[3, [100, 400, 10]], [4, [121, 401, 9.5]]]);
+        await expect(backend.pnpBusSlot({ address: 0, by: "nozzle" })).rejects.toThrow("a slot's address is 1 to 254, not 0");
+        await expect(backend.pnpBusSlot({ address: 4, by: "nozzle", find: true })).rejects.toThrow("find is for a slot taken with the camera");
+    });
+
+    test("by the camera: the head plus the measured offset, the height the slot's own or the other slots'", async () => {
+        const { backend } = setup();
+        await connectGcode(backend, "lumen", PROFILE + `[[slot]]\naddress = 5\nat = [130.0, 400.0, 10.04]\n`);
+        headAt(backend, 80, 340, 31.5);
+        await expect(backend.pnpBusSlot({ address: 6, by: "camera" })).rejects.toThrow("measure the top camera's offset first, or take the slot with the nozzle");
+        await backend.topSettings({ offset: [20, 60] });
+        // A new slot: the others' heights, which agree within 0.05 mm.
+        expect((await backend.pnpBusSlot({ address: 6, by: "camera" })).slot).toEqual({ address: 6, at: [100, 400, 10.02], rotation: 0 });
+        // The slot's own height when it has one.
+        headAt(backend, 81, 341, 31.5);
+        expect((await backend.pnpBusSlot({ address: 3, by: "camera" })).slot.at).toEqual([101, 401, 10]);
+        // Heights apart: the nozzle first.
+        await connectGcode(backend, "far", PROFILE + `[[slot]]\naddress = 5\nat = [130.0, 400.0, 10.1]\n`);
+        await expect(backend.pnpBusSlot({ address: 7, by: "camera" })).rejects.toThrow("take one slot with the nozzle first: the camera gives no height (the other slots' heights differ by 0.100 mm)");
+        // Find needs the shade of the feeder there.
+        await expect(backend.pnpBusSlot({ address: 3, by: "camera", find: true })).rejects.toThrow("find needs the feeder's pocket shade");
+    });
+
+    test("the camera over a slot moves only X and Y, by the measured offset", async () => {
+        const { backend } = setup();
+        await connectGcode(backend, "lumen", PROFILE);
+        await expect(backend.pnpBusOverSlot(9)).rejects.toThrow("lumen's file has no [[slot]] for bus address 9");
+        await expect(backend.pnpBusOverSlot(3)).rejects.toThrow("measure the top camera's offset first: the camera goes over a slot by it");
+        await backend.topSettings({ offset: [20, 60] });
+        headAt(backend, 0, 0, 40);
+        const before = (await backend.placingState()).log.length;
+        await backend.pnpBusOverSlot(3);
+        const sent = (await backend.placingState()).log.slice(before).filter((entry) => entry.dir === "tx").map((entry) => entry.text);
+        // Across at the safe height: one move of X and Y, no Z in it; a Z move only to the safe height.
+        const moves = sent.filter((line) => /^G[01] /.test(line));
+        const across = moves.filter((line) => /X/.test(line));
+        expect(across.length).toBe(1);
+        expect(across[0]).toMatch(/X80\b.*Y340\b/);
+        expect(across[0]).not.toMatch(/Z/);
+        expect(moves.filter((line) => !/X/.test(line)).every((line) => /^G[01] Z31\.5\b/.test(line))).toBe(true);
+    });
+
+    test("the row's Slot here goes by the camera once its offset is measured, the other way under the row", async () => {
+        const { root, calls, backend, ctx } = await lumenPanel();
+        findButton(root, "Scan bus").click();
+        await settled();
+        // Address 3 has no slot place: by the nozzle while no offset is measured.
+        expect(slotWay(ctx.store.get())).toBe("nozzle");
+        let row = root.querySelector<HTMLElement>(".bus-scan li[data-address='3']")!;
+        expect(findButton(row, "Slot here").title).toBe(slotTip(3, "nozzle"));
+        expect(findButton(row, "Slot by camera").dataset["reason"]).toBe("measure the top camera's offset first (Cameras, Top camera)");
+        await into(ctx, "placing", backend.topSettings({ offset: [20, 60] }));
+        await settled();
+        row = root.querySelector<HTMLElement>(".bus-scan li[data-address='3']")!;
+        expect(findButton(row, "Slot here").title).toBe(slotTip(3, "camera"));
+        expect(findButton(row, "Slot by nozzle").disabled).toBe(false);
+        headAt(backend, 80, -30, 31.5);
+        findButton(row, "Slot here").click();
+        await settle();
+        dialogButton("Take it").click();
+        await settled();
+        expect(calls.filter((call) => call.name === "pnpBusSlot").at(-1)?.args[0]).toEqual({ address: 3, by: "camera" });
+        // The head plus the offset (the LumenPnP's skew taken out of X), at the other slots' height.
+        const [x, y, z] = ctx.store.get().placing!.document!.slots!.find((slot) => slot.address === 3)!.at;
+        expect([Math.round(x), y, z]).toEqual([100, 30, 12]);
+        // Its place known, the row's button goes under it, with the camera over the slot.
+        row = root.querySelector<HTMLElement>(".bus-scan li[data-address='3']")!;
+        expect(row.querySelector(".group-row button.btn")?.textContent).toBe("Add feeder");
+        findButton(row, "Camera over slot").click();
+        await settled();
+        expect(calls.filter((call) => call.name === "pnpBusOverSlot").map((call) => call.args)).toEqual([[3]]);
     });
 });

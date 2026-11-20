@@ -174,10 +174,16 @@ describe("HttpApi feeder routes", () => {
         await api.pnpFeederCheck("a1");
         await api.pnpFeederCheck("a 1", ["R1", "C2"]);
         await api.addMachineTable("opulo lumen", "feeder", { id: "10k-r0603", match: "10k R_0603_1608Metric", bus_id: "AABBCCDDEEFF001122334455", advance: 4 });
+        await api.pnpBusSlot({ address: 3, by: "camera", find: true });
+        await api.pnpBusSlot({ address: 4, by: "nozzle" });
+        await api.pnpBusOverSlot(3);
         expect(calls.map((call) => [call.method, call.url.replace("http://host", ""), call.body])).toEqual([
             ["POST", "/api/pnp/feeders/check", { job: "a1" }],
             ["POST", "/api/pnp/feeders/check", { job: "a 1", refs: ["R1", "C2"] }],
             ["POST", "/api/machines/opulo%20lumen/tables", { table: "feeder", values: { id: "10k-r0603", match: "10k R_0603_1608Metric", bus_id: "AABBCCDDEEFF001122334455", advance: 4 } }],
+            ["POST", "/api/pnp/bus/slot", { address: 3, by: "camera", find: true }],
+            ["POST", "/api/pnp/bus/slot", { address: 4, by: "nozzle" }],
+            ["POST", "/api/pnp/bus/over-slot", { address: 3 }],
         ]);
     });
 });

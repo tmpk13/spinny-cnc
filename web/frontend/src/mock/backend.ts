@@ -197,6 +197,7 @@ import type {
     BusFeeder,
     BusMissing,
     BusScan,
+    BusSlot,
     FeederCheck,
     CalibrateRequest,
     CalibrateResponse,
@@ -9971,6 +9972,115 @@ export class MockBackend implements Api, EventFeed {
         }
         const address = this.busAdvance(device, feeder);
         this.message("info", `feeder ${feederId} advanced ${gnum(feeder.advance)} mm (bus address ${address})`);
+        this.emitPlacing();
+        return this.placingStateOf();
+    }
+
+    /**
+     * The file's feeder at a bus address, as the backend's _feeder_at: the
+     * one the bus last answered for there since the machine connected, else
+     * the one whose file names that slot.
+     */
+    private feederAt(device: MockDevice, address: number): MockFeeder | null {
+        const seen = this.deviceLink.connected && this.gcodeId === device.id ? [...this.busSeen.entries()].reverse() : [];
+        for (const [id, at] of seen) {
+            const feeder = device.feeders.find((entry) => entry.bus_id === id);
+            if (at === address && feeder) {
+                return feeder;
+            }
+        }
+        return device.feeders.find((feeder) => feeder.slot === address) ?? null;
+    }
+
+    /**
+     * A bus slot's place taken from where the head is and written into the
+     * machine file, as the backend's pnp_bus_slot: by the nozzle, X Y Z of
+     * the head; by the camera, X and Y of the head plus the top camera's
+     * measured offset, the height the slot's own, else the other slots'
+     * when they agree within 0.05 mm (Q66). With `find` the camera finds
+     * the part first: the mock's is where the picture's center is.
+     */
+    async pnpBusSlot(request: { address: number; by: "camera" | "nozzle"; find?: boolean }): Promise<PlacingState & { slot: BusSlot }> {
+        const device = this.gcodeIdle();
+        const { address, by } = request;
+        if (device.bus === null) {
+            throw new ApiError(400, `${device.name}'s file has no [bus] table`);
+        }
+        if (!(Number.isInteger(address) && address >= 1 && address <= 254)) {
+            throw new ApiError(400, `a slot's address is 1 to 254, not ${address}`);
+        }
+        if (by !== "camera" && by !== "nozzle") {
+            throw new ApiError(400, 'a slot is taken by "camera" or by "nozzle"');
+        }
+        if (request.find && by !== "camera") {
+            throw new ApiError(400, "find is for a slot taken with the camera");
+        }
+        let at: [number, number, number];
+        if (by === "nozzle") {
+            const here = this.deviceHere(device);
+            at = [here.x, here.y, here.z];
+        } else {
+            const offset = this.topConfig.offset;
+            if (offset === null) {
+                throw new ApiError(409, "measure the top camera's offset first, or take the slot with the nozzle");
+            }
+            const own = device.slots.find((slot) => slot.address === address);
+            let z: number;
+            if (own) {
+                z = own.at[2];
+            } else {
+                const heights = device.slots.map((slot) => slot.at[2]);
+                const need = "take one slot with the nozzle first: the camera gives no height";
+                if (heights.length === 0) {
+                    throw new ApiError(409, need);
+                }
+                const spread = Math.max(...heights) - Math.min(...heights);
+                if (spread > 0.05 + 1e-9) {
+                    throw new ApiError(409, `${need} (the other slots' heights differ by ${spread.toFixed(3)} mm)`);
+                }
+                z = heights.reduce((sum, height) => sum + height, 0) / heights.length;
+            }
+            if (request.find) {
+                const feeder = this.feederAt(device, address);
+                if (feeder === null || feeder.pocket === null || device.top === null) {
+                    throw new ApiError(400, "find needs the feeder's pocket shade");
+                }
+                if (!this.topRunning) {
+                    throw new ApiError(409, "the top camera is not running: start it first");
+                }
+            }
+            const here = this.deviceHere(device);
+            at = [here.x + offset[0], here.y + offset[1], z];
+        }
+        const rounded = at.map((value) => Math.round(value * 1000) / 1000 || 0) as [number, number, number];
+        const text = this.machineText(device.id);
+        const index = device.slots.findIndex((slot) => slot.address === address);
+        let changed: string;
+        try {
+            changed = index >= 0 ? setValue(text, ["slot", index, "at"], rounded) : appendTable(text, "slot", { address, at: rounded });
+        } catch (error) {
+            throw new ApiError(400, errorText(error));
+        }
+        const saved = await this.saveMachineFile(device.id, changed);
+        const slot = saved.document?.gcode?.slots?.find((entry) => entry.address === address);
+        const place: [number, number, number] = slot ? [slot.at[0], slot.at[1], slot.at[2]] : rounded;
+        this.message("info", `bus slot ${address} taken by ${by}: X ${gnum(place[0])} Y ${gnum(place[1])} Z ${gnum(place[2])}`);
+        this.emitPlacing();
+        return { ...this.placingStateOf(), slot: { address, at: place, rotation: slot?.rotation ?? 0 } };
+    }
+
+    /** The head over a slot's place with the top camera's picture center, at the safe height, only X and Y moved: the backend's pnp_bus_over_slot. */
+    async pnpBusOverSlot(address: number): Promise<PlacingState> {
+        const device = this.gcodeIdle();
+        const slot = device.slots.find((entry) => entry.address === address);
+        if (!slot) {
+            throw new ApiError(404, `${device.name}'s file has no [[slot]] for bus address ${address}`);
+        }
+        const offset = this.topConfig.offset;
+        if (offset === null) {
+            throw new ApiError(409, "measure the top camera's offset first: the camera goes over a slot by it");
+        }
+        this.headLines(device, gotoLines(device, this.deviceHere(device), { x: slot.at[0] - offset[0], y: slot.at[1] - offset[1] }));
         this.emitPlacing();
         return this.placingStateOf();
     }

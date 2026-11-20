@@ -8,6 +8,7 @@ import type {
     AutoSettings,
     AutoSettingsUpdate,
     BusScan,
+    BusSlot,
     CalibrateRequest,
     CalibrateResponse,
     CameraControls,
@@ -421,6 +422,10 @@ export interface Api {
     pnpBusScan(feeders?: string[]): Promise<PlacingState & BusScan>;
     /** One advance of a feeder on the bus. */
     pnpBusFeed(feeder: string): Promise<PlacingState>;
+    /** A bus slot's place taken from where the head is, by the nozzle on its pick point or the top camera's picture center over it (with `find`, the part found there first), and written into the machine file. */
+    pnpBusSlot(request: { address: number; by: "camera" | "nozzle"; find?: boolean }): Promise<PlacingState & { slot: BusSlot }>;
+    /** The head moved at the safe height so the top camera's picture center is over a slot's place: only X and Y. */
+    pnpBusOverSlot(address: number): Promise<PlacingState>;
     /** A reference for a part: where it is on the machine, read off it when `at` is left out. */
     pnpReference(request: { job: string; ref: string; at?: [number, number]; camera?: boolean }): Promise<PlacingState>;
     pnpDropReferences(job: string, ref?: string): Promise<PlacingState>;
@@ -1340,6 +1345,14 @@ export class HttpApi implements Api {
 
     pnpBusFeed(feeder: string): Promise<PlacingState> {
         return this.request<PlacingState>("POST", "/api/pnp/bus/feed", { feeder });
+    }
+
+    pnpBusSlot(request: { address: number; by: "camera" | "nozzle"; find?: boolean }): Promise<PlacingState & { slot: BusSlot }> {
+        return this.request<PlacingState & { slot: BusSlot }>("POST", "/api/pnp/bus/slot", request);
+    }
+
+    pnpBusOverSlot(address: number): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/bus/over-slot", { address });
     }
 
     pnpReference(request: { job: string; ref: string; at?: [number, number]; camera?: boolean }): Promise<PlacingState> {

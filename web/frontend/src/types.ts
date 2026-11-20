@@ -1436,6 +1436,13 @@ export interface BusScan {
     missing: BusMissing[];
 }
 
+/** A feeder bus slot's place as the machine file has it: its address, the nozzle's place over its pick point (X Y Z), and its turn. */
+export interface BusSlot {
+    address: number;
+    at: [number, number, number];
+    rotation: number;
+}
+
 /** A part a job would place, as the feeder check has it: its feeder's id, or null with why none. */
 export interface FeederCheckPart {
     ref: string;

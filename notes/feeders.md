@@ -180,3 +180,11 @@ was not obvious, and why it is the way it is.
 - **The feeders table's place cell wraps.** With every cell on one line,
   the place pushed what a feeder has given, where the check's want shows,
   out of the side panel's width.
+- **Slot here goes by the camera once the top camera's offset is measured**
+  (`placing.top.offset`; the file's design offset does not count, as the
+  backend refuses it), else by the nozzle; the tooltip says which, and the
+  other way is under the row, locked with its reason while it cannot act.
+  Whether a slot has a place is read from the file now, not from the
+  scan's answer: a slot taken since the scan would otherwise still ask
+  for Slot here and offer no Camera over slot. The page no longer writes a
+  slot's text (`withSlot` went): the backend is the slots' one writer.

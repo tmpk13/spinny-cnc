@@ -15,17 +15,24 @@
 //
 // With a [bus] in the file, a scan lists the feeders that answer, a row
 // each by address: the row opens in place on what is done to that address
-// now and then (its slot's place taken again, the address written into the
-// file's feeder), and shows one button, the one the row wants: Add feeder
-// for an id no feeder of the file has, Slot here for a slot with no place.
-// Add feeder opens its fields in place, under the row it was pressed on,
-// and writes a [[feeder]] at the end of the machine file.
+// now and then (its slot's place taken again or the other way, the top
+// camera taken over it, the address written into the file's feeder), and
+// shows one button, the one the row wants: Add feeder for an id no feeder
+// of the file has, Slot here for a slot with no place. Add feeder opens
+// its fields in place, under the row it was pressed on, and writes a
+// [[feeder]] at the end of the machine file.
+//
+// Slot here takes the slot's place by the top camera once its offset from
+// the nozzle is measured (the picture's center on the pick point, the
+// height from the other slots), else by the nozzle lowered onto the pick
+// point; the backend writes it. The top camera looks before anything is
+// lowered near the feeders, which is why it is the first way.
 
 import { askConfirm } from "../confirm.ts";
 import { button, el, labeled, lockFor, numberField, replace, setLocked } from "../dom.ts";
 import { formatFixed, parseNumber } from "../format.ts";
 import type { AppState } from "../state.ts";
-import type { BusFeeder, BusMissing, CamValue, FeederCheck, FeederCheckFeeder, FeederSummary, GcodeDocument } from "../types.ts";
+import type { BusFeeder, BusMissing, CamValue, FeederCheck, FeederCheckFeeder, FeederSummary } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
 import { currentCheck, footprintName, refreshFeederCheck, watchFeederCheck } from "./feedercheck.ts";
 
@@ -141,34 +148,19 @@ export function draftValues(draft: FeederDraft): Record<string, CamValue> {
     return { id: draft.id, ...parts, bus_id: draft.busId ?? "", advance: draft.advance ?? 4 };
 }
 
-/** The machine file's text with a [[slot]] for an address at a place: the one there changed, else a new one at the end. */
-export function withSlot(text: string, doc: GcodeDocument, address: number, at: [number, number, number]): string {
-    const place = `at = [${at.map((value) => formatFixed(value, 3)).join(", ")}]`;
-    const index = (doc.slots ?? []).findIndex((slot) => slot.address === address);
-    if (index < 0) {
-        return `${text.replace(/\n+$/, "")}\n\n[[slot]]\naddress = ${address}\n${place}\n`;
-    }
-    // The index-th [[slot]] table's at line.
-    const lines = text.split("\n");
-    let seen = -1;
-    let inside = false;
-    for (let at_ = 0; at_ < lines.length; at_++) {
-        const line = lines[at_]!.trim();
-        if (/^\[\[slot\]\]/.test(line)) {
-            seen += 1;
-            inside = seen === index;
-            continue;
-        }
-        if (/^\[/.test(line)) {
-            inside = false;
-            continue;
-        }
-        if (inside && /^at\s*=/.test(line)) {
-            lines[at_] = place;
-            return lines.join("\n");
-        }
-    }
-    return text;
+/** How a slot's place is taken: the top camera's picture center on its pick point, or the nozzle on it. */
+export type SlotWay = "camera" | "nozzle";
+
+/** The first way a slot's place is taken: by the camera once the top camera's offset is measured (the file's design offset does not count), else by the nozzle. */
+export function slotWay(state: AppState): SlotWay {
+    return (state.placing?.top?.offset ?? null) !== null ? "camera" : "nozzle";
+}
+
+/** What taking a slot's place a way does, for its button's tooltip. */
+export function slotTip(address: number, way: SlotWay): string {
+    return way === "camera"
+        ? `take address ${address}'s slot place where the top camera's picture center is, by its measured offset, at the other slots' height`
+        : `take address ${address}'s slot place from where the nozzle is now`;
 }
 
 /** Which keys were held with a press on a list's row: Shift picks a run of rows, Ctrl (or Cmd) adds or drops one. */
@@ -246,7 +238,7 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
     let form: { key: string; node: HTMLElement } | null = null;
     // The buttons of the rows that send the machine something, locked with
     // the machine's state.
-    let rowButtons: HTMLButtonElement[] = [];
+    let rowButtons: { press: HTMLButtonElement; camera: boolean }[] = [];
 
     function setPicked(next: Set<string>, nextAnchor: string | null): void {
         picked = next;
@@ -310,30 +302,20 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
         }
     }
 
-    async function slotHere(address: number): Promise<void> {
-        const state = ctx.store.get();
-        const doc = state.placing?.document ?? null;
-        const id = state.placing?.machine;
-        if (!doc || !id) {
+    /** A slot's place taken where the head is, by the camera or the nozzle, once the operator says the head is on its pick point; with `find` the camera finds the part there first. */
+    async function takeSlot(address: number, by: SlotWay, find = false): Promise<void> {
+        const question = find
+            ? `Is the top camera's picture over the pick window of the feeder at address ${address}? It finds the part there, and its center is the slot's place.`
+            : by === "camera"
+                ? `Is the top camera's picture centered on the point the feeder at address ${address} presents its part at? Its slot's place is taken from there, at the other slots' height.`
+                : `Is the nozzle over the point the feeder at address ${address} presents its part at? Its slot's place is taken from where the head is.`;
+        if (!(await askConfirm(question, "Take it"))) {
             return;
         }
-        if (!(await askConfirm(`Is the nozzle over the point the feeder at address ${address} presents its part at? Its slot's place is taken from where the head is.`, "Take it"))) {
-            return;
-        }
-        // The head's place read now, the readout's joints: r is X, z is Y, h is Z.
-        if ((await ctx.call(ctx.api.realtime("status").then(() => true))) !== true) {
-            return;
-        }
-        const snapshot = await ctx.call(ctx.api.state());
-        const joint = snapshot?.machine?.joint;
-        const file = await ctx.call(ctx.api.machineFile(id));
-        if (!snapshot || !joint || !file) {
-            return;
-        }
-        ctx.store.set({ snapshot });
-        const text = withSlot(file.text, doc, address, [joint.r, joint.z, joint.h ?? 0]);
-        if (await ctx.call(ctx.api.saveMachineFile(id, text))) {
-            await ctx.refreshPlacing();
+        const answer = await ctx.call(ctx.api.pnpBusSlot({ address, by, ...(find ? { find: true } : {}) }));
+        if (answer) {
+            const { slot: _slot, ...state } = answer;
+            ctx.store.set({ placing: state });
             await ctx.refreshMachines();
         }
     }
@@ -519,7 +501,8 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
     function drawScan(state: AppState): void {
         const doc = state.placing?.document;
         const feeders = doc?.feeders ?? [];
-        const key = JSON.stringify([found, missing, feeders.map((feeder) => [feeder.id, feeder.bus_id, feeder.slot]), doc?.slots ?? []]);
+        const way = slotWay(state);
+        const key = JSON.stringify([found, missing, feeders.map((feeder) => [feeder.id, feeder.bus_id, feeder.slot, feeder.pocket]), doc?.slots ?? [], way]);
         if (key === scanKey) {
             return;
         }
@@ -530,15 +513,35 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
         replace(scanList, ...found.map((entry) => {
             const index = feeders.findIndex((feeder) => feeder.bus_id === entry.id);
             const feeder = index >= 0 ? feeders[index]! : null;
+            // Whether the address's slot has a place in the file now: a slot
+            // taken since the scan counts.
+            const placed = (doc?.slots ?? []).some((slot) => slot.address === entry.address);
             // What is done to the address now and then, under the row.
             const more: HTMLElement[] = [];
-            if (feeder && feeder.slot !== entry.address && entry.slot) {
+            if (feeder && feeder.slot !== entry.address && placed) {
                 more.push(button(`Keep slot ${entry.address}`, () => keepSlot(index, entry.address), "btn btn-quiet btn-small",
                     `write address ${entry.address} into feeder ${feeder.id}'s slot in the machine file`));
             }
-            const slot = button(entry.slot ? "Slot here again" : "Slot here", () => slotHere(entry.address), entry.slot ? "btn btn-quiet btn-small" : "btn btn-small",
-                `take address ${entry.address}'s slot place from where the nozzle is now`);
-            rowButtons.push(slot);
+            // Slot here takes the place the first way there is; the other way,
+            // the part found first, and the camera over the place sit under the row.
+            const other: SlotWay = way === "camera" ? "nozzle" : "camera";
+            const slot = button(placed ? "Slot here again" : "Slot here", () => takeSlot(entry.address, way), placed ? "btn btn-quiet btn-small" : "btn btn-small",
+                slotTip(entry.address, way));
+            const otherWay = button(`Slot by ${other}`, () => takeSlot(entry.address, other), "btn btn-quiet btn-small", slotTip(entry.address, other));
+            rowButtons.push({ press: slot, camera: way === "camera" }, { press: otherWay, camera: other === "camera" });
+            more.push(otherWay);
+            if (way === "camera" && feeder?.pocket) {
+                const findPart = button("Find the part, then slot", () => takeSlot(entry.address, "camera", true), "btn btn-quiet btn-small",
+                    `the top camera finds feeder ${feeder.id}'s part in the pick window and takes its center as the slot's place`);
+                rowButtons.push({ press: findPart, camera: true });
+                more.push(findPart);
+            }
+            if (placed) {
+                const over = button("Camera over slot", () => into(ctx, "placing", ctx.api.pnpBusOverSlot(entry.address)), "btn btn-quiet btn-small",
+                    `the top camera's picture center over address ${entry.address}'s slot place, at the safe height: nothing is lowered`);
+                rowButtons.push({ press: over, camera: true });
+                more.push(over);
+            }
             // The one button the row shows: Add feeder for an id no feeder
             // has, else Slot here for a slot with no place yet.
             const formKey = `bus ${entry.id}`;
@@ -547,13 +550,13 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
                 main = button("Add feeder", () => toggleForm(formKey, { group: null, busId: entry.id }), "btn btn-small feeder-add", "write a feeder of this id into the machine file");
                 main.setAttribute("aria-expanded", String(form?.key === formKey));
                 more.unshift(slot);
-            } else if (!entry.slot) {
+            } else if (!placed) {
                 main = slot;
             } else {
                 more.unshift(slot);
             }
             const fields = el("div", { class: "group-fields button-row bus-more" }, ...more);
-            const says = `${feeder ? feeder.id : `${entry.id}, not in the file`}${entry.slot ? "" : ", no slot place yet"}`;
+            const says = `${feeder ? feeder.id : `${entry.id}, not in the file`}${placed ? "" : ", no slot place yet"}`;
             const opener = el("button", { type: "button", class: "group-open", title: "what else is done to this address: show or hide it" },
                 el("span", { class: "group-name" }, `address ${entry.address}`),
                 el("span", { class: "muted group-says" }, says),
@@ -588,8 +591,9 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
         const device = state.placing;
         const connected = device?.connected === true;
         const busy = device?.running === true || state.pnp?.routine?.state === "running" || device?.top?.routine?.state === "running";
-        for (const press of rowButtons) {
-            lockFor(press, [!connected, "connect the machine first"], [busy, "the machine is busy"]);
+        const measured = (device?.top?.offset ?? null) !== null;
+        for (const { press, camera } of rowButtons) {
+            lockFor(press, [!connected, "connect the machine first"], [busy, "the machine is busy"], [camera && !measured, "measure the top camera's offset first (Cameras, Top camera)"]);
         }
     }
 

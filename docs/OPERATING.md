@@ -1149,6 +1149,15 @@ Steps panel's *Place parts with a G-code machine*):
    file, its comments kept. Feeders picked in the list (a press, Shift,
    Ctrl or Cmd) get a row of buttons under it: *Feed* moves each picked
    feeder on the bus once, *Count again* counts them from their first part.
+   A scanned row whose slot has no place shows *Slot here*: with the top
+   camera's offset measured it takes the place where the camera's picture
+   center is, the height from the other slots (take the first slot with
+   the nozzle), so nothing is lowered near the feeders; before that, with
+   the nozzle lowered onto the pick point. A press on the row opens the
+   rest: the other way, *Find the part, then slot* (the camera centers on
+   the part in the pick window first, for a feeder with a `pocket` shade),
+   *Camera over slot* (the head goes across at the safe height so the
+   picture's center is over the slot's place, to check it) and *Keep slot*.
 5. *Plan*, in the Placing part of the Run panel, makes the placement program from the references and the
    feeders and shows it; nothing moves (it works with the machine
    disconnected too, for the one last connected). *Run* places the
