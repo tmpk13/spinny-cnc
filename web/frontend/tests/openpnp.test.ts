@@ -408,4 +408,42 @@ describe("the import on the Config page", () => {
         configRoot.remove();
         localStorage.removeItem("spinny.machine");
     });
+
+    test("a job's references go to the board job they were matched against, though another is picked since", async () => {
+        const { mountOpenPnpImport } = await import("../src/views/openpnpimport.ts");
+        const { setup, settle, click } = await import("./harness.ts");
+        const { ctx, api, store, backend } = setup();
+        // The references are kept per G-code machine: the mock's LumenPnP.
+        store.set({ snapshot: await backend.connect("/dev/ttyACM1", "opulo-lumen-rev5") });
+        await ctx.refreshPlacing();
+        const first = await backend.uploadJob(new File(["(kicad_pcb)"], "first.kicad_pcb"), {});
+        const second = await backend.uploadJob(new File(["(kicad_pcb)"], "second.kicad_pcb"), {});
+        await ctx.refreshJobs();
+        await ctx.selectJob(first.id);
+        const parts = await api.components(first.id);
+        store.set({ components: parts });
+        const refs = parts.components.slice(0, 2).map((entry) => entry.ref);
+        const board = `<openpnp-board version="1.1" name="board"><placements>${refs.map((ref, index) =>
+            `<placement version="1.4" id="${ref}" side="Top" part-id="P" type="Placement" enabled="true"><location units="Millimeters" x="${10 * index}" y="0.0" z="0.0" rotation="0.0"/></placement>`).join("")}</placements></openpnp-board>`;
+        const root = document.createElement("section");
+        document.body.append(root);
+        mountOpenPnpImport(root, ctx);
+        const input = root.querySelector('input[aria-label="OpenPnP files"]') as HTMLInputElement;
+        Object.defineProperty(input, "files", { configurable: true, value: [new File([JOB], "board.job.xml"), new File([board], "board.board.xml")] });
+        input.dispatchEvent(new Event("change"));
+        await settle();
+        await settle();
+        expect(root.querySelector(".openpnp-item .openpnp-value")?.textContent).toContain("2 of 2 placements");
+        // Another board job picked before the press.
+        await ctx.selectJob(second.id);
+        store.set({ components: await api.components(second.id) });
+        click(root, "Keep references");
+        for (let i = 0; i < 4; i += 1) {
+            await settle();
+        }
+        const references = store.get().placing?.references ?? [];
+        expect(references.filter((entry) => entry.job === second.id)).toEqual([]);
+        expect(references.filter((entry) => entry.job === first.id).map((entry) => entry.ref).sort()).toEqual([...refs].sort());
+        root.remove();
+    });
 });

@@ -49,6 +49,9 @@ export function mountOpenPnpImport(root: HTMLElement, ctx: Ctx, made: (id: strin
     let nozzle: string | undefined;
     let items: ImportItem[] = [];
     let references: { ref: string; at: [number, number] }[] = [];
+    // The board job the references were matched against: they are kept
+    // for it, though another job is picked before the press.
+    let referencesJob: { id: string; name: string } | null = null;
     const kept = new Set<string>();
 
     files.addEventListener("change", () => void readFiles());
@@ -99,6 +102,7 @@ export function mountOpenPnpImport(root: HTMLElement, ctx: Ctx, made: (id: strin
         const fromParts = reading.parts && machine ? partItems(reading.parts.parts, machine.feeders) : [];
         items = [...found.items, ...fromJob.items, ...fromParts];
         references = fromJob.references;
+        referencesJob = parts.length > 0 && state.job ? { id: state.job.id, name: state.job.name } : null;
         if (fresh) {
             kept.clear();
             for (const item of items) {
@@ -195,7 +199,7 @@ export function mountOpenPnpImport(root: HTMLElement, ctx: Ctx, made: (id: strin
             await ctx.refreshPorts();
             await ctx.refreshPlacing();
         }
-        const job = ctx.store.get().job;
+        const job = referencesJob;
         if (kept.has("references") && references.length > 0 && job) {
             let done = 0;
             for (const reference of references) {
