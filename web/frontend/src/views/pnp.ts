@@ -657,6 +657,8 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     const partsBox = el("div", { class: "pnp-parts-box", title: "drag the lower right corner to size the list" }, table);
     const correct = el("input", { type: "checkbox", "aria-label": "Correct by the part on the nozzle" }) as HTMLInputElement;
     const correctLabel = el("label", { class: "muted" }, correct, " part center over the place");
+    // Its row goes with it: a row left standing empty keeps its space in the fold.
+    const correctRow = el("div", { class: "button-row" }, correctLabel);
     const gotoButton = button("Nozzle to Part", () => gotoPart(false), "btn btn-primary");
     gotoButton.title = "the nozzle's X and Y over the picked part, at the safe height (Travel H on this project's firmware, safe Z on a G-code machine); Z stays up";
     const cameraGotoButton = button("Camera to Part", () => gotoPart(true), "btn");
@@ -678,7 +680,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
                 el("summary", { title: "fold or unfold" }, "More: side, groups, parts left out, a board file"),
                 el("div", { class: "button-row" }, labeled("Side", sidePick, "labeled inline"), el("label", { class: "muted" }, grouped, " group"), keptOutLabel),
                 partsFilter.root,
-                el("div", { class: "button-row" }, correctLabel),
+                correctRow,
                 el("div", { class: "button-row" }, uploadButton, upload),
             ),
         ),
@@ -1251,7 +1253,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         lockFor(gotoButton, ...locks);
         lockFor(cameraGotoButton, ...locks);
         cameraGotoButton.hidden = !onDevice;
-        correctLabel.classList.toggle("hidden", onDevice);
+        correctRow.classList.toggle("hidden", onDevice);
         correct.disabled = !state.pnp?.part_offset;
         if (correct.disabled) {
             correct.checked = false;
