@@ -288,3 +288,13 @@ way keeps its layer. The page's chooser reads the same table itself
   reader makes of tests/data/dxf/*.dxf; the page test compares the twin
   within 1e-9 (lines.dxf has CRLF ends on purpose). Both agree exactly on
   the OpenSCAD and GDAL sample DXFs on this machine.
+
+## A gerber among other boards' files (2026-11-20)
+
+A gerber read from a folder holding other boards' plotted files took the
+first Edge.Cuts there and every drill file named like the board up to its
+first dash, so led-matrix-F_Cu.gtl was cut around led-driver's outline and
+drilled with its holes. A board is its file's name less the layer
+kicad-cli adds (`board.board_name`); its outline is named after it or
+after no board, its drills are <board>.drl and <board>-*.drl, or with
+none of those the drill files named after no other board in the folder.

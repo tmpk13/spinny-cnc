@@ -95,3 +95,14 @@ on the user's LumenPnP that evening.
   stop's head place, turn and the backend's look, around head (242.505,
   215.21) at Z 4. The scripts that took and graded them are beside the
   other surveys' in var/surveys/tools (nozzlewalk.py, filtergrade.py).
+
+## A file's camera place is a guess (2026-11-20)
+
+After Forget, the bottom camera's place falls back to the machine file's
+`[up_camera] position` while a scale measured before stays kept, and the
+place read as measured: a run took parts to the file's place and lowered
+them there (the stock LumenPnP file's is 180 mm off, over a tape). A place
+that is the file's is now `guessed`, a start for centering and Over
+camera, never measured. Over camera, Center nozzle and Offset by bottom
+camera still go to it and lower N1 without a look first, as designed; the
+flag would make a guard one line.

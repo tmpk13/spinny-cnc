@@ -212,3 +212,9 @@ was not obvious, and why it is the way it is.
   ignore its press, and the failing run climbed past 6 GB before it was
   killed; a green run peaks near 1 GB.
 
+## Counts and stops under a run (2026-11-20)
+
+Count again is refused (409) while a run is under way: the run's own
+count, written back after its next pick, undid it. A stop during a bus
+feeder's feed ends the run as stopped; the bus's "stopped" error was taken
+for a feeder that did not advance, and parts were listed as left out.

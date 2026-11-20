@@ -79,3 +79,16 @@ Built by an agent (todo-panels), cherry-picked.
 - gotoplan.ts takes `seesaw`; the page passes true unless the file says
   `seesaw = false`, as the backend's needs_lift; the `leave` lift lifts
   only from below on a plain Z (2026-11-14).
+
+## Holds, keys and pop-ups (2026-11-20)
+
+A held jog ends at the release, Escape, a blur, the 60 s limit, the
+panel's Cancel and any other press on the page (the big Stop's included:
+with a key held, Stop stopped the machine and the next tick moved it
+again). A piece still on its way at the release is cancelled again once
+it is answered, as the backend takes the cancel and the piece side by
+side. A held key is matched by `event.code`: its name can change during a
+hold (Shift released over the keypad). Every key pressed in an open menu
+stays there, and PageUp/PageDown in the to-do drawer and the page settings
+too (machine files bind them to Z). Escape over a pop-up only closes it;
+whether it should also stop is Q70.

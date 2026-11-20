@@ -414,3 +414,11 @@ Why it matters: the card, measured before and after a quarter turn, shows the he
 - C. Measure the card at another place on the bed first, to see whether the lean is the same across the bed.
 Applied: nothing yet, since writing it moves the places measured before it; asked on the phone (#403).
 Answer:
+
+## Q70. Should Escape stop the machine when it also closes a pop-up?
+Why it matters: Escape is the jog's stop (on a G-code machine the file's stop line, which also ends a placing run; Marlin's M410 stops without slowing and can lose steps), but with a menu, the to-do drawer, the page settings or an info drawing open it only closes that pop-up, while the tab bar's pop-up lets it through and dismiss.ts says stopping is never held back.
+- A. Keep it: Escape over a pop-up only closes the pop-up (recommended); the bar's Stop and every Stop button still reach through pop-ups, and closing a menu with Escape never ends a run.
+- B. Escape closes the pop-up and stops, as a press on Stop does: one key always stops, and a menu closed with Escape during a run ends the run.
+- C. Escape closes the pop-up and stops only while a jog or goto moves the head, not a run or a camera routine.
+Applied: A, as it was (the tab bar's pop-up still lets Escape through).
+Answer:

@@ -115,3 +115,12 @@ only for a page this server itself served.
   or change where reports go. GUIDE (the system prompt and the MCP
   instructions) says what plugins are and that only the operator turns
   one on, in the Plugins tab.
+
+## Auto looks again (2026-11-20)
+
+Auto searches with the top camera once in every run before it compares a
+place found or takes it: the backend keeps a place found until the next
+search, so after one board was placed and the next put in, Auto compared
+the old board's place with the references without a picture, and Run
+would have placed the new board where the old one lay. It searches even
+right after a Search by hand; a choice the user may correct.

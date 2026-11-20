@@ -294,3 +294,17 @@ fast-forwarded on its main, release pcbv rebuilt).
   2000: size cannot tell them apart. No speck floor from the scale: vias
   are as small as the harmful specks. Numbers in pcb-vision's
   notes/localizer.md; `mise run clutter` there redoes the survey.
+
+## A picture's capture told from the ask (2026-11-20)
+
+pcbv measures `age_ms` when it answers, near the ask; its reply can take
+long to arrive. Told from the arrival, a slow reply put a picture later
+than it was taken: a look after a move took a moving head's picture as
+settled (Find mark wrote the offset from one), the survey kept such a
+picture unmarked, and a pose or a flying scan's tile landed further along
+the head's path (2 mm per 10 ms at 200 mm/s). Every capture is now told
+from the ask. A stop's settle also wants a picture other than the last
+(by frame number): pcbv answers its newest again until the next is taken,
+and one picture read twice agreed with itself, so every stop was trusted
+from its start. Estimates made so err early only: timing tests bound them
+on one side.

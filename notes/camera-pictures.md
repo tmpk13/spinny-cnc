@@ -195,3 +195,12 @@ an agent in worktrees (spinny branch cv-crop, pcb-vision branch crop).
   tone `crop`. The bottom picture's older *Crop* select (part classes'
   circles) stays; the two words sit side by side, which the user may
   want renamed.
+
+## Drags that draw no box (2026-11-20)
+
+Shift and a drag draw a search box only on the Run area's head and top
+pictures; on the Cameras page's copy and the bottom camera's picture it
+fell through to a plain drag and moved the head (12 mm on a LumenPnP from
+a corner to the middle). There it now moves nothing and says where a box
+is drawn. With no top camera offset known, the top picture's marks are
+drawn about the head's own place, as the backend's looks take it.

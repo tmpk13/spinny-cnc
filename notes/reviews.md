@@ -262,3 +262,52 @@ cameras again; camjob.read_gcode merges runs whose S or F differ past
 `:g`; fine.Design refusals name command line flags on the page; the
 endstop bring-up check says to watch `?`, whose status line has no
 switch field.
+
+## Bug sweep of 2026-11-10 to 2026-11-20 (2026-11-20)
+
+Eleven reviewers, one area each (the placement run; the G-code link; the
+board look and posterior; the app's routes and stores; firmware, toolpath
+and carve; the camera tools; the page's PNP side, machine side, camera
+views, frame and preview), proved each bug with a test seen failing, fixed
+it and committed it on its own in the shared tree, after 1a7bb23 (one in
+spinny-firmware). The details sit in each topic's notes under the same
+date; `notes/gcode-link.md` is new. What was not obvious:
+
+- The worst were machine-facing: a home of one axis made Z trusted, so
+  Home lifted from a Z never homed; a forgotten bottom camera place read
+  as measured and a run lowered parts at the file's; a run could start
+  between a slot find's moves; a timed-out G-code line's `ok` answered
+  the next line; Auto took the last board's place for the new one; a
+  stretched board's place missed by 0.4 mm; a gerber took a neighbor
+  board's outline and drills; keys in a menu or the to-do drawer jogged,
+  a held jog's piece in flight ran after the release, and Stop did not
+  end a key-held jog; a Shift drag on a picture with no search box moved
+  the head. On the page, a lost WebGL context came back blank, and a
+  render test passed for the wrong reason (a count group 0 already met).
+- Capture times: told from a reply's arrival, a slow pcbv answer passed a
+  moving head's picture as settled (`notes/camera-looks.md`).
+- Two tests compared the operator's calibrated LumenPnP file with numbers
+  written in them and failed on the user's uncommitted calibration,
+  cancelling the other suites in `mise run test`; they read the file's own
+  values now. The page's mock moved its board with every reference taken
+  through a wrong camera offset, and a test had been loosened to pass on
+  the miss that caused.
+- Five reviewers running suites at once made a 20 ms timing bound flaky,
+  and jog panels other page test files left mounted marked Escape handled
+  for a later file's test: both tests check what matters now.
+- Choices made without the user, each its own commit: a timed-out G-code
+  line drops the link; Z trusted only after a home of X, Y and Z or all;
+  a servo's range narrowed under its angle holds it at the new end; a run
+  marks the vacuum not known; Count again refused under a run; Auto
+  searches once every run; an OpenPnP strip fed to its end is left out;
+  any press on the page ends a held jog; Escape over a pop-up still only
+  closes it (Q70).
+- Left open: the big Stop while a run is being prepared cancels no jog or
+  goto in flight; skew_apply writes X and Y as two patches (a failure
+  between leaves X applied, and applying again doubles it); whole-file
+  writes have no fsync before the rename (this laptop has no battery); a
+  flying scan on a spindle machine fails at its first row (`cut ... S0`
+  is refused there); a hypothesis the corners ruled out keeps its
+  probability in the posterior; DXF layer names compare case-sensitively
+  and INSERT arrays have no cap; `controls.ts` gives a G-code machine a
+  Center button (an empty `center`) until the settings are read.

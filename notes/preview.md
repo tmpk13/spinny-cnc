@@ -67,12 +67,16 @@ path came from, so cutting order stays near what it was; a group a move
 empties is dropped. Joint-space groups (paths drawn from joints) and model
 groups (moves) give no path away; dots and paths never share a group.
 
-A click is a press let go within 4 px; it picks the path nearest the
-pointer within 8 px (projected segments, any group), shift or ctrl toggles.
-Box selection is a toggle because a plain drag already orbits and shift
-drag pans; it takes paths wholly inside the box. The halo is drawn under
-the groups in the still layer (the selection is in the scene key), the
-caret's place over everything.
+A click is a press let go within 4 px; it picks a path the pointer is on
+or within 8 px of, measured from the path's edge as drawn (a line is as
+wide as the spot, a pad's dot as wide as the pad: from the middle alone a
+click on a wide stroke or a large dot missed, 2026-11-20), the one whose
+middle is nearest where several are; shift or ctrl toggles. Box selection
+is a toggle because a plain drag already orbits and shift drag pans; it
+takes paths wholly inside the box. The halo is drawn under the groups in
+the still layer (the selection is in the scene key), a picked pad's as a
+ring outside its dot, which hid the line halo; the caret's place over
+everything.
 
 The JSON panel formats the job with every path on one line (`formatJson`):
 82 kB for the test board, a plain textarea copes; text past 4 MB waits for

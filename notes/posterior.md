@@ -100,3 +100,12 @@ this file keeps why it is built so and the traps met.
   3.4 s but 0.07 to 0.09 mm off where the vote gave 0.025 to 0.052, also
   with the final place fitted to the looks' points (placed_estimate). Not
   understood yet; the vote stays the default.
+
+## Stretch and crops (2026-11-20)
+
+A stretched board's place is rigid about the board's middle: the shift was
+taken with the stretch but applied without it, so the place missed its
+own middle by the stretch times the middle's distance from the job's
+origin (0.4 mm for a board drawn at (150, 100) at 0.2%), and the top
+camera's references moved with it. Views taken at rest count a
+hypothesis' pads inside the board crop only, as views on the move did.
