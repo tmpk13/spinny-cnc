@@ -71,4 +71,23 @@ describe("hold to move", () => {
         expect(calls.some((call) => call.name === "jogCancel")).toBe(true);
         store.set({ snapshot: { ...connected(), connected: false } });
     });
+
+    test("the panel's Cancel ends a held key's jog, not only what is queued", async () => {
+        localStorage.setItem(SMOOTH_KEY, "1");
+        const { store, ctx, root, calls, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountJog(root, ctx);
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", code: "ArrowUp", bubbles: true }));
+        await ticks(2.5);
+        const cancel = findButton(root, "Cancel");
+        cancel.dispatchEvent(new PointerEvent("pointerdown", { button: 0, bubbles: true, pointerId: 2 }));
+        cancel.click();
+        await settle();
+        const pieces = calls.filter((call) => call.name === "jog").length;
+        await ticks(3);
+        expect(calls.filter((call) => call.name === "jog").length).toBe(pieces);
+        document.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowUp", code: "ArrowUp", bubbles: true }));
+        store.set({ snapshot: { ...connected(), connected: false } });
+    });
 });

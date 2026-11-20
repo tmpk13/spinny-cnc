@@ -246,7 +246,11 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
     const own = readSteps(readStored(STEPS_KEY));
     const feedInput = numberField({ placeholder: "default", min: 0 });
     const feed = (): number | null => parseNumber(feedInput.value);
-    const cancelButton = button("Cancel", () => cancel(), "btn btn-danger btn-small urgent");
+    // As Escape: what is queued is cancelled and a hold sends no more.
+    const cancelButton = button("Cancel", () => {
+        stopHold();
+        return cancel();
+    }, "btn btn-danger btn-small urgent");
     cancelButton.title = "stop a jog or goto (Escape)";
     // Hold to move: a button or key held moves until let go.
     let smooth = readStored(SMOOTH_KEY) === "1";
