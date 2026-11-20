@@ -121,9 +121,16 @@ export function mountTodo(bar: HTMLElement, ctx: Ctx): TodoDrawer {
         }
     }
 
+    // Counts the lists the backend answered a change with, so a read that
+    // was on its way meanwhile knows it may be the older one.
+    let kept = 0;
+
     async function load(): Promise<void> {
+        const before = kept;
         const got = await ctx.call(ctx.api.todo());
-        if (got) {
+        // A read that answers after a change was kept, with a revision older
+        // than that change's, is the list before it.
+        if (got && (kept === before || got.revision >= shown.revision)) {
             shown = got;
             draw();
         }
@@ -152,6 +159,7 @@ export function mountTodo(bar: HTMLElement, ctx: Ctx): TodoDrawer {
                 }
             }
         }
+        kept += 1;
         draw();
     }
 

@@ -168,6 +168,32 @@ describe("the to-do drawer", () => {
         expect((await backend.todo()).items).toEqual([item("a", "one", true), item("b", "from elsewhere")]);
     });
 
+    test("a list read before a change was kept does not draw over that change", async () => {
+        const { backend, drawer } = mount();
+        await settle();
+        const read = backend.todo.bind(backend);
+        let release: () => void = () => undefined;
+        backend.todo = async () => {
+            const then = await read();
+            await new Promise<void>((resolve) => {
+                release = resolve;
+            });
+            return then;
+        };
+        // Opening reads the list again; its answer comes after the line's.
+        drawer.open();
+        const input = drawer.drawer.querySelector<HTMLInputElement>(".todo-input")!;
+        type(input, "clean the lens");
+        await drawer.settled();
+        await settle();
+        expect(rowsOf(drawer.drawer)).toEqual(["- clean the lens"]);
+        release();
+        await settle();
+        expect(rowsOf(drawer.drawer)).toEqual(["- clean the lens"]);
+        expect(drawer.toggle.dataset["count"]).toBe("1");
+        backend.todo = read;
+    });
+
     test("a line the backend did not keep goes back in the box, not lost", async () => {
         const { backend, drawer } = mount();
         drawer.open();
