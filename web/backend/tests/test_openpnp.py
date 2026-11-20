@@ -528,6 +528,21 @@ def test_a_line_in_flight_ends_when_its_link_is_disconnected():
     assert link.command("M114", 2.0)[-1] == "ok"
 
 
+def test_a_line_not_answered_in_time_lets_the_link_go():
+    fake = FakeMarlin(position=(10.0, 20.0, 5.0))
+    link = connected_quietly(fake)
+    fake.hold = threading.Event()
+    with pytest.raises(GcodeLinkError, match="no answer"):
+        link.command("M400", 0.3)
+    # The machine answers the wait late, after the next line went out: that
+    # answer would be taken for the next line's, so no next line goes.
+    threading.Timer(0.3, fake.hold.set).start()
+    with pytest.raises(GcodeLinkError, match="no answer"):
+        link.command("M114", 3.0)
+    assert not link.connected and "no answer" in link.state()["lost"]
+    link.disconnect()
+
+
 def connected_quietly(fake: FakeMarlin) -> GcodeLink:
     link = GcodeLink(lambda: None, opener=lambda url, baud: fake)
     link.connect("socket://127.0.0.1:9", 115200, 0, (), 2.0)

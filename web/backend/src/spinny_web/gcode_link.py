@@ -9,8 +9,9 @@ the backend's connection to a machine whose machine file says
 taken with it so it does not answer the next line. Marlin's `busy:` keeps
 a slow line (a home, a wait for the moves) alive past its timeout. Lines
 nobody asked for (a boot banner, `echo:`, `wait`) go to the log only, and
-any left over are cleared before the next line goes out, so a late `ok`
-can never be taken for the next line's.
+any left over are cleared before the next line goes out. A line not
+answered in time lets the link go: its `ok` could come after the next
+line went out and be taken for that one's.
 
 Every line out and in goes to `on_line` for the console and the wire
 log, a poll's marked so; a link that fails on its own says why to
@@ -363,7 +364,12 @@ class GcodeLink:
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise GcodeLinkError(f"'{code}': no answer in {timeout:g} s")
+                # Its answer may still come, after the next line went out,
+                # and be taken for that one's: the link is out of step, so
+                # it is let go, and nothing more goes until a new connect.
+                reason = f"'{code}': no answer in {timeout:g} s"
+                self._lose(reason)
+                raise GcodeLinkError(reason)
             try:
                 text = replies.get(timeout=min(0.1, remaining))
             except queue.Empty:
