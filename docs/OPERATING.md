@@ -1221,6 +1221,13 @@ picture shows that task's box with the rest dimmed, a drag draws another,
 the whole picture again (MACHINES.md). While a routine runs, its picture
 shows the crop of the task it keeps to; a nozzle crop a couple of mm about
 the center keeps *Center nozzle* off a still speck beside the tip.
+The nozzle's finder (*Center nozzle*, *Measure runout*, *Look once* at the
+nozzle) takes only a round spot of 60 px or more (in a 1280x720 picture):
+a ring light's glare off a tip's chamfers shows as thin arcs and specks,
+often nearer the center than the tip, that jump as the head moves. Every
+place *Center nozzle* looks from is reached moving toward +X and +Y, so
+the machine's backlash shortens neither the step it measures the scale
+over nor the moves that center the tip.
 Every look a routine takes waits for a picture taken a quarter of a
 second after the head stopped, and *Center nozzle* refuses a measure
 whose two steps did not show as equal moves at right angles (a picture

@@ -229,4 +229,6 @@ What the reading says to build once there are pictures:
   exactly one result, and a limit on the circle fit's residual for the
   runout (OpenPnP only shows it).
 
-Q61 in QUESTIONS.md asks for the pictures this needs.
+Pictures of a tip were taken on 2026-11-19; until this is built, the
+finder keeps to round spots of a tip's size, which took the tip in all 32
+of them ([notes/nozzle-finder.md](../notes/nozzle-finder.md)).

@@ -12,10 +12,6 @@ Built in the todo-cameras worktree by an agent, cherry-picked onto main.
   since the fakes show the head at once; LaggingUpCamera in
   device_fakes.py is a fake that lags, and the test with it fails without
   the wait.
-- calibrate() now refuses X/Y steps that did not show as equal moves at
-  right angles (lengths over 1.25x apart or 15 degrees off square): before,
-  a half-lagged picture or a wrong spot gave a garbage scale that the
-  centering then chased out of the picture.
 - Board look (boardlook.py): a locked pose becomes an estimate (job frame
   to machine frame, rigid) by fitting the picture's center and four corners
   (pcbv's `corners`, board points) against machine points made with the

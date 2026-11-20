@@ -337,7 +337,7 @@ as the firmware answers them:
 - Teaching a cut-tape strip from two pockets (its `at`, `pitch`,
   `rotation` and `count` are typed by hand).
 - The bottom camera's nozzle centering, which `vision = true` rests on
-  (Q61).
+  ([notes/nozzle-finder.md](../notes/nozzle-finder.md)).
 - The hardware steps listed under Where it stands. They need the
   operator at the machine, and the hardware rule applies: ask before
   lowering a nozzle near the bed or the feeders.

@@ -192,5 +192,4 @@ the numbers are in docs/CV_HARDWARE.md. Decisions and traps:
   to Rust is over ten times faster and was needed to try rules on every
   picture.
 - Nozzle centering was not touched: no picture of a tip over the bottom
-  camera is kept. What to build once there are some is in the doc; Q61
-  asks for them.
+  camera was kept then. They were taken on 2026-11-19: notes/nozzle-finder.md.

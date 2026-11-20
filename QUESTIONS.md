@@ -354,14 +354,6 @@ Why it matters: the Machines page's Keys view listed 160 keys with their help, 1
 Applied: A, in d4dee4e.
 Answer:
 
-## Q61. May the next session on the LumenPnP lower N1 over the bottom camera to take pictures for the nozzle finder?
-Why it matters: finding the nozzle's center is bad (TODO.md) and no picture of a tip is kept, so nothing can be graded or built against; it needs about 30 pictures (three head places a few millimeters apart, six turns, two heights) at the place found on 2026-11-14 (241.98, 217.10), Z 4, where N1 was lowered once with your approval.
-- A. Yes, at that place and height, after the top camera has looked at it (recommended): the same move as before, and the look first is the rule since the tape incident.
-- B. Yes, but I lower the nozzle myself and say when: no Z move by the program.
-- C. No: the finder stays as it is.
-Applied: nothing; no Z move is made without an answer.
-Answer: yes
-
 ## Q62. Which of the jog's rows should stay folded under More?
 Why it matters: you asked for Home's items out of that fold; Home, Unlock and Motors came out, and each row shown takes height from the work while the dock is open.
 - A. Zero here, go to, set position and the feed stay under More (recommended): they are used now and then, and the open dock stays about a third of the window.
