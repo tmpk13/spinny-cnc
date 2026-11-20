@@ -645,7 +645,7 @@ head's place. A jog reads the place first and is answered once queued, so
 jogs pressed quickly add up; a goto moves only the axes it names, rises to
 `safe_z` only to go across and only from below it (a nozzle above it stays
 there; with `seesaw` it comes down to it too), puts the height last, and is
-answered once its moves have run. Go to part, Park, the camera swaps and
+answered once its moves have run. Nozzle to Part, Camera to Part, Park, the camera swaps and
 the cameras' routines go across by the same rule, and a seesaw's Z jog
 stops at `safe_z`, both nozzles up, rather than go past it. The console sends lines as typed; Stop sends `stop`. What
 needs this project's firmware (the laser, the spindle, runs, probing,

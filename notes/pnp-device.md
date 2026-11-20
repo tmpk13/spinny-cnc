@@ -219,7 +219,7 @@ Built by an agent (todo-pnp), cherry-picked; the default changed after.
   it was turned back (8143332) because a seesaw nobody marked would cross
   with its other nozzle hanging down. The shipped LumenPnP and virtual
   files say true; the OpenPnP import writes it when another nozzle's Z is
-  a ReferenceMappedAxis of the chosen nozzle's Z. Go to part reads M114
+  a ReferenceMappedAxis of the chosen nozzle's Z. Nozzle to Part and Camera to Part read M114
   first and uses goto_lines; the run's own pick and place lines are
   unchanged. Cause found on the virtual LumenPnP: "N1 up" past 31.5
   lowered N2, and every later move across brought Z back down to 31.5.

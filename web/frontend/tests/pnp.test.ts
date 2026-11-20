@@ -198,7 +198,7 @@ describe("the pnp page", () => {
         const rows = roots.parts.querySelectorAll("table.pnp-parts tbody tr");
         expect(rows.length).toBeGreaterThan(0);
         expect(roots.board.querySelectorAll(".pnp-part").length).toBe(rows.length);
-        // The parts panel keeps the job, the search and Go to part in view; which side and which parts are listed is folded.
+        // The parts panel keeps the job, the search and Nozzle to Part in view; which side and which parts are listed is folded.
         const partsMore = roots.parts.querySelector("details.pnp-parts-more") as HTMLDetailsElement;
         expect(partsMore.open).toBe(false);
         expect(partsMore.contains(roots.parts.querySelector('select[aria-label="Side"]'))).toBe(true);
@@ -236,8 +236,10 @@ describe("the pnp page", () => {
         store.set({ job: { ...moved, offset: { x: moved.offset.x + 5, y: moved.offset.y } } });
         await settle();
         expect(calls.filter((call) => call.name === "components").length).toBe(asked + 1);
-        // Go to part goes over the picked one.
-        click(roots.parts, "Go to part");
+        // Nozzle to Part goes over the picked one; Camera to Part is a G-code machine's.
+        const cameraGoto = Array.from(roots.parts.querySelectorAll("button")).find((b) => b.textContent === "Camera to Part")!;
+        expect(cameraGoto.hidden).toBe(true);
+        click(roots.parts, "Nozzle to Part");
         await settle();
         expect(backend.machine.queue.length + (backend.machine.state === "Jog" ? 1 : 0)).toBeGreaterThan(0);
     });

@@ -657,10 +657,10 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
     const partsBox = el("div", { class: "pnp-parts-box", title: "drag the lower right corner to size the list" }, table);
     const correct = el("input", { type: "checkbox", "aria-label": "Correct by the part on the nozzle" }) as HTMLInputElement;
     const correctLabel = el("label", { class: "muted" }, correct, " part center over the place");
-    const withCamera = el("input", { type: "checkbox", "aria-label": "Go with the top camera" }) as HTMLInputElement;
-    const withCameraLabel = el("label", { class: "muted", title: "the top camera's crosshair goes over the part instead of the nozzle" }, withCamera, " with the top camera");
-    const gotoButton = button("Go to part", () => gotoPart(), "btn btn-primary");
-    gotoButton.title = "X and Y over the picked part, at the safe height (Travel H on this project's firmware, safe Z on a G-code machine); Z stays up";
+    const gotoButton = button("Nozzle to Part", () => gotoPart(false), "btn btn-primary");
+    gotoButton.title = "the nozzle's X and Y over the picked part, at the safe height (Travel H on this project's firmware, safe Z on a G-code machine); Z stays up";
+    const cameraGotoButton = button("Camera to Part", () => gotoPart(true), "btn");
+    cameraGotoButton.title = "the top camera's picture center over the picked part instead of the nozzle, at the safe height; Z stays up";
     const chosenLine = el("p", { class: "muted pnp-chosen" });
     roots.parts.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Parts")),
@@ -670,7 +670,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         el("fieldset", { class: "panel-body" },
             el("div", { class: "button-row" }, labeled("Job", jobPick, "labeled inline")),
             el("div", { class: "button-row" }, filter),
-            el("div", { class: "button-row" }, gotoButton),
+            el("div", { class: "button-row" }, gotoButton, cameraGotoButton),
             chosenLine,
             partsNote,
             resizableBox(partsBox, "spinny.pnp.parts.height"),
@@ -678,7 +678,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
                 el("summary", { title: "fold or unfold" }, "More: side, groups, parts left out, a board file"),
                 el("div", { class: "button-row" }, labeled("Side", sidePick, "labeled inline"), el("label", { class: "muted" }, grouped, " group"), keptOutLabel),
                 partsFilter.root,
-                el("div", { class: "button-row" }, correctLabel, withCameraLabel),
+                el("div", { class: "button-row" }, correctLabel),
                 el("div", { class: "button-row" }, uploadButton, upload),
             ),
         ),
@@ -881,7 +881,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
             partLine,
             el("p", { class: "muted hint" },
                 "Center nozzle rises to travel height, then comes down over the bottom camera to Sharp at H; step 0 keeps the scale."
-                + " With the box ticked, Go to part places the held part's center (from Look at part), not the nozzle's."),
+                + " With the box ticked, Nozzle to Part places the held part's center (from Look at part), not the nozzle's."),
         ),
     );
 
@@ -1024,7 +1024,8 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         await into(ctx, "placing", ctx.api.pnpCameraPlace({ position: [x, y] }));
     }
 
-    async function gotoPart(): Promise<void> {
+    /** The nozzle, or with `camera` the top camera's picture center, over the picked part. */
+    async function gotoPart(camera: boolean): Promise<void> {
         const state = ctx.store.get();
         const job = state.job;
         if (!job || selected === null) {
@@ -1032,7 +1033,7 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
             return;
         }
         if (gcodePlacing(state)) {
-            await ctx.call(ctx.api.pnpGoto({ job: job.id, ref: selected, camera: withCamera.checked }));
+            await ctx.call(ctx.api.pnpGoto({ job: job.id, ref: selected, camera }));
             await ctx.refreshPlacing();
             return;
         }
@@ -1235,20 +1236,22 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
             : "No part picked.";
     }
 
-    /** The goto's button and boxes, which follow the machine and the cameras. */
+    /**
+     * The gotos' buttons and box, which follow the machine and the cameras.
+     * Camera to Part is a G-code machine's (the top camera is its) and needs
+     * no measured offset: the backend goes by places the camera took itself
+     * then, and says so when the references are the nozzle's.
+     */
     function renderActions(state: AppState): void {
         const onDevice = gcodePlacing(state);
         const busy = onDevice ? state.placing?.running === true : state.pnp?.routine?.state === "running";
         const chosen = selected !== null && partsOf(state).some((part) => part.ref === selected);
         const linked = onDevice ? state.placing?.connected === true : state.snapshot.connected;
-        lockFor(gotoButton, [!linked, "connect first"], [busy, onDevice ? "the machine is placing" : "a camera routine is under way"], [!chosen, "pick a part first"]);
+        const locks: [boolean, string][] = [[!linked, "connect first"], [busy, onDevice ? "the machine is placing" : "a camera routine is under way"], [!chosen, "pick a part first"]];
+        lockFor(gotoButton, ...locks);
+        lockFor(cameraGotoButton, ...locks);
+        cameraGotoButton.hidden = !onDevice;
         correctLabel.classList.toggle("hidden", onDevice);
-        withCameraLabel.classList.toggle("hidden", !onDevice);
-        const offsetKnown = (state.placing?.top?.offset ?? null) !== null || (state.placing?.document?.top?.offset ?? null) !== null;
-        withCamera.disabled = !offsetKnown;
-        if (withCamera.disabled) {
-            withCamera.checked = false;
-        }
         correct.disabled = !state.pnp?.part_offset;
         if (correct.disabled) {
             correct.checked = false;

@@ -25,7 +25,7 @@ of them:
 | Power, speed, spot | Jobs (fields for the next import), the selected job's group table and Spot width, Laser (test beam's Power S), Plot's Operation | 4 |
 | Where the board sits | Jobs (Anchor, Offset x and y for the next import), the selected job (Offset, Move, Turn), Find board (look, corners, features), Align (marks), Board on the machine (references, fiducials), Machine view (board area) | 6 |
 | Which side is up, the finish | Jobs (Layer, Mirror), Camera (Side, Finish), Top camera (Side, Finish, Paste), Parts (Side filter) | 4 |
-| Going somewhere | Jog (board Go, joint Go, Center), Markers (Go), Parts (Go to part), Head (Park, Nozzle over camera, Nozzle to camera spot, Camera to nozzle spot), Nozzle (Nozzle over camera) | 5 |
+| Going somewhere | Jog (board Go, joint Go, Center), Markers (Go), Parts (Nozzle to Part, Camera to Part), Head (Park, Nozzle over camera, Nozzle to camera spot, Camera to nozzle spot), Nozzle (Nozzle over camera) | 5 |
 | Zero, position, homing | Jog (Set R=0 here and three more, Here is with Set position and Last known, Home), Height map (Probe here: set H 0), Top camera (Home by fiducial, Find home fiducial) | 3 |
 | Height and focus | Jog (Travel H), Height map (map, Focus offset, Focus here, Rayleigh), Run (the map's mode), Setup steps 3 to 6 | 4 |
 | Run, hold, stop | Run, Plot's Run, Placing, Console (Hold !, Resume ~, Reset) | 4 |

@@ -1075,7 +1075,7 @@ Steps panel leads through it:
    the parts it matches leave the list, the drawing and every placing run,
    and the line under it counts them, or says why an expression is refused.
 4. With a part on the nozzle, *Look at part* (Nozzle panel) reads where its center sits
-   against the nozzle's. *Go to part* (Parts panel) takes the nozzle over the picked
+   against the nozzle's. *Nozzle to Part* (Parts panel) takes the nozzle over the picked
    part's place at the travel height, or, ticked, the part's center.
 
 The routines need `$cartesian=1`; the vacuum and the nozzle's turn are not
@@ -1113,13 +1113,13 @@ Steps panel's *Place parts with a G-code machine*):
    thing to press until the machine is homed).
 3. Pick or upload the board (a `.kicad_pcb`) in the Parts panel, pick a
    part, put the nozzle over it with the Machine panel's jog (or the top camera,
-   *with the top camera* on *Go to part*), and press *Nozzle here* or
+   *Camera to Part* beside *Nozzle to Part*), and press *Nozzle here* or
    *Camera here* in the Board place panel's *By references*. The references are kept per job
    and map the whole board: one gives the shift (with *Turned deg*), two
    or more the turn too, and the panel says how far each one sits off the
    fit. A corner of the board taken with the top camera (*Corner here* or
    *Corner by edges* under *By camera*) is a reference too, listed
-   as "corner bottom left", so *Go to part* works from it at once; one
+   as "corner bottom left", so *Nozzle to Part* and *Camera to Part* work from it at once; one
    found by its edges also gives the board's turn. *Clear corners*
    forgets them. *Parts to align to*: *Choose* picks that many parts
    spread over the board (its fiducials first, then each next the part
@@ -1157,8 +1157,8 @@ and *Find home fiducial*. The Head panel on the Setup side's Cameras
 page has *Nozzle over camera* (the
 nozzle over the bottom camera at the height it is sharp at), *Nozzle to
 camera spot* and *Camera to nozzle spot* (the head moved by the top
-camera's offset), *Read vacuum*, and *Tune the machine file*. *Go to part*
-moves X and Y only: it rises to the safe height first when the nozzle is
+camera's offset), *Read vacuum*, and *Tune the machine file*. *Nozzle to Part*
+and *Camera to Part* move X and Y only: it rises to the safe height first when the nozzle is
 below it and never brings it down. The Bottom camera view and Top
 camera view panels in the Run area show the two pictures (stack them, or put them side
 by side, from the panels' menus); a drag on a picture moves the head so
@@ -1255,7 +1255,7 @@ else the file's, else none, and is read with the one in use now: when
 place moves by the difference, and nothing has to be found again (the
 look's corners and the place it found move too; its guesses start over).
 With no offset known at all the camera still finds the board and goes
-back to its parts; a plan, a run and the nozzle's *Go to part* wait for
+back to its parts (*Camera to Part*); a plan, a run and *Nozzle to Part* wait for
 *Measure offset*, and say so. *Find fiducials* needs the scale measured,
 not the offset; *Home by fiducial* still needs both. The Board panel's drawing shows where each guess
 says the camera's picture lies on the board, green once found. A

@@ -837,7 +837,7 @@ class PlacingPart:
         """The top camera's picture's center is on a corner of the job's
         board: the machine point under it is kept for that corner, the
         guesses weighed against it and a rough place made (boardlook.py),
-        and kept as one of the job's references, which Go to part, Find
+        and kept as one of the job's references, which Nozzle to Part, Camera to Part, Find
         fiducials and a plan place the board by."""
         machine = self._placing_idle()
         job = self._job(body.job)

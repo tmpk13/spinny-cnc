@@ -191,7 +191,7 @@ Applied: A, in 33001e0.
 Answer:
 
 ## Q27. Should Clear corners also forget the corners kept as references?
-Why it matters: after Clear corners, Go to part loses the place they gave.
+Why it matters: after Clear corners, Nozzle to Part and Camera to Part lose the place they gave.
 - A. Yes, a corner is forgotten everywhere; Use as board place makes references that outlast it (recommended).
 - B. No: they stay until dropped in Board on the machine.
 Applied: A, in 2109862.

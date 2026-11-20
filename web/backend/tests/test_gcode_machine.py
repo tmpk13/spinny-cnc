@@ -310,7 +310,7 @@ def test_moves_across_never_bring_a_nozzle_above_the_safe_height_down(client):
         assert action().status_code == 200
         assert not any(line.startswith("G0 Z") for line in sent(client, start)), sent(client, start)
     assert client.get("/api/state").json()["machine"]["joint"]["h"] == 12.0
-    # Below it, Go to part goes up first and stays up.
+    # Below it, Nozzle to Part goes up first and stays up.
     client.post("/api/goto", json={"kind": "joint", "h": -1.0})
     start = len(client.fake.lines)
     client.post("/api/pnp/goto", json={"job": job_id, "ref": "R1"})

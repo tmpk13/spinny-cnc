@@ -636,7 +636,7 @@ def test_the_top_camera_measures_its_offset_and_finds_the_fiducials(client):
     planned = client.post("/api/pnp/plan", json={"job": job_id, "refs": ["R1"]}).json()
     assert planned["fit"]["rotation"] == pytest.approx(TRUE_TURN, abs=0.02)
     assert state["top"]["fiducials"]["job"] == job_id
-    # Go to part follows the fiducials: the nozzle over the part's true
+    # Nozzle to Part follows the fiducials: the nozzle over the part's true
     # place, or with the camera the head one camera offset short of it, so
     # the picture's center is on the part.
     client.post("/api/pnp/goto", json={"job": job_id, "ref": "R2"})

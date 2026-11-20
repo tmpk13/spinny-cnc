@@ -213,7 +213,7 @@ describe("a G-code machine in the mock", () => {
 });
 
 describe("a corner taken with the top camera", () => {
-    test("is a reference of its own: the fit, a plan and Go to part place the board by it", async () => {
+    test("is a reference of its own: the fit, a plan and Nozzle to Part place the board by it", async () => {
         const backend = new MockBackend({ timers: false });
         const job = await backend.uploadJob(new File(["(kicad_pcb)"], "board.kicad_pcb"), {});
         await marlinRig(backend, "\n[top_camera]\noffset = [20.0, 0.0]\n");
@@ -226,7 +226,7 @@ describe("a corner taken with the top camera", () => {
         const corner = state.references.find((entry) => entry.by === "corner")!;
         expect(corner.ref).toBe("corner bottom left");
         expect(corner.at).toEqual([100, 30]);
-        // Its place in the job is the outline's corner: Go to part goes there by it.
+        // Its place in the job is the outline's corner: Nozzle to Part goes there by it.
         const shift = [100 - corner.point![0], 30 - corner.point![1]];
         await backend.pnpGoto({ job: job.id, ref: part.ref });
         const board = (await backend.state()).machine!.board;
