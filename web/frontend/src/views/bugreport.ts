@@ -107,6 +107,10 @@ export function mountBugReport(tools: HTMLElement, ctx: Ctx, options: BugReportO
         ) as HTMLDialogElement;
 
         void shot.then((taken) => {
+            // Closed meanwhile: nothing shows it, and nothing would let its address go.
+            if (!dialog.isConnected) {
+                return;
+            }
             if (taken instanceof Blob) {
                 shotUrl = typeof URL.createObjectURL === "function" ? URL.createObjectURL(taken) : null;
                 replace(shotView, shotUrl ? el("img", { class: "bug-shot-img", src: shotUrl, alt: "The screenshot" }) : el("p", { class: "muted hint" }, "Screenshot taken."));

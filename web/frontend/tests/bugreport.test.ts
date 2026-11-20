@@ -379,4 +379,34 @@ describe("the bug report dialog", () => {
         expect(store.get().toasts.at(-1)?.text).toContain("http or https");
         expect((await backend.reportSettings()).link).toBe("https://github.com/o/r/");
     });
+
+    test("a screenshot that comes after its dialog closed keeps no picture address", async () => {
+        let deliver: (blob: Blob) => void = () => undefined;
+        const { bug } = mount(() => new Promise<Blob>((resolve) => {
+            deliver = resolve;
+        }));
+        const made: string[] = [];
+        const revoked: string[] = [];
+        const create = URL.createObjectURL;
+        const revoke = URL.revokeObjectURL;
+        URL.createObjectURL = () => {
+            made.push(`blob:shot-${made.length}`);
+            return made.at(-1)!;
+        };
+        URL.revokeObjectURL = (url: string) => {
+            revoked.push(url);
+        };
+        try {
+            const dialog = bug.open();
+            dialog.close();
+            await settle();
+            deliver(new Blob(["png"], { type: "image/png" }));
+            await settle();
+            // Every address made for the picture is let go: none holds it.
+            expect(made.filter((url) => !revoked.includes(url))).toEqual([]);
+        } finally {
+            URL.createObjectURL = create;
+            URL.revokeObjectURL = revoke;
+        }
+    });
 });
