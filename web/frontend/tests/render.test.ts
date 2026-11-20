@@ -262,6 +262,24 @@ function recordingGl(): { gl: WebGL2RenderingContext; calls: GlCall[] } {
     return { gl, calls };
 }
 
+/** Each draw's vertex count and the first point of the texture bound for it (null for a texture given no points). */
+function drawnFrom(calls: GlCall[]): { count: number; first: [number, number] | null }[] {
+    let bound: unknown = null;
+    const points = new Map<unknown, Float32Array>();
+    const draws: { count: number; first: [number, number] | null }[] = [];
+    for (const call of calls) {
+        if (call.name === "bindTexture") {
+            bound = call.args[1];
+        } else if (call.name === "texImage2D" && call.args[8] instanceof Float32Array) {
+            points.set(bound, call.args[8]);
+        } else if (call.name === "drawArrays") {
+            const data = points.get(bound);
+            draws.push({ count: call.args[2] as number, first: data ? [data[0]!, data[1]!] : null });
+        }
+    }
+    return draws;
+}
+
 function paintInput(state: RenderState): PaintInput {
     const scale = pxPerMm(state.camera, state.height);
     const reach = jobReach(state.job, 0);
@@ -290,8 +308,10 @@ describe("the WebGL painter", () => {
         // (The dot between them is in the dots.) Group 2's two dots: twelve.
         expect(draws).toContain(6 * 4);
         expect(draws).toContain(6 * 2);
-        // The outline's five points.
-        expect(draws).toContain(6 * 4);
+        // The outline's five points, from the texture holding them: group
+        // 0's lines take as many vertices, so the count alone tells nothing.
+        expect(drawnFrom(calls)).toContainEqual({ count: 6 * 4, first: [-6, -6] });
+        expect(drawnFrom(calls)).toContainEqual({ count: 6 * 4, first: [0, 0] });
         expect(calls.some((call) => call.name === "drawElements")).toBe(true);
         expect(calls.some((call) => call.name === "stencilOp")).toBe(true);
         // Translucent groups go through the layer.
