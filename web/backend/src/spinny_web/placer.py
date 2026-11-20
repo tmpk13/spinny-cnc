@@ -241,6 +241,11 @@ class Placement:
                 try:
                     self._advance(ctx, feeder, block.ref)
                 except BusError as exc:
+                    # The bus gives up between its exchanges once the run is
+                    # told to stop: that is the run's stop, not a feeder
+                    # that would not advance, and no part is left out by it.
+                    if self.link.stopping:
+                        raise GcodeLinkError("stopped") from exc
                     reason = f"feeder {feeder.id} did not advance: {exc}"
                     break
             if feeder.pocket is not None:

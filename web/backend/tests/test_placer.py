@@ -1389,3 +1389,18 @@ def test_a_forgotten_bottom_camera_place_is_not_placed_by_as_measured(client):
     response = client.post("/api/pnp/run", json={"job": job_id, "refs": ["R1"]})
     wait_for(lambda: not client.get("/api/pnp/placing").json()["running"])
     assert (10.0, 80.0) not in moves(client.fake.lines[before:]), response.text
+
+
+def test_a_stop_during_a_feed_ends_the_run_stopped_with_no_part_left_out(client):
+    job_id = rig(client, profile(rest=BUS))
+    # The feed takes far longer than the test waits: the stop comes during it.
+    client.fake.bus = FakePhotonBus({3: PHOTON}, asks=100000)
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    response = client.post("/api/pnp/run", json={"job": job_id})
+    assert response.status_code == 200, response.text
+    wait_for(lambda: client.fake.bus.fed)
+    client.post("/api/pnp/run/stop")
+    wait_for(lambda: not client.get("/api/pnp/placing").json()["running"])
+    progress = client.get("/api/pnp/placing").json()["progress"]
+    assert progress["state"] == "stopped", progress
+    assert progress["failed"] == [], progress["failed"]
