@@ -254,10 +254,11 @@ export interface GuessGraph {
  * The guesses as columns of their share of the evidence, as an equalizer
  * shows its bands, with the threshold as a line across them: a press or a
  * drag on the graph moves the line (`preview` while it moves, `commit` once
- * let go). A guess the corners rule out is hatched, as tall as its share of
- * every guess's evidence, and the threshold does not apply to it.
+ * let go, `cancel` when the browser takes the press away before that). A
+ * guess the corners rule out is hatched, as tall as its share of every
+ * guess's evidence, and the threshold does not apply to it.
  */
-export function mountGuessGraph(preview: (value: number) => void, commit: (value: number) => void): GuessGraph {
+export function mountGuessGraph(preview: (value: number) => void, commit: (value: number) => void, cancel?: () => void): GuessGraph {
     graphCount += 1;
     const hatch = `find-hatch-${graphCount}`;
     const root = svg("svg", { class: "find-graph", viewBox: `0 0 ${VIEW.width} ${VIEW.height}`, role: "img", "aria-label": "the guesses' shares of the evidence and the threshold" }) as SVGSVGElement;
@@ -322,7 +323,10 @@ export function mountGuessGraph(preview: (value: number) => void, commit: (value
         commit(valueAt(event.clientY));
     });
     root.addEventListener("pointercancel", () => {
-        dragging = false;
+        if (dragging) {
+            dragging = false;
+            cancel?.();
+        }
     });
 
     function render(look: BoardLook | null, value: number): void {
@@ -439,7 +443,12 @@ export function mountFindBoard(root: HTMLElement, ctx: Ctx, options: FindBoardOp
     const slider = el("input", { type: "range", min: "0", max: "100", step: "1", class: "find-slider", "aria-label": "Threshold percent" }) as HTMLInputElement;
     slider.title = "the threshold: the least share of the evidence the most likely guess must hold to be called found";
     const sliderValue = el("output", { class: "find-slider-value" });
-    const graph = mountGuessGraph((value) => show(value), (value) => void setThreshold(value));
+    // A press the browser takes away drops the line drawn: the camera's threshold shows again.
+    const graph = mountGuessGraph((value) => show(value), (value) => void setThreshold(value), () => {
+        dragged = null;
+        render(ctx.store.get());
+        options.onChange?.();
+    });
     slider.addEventListener("input", () => show(Number(slider.value) / 100));
     slider.addEventListener("change", () => void setThreshold(Number(slider.value) / 100));
     // How the look calls the board found, and the posterior's board stretch.

@@ -52,6 +52,27 @@ describe("the guesses' graph", () => {
         expect(graph.root.querySelector(".find-empty")?.classList.contains("hidden")).toBe(false);
     });
 
+    test("a press on the graph that the browser cancels leaves the threshold the camera has, not the one pressed", async () => {
+        const { store, ctx, root, api, backend, calls } = setup();
+        await api.connect("/dev/ttyACM0");
+        await backend.applyMachine("cartesian-mill");
+        await ctx.refreshState();
+        await ctx.refreshCamera();
+        const panel = mountFindBoard(root, ctx, { page: "test-cancel", boxes: { head: () => null, top: () => null } });
+        const before = panel.threshold(store.get());
+        const svg = root.querySelector("svg.find-graph") as SVGSVGElement;
+        svg.getBoundingClientRect = () => ({ top: 0, left: 0, width: 320, height: 128, right: 320, bottom: 128, x: 0, y: 0, toJSON: () => ({}) });
+        const at = (share: number): number => 110 - share * 94;
+        svg.dispatchEvent(new PointerEvent("pointerdown", { clientY: at(0.9), button: 0, bubbles: true }));
+        expect(panel.threshold(store.get())).toBe(0.9);
+        // A touch taken over by the page's scroll: no pointerup follows.
+        svg.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true }));
+        await settle();
+        expect(calls.some((call) => call.name === "cameraSettings")).toBe(false);
+        expect(panel.threshold(store.get())).toBe(before);
+        expect(root.querySelector(".find-slider-value")?.textContent).toBe(`${Math.round(before * 100)}%`);
+    });
+
     test("the board drawing shows the most likely guess and those at or over the threshold; the corners say where they were taken", () => {
         const look: BoardLook = { job: "a1", guesses: [guess(0.4), guess(0.35), guess(0.25), guess(0, { ruled_out: true, share: 0.5 })] };
         expect(shownGuesses(look, 0.3).map((entry) => entry.probability)).toEqual([0.4, 0.35]);
