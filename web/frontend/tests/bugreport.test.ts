@@ -192,6 +192,17 @@ describe("reports and their GitHub page", () => {
         expect(reportTitle("y".repeat(100))).toHaveLength(82);
     });
 
+    test("a text too long for the issue page is cut between characters, never inside one", () => {
+        // A character outside the first 65536 is two UTF-16 units; a cut
+        // between them leaves half of one, which no address can carry.
+        const face = String.fromCodePoint(0x1f600);
+        for (const text of [face.repeat(3000), `a${face.repeat(3000)}`]) {
+            const url = issueUrl("o", "r", "t", text, [], null);
+            expect(url.length).toBeLessThanOrEqual(MAX_ISSUE_URL);
+            expect(new URL(url).searchParams.get("body")).toContain("(cut here: the whole text is in report.txt)");
+        }
+    });
+
     test("the issue page keeps the newest actions that fit, and cuts a text too long for any", () => {
         const many = Array.from({ length: 400 }, (_, n) => ({ at: "2026-11-13T12:00:00.000Z", kind: "request", method: "GET", path: `/api/jobs/${String(n).padStart(4, "0")}`, status: 200, ms: 3 }));
         const url = issueUrl("o", "r", "Run did nothing", "Run did nothing", ["Page: jobs"], many);

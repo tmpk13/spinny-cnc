@@ -111,17 +111,24 @@ export function issueUrl(owner: string, repo: string, title: string, text: strin
     if (!fits(said, kept)) {
         kept = [];
         const note = "\n\n(cut here: the whole text is in report.txt)";
+        // A cut between the two halves of a character outside the first
+        // 65536 leaves half of it, which encodeURIComponent refuses: such a
+        // cut is moved back before the character.
+        const head = (end: number): string => {
+            const code = end > 0 ? text.charCodeAt(end - 1) : 0;
+            return text.slice(0, code >= 0xd800 && code <= 0xdbff ? end - 1 : end);
+        };
         let shortest = 0;
         let longest = text.length;
         while (shortest < longest) {
             const middle = Math.floor((shortest + longest + 1) / 2);
-            if (fits(text.slice(0, middle) + note, kept)) {
+            if (fits(head(middle) + note, kept)) {
                 shortest = middle;
             } else {
                 longest = middle - 1;
             }
         }
-        said = text.slice(0, shortest) + note;
+        said = head(shortest) + note;
     }
     return base + encodeURIComponent(body(said, kept));
 }
