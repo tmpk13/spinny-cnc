@@ -169,7 +169,11 @@ export function infoTip(topic: InfoTopic): HTMLSpanElement {
     };
     const escape = (event: KeyboardEvent): void => {
         if (event.key === "Escape") {
-            event.stopPropagation();
+            // A drawing that left the page with its panel's row shows
+            // nothing to close: the key goes on to the page (the jog's stop).
+            if (tip.isConnected) {
+                event.stopPropagation();
+            }
             close();
         }
     };

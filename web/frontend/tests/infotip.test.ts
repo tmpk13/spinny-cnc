@@ -36,3 +36,29 @@ test("one drawing open at a time", () => {
     first.remove();
     second.remove();
 });
+
+test("a drawing whose panel was drawn again takes no Escape from the page: the stop key still reaches the jog", () => {
+    const holder = document.createElement("div");
+    const tip = infoTip("heights");
+    holder.append(tip);
+    document.body.append(holder);
+    tip.querySelector(".info-tip-mark")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(tip.hasAttribute("data-open")).toBe(true);
+    // The panel draws its row again: the open drawing leaves the page with it.
+    holder.replaceChildren();
+    const heard: string[] = [];
+    const jog = (event: KeyboardEvent): void => {
+        if (!event.defaultPrevented) {
+            heard.push(event.key);
+        }
+    };
+    document.addEventListener("keydown", jog);
+    try {
+        document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    } finally {
+        document.removeEventListener("keydown", jog);
+        closeInfoTip();
+        holder.remove();
+    }
+    expect(heard).toEqual(["Escape"]);
+});
