@@ -46,11 +46,13 @@ test("a drawing whose panel was drawn again takes no Escape from the page: the s
     expect(tip.hasAttribute("data-open")).toBe(true);
     // The panel draws its row again: the open drawing leaves the page with it.
     holder.replaceChildren();
+    // A drawing that keeps the key stops it on its way down, so a listener
+    // on the document, where the jog's is, never hears it. Whether the key
+    // was marked handled is no sign here: jog panels other test files
+    // mounted mark it so on the same document.
     const heard: string[] = [];
     const jog = (event: KeyboardEvent): void => {
-        if (!event.defaultPrevented) {
-            heard.push(event.key);
-        }
+        heard.push(event.key);
     };
     document.addEventListener("keydown", jog);
     try {
