@@ -437,3 +437,31 @@ describe("the drawing worker's host", () => {
         }
     });
 });
+
+describe("a picked pad", () => {
+    test("is haloed round its dot as drawn, however wide the pad is", () => {
+        // Close in: group 2's second pad (2 mm2) is a dot 16 px in radius.
+        const camera: Camera = { ...topDown, distance: 20 };
+        const state = stateWith({ job: renderJob(), camera, selection: [[2, 1]] });
+        const scale = pxPerMm(camera, H);
+        const dot = Math.sqrt(2 / Math.PI) * scale;
+        expect(dot).toBeGreaterThan(15);
+        // How far out of the pad's middle the halo reaches, px: the picked
+        // lines' half width, or a ring in the selection's color.
+        let reach = 0;
+        for (const item of sceneFor(state).work) {
+            if (item.kind === "lines" && item.source.kind === "picked") {
+                reach = Math.max(reach, item.ink.width / 2);
+            } else if (item.kind === "circles") {
+                for (const circle of item.circles) {
+                    if (circle.color === DEFAULT_COLORS.select && circle.at[0] === -3 && circle.at[1] === 0) {
+                        reach = Math.max(reach, circle.radius);
+                    }
+                }
+            }
+        }
+        // A line's halo stands 3.5 px out of either side of it; a dot's
+        // out of its edge as far, or the dot over it hides it.
+        expect(reach).toBeGreaterThanOrEqual(dot + 3.5 - 1e-9);
+    });
+});

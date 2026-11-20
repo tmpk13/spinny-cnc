@@ -954,9 +954,22 @@ function workItems(work: Item[], frame: SceneFrame, job: RenderJob): void {
     }
     const spot = spotOf(job);
     const width = lineWidthPx(spot, scale, state.coarse, state.dpr);
-    // The picked paths: a halo a few px wider than the line, under it.
+    // The picked paths: a halo a few px wider than the line, under it. A
+    // pad's dot is drawn as wide as the pad, so its halo is a ring the
+    // same few px out of the dot's edge, or the dot would hide it.
     if (state.selection.length > 0) {
         work.push({ kind: "lines", source: { kind: "picked" }, ink: { color: colors.select, width: width + 7, alpha: 0.45 } });
+        const halos: Circle[] = [];
+        for (const [g, p] of state.selection) {
+            const group = job.groups[g];
+            const path = group?.paths[p];
+            if (group && path && path.length === 1) {
+                halos.push({ at: flat(path[0]!), radius: dotRadiusPx(dotRadius(group.areas?.[p], spot), scale) + 3.5, color: colors.select });
+            }
+        }
+        if (halos.length > 0) {
+            work.push({ kind: "circles", circles: halos, alpha: 0.45 });
+        }
     }
     if (speeds !== null) {
         // Every path faint in its group's color, then each move by its
