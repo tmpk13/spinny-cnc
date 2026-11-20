@@ -19,7 +19,7 @@ describe("the mock's DXF reader", () => {
     const drawings = fixture.drawings as Record<string, { unit_mm: number; layers: { name: string; paths: number[][][] }[] }>;
 
     test("reads every fixture into the paths the backend's reader does", async () => {
-        expect(Object.keys(drawings).sort()).toEqual(["blocks.dxf", "curves.dxf", "lines.dxf", "splines.dxf"]);
+        expect(Object.keys(drawings).sort()).toEqual(["blocks.dxf", "curves.dxf", "ellipses.dxf", "lines.dxf", "splines.dxf"]);
         for (const [name, expected] of Object.entries(drawings)) {
             const drawing = readDxf(await fixtureText(name), fixture.tolerance);
             expect(drawing.unitMm).toBe(expected.unit_mm);

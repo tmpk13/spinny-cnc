@@ -40,6 +40,10 @@ const MAX_STEPS = 10_000;
 const MIN_STEP = Math.PI / 4;
 /** A spline's spans are halved at most this deep while flattening. */
 const SPLINE_DEPTH = 12;
+// How far past a whole turn, radians, an ellipse's end parameter may be
+// written and still close the ellipse: 2 pi rounded up to four decimals is
+// 7.3e-6 past it.
+const FULL_TURN_SLACK = 1e-4;
 const DEFAULT_LAYER = "0";
 /** Ends nearer than this, mm, are joined (the backend's clear.JOIN_EPSILON). */
 const JOIN_EPSILON = 1e-3;
@@ -643,7 +647,14 @@ class Reader {
         }
         const t0 = entity.number(41, 0);
         const t1 = entity.number(42, 2 * Math.PI);
-        const sweep = pyMod(t1 - t0, 2 * Math.PI) || 2 * Math.PI;
+        const span = t1 - t0;
+        let sweep = pyMod(span, 2 * Math.PI);
+        // A whole turn is written as none, or as 2 pi in fewer digits than
+        // it has, which can land a hair past it (6.28318530718): a sweep
+        // that short from parameters more than half a turn apart is one.
+        if (sweep === 0 || (sweep < FULL_TURN_SLACK && Math.abs(span) > Math.PI)) {
+            sweep = 2 * Math.PI;
+        }
         // Within the tolerance of the circle of the major radius, which
         // the ellipse is that circle squeezed: chords sag no more on it.
         const n = steps(major, sweep, this.local(matrix));
