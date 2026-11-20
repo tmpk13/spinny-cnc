@@ -40,7 +40,7 @@ from .boardlook import (
     search_extra,
     search_stops,
 )
-from .feederbus import BusError, FeederBus, check_id, slot_place
+from .feederbus import BusError, Collision, FeederBus, NoAddress, check_id, slot_place
 from .findings import Target, UndoRefused
 from .gcode_link import GcodeLinkError, GcodeMover
 from .gcode_part import HOME_TIMEOUTS
@@ -1571,6 +1571,80 @@ class PlacingPart:
             else:
                 identified.append(bus_id)
         return {**self.publish_placing(), "identified": identified, "missing": missing}
+
+    def pnp_bus_program(self, address: int, feeder: str | None = None, written: Callable[[str], None] = lambda machine_id: None) -> dict:
+        """Writes a slot's bus address into its floor: the slot of the feeder
+        whose id on the bus is `feeder` (Set address), or, with none, of the
+        one feeder that answers at no address (Address a new slot: every
+        feeder that answers at an address is initialized first, so that it
+        alone answers who is not). Refused for an address no slot has (400),
+        one another feeder answers at, or one a [[slot]] of the file names
+        but the slot being renumbered (409). The file's [[slot]] for the old
+        address, and every feeder pinned to it, moves to the new one: the
+        place belongs to the slot, not to its number (`written` is told the
+        file's id then). The answer is the scan again, with the address and
+        the feeder's id."""
+        machine = self._placing_idle()
+        bus = self._bus(machine)
+        if not bus.is_slot(address):
+            raise ValueError(f"a slot's address is 1 to [bus] max_address {bus.profile.max_address}, not {address}")
+        feeder_id = check_id(feeder) if feeder is not None else None
+        named = {entry.bus_id: entry.id for entry in machine.feeders if entry.bus_id is not None}
+        old: int | None = None
+        try:
+            if feeder_id is not None:
+                try:
+                    old = bus.find(feeder_id)
+                except NoAddress as exc:
+                    old = exc.address
+                other = bus.feeder_at(address)
+            else:
+                answering = bus.scan()
+                for entry in answering:
+                    bus.initialize(entry["address"], entry["id"])
+                other = next((entry["id"] for entry in answering if entry["address"] == address), None)
+            if other is not None and other != feeder_id:
+                raise HTTPException(status_code=409, detail=f"feeder {named.get(other, other)} answers at address {address}: pick another")
+            if address != old and any(slot.address == address for slot in machine.slots):
+                raise HTTPException(status_code=409, detail=f"the machine file's [[slot]] {address} is another slot's place: pick another address")
+            if feeder_id is None:
+                try:
+                    feeder_id = bus.unready()
+                except Collision as exc:
+                    raise HTTPException(status_code=409, detail="more than one feeder has no address: leave one in") from exc
+                if feeder_id is None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="no feeder without an address answered (two or more answering at once garble each other,"
+                        " which Marlin's M485 shows as none): leave one in",
+                    )
+            bus.program(feeder_id, address)
+        except BusError as exc:
+            raise GcodeLinkError(f"the slot's address was not written: {exc}") from exc
+        name = named.get(feeder_id, feeder_id)
+        moved = old is not None and old != address and self._renumber_slot(machine, old, address)
+        if moved:
+            written(machine.id)
+        said = f"; [[slot]] {old} is [[slot]] {address} in the machine file now" if moved else ""
+        self.publish_message("info", f"feeder {name} answers at bus address {address}{said}")
+        return {**self.pnp_bus_scan(), "address": address, "id": feeder_id}
+
+    def _renumber_slot(self, machine: GcodeMachine, old: int, new: int) -> bool:
+        """The file's [[slot]] for address `old`, and every feeder pinned to
+        it by `slot`, moved to `new`; whether the file had one. Each write
+        leaves a file that reads (a pin must name a [[slot]]), so the pins
+        are lifted first and put back after."""
+        index = next((number for number, slot in enumerate(machine.slots) if slot.address == old), None)
+        if index is None:
+            return False
+        pinned = [number for number, entry in enumerate(machine.feeders) if entry.slot == old]
+        for number in pinned:
+            self.machine_store.patch(machine.id, ["feeder", number, "slot"], None)
+        self.machine_store.patch(machine.id, ["slot", index, "address"], new)
+        for number in pinned:
+            self.machine_store.patch(machine.id, ["feeder", number, "slot"], new)
+        self.machine_written(machine.id)
+        return True
 
     def pnp_boards_reset(self) -> dict:
         self.placing_machine()

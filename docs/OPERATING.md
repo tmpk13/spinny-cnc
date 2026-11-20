@@ -1332,7 +1332,11 @@ quicker), M400 waits for them, M410 stops the head where it is, M114
 reports, the ring light and the fans switch, and the vacuum sensor behind
 the I2C mux reads as a LumenPnP's: about 254 with the pump off, 251 with
 the nozzle open, 231 with a part on it. Three Photon feeders answer on
-the bus (addresses 1 to 3; the program prints their ids for `bus_id`).
+the bus (addresses 1 to 3; the program prints their ids for `bus_id`);
+`--unaddressed 1` adds one in a slot whose floor was never programmed,
+to give an address. Like a real feeder, one flashing for an identify hears
+nothing for 1.8 s, and answers from several feeders at once collide and
+read as no answer, as Marlin prints them.
 
 Connect *Virtual LumenPnP* (`machines/virtual-pnp.toml`) in the Connection panel.
 Its file gives the bottom (up) camera the device

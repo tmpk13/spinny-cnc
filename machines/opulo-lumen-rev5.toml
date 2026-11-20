@@ -237,11 +237,14 @@ feed = 4                  # with the tenths of a mm to move
 status = 6
 find = 192                # 0xC0, to every feeder with an id: answered from its address
 identify = 193            # 0xC1, to every feeder with an id: that one flashes white three times
+program_floor = 194       # 0xC2, to every feeder with an id and an address: that one writes it into its slot's floor
+unready = 195             # 0xC3, to every feeder: each one not initialized answers with its id
 ok = 0                    # the answers' codes
 wrong_id = 1
 unreachable = 2
 uninitialized = 3
 busy = 4
+fail = 5                  # a floor's write that did not take
 
 # Where the feeder at each address presents its part: put N1 over a
 # feeder's pick point and press Slot here in the Feeders panel, or let

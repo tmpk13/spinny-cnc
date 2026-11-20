@@ -17,7 +17,7 @@ from spinny_web import feederbus
 
 from spinny_laser.machines import MachineError
 from spinny_web.app import create_app
-from spinny_web.feederbus import HEADER_FIELDS, BusError, FeederBus, NoAddress, Packet, crc8, decode, slot_place
+from spinny_web.feederbus import HEADER_FIELDS, BusError, Collision, FeederBus, NoAddress, Packet, crc8, decode, slot_place
 from spinny_web.jobs import Design, Group, Job
 from spinny_web.openpnp import board_fit, plan
 from spinny_web.openpnp import parse as parse_file
@@ -29,6 +29,8 @@ def parse(text: str, machine_id: str):
 
 C100N = "0102030405060708090A0B0C"
 C1U = "AABBCCDDEEFF001122334455"
+# A feeder just put in a slot whose floor was never programmed.
+NEW = "5350494E4E59000000000101"
 
 PROFILE = f"""name = "lumen"
 [port]
@@ -124,7 +126,7 @@ def test_the_bus_and_its_feeders_read_placed_by_their_slots_or_left_to_the_run()
     c100n, c1u = device.feeders
     assert c100n.bus_id == C100N and c100n.at == pytest.approx((100.0, 401.0, 10.5)) and c100n.rotation == 90.0
     assert c1u.bus_id == C1U and c1u.at is None and c1u.slot is None
-    assert device.bus.identify == 0xC1
+    assert (device.bus.identify, device.bus.program_floor, device.bus.unready, device.bus.fail) == (0xC1, 0xC2, 0xC3, 0x05)
     fit = board_fit([((0.0, 0.0), (0.0, 0.0))], 0.0)
     program = plan(device, [part("C1", "100n", 1.0, 0.0), part("C2", "1u", 2.0, 0.0)], fit, {})
     assert [block.ref for block in program.blocks] == ["C1"]
@@ -244,6 +246,55 @@ def test_identify_flashes_the_feeder_with_the_id_and_waits_until_it_listens_agai
     slept.clear()
     bus.sleep = sleep
     assert bus.identify("00112233445566778899AABB") is None and slept == []
+
+
+def test_a_slots_floor_is_programmed_and_the_feeder_answers_from_its_new_address():
+    fake = FakePhotonBus({3: C100N}, unaddressed=[C1U])
+    bus = bus_over(fake)
+    bus.program(C1U, 5)
+    first = decode(bus.sent[0][5:], HEADER_FIELDS)  # type: ignore[attr-defined]
+    # As the plan's table has it: to the broadcast, 0xC2, the id, the address.
+    assert (first.to, first.payload) == (255, bytes([0xC2]) + bytes.fromhex(C1U) + bytes([5]))
+    (photon,) = [feeder for feeder in fake.feeders if feeder.id == C1U]
+    # Initialized there and asked its id, to confirm.
+    assert photon.floor == 5 and photon.initialized and bus.found[C1U] == 5 and 5 in bus.ready
+    # A feeder with an address is given another: it no longer answers at the old one.
+    bus.program(C100N, 7)
+    assert bus.feeder_at(7) == C100N and bus.feeder_at(3) is None and bus.found[C100N] == 7
+
+
+def test_a_floor_with_no_chip_fails_the_write_from_the_old_address():
+    fake = FakePhotonBus({}, chipless=[C1U])
+    with pytest.raises(BusError, match="the slot's floor did not take the address: no floor chip, or the write did not read back"):
+        bus_over(fake).program(C1U, 5)
+    packet = Packet(to=255, sender=0, number=9, payload=bytes([0xC2]) + bytes.fromhex(C1U) + bytes([5])).encode(HEADER_FIELDS)
+    answer = decode(fake.answer(packet).split(":", 1)[1].strip(), HEADER_FIELDS)
+    assert answer is not None and (answer.sender, answer.payload) == (255, bytes([0x05])) and fake.feeders[0].floor is None
+
+
+@pytest.mark.parametrize("address", [0, 255, 33])
+def test_a_floor_is_never_given_an_address_no_slot_has(address):
+    bus = bus_over(FakePhotonBus({}, unaddressed=[C1U]))
+    with pytest.raises(ValueError, match="a slot's address is 1 to"):
+        bus.program(C1U, address)
+    assert bus.sent == []  # type: ignore[attr-defined]
+
+
+def test_the_feeder_not_initialized_answers_alone_only_once_the_others_are():
+    fake = FakePhotonBus({3: C100N, 4: C1U}, unaddressed=[NEW])
+    bus = bus_over(fake)
+    # Asked first, the three answer at once and garble each other: Marlin's
+    # M485 drops what does not check, so it reads as no answer.
+    assert bus.unready() is None
+    for entry in bus.scan():
+        bus.initialize(entry["address"], entry["id"])
+    assert bus.unready() == NEW
+    (packet, *_) = [decode(line[5:], HEADER_FIELDS) for line in bus.sent]  # type: ignore[attr-defined]
+    assert (packet.to, packet.payload) == (255, bytes([0xC3]))
+    # A controller that prints what it got shows the garble.
+    with pytest.raises(Collision):
+        bus_over(FakePhotonBus({3: C100N}, unaddressed=[NEW], checked=False)).unready()
+    assert bus_over(FakePhotonBus({})).unready() is None
 
 
 @pytest.mark.parametrize("address", [0, 255, 33])
@@ -376,3 +427,90 @@ def test_identify_flashes_the_feeders_picked_one_after_another_and_names_the_mis
     assert client.post("/api/pnp/bus/identify", json={}).status_code == 400
     assert client.post("/api/pnp/bus/identify", json={"ids": ["12"]}).status_code == 400
     assert client.post("/api/pnp/bus/identify", json={"feeders": ["nope"]}).status_code == 404
+
+
+def floor_of(client, feeder_id: str) -> int | None:
+    return next(feeder.floor for feeder in client.fake.bus.feeders if feeder.id == feeder_id)
+
+
+def changes(client, monkeypatch) -> list[dict]:
+    """Every event the backend sends pages from now on, kept as it goes."""
+    sent: list[dict] = []
+    publish = client.backend.broadcast.publish_threadsafe
+    monkeypatch.setattr(client.backend.broadcast, "publish_threadsafe", lambda event: (sent.append(event), publish(event)))
+    return sent
+
+
+def test_set_address_programs_a_feeders_floor_and_its_slots_place_follows(client, monkeypatch):
+    connect(client, "lumen")
+    sent = changes(client, monkeypatch)
+    response = client.post("/api/pnp/bus/program", json={"address": 5, "feeder": C100N.lower()})
+    assert response.status_code == 200, response.text
+    answer = response.json()
+    assert (answer["address"], answer["id"]) == (5, C100N) and floor_of(client, C100N) == 5
+    # The scan again: c-100n at 5, its slot's place moved with it.
+    assert answer["feeders"] == [{"address": 4, "id": C1U, "feeder": "c-1u", "slot": True}, {"address": 5, "id": C100N, "feeder": "c-100n", "slot": True}]
+    machine = client.backend.machine_store.gcode("lumen")
+    assert [slot.address for slot in machine.slots] == [5, 4]
+    c100n = next(feeder for feeder in machine.feeders if feeder.id == "c-100n")
+    assert c100n.slot == 5 and c100n.at == pytest.approx((100.0, 401.0, 10.5))
+    assert "address = 5\nat = [100.0, 400.0, 10.0]" in client.backend.machine_store.text("lumen")
+    # Pages read the file again.
+    assert {"type": "changed", "what": "machines", "id": "lumen"} in sent
+
+
+def test_set_address_refuses_an_address_taken_by_a_feeder_or_a_slot_or_none_at_all(client):
+    connect(client, "lumen")
+    taken = client.post("/api/pnp/bus/program", json={"address": 4, "feeder": C100N})
+    assert taken.status_code == 409 and taken.json()["detail"] == "feeder c-1u answers at address 4: pick another"
+    client.fake.bus.remove(C1U)
+    slot = client.post("/api/pnp/bus/program", json={"address": 4, "feeder": C100N})
+    assert slot.status_code == 409 and "[[slot]] 4 is another slot's place" in slot.json()["detail"]
+    for address in (0, 33, 255):
+        assert client.post("/api/pnp/bus/program", json={"address": address, "feeder": C100N}).status_code == 400
+    assert client.post("/api/pnp/bus/program", json={"address": 5, "feeder": "12"}).status_code == 400
+    # Nothing was written.
+    assert floor_of(client, C100N) == 3 and [slot.address for slot in client.backend.machine_store.gcode("lumen").slots] == [3, 4]
+
+
+def test_address_a_new_slot_initializes_the_others_then_programs_the_one_without(client, monkeypatch):
+    client.fake.bus = FakePhotonBus({3: C100N, 4: C1U}, unaddressed=[NEW])
+    connect(client, "lumen")
+    sent = changes(client, monkeypatch)
+    response = client.post("/api/pnp/bus/program", json={"address": 6})
+    assert response.status_code == 200, response.text
+    answer = response.json()
+    assert (answer["address"], answer["id"]) == (6, NEW) and floor_of(client, NEW) == 6
+    assert [(entry["address"], entry["id"], entry["feeder"], entry["slot"]) for entry in answer["feeders"]] == [
+        (3, C100N, "c-100n", True), (4, C1U, "c-1u", True), (6, NEW, None, False)
+    ]
+    # No slot of the file moved: the new one has no place yet.
+    assert [slot.address for slot in client.backend.machine_store.gcode("lumen").slots] == [3, 4]
+    assert not [event for event in sent if event.get("type") == "changed"]
+    # An address another feeder answers at is refused before anything is written.
+    assert client.post("/api/pnp/bus/program", json={"address": 3}).json()["detail"] == "feeder c-100n answers at address 3: pick another"
+
+
+@pytest.mark.parametrize(
+    "unaddressed, checked, status, words",
+    [
+        ([], True, 409, "no feeder without an address answered"),
+        ([NEW, "5350494E4E59000000000102"], True, 409, "no feeder without an address answered (two or more answering at once garble each other"),
+        ([NEW, "5350494E4E59000000000102"], False, 409, "more than one feeder has no address: leave one in"),
+    ],
+)
+def test_address_a_new_slot_needs_exactly_one_feeder_without_an_address(client, unaddressed, checked, status, words):
+    client.fake.bus = FakePhotonBus({3: C100N}, unaddressed=unaddressed, checked=checked)
+    connect(client, "lumen")
+    response = client.post("/api/pnp/bus/program", json={"address": 6})
+    assert response.status_code == status and response.json()["detail"].startswith(words)
+    assert all(feeder.floor in (0, 3) for feeder in client.fake.bus.feeders)
+
+
+def test_a_new_slot_with_no_floor_chip_is_not_addressed(client):
+    client.fake.bus = FakePhotonBus({3: C100N}, chipless=[NEW])
+    connect(client, "lumen")
+    response = client.post("/api/pnp/bus/program", json={"address": 6})
+    assert response.status_code == 502
+    assert response.json()["detail"] == "the slot's address was not written: the slot's floor did not take the address: no floor chip, or the write did not read back"
+

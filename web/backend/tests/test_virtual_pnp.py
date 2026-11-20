@@ -197,6 +197,35 @@ def test_photon_feeders_hear_their_own_address_and_the_broadcast_and_answer_from
     assert reply == "rs485-reply: TIMEOUT" and bus.fed == [(3, 40), (0, 40)] and bus.ready == {3, 0}
 
 
+def test_photon_feeders_program_their_floors_and_say_who_is_not_initialized():
+    from spinny_web.feederbus import HEADER_FIELDS, Packet, decode
+
+    bus = virtual_pnp.photon_bus(1, 2)
+    first, blue, other = (feeder.id for feeder in bus.feeders)
+    assert [feeder.address for feeder in bus.feeders] == [1, 0, 0] and len({first, blue, other}) == 3
+
+    def ask(to: int, payload: bytes) -> str:
+        return bus.answer(Packet(to=to, sender=0, number=4, payload=payload).encode(HEADER_FIELDS))
+
+    def read(reply: str):
+        return decode(reply.split(":", 1)[1].strip(), HEADER_FIELDS)
+
+    # Every feeder not initialized answers 0xC3: three at once collide.
+    assert ask(255, bytes([0xC3])) == "rs485-reply: TIMEOUT"
+    # The floor's write: ok from the new address, which it hears from then on.
+    answer = read(ask(255, bytes([0xC2]) + bytes.fromhex(blue) + bytes([7])))
+    assert (answer.sender, answer.payload) == (7, bytes([0])) and read(ask(7, bytes([0x01]))).payload[1:] == bytes.fromhex(blue)
+    # Initialized, two stop answering 0xC3: the third answers with its id.
+    for feeder, address in ((first, 1), (blue, 7)):
+        assert read(ask(address, bytes([0x02]) + bytes.fromhex(feeder))).payload[0] == 0
+    answer = read(ask(255, bytes([0xC3])))
+    assert (answer.sender, answer.payload) == (0, bytes([0]) + bytes.fromhex(other))
+    # Two answering at once, printed as they came, do not check.
+    raw = virtual_pnp.PhotonBus({}, unaddressed=[blue, other], checked=False)
+    garbled = raw.answer(Packet(to=255, sender=0, number=5, payload=bytes([0xC3])).encode(HEADER_FIELDS))
+    assert garbled.startswith("rs485-reply: ") and decode(garbled.split(":", 1)[1].strip(), HEADER_FIELDS) is None
+
+
 # --- on a socket -------------------------------------------------------------------------------
 
 

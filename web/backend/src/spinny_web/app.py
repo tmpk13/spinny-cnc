@@ -755,6 +755,14 @@ class PnpBusIdentifyBody(BaseModel):
     ids: list[str] | None = None
 
 
+class PnpBusProgramBody(BaseModel):
+    # The bus address to write into a slot's floor, and the id on the bus of
+    # the feeder in that slot (as a scan row gives it); left out, the one
+    # feeder that answers at no address.
+    address: int
+    feeder: str | None = None
+
+
 class PnpLightBody(BaseModel):
     on: bool
 
@@ -5591,6 +5599,14 @@ def create_app(
     @app.post("/api/pnp/bus/identify")
     def pnp_bus_identify(body: PnpBusIdentifyBody):
         return guarded(lambda: backend.pnp_bus_identify(body.feeders, body.ids))
+
+    @app.post("/api/pnp/bus/program")
+    def pnp_bus_program(body: PnpBusProgramBody):
+        written: list[str] = []
+        result = guarded(lambda: backend.pnp_bus_program(body.address, body.feeder, written.append))
+        for machine_id in written:
+            changed("machines", machine_id)
+        return result
 
     @app.post("/api/pnp/feeders/reset")
     def pnp_reset_feeders(body: PnpFeederBody | None = None):

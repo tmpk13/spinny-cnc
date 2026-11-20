@@ -24,6 +24,10 @@ every feeder hears. Neither is a slot's address, nor is one past the
 profile's last: a feeder answering from one has no address, and nothing
 meant for one feeder alone (initialize, feed, status) is ever sent there,
 since a feed to the broadcast moves every feeder that is initialized.
+What goes to the broadcast works whatever a feeder's address: the find,
+identify (it flashes) and the floor's write (it is given an address),
+each with the id of the one feeder meant, and the question every feeder
+not yet initialized answers.
 """
 
 from __future__ import annotations
@@ -61,6 +65,10 @@ class NoAddress(BusError):
         self.address = address
 
 
+class Collision(BusError):
+    """An answer that came garbled: more than one feeder answered at once."""
+
+
 def crc8(data: bytes) -> int:
     """CRC-8 with the polynomial 0x07, starting at 0, as Photon checks a packet."""
     crc = 0
@@ -93,11 +101,14 @@ class BusProfile:
     status: int = 0x06
     find: int = 0xC0
     identify: int = 0xC1
+    program_floor: int = 0xC2
+    unready: int = 0xC3
     ok: int = 0x00
     wrong_id: int = 0x01
     unreachable: int = 0x02
     uninitialized: int = 0x03
     busy: int = 0x04
+    fail: int = 0x05
 
 
 @dataclass(frozen=True)
@@ -160,7 +171,14 @@ class FeederBus:
     def exchange(self, to: int, code: int, payload: bytes = b"") -> Packet | None:
         """One command and its answer, tried up to the profile's tries; None
         when no answer reads (a timeout, a garbled one, another packet's)."""
+        return self._exchange(to, code, payload)[0]
+
+    def _exchange(self, to: int, code: int, payload: bytes = b"") -> tuple[Packet | None, bool]:
+        """As `exchange`, and whether an answer came that did not read (hex
+        that does not check, not a timeout): what feeders answering at once
+        give on the wire, when the controller prints what it got."""
         pattern = re.compile(self.profile.reply)
+        garbled = False
         for _ in range(max(1, self.profile.tries)):
             if self.stopped():
                 raise BusError("stopped")
@@ -173,10 +191,13 @@ class FeederBus:
                 if found is None:
                     continue
                 named = found.groupdict().get("packet")
-                answer = decode(named if named is not None else found.group(1), self.profile.header)
-                if answer is not None and ("id" not in self.profile.header or answer.number == number):
-                    return answer
-        return None
+                hex_text = (named if named is not None else found.group(1)) or ""
+                answer = decode(hex_text, self.profile.header)
+                if answer is None:
+                    garbled = garbled or bool(hex_text.strip())
+                elif "id" not in self.profile.header or answer.number == number:
+                    return answer, garbled
+        return None, garbled
 
     def _code(self, answer: Packet) -> int:
         return answer.payload[0] if answer.payload else -1
@@ -228,6 +249,53 @@ class FeederBus:
             raise BusError(f"the feeder answered the identify with code {code}")
         self.sleep(IDENTIFY_WAIT)
         return answer.sender
+
+    def program(self, feeder_id: str, address: int) -> None:
+        """Writes `address` into the floor of the slot the feeder with this id
+        sits in, asked of every feeder at once (it works whatever the
+        feeder's address, none included). The feeder answers ok from the new
+        address once its floor reads it back, else `fail` from its old one;
+        then it is initialized there and asked its id, to confirm. A
+        ValueError for an address no slot has; BusError when the write does
+        not take."""
+        feeder_id = check_id(feeder_id)
+        if not self.is_slot(address):
+            raise ValueError(
+                f"a slot's address is 1 to [bus] max_address {self.profile.max_address}, neither the host's nor the broadcast, not {address}"
+            )
+        answer = self.exchange(self.profile.broadcast, self.profile.program_floor, bytes.fromhex(feeder_id) + bytes([address]))
+        if answer is None:
+            raise BusError(f"no feeder answered to the id {feeder_id}: is it in a slot?")
+        code = self._code(answer)
+        if code == self.profile.fail:
+            raise BusError("the slot's floor did not take the address: no floor chip, or the write did not read back")
+        if code != self.profile.ok:
+            raise BusError(f"the feeder answered the floor's write with code {code}")
+        if answer.sender != address:
+            raise BusError(f"the feeder answered the floor's write from address {answer.sender}, not {address}")
+        # What was known of its old address, and of the new one, is no more.
+        old = self.found.pop(feeder_id, None)
+        self.ready.difference_update({address} if old is None else {address, old})
+        self.found = {key: value for key, value in self.found.items() if value != address}
+        self.initialize(address, feeder_id)
+        if self.feeder_at(address) != feeder_id:
+            raise BusError(f"address {address} does not answer with feeder {feeder_id}'s id after the floor's write")
+        self.found[feeder_id] = address
+
+    def unready(self) -> str | None:
+        """The id of the one feeder not initialized yet, asked of every
+        feeder at once (each one not initialized answers): None when none
+        answers. Collision for an answer that came garbled; a controller
+        that drops an answer whose check fails (Marlin's M485 does) shows
+        feeders answering at once as none."""
+        answer, garbled = self._exchange(self.profile.broadcast, self.profile.unready)
+        if answer is None:
+            if garbled:
+                raise Collision("more than one feeder answered at once, garbling each other")
+            return None
+        if self._code(answer) != self.profile.ok or len(answer.payload) < 1 + ID_BYTES:
+            raise BusError(f"the feeder not initialized answered with code {self._code(answer)} and no id")
+        return answer.payload[1 : 1 + ID_BYTES].hex().upper()
 
     def feeder_at(self, address: int) -> str | None:
         """The id of the feeder at an address, or None for no answer."""

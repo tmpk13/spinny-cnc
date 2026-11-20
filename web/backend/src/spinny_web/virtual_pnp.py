@@ -84,6 +84,7 @@ PHOTON_OK = 0x00
 PHOTON_WRONG_ID = 0x01
 PHOTON_UNINITIALIZED = 0x03
 PHOTON_BUSY = 0x04
+PHOTON_FAIL = 0x05
 # How long a Photon feeder flashes for an identify, hearing nothing, s.
 PHOTON_FLASH = 1.8
 
@@ -146,18 +147,21 @@ class PhotonBus:
     `unaddressed` are the ids of feeders in slots whose floor was never
     programmed (address 0), `chipless` of feeders in slots with no floor
     chip (255). A feed takes `asks` status asks to finish; an identify
-    flashes for 1.8 s of `clock`.
+    flashes for 1.8 s of `clock`; a floor's write takes in a slot with a
+    chip and fails in one without.
 
     Two feeders answering at once garble each other on the wire, and
     Marlin's M485 takes only a packet whose check holds, so it prints a
-    timeout then."""
+    timeout then (`checked`); unchecked, as a controller that prints what
+    it got, the garbled bytes are printed."""
 
-    def __init__(self, feeders: dict[int, str], asks: int = 2, unaddressed=(), chipless=(), clock=time.monotonic) -> None:
+    def __init__(self, feeders: dict[int, str], asks: int = 2, unaddressed=(), chipless=(), clock=time.monotonic, checked: bool = True) -> None:
         self.feeders: list[Photon] = [Photon(id=feeder.upper(), floor=address) for address, feeder in feeders.items()]
         self.feeders += [Photon(id=feeder.upper(), floor=0) for feeder in unaddressed]
         self.feeders += [Photon(id=feeder.upper(), floor=None) for feeder in chipless]
         self.asks = asks
         self.clock = clock
+        self.checked = checked
         # Every feed asked: (address, tenths of a mm); every feeder that flashed, by id.
         self.fed: list[tuple[int, int]] = []
         self.identified: list[str] = []
@@ -193,9 +197,11 @@ class PhotonBus:
             if said is not None:
                 # From the address it has once it has acted.
                 answers.append(Packet(to=packet.sender, sender=feeder.address, number=packet.number, payload=said))
-        if len(answers) != 1:
+        if not answers or (len(answers) > 1 and self.checked):
             return PHOTON_TIMEOUT
-        return "rs485-reply: " + answers[0].encode(HEADER_FIELDS)
+        if len(answers) == 1:
+            return "rs485-reply: " + answers[0].encode(HEADER_FIELDS)
+        return "rs485-reply: " + garble([bytes.fromhex(answer.encode(HEADER_FIELDS)) for answer in answers])
 
     def _handle(self, feeder: Photon, code: int, body: bytes, now: float) -> bytes | None:
         """What a feeder answers a command with (its payload), or None for no answer."""
@@ -229,7 +235,32 @@ class PhotonBus:
             feeder.deaf_until = now + PHOTON_FLASH
             self.identified.append(feeder.id)
             return bytes([PHOTON_OK])
+        if code == 0xC2:
+            if not mine or len(body) <= len(own):
+                return None
+            if feeder.floor is None:
+                # No chip to write: the answer comes from where it was.
+                return bytes([PHOTON_FAIL])
+            feeder.floor = body[len(own)]
+            return bytes([PHOTON_OK])
+        if code == 0xC3:
+            return None if feeder.initialized else bytes([PHOTON_OK]) + own
         return None
+
+
+def garble(packets: list[bytes]) -> str:
+    """Packets sent at once as one garbled answer, hex: their bytes ANDed,
+    as long as the longest, the last byte changed should that still check."""
+    from .feederbus import HEADER_FIELDS, decode
+
+    size = max(len(packet) for packet in packets)
+    mixed = bytearray(0xFF for _ in range(size))
+    for packet in packets:
+        for index, byte in enumerate(packet):
+            mixed[index] &= byte
+    if decode(mixed.hex(), HEADER_FIELDS) is not None:
+        mixed[-1] ^= 0xFF
+    return mixed.hex().upper()
 
 
 @dataclass
@@ -821,6 +852,16 @@ def _board(text: str) -> tuple[str, float, float, float]:
     return (path, parts[0], parts[1], parts[2] if len(parts) == 3 else 0.0)
 
 
+def photon_bus(addressed: int, unaddressed: int) -> PhotonBus:
+    """The program's Photon feeders: `addressed` of them at addresses 1 and
+    up, then `unaddressed` in slots whose floor was never programmed. Their
+    ids spell SPINNY, then the address, or 0x100 and a count."""
+    return PhotonBus(
+        {address: f"{0x5350494E4E59000000000000 + address:024X}" for address in range(1, addressed + 1)},
+        unaddressed=[f"{0x5350494E4E59000000000100 + number:024X}" for number in range(1, unaddressed + 1)],
+    )
+
+
 def default_machine_file() -> Path:
     """virtual-pnp.toml in the machines directory of the spinny home, or,
     in a release whose backend has not made that directory yet, the copy
@@ -855,6 +896,13 @@ def main(argv: list[str] | None = None) -> int:
         help="a .kicad_pcb lying on the bed, its origin at X,Y and turned ANGLE degrees: the top camera sees its outline and fiducials; repeatable",
     )
     parser.add_argument("--feeders", type=int, default=3, help="Photon feeders on the bus, at addresses 1 and up (default: 3)")
+    parser.add_argument(
+        "--unaddressed",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Photon feeders in slots whose floor was never programmed, at no address, to try Address a new slot (default: 0)",
+    )
     parser.add_argument("--miss-every", type=int, default=0, metavar="N", help="every Nth pick finds no part (default: never)")
     parser.add_argument("--home-error", type=_point, default=(0.2, -0.15), metavar="DX,DY", help="how far off its numbers a home leaves the head on the bed, mm, for Home by fiducial to find (default: 0.2,-0.15)")
     parser.add_argument("--seed", type=int, default=1, help="the seed of the small errors a pick leaves (default: 1)")
@@ -902,7 +950,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     machine.report_angle = True
     machine.light = 0
-    machine.bus = PhotonBus({address: f"{0x5350494E4E59000000000000 + address:024X}" for address in range(1, args.feeders + 1)})
+    machine.bus = photon_bus(args.feeders, args.unaddressed)
     world.machine = machine
     try:
         server = listen(args.listen)
@@ -919,7 +967,8 @@ def main(argv: list[str] | None = None) -> int:
         if address != "off":
             print(f"  {camera.name} camera: http://{address}/snapshot", flush=True)
     for feeder in machine.bus.feeders:
-        print(f"  Photon feeder at address {feeder.address}: id {feeder.id}", flush=True)
+        where = f"at address {feeder.address}" if feeder.floor else "at no address (its slot's floor is not programmed)"
+        print(f"  Photon feeder {where}: id {feeder.id}", flush=True)
     try:
         serve(machine, server)
     except KeyboardInterrupt:
