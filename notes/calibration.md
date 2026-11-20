@@ -215,18 +215,30 @@ and pictures were kept outside the repository (a `var/surveys` folder).
   loops close within 1 to 8 um, and from one loop to the next the card
   turns only 0.001 to 0.006 degrees back and forth; the 10 to 20 um left
   at single fiducials is the machine's own repeat over 100 mm moves.
-- Fiducials, the same taped and loose: the machine's numbers give 100.27 mm per
-  100 mm of card along machine Y and 100.52 along machine X, and the two
-  axes are square to 0.01 degree with the file's skew taken out. The four
-  corners are not a parallelogram: opposite sides differ by 0.10 mm
-  (along Y) and 0.13 mm (along X), the corners lying 40 um off the best
-  affine fit, and the corner sum (P11 - P10 - P01 + P00) is 0.137 mm
-  along machine X and -0.092 mm along Y. A gantry whose two Y sides move
-  differently (the LumenPnP's Y has two motors: M503 lists a second Y
-  driver, `M906 I1 Y1000`) bends only Y, so it cannot be all of it; a
-  card burnt out of square, or a warped plate seen by a leaning camera,
-  can. Calipers on the rulers say whether the card is 100 mm; a quarter
-  turn of the card says whether the shape belongs to the card.
+- Fiducials, with the card's +X along machine +Y (taped and loose alike)
+  and then turned a quarter turn to lie along machine +X, three loops
+  each. Per 100 mm of card the machine's numbers give, card X and card Y:
+  100.265 and 100.526 before the turn, 100.444 and 100.352 after. What
+  turns with the card is the card's; what stays with the axes is the
+  machine's:
+  - The card is not a parallelogram. Its bottom side is 0.10 mm longer
+    than its top and its left side 0.11 to 0.13 mm longer than its right,
+    the same in both positions; the corner sum (P11 - P10 - P01 + P00) is
+    (-99, -134) um in card axes before the turn and (-100, -113) after.
+    So the LumenPnP's gantry does not rack (its Y has two motors, M503
+    lists `M906 I1 Y1000`, so it could have); the burner made the card so.
+    The card's Y is also 0.085 percent longer than its X, and its corner
+    is 0.037 degrees out of square.
+  - The machine's X reads 0.175 percent more than its Y for the same
+    length (1.00178 by the card's X sides, 1.00173 by its Y sides).
+  - Square: the angle between the card's axes in the machine's numbers is
+    90 + card - lean before the turn and 90 + card + lean after (a lean of
+    the Y travel toward +X shears a line along Y and not one along X), so
+    half the change, -0.0263 degrees, is the lean left with the file's
+    skew 0.0023 taken out: the machine leans 0.00184 (0.106 degrees), not
+    0.0023. Measure camera had said 0.0020 over a few millimeters.
+  - Scale: machine times card is 1.0040 on average (X 1.0048, Y 1.0031
+    if the card is true). Calipers on the rulers split the two.
 - The prediction of a fiducial from two found ones must keep a turn: a
   two-point fit (Kabsch, by SVD) leaves the second axis free and can mirror,
   which sent the head 100 mm the wrong way once (to the X end of travel at
