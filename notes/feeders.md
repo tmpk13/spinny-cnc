@@ -99,7 +99,8 @@ was not obvious, and why it is the way it is.
 - `append_table` (cam.py, beside `set_value`) refuses a null rather than
   leave its key out: TOML has no null, and a key dropped without a word
   would hide a value the page meant to set. The new table goes at the
-  file's end after one blank line, as the page's `withSlot` put a slot;
+  file's end after one blank line, as the page's own slot writer did
+  before the backend took it over;
   in TOML a `[[feeder]]` after other tables is still the array's next
   element. It checks only that the table reads back; the store's save
   reads the whole file, so a second feeder of one id or a key the table
@@ -113,7 +114,7 @@ was not obvious, and why it is the way it is.
   slots share one height, so one careful descent with the nozzle serves
   every slot after it.
 - Slots are written with 3 decimals spelled out (`100.000`), as the
-  page's `withSlot` wrote them, through a `Decimal` that `format_value`
+  page's own slot writer did, through a `Decimal` that `format_value`
   writes as spelled; a float would have come out `100.0`.
 - `MachineStore.put_slot` finds the slot's index in the text it read
   under the store's write lock, not in the parse the request began with,

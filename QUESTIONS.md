@@ -388,7 +388,7 @@ Why it matters: today the part is put back at the pick point, and the next feed 
 - A. Stop the run with the part still on the nozzle, saying to set `[motion] discard` (recommended): nothing is dropped where it cannot be found.
 - B. Put it back as now and go on: the run keeps going, and a part may end up loose.
 - C. Refuse to start a run that picks from such a feeder without a discard place: safe, but it also blocks runs where nothing would be rejected (no vacuum ranges, no vision).
-Applied: A, in the plan only (docs/FEEDERS.md item 1); not built yet.
+Applied: A, in f4ff832.
 Answer:
 
 ## Q66. Where should a slot taken with the top camera get its height?
@@ -396,7 +396,7 @@ Why it matters: the camera gives X and Y but not the pick height, and lowering t
 - A. From the slots already in the file, which on the LumenPnP share one height; the first slot is taken with the nozzle (recommended): no new key, and one careful descent.
 - B. A new `[bus] slot_z` for every slot: typed once, but a second place where a slot's height lives.
 - C. Lower the nozzle at each slot, as Slot here does now.
-Applied: A, in the plan only (docs/FEEDERS.md item 3); not built yet.
+Applied: A, in 66a3bf9.
 Answer:
 
 ## Q67. When the page changes a programmed slot's bus address, should the slot's place in the machine file move to the new address?
@@ -404,5 +404,5 @@ Why it matters: `[[slot]]` keys a place by address. The place belongs to the phy
 - A. Yes: Set address rewrites that `[[slot]]` table's `address` too (recommended), so the place stays with the slot it was measured at.
 - B. No: only the floor changes, and the place is taken again with the camera or the nozzle.
 - C. The page programs only slots with no address (OpenPnP's wizard case) and never renumbers one.
-Applied: A, in the plan only (docs/FEEDERS.md item 5c); not built yet.
+Applied: A, in d2b94c3.
 Answer:

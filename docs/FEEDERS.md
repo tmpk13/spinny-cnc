@@ -1,30 +1,34 @@
 # Feeders plan
 
-A plan, written 2026-11-19 and not built yet, for five changes that make
-the feeders usable on the LumenPnP: a pick-order bug, adding a feeder
-from the page, taking slot places with the top camera, a Feeders step
-that checks the job, and Photon's identify and floor commands. The
-decisions only the owner can make are in [QUESTIONS.md](../QUESTIONS.md)
-(Q65 to Q67). How feeders work today: [OPERATING.md](OPERATING.md)
-(Feeders, Feeders on a bus), [MACHINES.md](MACHINES.md) (the keys),
-[notes/pnp-device.md](../notes/pnp-device.md) (why).
+A plan, written 2026-11-19 and built the same day (f4ff832 to 36fac3f),
+for five changes that make the feeders usable on the LumenPnP: a
+pick-order bug, adding a feeder from the page, taking slot places with
+the top camera, a Feeders step that checks the job, and Photon's
+identify and floor commands. The options applied where only the owner
+can decide are in [QUESTIONS.md](../QUESTIONS.md) (Q65 to Q67). How
+feeders work now: [OPERATING.md](OPERATING.md) (Feeders, Feeders on a
+bus), [MACHINES.md](MACHINES.md) (the keys),
+[notes/feeders.md](../notes/feeders.md) (why, and where the build went
+its own way).
 
 ## Where it stands
 
-- The code has four kinds of feeder: strips, trays, feeders told to
-  advance by G-code lines (`feed`), and Opulo's Photon feeders on the
-  RS-485 bus (`bus_id`, with `[bus]` and `[[slot]]` in the machine file).
-  The Feeders panel scans the bus, takes a slot's place with the nozzle
-  (*Slot here*), writes a found address into a feeder (*Keep slot*),
-  feeds once and counts a feeder from its first part again.
-- None of it has run on the real machine: no `M485` line appears in any
-  log, and the LumenPnP's machine file has no `[[feeder]]` and no
-  `[[slot]]`. The bus code was written from OpenPnP's PhotonFeeder source
-  and tested against a fake feeder written from the same reading
-  (`virtual_pnp.PhotonBus`), so a misreading would pass every test.
-- The first hardware steps need no code: *Scan bus*, *Feed* one feeder,
-  then feeders and slots into the file, the vacuum's `part_on` and
-  `part_off`, and a `[motion] discard` checked with the top camera.
+- All five items are built and tested against the virtual LumenPnP and
+  the page's mock. None of it has run on the real machine yet: the bus
+  code still rests on a reading of OpenPnP's and the feeders' firmware's
+  source, and the virtual bus was written from the same reading, so a
+  misreading would pass every test.
+- Where the build differs from the text below: *Add feeder* makes bus
+  feeders only (a strip or tray needs places measured at the machine);
+  the check names no problem when a bus feeder's file `slot` differs
+  from the address the bus answered at; the page cannot bound the
+  address it offers by `max_address`, which the machine file's summary
+  does not carry; the Feeders view holds exactly 40 controls, so the next
+  control there goes under a fold.
+- The first hardware steps: *Scan bus*, *Identify* and *Feed* one
+  feeder, then feeders (*Add feeder*) and slots (*Slot here*, the first
+  with the nozzle), the vacuum's `part_on` and `part_off`, and a
+  `[motion] discard` checked with the top camera.
 
 ## Order
 

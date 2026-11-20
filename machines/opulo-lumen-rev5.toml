@@ -246,7 +246,8 @@ uninitialized = 3
 busy = 4
 fail = 5                  # a floor's write that did not take
 
-# Where the feeder at each address presents its part: put N1 over a
+# Where the feeder at each address presents its part: put the top
+# camera's picture center (once its offset is measured; else N1) over a
 # feeder's pick point and press Slot here in the Feeders panel, or let
 # Import from OpenPnP bring the slots OpenPnP kept.
 # [[slot]]
