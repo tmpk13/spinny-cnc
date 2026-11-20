@@ -343,8 +343,13 @@ class PlacingPart:
         kept = self._placing_config().get("camera")
         kept = kept if isinstance(kept, dict) else {}
         position = kept.get("position")
+        # The file's place is a guess (a stock file's missed by 180 mm on a
+        # LumenPnP): a scale kept from an earlier centering does not make
+        # it measured.
+        guessed = False
         if not (isinstance(position, list) and len(position) == 2) and machine is not None and machine.camera_position is not None:
             position = list(machine.camera_position)
+            guessed = True
         runout = kept.get("runout")
         try:
             place = CameraPlace(
@@ -354,6 +359,7 @@ class PlacingPart:
                 roll=float(kept.get("roll", 0.0)),
                 mirror=bool(kept.get("mirror", True)),
                 runout=(float(runout[0]), float(runout[1])) if isinstance(runout, list) and len(runout) == 2 else None,
+                guessed=guessed,
             )
         except (TypeError, ValueError):
             place = CameraPlace(height=machine.camera_z if machine is not None else None)

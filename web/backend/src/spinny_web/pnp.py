@@ -706,10 +706,14 @@ class CameraPlace:
     # turned to 0, mm in the machine's frame; None until measured. The
     # position above is the head's with the tip at 0 over the center.
     runout: Point | None = None
+    # The position is the machine file's, not one centering measured or
+    # one set by hand on this machine: a place to start centering from,
+    # never measured, whatever scale is kept beside it. Never kept.
+    guessed: bool = False
 
     @property
     def measured(self) -> bool:
-        return self.position is not None and self.mm_per_px > 0.0
+        return self.position is not None and self.mm_per_px > 0.0 and not self.guessed
 
     def to_dict(self) -> dict:
         return {

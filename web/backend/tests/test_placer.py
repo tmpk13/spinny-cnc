@@ -1361,3 +1361,31 @@ def test_a_pick_rejected_from_a_feeder_that_advances_goes_to_the_discard_place_a
     # The window, the discard place, the window again, the place.
     assert moves(client.fake.lines[before:]) == [(60.0, 30.0), (0.0, 0.0), (60.0, 30.0), (100.0, 50.0)]
 
+
+
+# --- what a run leaves behind ------------------------------------------------------------
+
+
+def test_a_forgotten_bottom_camera_place_is_not_placed_by_as_measured(client):
+    # The file's place for the bottom camera is a guess (a stock file's
+    # missed by 180 mm on a LumenPnP, where a tape lay): once the place
+    # centering measured is forgotten, the page says not measured, and a
+    # run must not take parts there and lower them as if it were.
+    text = profile(feeder="vision = true\nsize = [1.6, 0.8]", rest="[camera]\nz = -4\nposition = [10.0, 80.0]\n")
+    job_id = rig(client, text)
+    camera = DeviceUpCamera(client.fake, where=(150.0, 30.0), roll=-2.0, mirror=True, part=(0.1, 0.05), rect=True)
+    client.backend.pnp.client = camera
+    client.put("/api/pnp/settings", json={"part_spot": "bright"})
+    # Put over the camera by hand, then centered there.
+    client.post("/api/command", json={"line": "G0 X150.4 Y29.7"})
+    assert client.put("/api/pnp/camera", json={"here": True}).status_code == 200
+    assert client.post("/api/pnp/nozzle", json={"step": 1.0}).status_code == 200
+    assert routine_done(client)["state"] == "done"
+    assert client.get("/api/pnp/placing").json()["camera"]["mm_per_px"] > 0.0
+    assert client.put("/api/pnp/camera", json={"clear": True}).status_code == 200
+    assert client.get("/api/pnp/placing").json()["camera"]["measured"] is False
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    before = len(client.fake.lines)
+    response = client.post("/api/pnp/run", json={"job": job_id, "refs": ["R1"]})
+    wait_for(lambda: not client.get("/api/pnp/placing").json()["running"])
+    assert (10.0, 80.0) not in moves(client.fake.lines[before:]), response.text
