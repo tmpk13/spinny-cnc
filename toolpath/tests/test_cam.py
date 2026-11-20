@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import shutil
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -243,6 +244,15 @@ def test_append_table_adds_a_table_at_the_end_and_keeps_the_comments():
 def test_append_table_refuses_what_does_not_read_back(text, name, values, words):
     with pytest.raises(CamError, match=words):
         append_table(text, name, values)
+
+
+def test_a_decimal_is_written_with_the_decimals_it_was_given():
+    text = "[[slot]]\naddress = 3\nat = [1.0, 2.0, 3.0]   # the place\n"
+    changed = set_value(text, ("slot", 0, "at"), [Decimal("100.000"), Decimal("-2.500"), Decimal("0.125")])
+    assert changed == "[[slot]]\naddress = 3\nat = [100.000, -2.500, 0.125]   # the place\n"
+    assert append_table("", "slot", {"at": [Decimal("1.250")]}) == "[[slot]]\nat = [1.250]\n"
+    with pytest.raises(CamError, match="a value must be a number"):
+        set_value(text, ("slot", 0, "address"), Decimal("NaN"))
 
 
 def test_the_board_goes_through_the_mill_profile():

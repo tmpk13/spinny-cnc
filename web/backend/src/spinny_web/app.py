@@ -860,6 +860,23 @@ class PnpFeederCheckBody(BaseModel):
     refs: list[str] | None = None
 
 
+class PnpBusSlotBody(BaseModel):
+    # The feeder bus address whose [[slot]] place is taken from where the head is.
+    address: int
+    # What is on the slot's pick point: the top camera's picture center
+    # (its measured offset added, the height from the file's slots) or the
+    # nozzle's tip (X, Y and Z).
+    by: Literal["camera", "nozzle"]
+    # With the camera: it finds the part near its picture's center and
+    # centers on it first, so the slot is the part's center.
+    find: bool = False
+
+
+class PnpBusOverSlotBody(BaseModel):
+    # The feeder bus address whose [[slot]] place the top camera goes over.
+    address: int
+
+
 class PnpGotoBody(Finite):
     job: str
     ref: str
@@ -5642,6 +5659,17 @@ def create_app(
     @app.post("/api/pnp/feeders/check")
     def pnp_feeder_check(body: PnpFeederCheckBody):
         return guarded(lambda: backend.pnp_feeder_check(body.job, body.refs))
+
+    @app.post("/api/pnp/bus/slot")
+    def pnp_bus_slot(body: PnpBusSlotBody):
+        result = guarded(lambda: backend.pnp_bus_slot(body.address, body.by, body.find))
+        backend.machine_written(result["machine"])
+        changed("machines", result["machine"])
+        return result
+
+    @app.post("/api/pnp/bus/over-slot")
+    def pnp_bus_over_slot(body: PnpBusOverSlotBody):
+        return guarded(lambda: backend.pnp_bus_over_slot(body.address))
 
     @app.post("/api/pnp/runout")
     def pnp_runout():

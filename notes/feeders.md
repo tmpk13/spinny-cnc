@@ -104,3 +104,29 @@ The plan these were built from is [docs/FEEDERS.md](../docs/FEEDERS.md).
   element. It checks only that the table reads back; the store's save
   reads the whole file, so a second feeder of one id or a key the table
   does not take is refused there, with the machine parse's words.
+- A slot taken with the top camera (`POST /api/pnp/bus/slot`) adds the
+  measured offset only, never the file's as designed: the file keeps
+  plain numbers, which cannot follow a later offset the way a reference
+  does (`reference_place`), and the design offset missed on a LumenPnP.
+  The camera gives no height, so Z is the slot's own, else the mean of
+  the other slots when they lie within 0.05 mm (Q66 A): the LumenPnP's
+  slots share one height, so one careful descent with the nozzle serves
+  every slot after it.
+- Slots are written with 3 decimals spelled out (`100.000`), as the
+  page's `withSlot` wrote them, through a `Decimal` that `format_value`
+  writes as spelled; a float would have come out `100.0`.
+- `MachineStore.put_slot` finds the slot's index in the text it read
+  under the store's write lock, not in the parse the request began with,
+  so an edit by hand in between cannot put the place in another slot. The
+  answer's slot comes from the saved document, not from the store's parse
+  cache, which is keyed by the file's mtime and would hand back the old
+  parse after two writes within one timestamp tick.
+- `find` runs in the request, not on the top camera's routine thread,
+  since the answer carries the slot; it holds the move lock and builds
+  its own `GcodeMover`, as the routines do. It passes the measured offset
+  to `look_at`, so a scale not measured says so instead of "offset not
+  measured". The slot is the look's last `seen` (the head plus the offset
+  plus what the picture still showed), finer than the head plus the
+  offset by up to the centering tolerance. The shade is the pocket of the
+  feeder the bus last answered for at that address, else of the feeder
+  whose `slot` it is.

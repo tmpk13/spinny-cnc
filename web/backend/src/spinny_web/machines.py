@@ -1,5 +1,6 @@
 """Machine files for the page: the files in `machines/` listed, read,
-checked, saved, changed a value at a time and removed. The parse is
+checked, saved, changed a value at a time, given a table or a feeder bus
+slot's place, and removed. The parse is
 `spinny_laser.machines`, and for a G-code machine its own tables are read
 by `openpnp.machine_of` as well, so a file is checked whole either way;
 this is the directory around it."""
@@ -7,9 +8,10 @@ this is the directory around it."""
 from __future__ import annotations
 
 import re
+import tomllib
 
 from spinny_laser import machines as machine_files
-from spinny_laser.cam import set_value
+from spinny_laser.cam import append_table, set_value
 from spinny_laser.machines import GCODE, Machine, MachineError
 
 from .cam import NotFound
@@ -81,3 +83,27 @@ class MachineStore(TomlStore):
                 if not header.search(text):
                     text = text.rstrip("\n") + f"\n\n[{name}]\n"
             return self.save(machine_id, set_value(text, tuple(path), value))
+
+    def put_slot(self, machine_id: str, address: int, at: list) -> dict:
+        """The place of the feeder bus slot at `address` written into the
+        file, comments and all: the `at` of its [[slot]] changed when the
+        file has one for that address, else a new [[slot]] of the address
+        and place added at the end; saved once the whole file reads. The
+        slot is looked for in the text read under the write lock, so an
+        edit by hand in the meantime cannot put the place in another slot."""
+        with self._writing:
+            text = self.text(machine_id)
+            try:
+                tables = tomllib.loads(text).get("slot", [])
+            except tomllib.TOMLDecodeError as exc:
+                raise MachineError(f"{machine_id}.toml: {exc}") from exc
+            index = next(
+                (
+                    number for number, table in enumerate(tables if isinstance(tables, list) else [])
+                    if isinstance(table, dict) and type(table.get("address")) is int and table["address"] == address
+                ),
+                None,
+            )
+            if index is None:
+                return self.save(machine_id, append_table(text, "slot", {"address": address, "at": at}))
+            return self.save(machine_id, set_value(text, ("slot", index, "at"), at))

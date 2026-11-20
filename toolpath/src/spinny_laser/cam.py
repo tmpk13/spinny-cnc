@@ -16,6 +16,7 @@ import math
 import re
 import tomllib
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -1167,7 +1168,8 @@ def _value_end(rest: str) -> int:
 
 
 def format_value(value: Any) -> str:
-    """A value as TOML writes it."""
+    """A value as TOML writes it; a Decimal as it is spelled, so a number
+    keeps the decimals it was given (100.000 stays three)."""
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, int):
@@ -1176,6 +1178,10 @@ def format_value(value: Any) -> str:
         if not math.isfinite(value):
             raise CamError("a value must be a number")
         return repr(value)
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise CamError("a value must be a number")
+        return str(value)
     if isinstance(value, str):
         return json.dumps(value)
     if isinstance(value, (list, tuple)):
@@ -1328,7 +1334,7 @@ def _lookup(data: Any, path: tuple) -> Any:
 def _same(read: Any, value: Any) -> bool:
     if isinstance(value, bool) or isinstance(read, bool):
         return read is value
-    if isinstance(value, (int, float)) and isinstance(read, (int, float)):
+    if isinstance(value, (int, float, Decimal)) and isinstance(read, (int, float)):
         return float(read) == float(value) or read == value
     if isinstance(value, (list, tuple)) and isinstance(read, list):
         return len(read) == len(value) and all(_same(a, b) for a, b in zip(read, value))

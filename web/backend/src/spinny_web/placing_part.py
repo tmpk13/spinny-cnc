@@ -17,6 +17,7 @@ backend's state and publishing as theirs."""
 from __future__ import annotations
 
 from dataclasses import replace
+from decimal import Decimal
 from typing import TYPE_CHECKING, Callable
 
 from fastapi import HTTPException
@@ -45,7 +46,7 @@ from .findings import Target, UndoRefused
 from .gcode_link import GcodeLinkError, GcodeMover
 from .gcode_part import HOME_TIMEOUTS
 from .kinematics import num
-from .openpnp import GcodeMachine, Plan, board_fit, declare_line, feeder_check, goto_lines, needs_lift, plan
+from .openpnp import Feeder, GcodeMachine, Plan, board_fit, declare_line, feeder_check, goto_lines, needs_lift, plan
 from .placer import Placement, PlaceSetup, fiducial_fit
 from .pnp import CameraPlace, PnpError
 from .log import log
@@ -107,6 +108,21 @@ MIXED_NEEDS_OFFSET = (
     " put the nozzle on a mark, press Nozzle on mark, then Measure offset"
 )
 
+# A feeder bus slot's place taken with the top camera goes by its measured
+# offset alone: the file keeps plain numbers, which cannot follow a later
+# offset as a reference does, and the file's offset as designed missed on a
+# LumenPnP. Nor does the camera give a height (Q66).
+SLOT_NEEDS_OFFSET = "measure the top camera's offset first, or take the slot with the nozzle"
+OVER_SLOT_NEEDS_OFFSET = "measure the top camera's offset first: the camera goes over a slot by it"
+SLOT_NEEDS_HEIGHT = "take one slot with the nozzle first: the camera gives no height"
+# How far apart the slots' heights in the file may lie for a slot taken
+# with the camera to take theirs, mm.
+SLOT_HEIGHTS_AGREE = 0.05
+# A slot's address as the file takes one, and the decimals its place is
+# written with.
+SLOT_ADDRESSES = (1, 254)
+SLOT_DECIMALS = 3
+
 
 def reference_offset(entry: dict) -> tuple[float, float] | None:
     """The top camera's offset a reference was taken with: every reference
@@ -159,6 +175,13 @@ def take_corner(look, job_id: str, name: str, job_point: tuple[float, float], ma
 def _inside(box: tuple[float, float, float, float], point: tuple[float, float]) -> bool:
     """Whether a point lies in a box (x0, y0, x1, y1, either way round)."""
     return min(box[0], box[2]) <= point[0] <= max(box[0], box[2]) and min(box[1], box[3]) <= point[1] <= max(box[1], box[3])
+
+
+def slot_number(value: float) -> Decimal:
+    """A number of a slot's place as the file is given it: SLOT_DECIMALS
+    decimals, written out (100.000), and no negative zero."""
+    number = Decimal(f"{value:.{SLOT_DECIMALS}f}")
+    return abs(number) if number == 0 else number
 
 
 class PlacingPart:
@@ -1474,6 +1497,128 @@ class PlacingPart:
         """The machine's port is let go: where its bus answered is
         forgotten, since its feeders may move before it is connected again."""
         self._bus_seen.clear()
+
+    def pnp_bus_slot(self, address: int, by: str, find: bool = False) -> dict:
+        """Takes the place of the feeder bus slot at `address` from where the
+        head is, and writes it as that address's [[slot]] in the machine
+        file (its `at` changed, or a new slot added at the end), 3 decimals.
+
+        `by` "nozzle": the nozzle's tip is on the slot's pick point, and X,
+        Y and Z are the head's. `by` "camera": the top camera's picture
+        center is on it, so X and Y are the head's plus the camera's
+        measured offset; the height is the slot's own when the file has
+        one, else the other slots' when they agree within
+        SLOT_HEIGHTS_AGREE (Q66). With `find` the camera first finds the
+        part in the pick window, with the pocket shade of the feeder at
+        that address, and centers on it: the slot is then the part's
+        center. The look goes across at the safe height, or at the file's
+        [top_camera] z when it gives one, as every look of that camera
+        does; nothing else moves."""
+        machine = self._placing_idle()
+        if machine.bus is None:
+            raise ValueError(f"{machine.name}'s file has no [bus] table")
+        low, high = SLOT_ADDRESSES
+        if not low <= address <= high:
+            raise ValueError(f"a slot's address is {low} to {high}, not {address}")
+        if by not in ("camera", "nozzle"):
+            raise ValueError('a slot is taken by "camera" or by "nozzle"')
+        if find and by != "camera":
+            raise ValueError("find is for a slot taken with the camera")
+        if by == "nozzle":
+            here = self._here(machine)
+            if "z" not in here:
+                raise GcodeLinkError(f"'{machine.position}' answered no {machine.axes[2]}: the slot's height is not known")
+            at = (here["x"], here["y"], here["z"])
+        else:
+            offset = self.top.settings().offset
+            if offset is None:
+                raise HTTPException(status_code=409, detail=SLOT_NEEDS_OFFSET)
+            z = self._slot_height(machine, address)
+            if find:
+                x, y = self._find_in_slot(machine, address, (float(offset[0]), float(offset[1])))
+            else:
+                here = self._here(machine)
+                x, y = here["x"] + offset[0], here["y"] + offset[1]
+            at = (x, y, z)
+        saved = self.machine_store.put_slot(machine.id, address, [slot_number(value) for value in at])
+        # The slot as the file saved reads it, its rotation as it was.
+        slot = next(entry for entry in saved["document"]["gcode"]["slots"] if entry["address"] == address)
+        x, y, z = slot["at"]
+        self.publish_message("info", f"bus slot {address} taken by {by}: X {num(x)} Y {num(y)} Z {num(z)}")
+        return {**self.publish_placing(), "slot": {"address": address, "at": [x, y, z], "rotation": slot["rotation"]}}
+
+    def _slot_height(self, machine: GcodeMachine, address: int) -> float:
+        """The pick height of a slot taken with the top camera, which gives
+        none: the slot's own when the file has one for `address`, else the
+        other slots', when they agree within SLOT_HEIGHTS_AGREE (the
+        LumenPnP's slots share one height); 409 otherwise."""
+        own = next((slot for slot in machine.slots if slot.address == address), None)
+        if own is not None:
+            return own.at[2]
+        heights = [slot.at[2] for slot in machine.slots]
+        if not heights:
+            raise HTTPException(status_code=409, detail=SLOT_NEEDS_HEIGHT)
+        spread = max(heights) - min(heights)
+        if spread > SLOT_HEIGHTS_AGREE + 1e-9:
+            raise HTTPException(status_code=409, detail=f"{SLOT_NEEDS_HEIGHT} (the other slots' heights differ by {spread:.3f} mm)")
+        return sum(heights) / len(heights)
+
+    def _feeder_at(self, machine: GcodeMachine, address: int) -> Feeder | None:
+        """The file's feeder at a bus address: the one the bus last answered
+        for there since the machine connected, else the one whose file names
+        that slot; None for none."""
+        by_id = {feeder.bus_id: feeder for feeder in machine.feeders if feeder.bus_id is not None}
+        for bus_id, at in reversed(list(self._bus_seen_now(machine).items())):
+            if at == address and bus_id in by_id:
+                return by_id[bus_id]
+        return next((feeder for feeder in machine.feeders if feeder.slot == address), None)
+
+    def _find_in_slot(self, machine: GcodeMachine, address: int, offset: tuple[float, float]) -> tuple[float, float]:
+        """The part in a slot's pick window found with the top camera and
+        centered on, as a feeder's marks are found in a run: looked for
+        within the file's [top_camera] within of the picture's center, in
+        the pocket shade of the feeder at that address. The nozzle's place
+        over the part's center, from the last look; the head is left with
+        the picture's center on it."""
+        feeder = self._feeder_at(machine, address)
+        if feeder is None or feeder.pocket is None or machine.top is None:
+            raise ValueError("find needs the feeder's pocket shade")
+        top = machine.top
+        mover = GcodeMover(self.gcode, machine, aborted=self.top.aborting)
+        mover.check()
+        try:
+            with self._move_lock:
+                mover.begin()
+                head = mover.here()
+                seen = self.top.look_at(
+                    mover, (head[0] + offset[0], head[1] + offset[1]), feeder.pocket, top.within, top.z,
+                    size=feeder.size, center=True, routine="finding the part in a slot", step=f"slot {address}", offset=offset,
+                )
+        finally:
+            self._publish_gcode_state()
+        if seen is None:
+            raise PnpError(
+                f"no {feeder.pocket} part of feeder {feeder.id} within {top.within:g} mm of the top camera's picture center:"
+                " put the picture's center on the pick point"
+            )
+        return seen
+
+    def pnp_bus_over_slot(self, address: int) -> dict:
+        """The head moved so the top camera's picture center is over the
+        place of the slot at `address`, to check it without lowering
+        anything: X and Y are the slot's less the camera's measured offset,
+        and only they move, as a goto goes across (up to the safe height
+        first only from below it, or from above it on a seesaw Z)."""
+        machine = self._placing_idle()
+        slot = next((entry for entry in machine.slots if entry.address == address), None)
+        if slot is None:
+            raise HTTPException(status_code=404, detail=f"{machine.name}'s file has no [[slot]] for bus address {address}")
+        offset = self.top.settings().offset
+        if offset is None:
+            raise HTTPException(status_code=409, detail=OVER_SLOT_NEEDS_OFFSET)
+        here = self._here(machine)
+        self._head_lines(machine, goto_lines(machine, here, {"x": slot.at[0] - offset[0], "y": slot.at[1] - offset[1]}))
+        return self.publish_placing()
 
     def _bus(self, machine: GcodeMachine) -> FeederBus:
         if machine.bus is None:
