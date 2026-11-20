@@ -215,6 +215,7 @@ and pictures were kept outside the repository (a `var/surveys` folder).
   give 100.27 mm per 100 mm of card along machine Y and 100.52 along
   machine X. Opposite sides differ by about 0.1 mm, and the two lines
   along machine X are 0.054 degrees apart. A gantry whose two Y sides move
-  differently gives that pattern, and so does a card burnt as a
-  trapezoid. Calipers on the rulers say whether the card is 100 mm; a
+  differently gives that pattern, and the LumenPnP's Y has two motors
+  (M503 lists a second Y driver, `M906 I1 Y1000`). A card burnt as a
+  trapezoid gives the same pattern. Calipers on the rulers say whether the card is 100 mm; a
   quarter turn of the card says whether the shape belongs to the card.
