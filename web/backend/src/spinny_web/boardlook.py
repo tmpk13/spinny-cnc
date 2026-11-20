@@ -2837,10 +2837,17 @@ class BoardMover:
 
     def arrived(self) -> bool:
         """The head stands at the end of the row `fly` began (the machine
-        Idle there, a moment after the lines went out)."""
+        Idle there, a moment after the lines went out). A machine that
+        reset since the search began, or raised an alarm, never gets there:
+        the search's error, as a move's settle raises it."""
         if time.monotonic() - getattr(self, "_flying", 0.0) < 0.3:
             return False
-        status = self.access.link.status
+        link = self.access.link
+        if link.restarts != self._restarts:
+            raise self._error("the machine reset during the search")
+        status = link.status
+        if status is not None and status.state == "Alarm":
+            raise self._error(f"the machine raised an alarm: {status.raw}")
         if status is None or status.state != "Idle":
             return False
         head_point = self.access.head_point
