@@ -3,8 +3,8 @@
 
 Each kind is read afresh on every call so an edit by hand shows at once,
 saved whole only once its text parses (a text that does not leaves the
-file as it was), changed a value at a time with its comments kept, made
-new and removed. A kind gives its id check, its parse and its words; the
+file as it was), changed a value at a time with its comments kept, given
+a table at its end, made new and removed. A kind gives its id check, its parse and its words; the
 rest is here once.
 """
 
@@ -14,7 +14,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from spinny_laser.cam import set_value
+from spinny_laser.cam import append_table, set_value
 
 from .files import write_whole
 
@@ -138,6 +138,13 @@ class TomlStore:
         whole once it parses; `None` takes the key out."""
         with self._writing:
             return self.save(item_id, set_value(self.text(item_id), tuple(path), value))
+
+    def append(self, item_id: str, table: str, values: dict) -> dict:
+        """A `[[table]]` of `values` added at the end of the file's text,
+        everything before it kept, comments and all, then saved whole once
+        it parses."""
+        with self._writing:
+            return self.save(item_id, append_table(self.text(item_id), table, values))
 
     def create(self, item_id: str, text: str) -> dict:
         """A new file; refused when one of that id is there."""

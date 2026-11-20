@@ -724,6 +724,14 @@ class MachinePatchBody(BaseModel):
     value: Any = None
 
 
+class MachineTableBody(BaseModel):
+    # The array of tables a new table is added to ("feeder", "slot"), and
+    # its keys with their values. TOML has no null: a null is refused, so
+    # a key with no value is left out.
+    table: str
+    values: dict[str, Any]
+
+
 class PnpSwapBody(BaseModel):
     # Which of the two goes over the point the other one is over.
     to: Literal["nozzle", "camera"]
@@ -4927,6 +4935,14 @@ def create_app(
     @app.patch("/api/machines/{machine_id}")
     def machine_patch(machine_id: str, body: MachinePatchBody):
         result = guarded(lambda: backend.machine_store.patch(machine_id, body.path, body.value))
+        backend.machine_written(machine_id)
+        backend.publish_placing()
+        changed("machines", machine_id)
+        return result
+
+    @app.post("/api/machines/{machine_id}/tables")
+    def machine_table(machine_id: str, body: MachineTableBody):
+        result = guarded(lambda: backend.machine_store.append(machine_id, body.table, body.values))
         backend.machine_written(machine_id)
         backend.publish_placing()
         changed("machines", machine_id)

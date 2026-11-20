@@ -96,3 +96,11 @@ The plan these were built from is [docs/FEEDERS.md](../docs/FEEDERS.md).
   another slot, a run's advance at the file's address fails and leaves
   its parts out; the check shows where it answered and calls it no
   problem.
+- `append_table` (cam.py, beside `set_value`) refuses a null rather than
+  leave its key out: TOML has no null, and a key dropped without a word
+  would hide a value the page meant to set. The new table goes at the
+  file's end after one blank line, as the page's `withSlot` put a slot;
+  in TOML a `[[feeder]]` after other tables is still the array's next
+  element. It checks only that the table reads back; the store's save
+  reads the whole file, so a second feeder of one id or a key the table
+  does not take is refused there, with the machine parse's words.

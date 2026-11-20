@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from spinny_laser import cam, camcli, camjob, carve, post
-from spinny_laser.cam import CamError, load_all, parse, set_value
+from spinny_laser.cam import CamError, append_table, load_all, parse, set_value
 
 REPO = Path(__file__).resolve().parents[2]
 SHIPPED = REPO / "cam"
@@ -211,6 +211,38 @@ def test_set_value_adds_a_key_to_an_empty_table_and_before_the_next_header():
     assert changed.endswith('anchor = "corner"   # as drawn\n')
     changed = set_value(changed, ("description",), "x")
     assert changed.startswith('name = "a"\ndescription = "x"\n\n[post]')
+
+
+def test_append_table_adds_a_table_at_the_end_and_keeps_the_comments():
+    text = '# a machine\nname = "a"   # its name\n\n[[feeder]]\nid = "one"  # the first\nmatch = "10k"\n\n\n'
+    changed = append_table(text, "feeder", {"id": "two", "match": "1u 0402", "advance": 2, "offset": [1.0, 0.0, 0.5], "vision": True})
+    assert changed == (
+        '# a machine\nname = "a"   # its name\n\n[[feeder]]\nid = "one"  # the first\nmatch = "10k"\n\n'
+        '[[feeder]]\nid = "two"\nmatch = "1u 0402"\nadvance = 2\noffset = [1.0, 0.0, 0.5]\nvision = true\n'
+    )
+    # A text with nothing in it takes the table alone; another table goes after the last.
+    assert append_table("", "slot", {"address": 3}) == "[[slot]]\naddress = 3\n"
+    assert append_table("[[slot]]\naddress = 3", "slot", {"address": 4}).endswith("address = 3\n\n[[slot]]\naddress = 4\n")
+
+
+@pytest.mark.parametrize(
+    "text, name, values, words",
+    [
+        ("", "Feeder", {"id": "a"}, "a table's name is lower case letters, digits and _"),
+        ("", "feeder.x", {"id": "a"}, "a table's name is lower case letters, digits and _"),
+        ("", "feeder", {"bad key": 1}, "is not a key"),
+        ("", "feeder", {"slot": None}, r"\[\[feeder\]\] slot has no value, and TOML has no null: leave the key out"),
+        ("", "feeder", {"at": {"x": 1}}, r"\[\[feeder\]\] at: cannot write a value of type dict"),
+        ("", "feeder", {"crop": math.inf}, r"\[\[feeder\]\] crop: a value must be a number"),
+        # A plain table of that name, or values under it, is no array of tables.
+        ("[motion]\nsafe_z = 5\n", "motion", {"place_z": 1}, "does not read as TOML"),
+        ("feeder = [1, 2]\n", "feeder", {"id": "a"}, "does not read as TOML"),
+        ("[motion\n", "feeder", {"id": "a"}, "does not read as TOML"),
+    ],
+)
+def test_append_table_refuses_what_does_not_read_back(text, name, values, words):
+    with pytest.raises(CamError, match=words):
+        append_table(text, name, values)
 
 
 def test_the_board_goes_through_the_mill_profile():

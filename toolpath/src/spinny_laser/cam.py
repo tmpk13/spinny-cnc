@@ -6,7 +6,7 @@ A profile is read whole and refused whole, every fault naming the file, the
 table and the key, so a file written by hand or by a language model is
 either taken as it stands or says what is wrong with it. `set_value` changes
 one value in a file's text and keeps everything else as it was, comments
-included.
+included; `append_table` adds a table to an array of tables at its end.
 """
 
 from __future__ import annotations
@@ -1266,6 +1266,48 @@ def set_value(text: str, path: tuple, value: Any) -> str:
             raise CamError(f"{'.'.join(map(str, path))} is still there")
     elif not _same(read, value):
         raise CamError(f"{'.'.join(map(str, path))} did not take the value")
+    return changed
+
+
+# The name of a table append_table adds: lower case letters, digits and _.
+_TABLE_NAME = re.compile(r"^[a-z0-9_]+$")
+# A bare key, as set_value takes one.
+_BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def append_table(text: str, name: str, values: dict[str, Any]) -> str:
+    """The file's text with a `[[name]]` table of `values` added at its end,
+    after one blank line, and everything before it, comments included, as
+    it was.
+
+    The name is lower case letters, digits and _; each key a bare key, and
+    each value one TOML holds (as format_value writes it; TOML has no
+    null, so a key with none is left out rather than given None). Refused
+    when the text then does not read as TOML or the table does not read
+    back as written: a plain [name] table in the file already, say, or
+    `name` holding values rather than tables."""
+    if not isinstance(name, str) or not _TABLE_NAME.match(name):
+        raise CamError(f"a table's name is lower case letters, digits and _, not {name!r}")
+    lines = [f"[[{name}]]"]
+    for key, value in values.items():
+        if not isinstance(key, str) or not _BARE_KEY.match(key):
+            raise CamError(f"[[{name}]]: {key!r} is not a key: letters, digits, - and _")
+        if value is None:
+            raise CamError(f"[[{name}]] {key} has no value, and TOML has no null: leave the key out")
+        try:
+            lines.append(f"{key} = {format_value(value)}")
+        except CamError as exc:
+            raise CamError(f"[[{name}]] {key}: {exc}") from None
+    before = text.rstrip("\n")
+    changed = (f"{before}\n\n" if before.strip() else "") + "\n".join(lines) + "\n"
+    try:
+        data = tomllib.loads(changed)
+    except tomllib.TOMLDecodeError as exc:
+        raise CamError(f"the file with [[{name}]] added does not read as TOML: {exc}") from exc
+    tables = data.get(name)
+    added = tables[-1] if isinstance(tables, list) and tables and isinstance(tables[-1], dict) else None
+    if added is None or set(added) != set(values) or not all(_same(added[key], value) for key, value in values.items()):
+        raise CamError(f"the [[{name}]] table added did not read back as written")
     return changed
 
 
