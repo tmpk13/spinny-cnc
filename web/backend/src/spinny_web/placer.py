@@ -174,6 +174,10 @@ class Placement:
     def __call__(self, ctx: RunContext) -> None:
         machine = self.machine
         mover = GcodeMover(self.link, machine, send=ctx.send)
+        # The run switches the vacuum with the file's pick and place lines,
+        # and may end with it on (a stop, or a part kept on the nozzle): what
+        # the hand switch last set says nothing of it from here on.
+        self.link.vacuum = None
         ctx.progress.note(f"placing {len(self.program.blocks)} parts on {machine.name}")
         for line in self.program.head:
             ctx.send(line)

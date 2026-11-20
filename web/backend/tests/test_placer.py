@@ -1404,3 +1404,18 @@ def test_a_stop_during_a_feed_ends_the_run_stopped_with_no_part_left_out(client)
     progress = client.get("/api/pnp/placing").json()["progress"]
     assert progress["state"] == "stopped", progress
     assert progress["failed"] == [], progress["failed"]
+
+
+def test_a_run_that_stops_with_the_vacuum_on_does_not_leave_it_shown_off(client):
+    job_id = rig(client, profile(rest=VACUUM + BUS))
+    client.fake.bus = FakePhotonBus({3: PHOTON})
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    # Switched off by hand before the run.
+    assert client.post("/api/pnp/vacuum", json={"on": False}).status_code == 200
+    # The pick holds nothing and the file has no discard place: the run
+    # stops with the vacuum on, the part (if any) still held.
+    client.fake.readings = [20.0]
+    state = run(client, {"job": job_id, "refs": ["R1"]})
+    assert state["progress"]["state"] == "error", state["progress"]
+    assert "M107" not in client.fake.lines[-3:]
+    assert state["vacuum"]["on"] is not False
