@@ -184,7 +184,13 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
     newId.style.width = "8rem";
     const create = button("New", () => createProfile(), "btn", "start a new CAM profile");
     const remove = button("Delete", () => removeProfile(), "btn btn-quiet", "delete this profile");
-    const reload = button("Reload", () => refresh(), "btn btn-quiet btn-small", "read the profiles again from disk");
+    const reload = button("Reload", async () => {
+        // Reading the profile again throws away what was typed and not saved.
+        if (dirty && picked !== null && !(await askConfirm(`Read ${picked} again from disk? Unsaved edits are lost.`, "Reload"))) {
+            return;
+        }
+        await refresh();
+    }, "btn btn-quiet btn-small", "read the profiles again from disk");
     const summary = el("p", { class: "muted cam-summary" });
     const problems = el("ul", { class: "cam-problems hidden" });
     const axesBox = el("div", { class: "groups-scroll" });

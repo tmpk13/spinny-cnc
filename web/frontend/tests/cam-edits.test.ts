@@ -44,4 +44,24 @@ describe("an unsaved edit of a CAM profile's text", () => {
         expect(text.value).toContain("# a note typed and not saved");
         fileRoot.remove();
     });
+
+    test("is kept when Reload is pressed and the leave is declined", async () => {
+        const { ctx, root } = setup();
+        const fileRoot = document.createElement("section");
+        document.body.append(fileRoot);
+        mountCam(root, ctx, fileRoot);
+        await settled();
+        const text = fileRoot.querySelector("textarea") as HTMLTextAreaElement;
+        text.value = `${text.value}\n# a note typed and not saved\n`;
+        text.dispatchEvent(new Event("input"));
+        await settled();
+        const reload = Array.from(root.querySelectorAll("button")).find((button) => button.textContent === "Reload")!;
+        reload.click();
+        await settled();
+        expect(document.querySelector("dialog[open]")?.textContent ?? "").toContain("Unsaved edits are lost");
+        dialogButton("Cancel").click();
+        await settled();
+        expect(text.value).toContain("# a note typed and not saved");
+        fileRoot.remove();
+    });
 });
