@@ -211,11 +211,23 @@ and pictures were kept outside the repository (a `var/surveys` folder).
   picture shows no tilt worth modeling. pcbv's own fits left 1.3 and 1.8
   px, against 0.7 and 1.1 px from a circle fitted to each dot's edge:
   its dot centers are noisier on brushed metal.
-- Fiducials, from the loop that closed within 2 um: the machine's numbers
-  give 100.27 mm per 100 mm of card along machine Y and 100.52 along
-  machine X. Opposite sides differ by about 0.1 mm, and the two lines
-  along machine X are 0.054 degrees apart. A gantry whose two Y sides move
-  differently gives that pattern, and the LumenPnP's Y has two motors
-  (M503 lists a second Y driver, `M906 I1 Y1000`). A card burnt as a
-  trapezoid gives the same pattern. Calipers on the rulers say whether the card is 100 mm; a
-  quarter turn of the card says whether the shape belongs to the card.
+- Taped down (it moved 3.5 mm and turned 0.28 degrees doing so), the
+  loops close within 1 to 8 um, and from one loop to the next the card
+  turns only 0.001 to 0.006 degrees back and forth; the 10 to 20 um left
+  at single fiducials is the machine's own repeat over 100 mm moves.
+- Fiducials, the same taped and loose: the machine's numbers give 100.27 mm per
+  100 mm of card along machine Y and 100.52 along machine X, and the two
+  axes are square to 0.01 degree with the file's skew taken out. The four
+  corners are not a parallelogram: opposite sides differ by 0.10 mm
+  (along Y) and 0.13 mm (along X), the corners lying 40 um off the best
+  affine fit, and the corner sum (P11 - P10 - P01 + P00) is 0.137 mm
+  along machine X and -0.092 mm along Y. A gantry whose two Y sides move
+  differently (the LumenPnP's Y has two motors: M503 lists a second Y
+  driver, `M906 I1 Y1000`) bends only Y, so it cannot be all of it; a
+  card burnt out of square, or a warped plate seen by a leaning camera,
+  can. Calipers on the rulers say whether the card is 100 mm; a quarter
+  turn of the card says whether the shape belongs to the card.
+- The prediction of a fiducial from two found ones must keep a turn: a
+  two-point fit (Kabsch, by SVD) leaves the second axis free and can mirror,
+  which sent the head 100 mm the wrong way once (to the X end of travel at
+  the safe height). Check the fit's determinant and fence the moves.
