@@ -1,4 +1,6 @@
-# Feeders: the plan in docs/FEEDERS.md as built
+# Feeders (2026-11-19)
+
+The plan these were built from is [docs/FEEDERS.md](../docs/FEEDERS.md).
 
 ## The run and the bus (2026-11-19)
 
@@ -70,3 +72,27 @@
   a feed time out rather than answer busy (STATUS_FEEDING_IN_PROGRESS is
   never sent). The host keeps asking either way; the virtual bus still
   answers busy, as OpenPnP's reading has it.
+
+## The check, the file writer, slots by camera
+
+- `part_feeders` (openpnp.py) is the top of `plan()`'s loop, taken out
+  whole: the job's own reasons, then `feeder_for`, then "no feeder holds
+  it". It needs no fit and no counts, so the check reads the list a plan
+  reads and the two cannot disagree. The bottom camera, a slot not known
+  and an empty feeder stay in `plan()`: they need the nozzle centered,
+  the slots the run's search found and the counts. The check says the
+  last two in its own words (`place_known`, `left`).
+- Where the bus last answered (`Backend._bus_seen`, bus id to address)
+  is read from `FeederBus.found` once a scan, a scan by id or
+  `_found_slots`'s search is done, so the bus code and `_found_slots`'s
+  `except` stay as they were. The newest answer stands: a scan of every
+  address replaces it all, and a scan by id or a search forgets an id it
+  asked that did not answer. Kept only the first answer, a feeder taken
+  out of its slot would still show its place known. `_close_gcode`
+  forgets all of it (a disconnect, another machine connected, a lost link
+  connected again), and it is read only while that machine is connected.
+- A bus feeder whose file names its `slot` has its place known whatever
+  the bus answered, as the contract between the agents has it. Moved to
+  another slot, a run's advance at the file's address fails and leaves
+  its parts out; the check shows where it answered and calls it no
+  problem.

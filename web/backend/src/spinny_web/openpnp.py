@@ -1399,6 +1399,71 @@ def expected_size(feeder: Feeder, part: dict) -> tuple[float, float] | None:
     return None
 
 
+# Why a part no feeder holds is left out.
+NO_FEEDER = "no feeder holds it"
+
+
+@dataclass(frozen=True)
+class PartFeeder:
+    """A part of a job as the feeders see it: its reference, the part (None
+    for a reference asked for that the job lacks), the feeder it comes
+    from, and why it is left out (None when it is to be placed)."""
+
+    ref: str
+    part: dict | None
+    feeder: Feeder | None = None
+    reason: str | None = None
+
+    @property
+    def wanted(self) -> bool:
+        """Whether the job itself places the part: it has its feeder, or
+        lacks only a feeder. A part the job leaves out for its own reasons
+        is no feeder's concern."""
+        return self.reason is None or self.reason == NO_FEEDER
+
+
+def part_feeders(machine: GcodeMachine, parts: list[dict], refs: list[str] | None = None) -> list[PartFeeder]:
+    """Each part of a job with the feeder it comes from, or why it is left
+    out, in the order a plan takes them: the references asked for that the
+    job lacks first, then the parts in the job's order.
+
+    `refs` are the parts to place, every one that can be by default. A part
+    the parts filter leaves out, one on the back, one not to be fitted, and
+    one kept out of the position files (unless `refs` or a feeder's refs
+    name it) are left out by the job; a fiducial is not a part, and is
+    named only when asked for. One no feeder holds is left out for that
+    (NO_FEEDER). Nothing here needs the board's fit or the counts taken, so
+    the feeders' check and the plan read the same list."""
+    entries: list[PartFeeder] = []
+    wanted = set(refs) if refs is not None else None
+    if wanted is not None:
+        for missing in sorted(wanted - {part["ref"] for part in parts}):
+            entries.append(PartFeeder(missing, None, reason="not a part of this job"))
+    for part in parts:
+        ref = part["ref"]
+        if wanted is not None and ref not in wanted:
+            continue
+        if part.get("fiducial"):
+            if wanted is not None:
+                entries.append(PartFeeder(ref, part, reason="a fiducial, not a part"))
+            continue
+        if part.get("filtered"):
+            entries.append(PartFeeder(ref, part, reason="left out by the parts filter"))
+            continue
+        if part.get("dnp"):
+            entries.append(PartFeeder(ref, part, reason="not to be fitted (dnp)"))
+            continue
+        if part.get("side") == "back":
+            entries.append(PartFeeder(ref, part, reason="on the back"))
+            continue
+        feeder = feeder_for(machine, part)
+        if part.get("exclude_from_pos_files") and wanted is None and not (feeder is not None and ref in feeder.refs):
+            entries.append(PartFeeder(ref, part, reason="kept out of the position files: pick it to place it"))
+            continue
+        entries.append(PartFeeder(ref, part, feeder, None if feeder is not None else NO_FEEDER))
+    return entries
+
+
 def plan(
     machine: GcodeMachine,
     parts: list[dict],
@@ -1426,34 +1491,12 @@ def plan(
     blocks: list[Block] = []
     skipped: list[dict] = []
     marked: set[str] = set()
-    wanted = set(refs) if refs is not None else None
-    if wanted is not None:
-        for missing in sorted(wanted - {part["ref"] for part in parts}):
-            skipped.append({"ref": missing, "reason": "not a part of this job"})
-    for part in parts:
-        ref = part["ref"]
-        if wanted is not None and ref not in wanted:
+    for entry in part_feeders(machine, parts, refs):
+        if entry.reason is not None:
+            skipped.append({"ref": entry.ref, "reason": entry.reason})
             continue
-        if part.get("fiducial"):
-            if wanted is not None:
-                skipped.append({"ref": ref, "reason": "a fiducial, not a part"})
-            continue
-        if part.get("filtered"):
-            skipped.append({"ref": ref, "reason": "left out by the parts filter"})
-            continue
-        if part.get("dnp"):
-            skipped.append({"ref": ref, "reason": "not to be fitted (dnp)"})
-            continue
-        if part.get("side") == "back":
-            skipped.append({"ref": ref, "reason": "on the back"})
-            continue
-        feeder = feeder_for(machine, part)
-        if part.get("exclude_from_pos_files") and wanted is None and not (feeder is not None and ref in feeder.refs):
-            skipped.append({"ref": ref, "reason": "kept out of the position files: pick it to place it"})
-            continue
-        if feeder is None:
-            skipped.append({"ref": ref, "reason": "no feeder holds it"})
-            continue
+        ref, part, feeder = entry.ref, entry.part, entry.feeder
+        assert part is not None and feeder is not None
         if feeder.vision and not vision_ready:
             skipped.append({"ref": ref, "reason": f"feeder {feeder.id} wants the bottom camera: center the nozzle over it first"})
             continue
@@ -1498,6 +1541,95 @@ def plan(
     head = [f"; {title or 'placement'} on {machine.name}: {len(blocks)} parts", *machine.init, *skew_lines(machine)]
     tail = [*([machine.wait] if machine.wait else []), *machine.end]
     return Plan(head=head, blocks=blocks, tail=tail, skipped=skipped, fit=fit)
+
+
+# How many references a problem names before it counts the rest.
+NAMED_REFS = 6
+
+
+def ref_words(refs: list[str]) -> str:
+    """References in words: "R3", "R3 and R4", "R3, R4 and R5"; past
+    NAMED_REFS the first five and how many more ("R1, ..., R5 and 4 more")."""
+    shown = refs if len(refs) <= NAMED_REFS else [*refs[: NAMED_REFS - 1], f"{len(refs) - NAMED_REFS + 1} more"]
+    return shown[0] if len(shown) == 1 else f"{', '.join(shown[:-1])} and {shown[-1]}"
+
+
+def feeder_check(machine: GcodeMachine, parts: list[dict], refs: list[str] | None, taken: dict[str, int], seen: dict[str, int]) -> dict:
+    """What a job's parts need of the machine's feeders, with nothing moved
+    and the bus never asked.
+
+    `parts` (a job's components) are listed as the plan would place them
+    (part_feeders, the plan's own list; `refs` the parts to place, every
+    one that can be by default): each with its feeder, or why it has none.
+    A part the job leaves out for its own reasons is not listed. Each
+    feeder the listed parts come from follows, in the file's order: how
+    many of them it gives (`needs`), what it has left (its count less what
+    `taken` says it gave, never below 0; None for a feeder with no count),
+    whether its pick place is known, and for a feeder on the bus the
+    address it answered at. A bus feeder's place is known from its file's
+    `slot`, else from a [[slot]] at the address it last answered at:
+    `seen`, by bus id, is where the bus answered since the machine
+    connected. Then the problems in words, and whether the job is ready:
+    a part to place, a feeder for each, every place known, none short."""
+    listed = [entry for entry in part_feeders(machine, parts, refs) if entry.wanted]
+    slots = {slot.address for slot in machine.slots}
+    giving: dict[str, list[str]] = {}
+    for entry in listed:
+        if entry.feeder is not None:
+            giving.setdefault(entry.feeder.id, []).append(entry.ref)
+    missing = [entry.ref for entry in listed if entry.feeder is None]
+    problems = [f"{ref_words(missing)}: no feeder holds {'it' if len(missing) == 1 else 'them'}"] if missing else []
+    feeders: list[dict] = []
+    for feeder in machine.feeders:
+        given = giving.get(feeder.id)
+        if not given:
+            continue
+        answered = seen.get(feeder.bus_id) if feeder.bus_id is not None else None
+        # A strip or tray has its place in the file; a bus feeder has it
+        # when the file names its slot (its place is then read already).
+        place_known = feeder.at is not None or (answered is not None and answered in slots)
+        left = max(0, feeder.count - int(taken.get(feeder.id, 0))) if feeder.count > 0 else None
+        feeders.append(
+            {
+                "id": feeder.id,
+                "refs": given,
+                "needs": len(given),
+                "left": left,
+                "place_known": place_known,
+                "bus_id": feeder.bus_id,
+                "address": answered if answered is not None else feeder.slot,
+                "seen": answered is not None,
+            }
+        )
+        if not place_known:
+            if answered is None:
+                problems.append(f"feeder {feeder.id}'s slot is not known: scan the feeder bus")
+            else:
+                problems.append(f"feeder {feeder.id} is at bus address {answered}, which has no [[slot]] place in the machine file")
+        if left is not None and left < len(given):
+            words = "no parts" if left == 0 else "1 part" if left == 1 else f"{left} parts"
+            problems.append(f"feeder {feeder.id} has {words} left, {len(given)} needed")
+    ready = (
+        bool(listed)
+        and not missing
+        and all(entry["place_known"] for entry in feeders)
+        and all(entry["left"] is None or entry["left"] >= entry["needs"] for entry in feeders)
+    )
+    return {
+        "parts": [
+            {
+                "ref": entry.ref,
+                "value": str((entry.part or {}).get("value", "")),
+                "footprint": str((entry.part or {}).get("footprint", "")),
+                "feeder": entry.feeder.id if entry.feeder is not None else None,
+                "reason": entry.reason,
+            }
+            for entry in listed
+        ],
+        "feeders": feeders,
+        "problems": problems,
+        "ready": ready,
+    }
 
 
 def board_goto(machine: GcodeMachine, fit: Fit, part: dict) -> list[str]:

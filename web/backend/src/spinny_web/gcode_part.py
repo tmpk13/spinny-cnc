@@ -164,6 +164,7 @@ class GcodePart:
     def _close_gcode(self) -> None:
         """Lets the G-code machine's port go: a placing run on it is stopped
         first, after the line in flight."""
+        self.forget_bus_answers()
         if self.gcode.url is None and not self.gcode.connected:
             self._gcode_id = None
             return

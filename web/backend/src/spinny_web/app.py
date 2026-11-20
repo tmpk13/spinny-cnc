@@ -846,6 +846,12 @@ class PnpFeederBody(BaseModel):
     feeder: str | None = None
 
 
+class PnpFeederCheckBody(BaseModel):
+    job: str
+    # The parts to place; left out, every one that can be.
+    refs: list[str] | None = None
+
+
 class PnpGotoBody(Finite):
     job: str
     ref: str
@@ -1033,6 +1039,9 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         # was opened as.
         self.gcode = GcodeLink(self.publish_placing, on_line=self._gcode_line, on_lost=self._gcode_lost)
         self._gcode_id: str | None = None
+        # Where the connected machine's feeder bus last answered for each
+        # feeder, by bus id (placing_part's feeder check reads it).
+        self._bus_seen: dict[str, int] = {}
         # How often the head's place is read while the G-code machine is
         # left alone, s; 0 reads it only when a request needs it.
         self.gcode_poll_seconds = GCODE_POLL_SECONDS
@@ -5611,6 +5620,12 @@ def create_app(
     @app.post("/api/pnp/feeders/reset")
     def pnp_reset_feeders(body: PnpFeederBody | None = None):
         return guarded(lambda: backend.pnp_reset_feeders(body or PnpFeederBody()))
+
+    # The feeders' check, and a bus slot's place taken and looked at.
+
+    @app.post("/api/pnp/feeders/check")
+    def pnp_feeder_check(body: PnpFeederCheckBody):
+        return guarded(lambda: backend.pnp_feeder_check(body.job, body.refs))
 
     @app.post("/api/pnp/runout")
     def pnp_runout():

@@ -45,7 +45,7 @@ from .findings import Target, UndoRefused
 from .gcode_link import GcodeLinkError, GcodeMover
 from .gcode_part import HOME_TIMEOUTS
 from .kinematics import num
-from .openpnp import GcodeMachine, Plan, board_fit, declare_line, goto_lines, needs_lift, plan
+from .openpnp import GcodeMachine, Plan, board_fit, declare_line, feeder_check, goto_lines, needs_lift, plan
 from .placer import Placement, PlaceSetup, fiducial_fit
 from .pnp import CameraPlace, PnpError
 from .log import log
@@ -1435,6 +1435,46 @@ class PlacingPart:
 
     # --- feeders ------------------------------------------------------------------------
 
+    def pnp_feeder_check(self, job_id: str, refs: list[str] | None) -> dict:
+        """What the job's parts need of the placing machine's feeders
+        (openpnp.feeder_check): nothing moves and the bus is not asked, a
+        bus feeder's address being where the bus last answered for it
+        since the machine connected."""
+        machine = self.placing_machine()
+        parts, taken, _ = self._placing(job_id)
+        return feeder_check(machine, parts, refs, taken, self._bus_seen_now(machine))
+
+    def _bus_answers(self, machine: GcodeMachine, found: dict[str, int], asked: list[str] | None) -> None:
+        """Keeps where the bus answered for each feeder, by its bus id, for
+        the feeders' check: `found` as the bus's answers gave it. An id in
+        `asked` that did not answer is forgotten, and after a scan of every
+        address (`asked` None) every id the scan did not find is: the
+        newest answer stands. Only for the machine connected; its
+        disconnect forgets it all (forget_bus_answers)."""
+        if not self.gcode.connected or self._gcode_id != machine.id:
+            return
+        if asked is None:
+            self._bus_seen.clear()
+        for bus_id in asked or ():
+            if bus_id not in found:
+                self._bus_seen.pop(bus_id, None)
+        for bus_id, address in found.items():
+            # Put last, so the newest answer at an address is the last one.
+            self._bus_seen.pop(bus_id, None)
+            self._bus_seen[bus_id] = address
+
+    def _bus_seen_now(self, machine: GcodeMachine) -> dict[str, int]:
+        """Where the bus last answered for each feeder of `machine`, by bus
+        id; none unless it is the machine connected."""
+        if not self.gcode.connected or self._gcode_id != machine.id:
+            return {}
+        return dict(self._bus_seen)
+
+    def forget_bus_answers(self) -> None:
+        """The machine's port is let go: where its bus answered is
+        forgotten, since its feeders may move before it is connected again."""
+        self._bus_seen.clear()
+
     def _bus(self, machine: GcodeMachine) -> FeederBus:
         if machine.bus is None:
             raise ValueError(f"{machine.name}'s file has no [bus] table")
@@ -1467,6 +1507,8 @@ class PlacingPart:
                 elif address is not None:
                     self.publish_message("warning", f"feeder {feeder.id} is at bus address {address}, which has no [[slot]] place in the machine file")
             feeders.append(feeder)
+        # The bus keeps every address its finds answered with.
+        self._bus_answers(machine, bus.found, [feeder.bus_id for feeder in unplaced if feeder.bus_id is not None])
         return replace(machine, feeders=tuple(feeders))
 
     def pnp_bus_scan(self, feeders: list[str] | None = None) -> dict:
@@ -1478,6 +1520,7 @@ class PlacingPart:
         machine = self._placing_idle()
         bus = self._bus(machine)
         missing: list[dict] = []
+        asked: list[str] | None = None
         if feeders is None:
             found = bus.scan()
         else:
@@ -1486,6 +1529,7 @@ class PlacingPart:
             if unknown:
                 raise HTTPException(status_code=404, detail=f"{machine.name}'s file has no feeder {unknown[0]!r}")
             found = []
+            asked = [bus_id for bus_id in (by_name[name].bus_id for name in feeders) if bus_id is not None]
             for name in dict.fromkeys(feeders):
                 feeder = by_name[name]
                 if feeder.bus_id is None:
@@ -1500,6 +1544,7 @@ class PlacingPart:
                 else:
                     found.append({"address": address, "id": feeder.bus_id})
             found.sort(key=lambda entry: entry["address"])
+        self._bus_answers(machine, bus.found, asked)
         by_id = {feeder.bus_id: feeder for feeder in machine.feeders if feeder.bus_id is not None}
         slots = {slot.address for slot in machine.slots}
         return {
