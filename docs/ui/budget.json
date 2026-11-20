@@ -122,7 +122,8 @@
   "machine": "lumen",
   "view": "Feeders",
   "width": 1440,
-  "height": 900
+  "height": 900,
+  "before": "(async () => { const input = document.querySelector(\"input[type=file][accept='.kicad_pcb']\"); const files = new DataTransfer(); files.items.add(new File(['(kicad_pcb)'], 'board.kicad_pcb')); input.files = files.files; input.dispatchEvent(new Event('change')); await new Promise((done) => setTimeout(done, 800)); Array.from(document.querySelectorAll('#pnp-feeders button')).find((press) => press.textContent === 'Scan bus').click(); await new Promise((done) => setTimeout(done, 500)); return 'board opened, bus scanned'; })()"
  },
  {
   "name": "pick and place: place",

@@ -191,6 +191,8 @@ export interface Api {
     deleteMachineFile(id: string): Promise<void>;
     /** One value of a machine file changed in its text, comments and all; a plain table not there yet is added. */
     patchMachineFile(id: string, path: CamPath, value: CamValue): Promise<MachineResponse>;
+    /** A `[[table]]` of these values added at the end of a machine file, comments kept, written once the whole file reads. */
+    addMachineTable(id: string, table: string, values: Record<string, CamValue>): Promise<MachineResponse>;
     /** The Machine view's picture and model of a machine file, as kept beside the config. */
     machineView(id: string): Promise<MachineViewState>;
     /** Keeps a picture (PNG, JPEG, WebP, GIF) or a model (STL) for the Machine view in place of the one before, its box kept. */
@@ -704,6 +706,10 @@ export class HttpApi implements Api {
 
     patchMachineFile(id: string, path: CamPath, value: CamValue): Promise<MachineResponse> {
         return this.request<MachineResponse>("PATCH", `/api/machines/${encodeURIComponent(id)}`, { path, value });
+    }
+
+    addMachineTable(id: string, table: string, values: Record<string, CamValue>): Promise<MachineResponse> {
+        return this.request<MachineResponse>("POST", `/api/machines/${encodeURIComponent(id)}/tables`, { table, values });
     }
 
     machineView(id: string): Promise<MachineViewState> {

@@ -158,14 +158,15 @@ describe("the feeder bus in the page and its mock", () => {
         await settle();
         const asked = calls.filter((call) => call.name === "pnpBusScan").at(-1);
         expect(asked?.args[0]).toEqual(["c-100n", "tray"]);
-        expect(root.querySelector(".bus-scan")?.textContent).toContain("address 3: " + C100N);
+        expect(root.querySelector(".bus-scan li[data-address='3']")?.textContent).toStartWith("address 3c-100n");
         expect(root.querySelector(".bus-missing")?.textContent).toBe("feeder tray: not on the bus: its file gives no bus_id");
-        // A press on a row's button is not a pick.
-        findButton(rows()[0]!, "Count again").click();
-        expect(rows()[0]!.classList.contains("selected")).toBe(true);
-        // Nothing picked: the scan asks every address again.
+        // The rows have no buttons: what acts on the feeders picked is the row under the list.
+        expect(rows().some((row) => row.querySelector("button") !== null)).toBe(false);
+        expect(findButton(root, "Count again").hidden).toBe(false);
+        // Nothing picked: the scan asks every address again, and the picks' buttons are put away.
         findButton(root, "Clear").click();
         expect(findButton(root, "Scan bus")).toBeDefined();
+        expect(findButton(root, "Count again").hidden).toBe(true);
         document.querySelector("dialog[open]")?.remove();
         root.remove();
     });

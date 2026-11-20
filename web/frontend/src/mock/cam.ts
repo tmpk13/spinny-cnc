@@ -1005,6 +1005,49 @@ export function setValue(text: string, path: CamPath, value: CamValue): string {
     return changed;
 }
 
+/**
+ * The text with a `[[name]]` table of `values` added at its end, after one
+ * blank line, comments and all kept: the backend's append_table, its words
+ * too. Refused for a table name not made of lower case letters, digits and
+ * _, a key that is not a bare key, a value TOML cannot hold (no null: a key
+ * with none is left out), and a text that does not read the table back as
+ * written.
+ */
+export function appendTable(text: string, name: string, values: Record<string, CamValue>): string {
+    if (!/^[a-z0-9_]+$/.test(name)) {
+        throw new Error(`a table's name is lower case letters, digits and _, not '${name}'`);
+    }
+    const lines = [`[[${name}]]`];
+    for (const [key, value] of Object.entries(values)) {
+        if (!/^[A-Za-z0-9_-]+$/.test(key)) {
+            throw new Error(`[[${name}]]: '${key}' is not a key: letters, digits, - and _`);
+        }
+        if (value === null || value === undefined) {
+            throw new Error(`[[${name}]] ${key} has no value, and TOML has no null: leave the key out`);
+        }
+        if (typeof value === "object" && !Array.isArray(value)) {
+            throw new Error(`[[${name}]] ${key}: cannot write a value of type dict`);
+        }
+        lines.push(`${key} = ${formatValue(value)}`);
+    }
+    const before = text.replace(/\n+$/, "");
+    const changed = `${before.trim() !== "" ? `${before}\n\n` : ""}${lines.join("\n")}\n`;
+    let data: TomlTable;
+    try {
+        data = parseToml(changed);
+    } catch (error) {
+        throw new Error(`the file with [[${name}]] added does not read as TOML: ${errorText(error)}`);
+    }
+    const tables = data[name];
+    const added = Array.isArray(tables) ? tables[tables.length - 1] : undefined;
+    const same = isTable(added) && Object.keys(added).length === Object.keys(values).length
+        && Object.entries(values).every(([key, value]) => JSON.stringify(added[key]) === JSON.stringify(value));
+    if (!same) {
+        throw new Error(`the [[${name}]] table added did not read back as written`);
+    }
+    return changed;
+}
+
 // --- a design through a profile -----------------------------------------------------
 
 interface Geometry {

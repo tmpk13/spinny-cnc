@@ -5,6 +5,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import type { MockBackend } from "../src/mock/backend.ts";
+import { appendTable } from "../src/mock/cam.ts";
 import { feederCheck, partFeeders, planDevice } from "../src/mock/openpnp.ts";
 import { initialState, type AppState } from "../src/state.ts";
 import type { Component, FeederCheck, FeederCheckFeeder, Job, PlacingState } from "../src/types.ts";
@@ -12,9 +13,9 @@ import { placingSteps, stepToOpen } from "../src/views/areaviews.ts";
 import { autoMemory, autoMove } from "../src/views/autosteps.ts";
 import { checkLine, feedersDone, feedersLine, refreshFeederCheck, refsText } from "../src/views/feedercheck.ts";
 import { setPickedToPlace } from "../src/views/partsfilter.ts";
-import { feederPlaceText, feederTakenText, looseGroups, mountPnpFeeders } from "../src/views/pnpfeeders.ts";
+import { advanceFor, draftProblem, draftValues, feederIdFor, feederPlaceText, feederTakenText, looseGroups, matchWords, mountPnpFeeders } from "../src/views/pnpfeeders.ts";
 import { connectGcode, parseDevice } from "./gcoderig.ts";
-import { findButton, settle, setup } from "./harness.ts";
+import { dialogButton, findButton, settle, setup } from "./harness.ts";
 
 const TP_A = "0102030405060708090A0B0C";
 
@@ -102,6 +103,24 @@ async function pickBoard(ctx: ReturnType<typeof setup>["ctx"], backend: MockBack
 /** The mock's placing state, to set its counts as a run would. */
 function taken(backend: MockBackend): Record<string, number> {
     return (backend as unknown as { placing(): { taken: Record<string, number> } }).placing().taken;
+}
+
+/** Lets the mock's answers and the page's redraws after a press come in. */
+async function settled(turns = 8): Promise<void> {
+    for (let turn = 0; turn < turns; turn++) {
+        await settle();
+    }
+}
+
+/** The mock's LumenPnP connected, with its own feeders, its board picked and the panel mounted. */
+async function lumenPanel(): Promise<ReturnType<typeof setup> & { board: Job }> {
+    const rig = setup();
+    rig.store.set({ snapshot: await rig.backend.connect("/dev/ttyACM1", "opulo-lumen-rev5") });
+    await rig.ctx.refreshPlacing();
+    mountPnpFeeders(rig.root, rig.ctx);
+    const board = await pickBoard(rig.ctx, rig.backend);
+    await settled();
+    return { ...rig, board };
 }
 
 afterEach(() => {
@@ -200,7 +219,7 @@ describe("the mock's feeder check", () => {
             { id: "tp-a", refs: ["TP1"], needs: 1, left: null, place_known: false, bus_id: TP_A, address: null, seen: false },
             { id: "tp-b", refs: ["TP2"], needs: 1, left: 1, place_known: true, bus_id: null, address: null, seen: false },
         ]);
-        expect(before.problems).toEqual(["TP3: no feeder holds it", "feeder tp-a's place is not known: scan the feeder bus for it"]);
+        expect(before.problems).toEqual(["TP3: no feeder holds it", "feeder tp-a's slot is not known: scan the feeder bus"]);
         expect(before.ready).toBe(false);
         // The scan finds tp-a in slot 3, whose place the file has.
         await backend.pnpBusScan();
@@ -232,7 +251,7 @@ describe("the mock's feeder check", () => {
         // tp-a answers at the first address no slot of the file names.
         expect(check.feeders[0]).toMatchObject({ address: 1, seen: true, place_known: false });
         expect(check.feeders[1]).toMatchObject({ needs: 2, left: 1 });
-        expect(check.problems).toEqual(["feeder tp-a answered at address 1, which has no [[slot]] place", "feeder tp-b has 1 part left, 2 needed"]);
+        expect(check.problems).toEqual(["feeder tp-a is at bus address 1, which has no [[slot]] place in the machine file", "feeder tp-b has 1 part left, 2 needed"]);
         const drawn = await backend.uploadJob(new File(["<svg xmlns='http://www.w3.org/2000/svg'><path d='M0 0 L10 0'/></svg>"], "line.svg"), {});
         await expect(backend.pnpFeederCheck(drawn.id)).rejects.toThrow("only a .kicad_pcb upload keeps the board its parts are read from");
     });
@@ -269,7 +288,9 @@ describe("the Feeders panel and the check", () => {
         await settle();
         const loose = root.querySelector(".feeder-loose")!;
         expect(loose.classList.contains("hidden")).toBe(false);
-        expect(loose.textContent).toBe("TP39 mm^2, TestPoint_Pad");
+        expect(loose.querySelector(".group-name")?.textContent).toBe("TP3");
+        expect(loose.querySelector(".muted")?.textContent).toBe("9 mm^2, TestPoint_Pad");
+        expect(findButton(loose, "Add feeder")).toBeDefined();
         const cells = Array.from(root.querySelectorAll(".device-feeders tbody tr")).map((row) => Array.from(row.querySelectorAll("td")).map((cell) => cell.textContent));
         expect(cells[0]?.[2]).toBe("not found on the bus yet: scan it");
         expect(root.querySelector(".device-feeders td[data-need]")?.textContent).toBe("not found on the bus yet: scan it");
@@ -319,5 +340,159 @@ describe("the Feeders panel and the check", () => {
         ctx.store.set({ job: null });
         await refreshFeederCheck(ctx);
         expect(ctx.store.get().feederCheck).toBeNull();
+    });
+});
+
+describe("adding a feeder", () => {
+    test("its id, its words and its advance from the parts' value and footprint", () => {
+        expect(feederIdFor("10k", "Resistor_SMD:R_0603_1608Metric", [])).toBe("10k-r0603");
+        expect(feederIdFor("100n", "C_0402_1005Metric", ["100n-c0402"])).toBe("100n-c0402-2");
+        expect(feederIdFor("9 mm^2", "TestPoint:TestPoint_Pad", [])).toBe("9-mm-2-testpoint");
+        expect(feederIdFor("STM32F103", "Package_QFP:LQFP-48_7x7mm_P0.5mm", [])).toBe("stm32f103-lqfp-48");
+        expect(feederIdFor("", "", [])).toBe("feeder");
+        expect(matchWords("10k", "Resistor_SMD:R_0603_1608Metric")).toBe("10k R_0603_1608Metric");
+        expect(advanceFor("Capacitor_SMD:C_0402_1005Metric")).toBe(2);
+        expect(advanceFor("Resistor_SMD:R_0603_1608Metric")).toBe(4);
+        expect(advanceFor("Package_TO_SOT_SMD:SOT-23")).toBe(4);
+    });
+
+    test("what a draft lacks, and the table it writes", () => {
+        const draft = { id: "10k-r0603", match: "10k R_0603_1608Metric", refs: null, busId: "AABBCCDDEEFF001122334455", advance: 4 };
+        expect(draftProblem(draft, [])).toBeNull();
+        expect(draftProblem({ ...draft, id: "Big" }, [])).toBe("id: lower case letters, digits, - and _");
+        expect(draftProblem(draft, ["10k-r0603"])).toBe("the file has a feeder 10k-r0603 already");
+        expect(draftProblem({ ...draft, match: " " }, [])).toBe("say which parts it holds");
+        expect(draftProblem({ ...draft, busId: null }, [])).toBe("scan the bus first: its id on the bus is needed");
+        expect(draftProblem({ ...draft, advance: 30 }, [])).toBe("advance: 0.1 to 25.5 mm");
+        expect(draftValues(draft)).toEqual({ id: "10k-r0603", match: "10k R_0603_1608Metric", bus_id: "AABBCCDDEEFF001122334455", advance: 4 });
+        // By reference, the words are left out.
+        expect(draftValues({ ...draft, refs: ["R3", "R4"] })).toEqual({ id: "10k-r0603", refs: ["R3", "R4"], bus_id: "AABBCCDDEEFF001122334455", advance: 4 });
+    });
+
+    test("the table goes at the end of the file, its comments kept, refused as the backend refuses it", () => {
+        const text = "# a machine\n[motion]\nsafe_z = 30 # the height\n\n\n";
+        expect(appendTable(text, "feeder", { id: "a", match: "10k", advance: 2.5, refs: ["R1"] }))
+            .toBe('# a machine\n[motion]\nsafe_z = 30 # the height\n\n[[feeder]]\nid = "a"\nmatch = "10k"\nadvance = 2.5\nrefs = ["R1"]\n');
+        expect(() => appendTable(text, "Feeder", { id: "a" })).toThrow("a table's name is lower case letters, digits and _, not 'Feeder'");
+        expect(() => appendTable(text, "feeder", { "bad key": 1 })).toThrow("[[feeder]]: 'bad key' is not a key: letters, digits, - and _");
+        expect(() => appendTable(text, "feeder", { slot: null })).toThrow("[[feeder]] slot has no value, and TOML has no null: leave the key out");
+        expect(() => appendTable(text, "feeder", { at: { x: 1 } as unknown as number })).toThrow("[[feeder]] at: cannot write a value of type dict");
+        expect(() => appendTable(text, "motion", { safe_z: 1 })).toThrow("the file with [[motion]] added does not read as TOML");
+    });
+
+    test("the mock's machine file takes the table once the whole file reads", async () => {
+        const { backend } = setup();
+        await connectGcode(backend, "lumen", PROFILE);
+        const written = await backend.addMachineTable("lumen", "feeder", { id: "tp-c", refs: ["TP3"], bus_id: "AABBCCDDEEFF001122334455" });
+        expect(written.text).toEndWith('\n\n[[feeder]]\nid = "tp-c"\nrefs = ["TP3"]\nbus_id = "AABBCCDDEEFF001122334455"\n');
+        expect(written.document?.gcode?.feeders.map((feeder) => feeder.id)).toEqual(["tp-a", "tp-b", "tp-c"]);
+        await expect(backend.addMachineTable("lumen", "feeder", { id: "tp-c", match: "x", at: [1, 2, 3] })).rejects.toThrow("[feeder 4] id 'tp-c' is another feeder's too");
+        await expect(backend.addMachineTable("none", "feeder", { id: "x" })).rejects.toThrow("no machine file 'none'");
+    });
+
+    test("the mock's LumenPnP has feeders, and a feeder on its bus that its file does not name", async () => {
+        const { lumen } = { lumen: setup() };
+        await lumen.backend.connect("/dev/ttyACM1", "opulo-lumen-rev5");
+        const state = await lumen.backend.placingState();
+        expect(state.document?.feeders.map((feeder) => feeder.id)).toEqual(["tp-9mm2", "r-10k-0603", "c-100n-0402"]);
+        const scan = await lumen.backend.pnpBusScan();
+        expect(scan.feeders).toEqual([
+            { address: 1, id: "0102030405060708090A0B0C", feeder: "tp-9mm2", slot: true },
+            { address: 2, id: "1112131415161718191A1B1C", feeder: "r-10k-0603", slot: true },
+            { address: 3, id: "2122232425262728292A2B2C", feeder: null, slot: false },
+        ]);
+    });
+
+    test("from a part no feeder holds: its pair's words, the id a scan found that no feeder has, its advance", async () => {
+        const { root, calls, store } = await lumenPanel();
+        // No scan yet: the form says to scan first and will not save.
+        findButton(root.querySelector(".feeder-loose")!, "Add feeder").click();
+        let form = root.querySelector<HTMLElement>(".feeder-form")!;
+        expect(form.textContent).toContain("Scan the bus first");
+        expect(findButton(form, "Save").disabled).toBe(true);
+        expect(findButton(form, "Save").dataset["reason"]).toBe("scan the bus first: its id on the bus is needed");
+        findButton(form, "Cancel").click();
+        expect(root.querySelector(".feeder-form")).toBeNull();
+        findButton(root, "Scan bus").click();
+        await settled();
+        findButton(root.querySelector(".feeder-loose")!, "Add feeder").click();
+        form = root.querySelector<HTMLElement>(".feeder-form")!;
+        expect(form.querySelector<HTMLInputElement>("input[aria-label='Feeder id']")?.value).toBe("9-mm-2-testpoint");
+        expect(form.querySelector<HTMLSelectElement>("select[aria-label='Its id on the bus']")?.value).toBe("2122232425262728292A2B2C");
+        expect(form.querySelector<HTMLInputElement>("input[aria-label='Advance, mm']")?.value).toBe("4");
+        findButton(form, "2").click();
+        findButton(form, "Save").click();
+        await settled();
+        const added = calls.filter((call) => call.name === "addMachineTable").at(-1);
+        expect(added?.args).toEqual(["opulo-lumen-rev5", "feeder", { id: "9-mm-2-testpoint", match: "9 mm^2 TestPoint_Pad", bus_id: "2122232425262728292A2B2C", advance: 2 }]);
+        // Written: the panel and the check follow the file.
+        expect(store.get().placing?.document?.feeders.map((feeder) => feeder.id)).toContain("9-mm-2-testpoint");
+        expect(root.querySelector(".feeder-form")).toBeNull();
+        expect(store.get().feederCheck?.check?.parts.find((part) => part.ref === "TP3")?.feeder).toBe("9-mm-2-testpoint");
+        expect(root.querySelector(".feeder-loose")?.classList.contains("hidden")).toBe(true);
+    });
+
+    test("from a scan's row whose id no feeder has: that id, the parts by reference or by words", async () => {
+        const { root, calls } = await lumenPanel();
+        findButton(root, "Scan bus").click();
+        await settled();
+        const row = root.querySelector<HTMLElement>(".bus-scan li[data-address='3']")!;
+        expect(row.querySelector(".group-says")?.textContent).toBe("2122232425262728292A2B2C, not in the file, no slot place yet");
+        findButton(row, "Add feeder").click();
+        // The rows are drawn again with the form under the one it was opened on.
+        const form = root.querySelector<HTMLElement>(".bus-scan li[data-address='3'] .feeder-form")!;
+        expect(form.textContent).toContain("2122232425262728292A2B2C");
+        const parts = form.querySelector<HTMLSelectElement>("select[aria-label='Parts it holds']")!;
+        expect(Array.from(parts.options).map((option) => option.textContent)).toEqual(["9 mm^2 TestPoint_Pad (TP3)"]);
+        findButton(form, "Save").click();
+        await settled();
+        expect(calls.filter((call) => call.name === "addMachineTable").at(-1)?.args[2]).toEqual({ id: "9-mm-2-testpoint", match: "9 mm^2 TestPoint_Pad", bus_id: "2122232425262728292A2B2C", advance: 4 });
+    });
+
+    test("a part's group by reference; a file with no bus offers no feeder to add", async () => {
+        const { root, calls } = await lumenPanel();
+        findButton(root, "Scan bus").click();
+        await settled();
+        findButton(root.querySelector(".feeder-loose")!, "Add feeder").click();
+        const form = root.querySelector<HTMLElement>(".feeder-form")!;
+        const parts = form.querySelector<HTMLSelectElement>("select[aria-label='Parts it holds']")!;
+        expect(Array.from(parts.options).map((option) => option.textContent)).toEqual(["9 mm^2 TestPoint_Pad (TP3)", "TP3 by reference"]);
+        parts.value = "1";
+        parts.dispatchEvent(new Event("change"));
+        const id = form.querySelector<HTMLInputElement>("input[aria-label='Feeder id']")!;
+        id.value = "tp3";
+        id.dispatchEvent(new Event("input"));
+        findButton(form, "Save").click();
+        await settled();
+        expect(calls.filter((call) => call.name === "addMachineTable").at(-1)?.args[2]).toEqual({ id: "tp3", refs: ["TP3"], bus_id: "2122232425262728292A2B2C", advance: 4 });
+        // A machine with no bus: the parts are listed, with nothing to add.
+        const plain = setup();
+        await connectGcode(plain.backend, "plain", PROFILE.replace(/\[bus\][\s\S]*$/, '[[feeder]]\nid = "tp-a"\nrefs = ["TP1"]\nat = [1.0, 2.0, 3.0]\n'));
+        await plain.ctx.refreshPlacing();
+        mountPnpFeeders(plain.root, plain.ctx);
+        await pickBoard(plain.ctx, plain.backend);
+        await settled();
+        expect(plain.root.querySelector(".feeder-loose .group-name")?.textContent).toBe("TP2 TP3");
+        expect(plain.root.querySelector(".feeder-loose button")).toBeNull();
+    });
+
+    test("the picked feeders' buttons: put away with none picked, Feed each one on the bus, Count again each", async () => {
+        const { root, calls } = await lumenPanel();
+        const rows = (): HTMLTableRowElement[] => Array.from(root.querySelectorAll<HTMLTableRowElement>(".device-feeders tbody tr"));
+        expect(findButton(root, "Feed").hidden).toBe(true);
+        expect(root.querySelector(".feeder-picks")?.textContent).toContain("Pick feeders in the list to feed, count or scan them.");
+        rows()[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        rows()[2]!.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true }));
+        expect(findButton(root, "Feed").hidden).toBe(false);
+        findButton(root, "Feed").click();
+        await settled();
+        // The strip is not on the bus: the one bus feeder picked is fed.
+        expect(calls.filter((call) => call.name === "pnpBusFeed").map((call) => call.args[0])).toEqual(["tp-9mm2"]);
+        findButton(root, "Count again").click();
+        await settle();
+        expect(document.querySelector("dialog[open]")?.textContent).toContain("Count feeders tp-9mm2, c-100n-0402 from the first part again?");
+        dialogButton("Count again").click();
+        await settled();
+        expect(calls.filter((call) => call.name === "pnpResetFeeders").map((call) => call.args[0])).toEqual(["tp-9mm2", "c-100n-0402"]);
     });
 });

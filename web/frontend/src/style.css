@@ -4153,6 +4153,26 @@ table.pnp-parts tr.dnp td {
     font-size: 0.85rem;
 }
 
+/* A row's one button sits at its end, the row's words before it. */
+.feeder-loose-row .feeder-add {
+    margin-left: auto;
+}
+
+.feeder-add {
+    flex: none;
+    white-space: nowrap;
+}
+
+/* A place wraps in a side panel's width, so what a feeder has given stays
+   in sight beside it. */
+table.device-feeders td:nth-child(3) {
+    white-space: normal;
+}
+
+.bus-scan .group-row {
+    padding-right: 0.5rem;
+}
+
 table.device-feeders td[data-need] {
     color: var(--hold);
 }

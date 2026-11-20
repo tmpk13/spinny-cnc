@@ -156,3 +156,27 @@ was not obvious, and why it is the way it is.
   take the same parts for the same reasons. Each entry keeps its place in
   the plan's order, so `skipped` lists the job's reasons and the parts no
   feeder holds interleaved, as before the split.
+- **The panel's rows hold one button at most, for the budget.** A feeder's
+  row has none: Feed and Count again act on the feeders picked, in a row
+  under the list put away while none is picked (a pick is what they
+  need, and the row comes with it). A scan's row opens in place on what is
+  done to its address now and then, and shows the one button it wants:
+  Add feeder for an id the file lacks, Slot here for a slot with no place.
+  Opening Add feeder draws the rows again, so a test reads the row anew.
+- **Add feeder makes a feeder on the bus only.** A strip or a tray needs a
+  place, a pitch and a count measured at the machine, which the plan
+  leaves to typing by hand; a file with no `[bus]` lists the parts with no
+  feeder and offers nothing. The form never sends a null (the backend's
+  writer refuses one: TOML has none), so a part named by reference leaves
+  `match` out. Its advance is guessed from the footprint (2 mm for 0201
+  and 0402, else 4), and its id from the value and the footprint's kind and
+  size ("10k-r0603"), numbered when the file has it.
+- **The mock's LumenPnP has feeders of its own** (`MOCK_LUMEN_FEEDERS` in
+  src/mock/machines.ts, appended to the shipped file's text; the shipped
+  file stays without), and its bus a feeder no file names
+  (`MOCK_BUS_LOOSE`, address 3), so the budget's Feeders shot, which opens
+  the mock's board and scans, is measured full: a part no feeder holds,
+  three feeders, three scanned rows. It measured 39 controls and 154 words.
+- **The feeders table's place cell wraps.** With every cell on one line,
+  the place pushed what a feeder has given, where the check's want shows,
+  out of the side panel's width.

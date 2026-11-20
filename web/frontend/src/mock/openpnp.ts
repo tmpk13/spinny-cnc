@@ -1288,9 +1288,13 @@ export function partFeeders<F extends { match: string; refs?: string[] }>(feeder
     return taken;
 }
 
-/** Words in a list: "a", "a and b", "a, b and c". */
-function andList(words: string[]): string {
-    return words.length <= 1 ? words[0] ?? "" : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
+/** How many references the check's words name before it counts the rest. */
+const NAMED_REFS = 6;
+
+/** References in words, as the backend's ref_words: "R3", "R3 and R4", "R3, R4 and R5"; past six the first five and how many more. */
+function refWords(refs: string[]): string {
+    const shown = refs.length <= NAMED_REFS ? refs : [...refs.slice(0, NAMED_REFS - 1), `${refs.length - NAMED_REFS + 1} more`];
+    return shown.length <= 1 ? shown[0] ?? "" : `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
 }
 
 /**
@@ -1323,13 +1327,13 @@ export function feederCheck(device: MockDevice, parts: Component[], refs: string
     const problems: string[] = [];
     const loose = entries.filter((entry) => entry.feeder === null).map((entry) => entry.ref);
     if (loose.length > 0) {
-        problems.push(`${andList(loose)}: no feeder holds ${loose.length === 1 ? "it" : "them"}`);
+        problems.push(`${refWords(loose)}: no feeder holds ${loose.length === 1 ? "it" : "them"}`);
     }
     for (const feeder of feeders) {
         if (!feeder.place_known) {
             problems.push(feeder.seen
-                ? `feeder ${feeder.id} answered at address ${feeder.address}, which has no [[slot]] place`
-                : `feeder ${feeder.id}'s place is not known: scan the feeder bus for it`);
+                ? `feeder ${feeder.id} is at bus address ${feeder.address}, which has no [[slot]] place in the machine file`
+                : `feeder ${feeder.id}'s slot is not known: scan the feeder bus`);
         }
         if (feeder.left !== null && feeder.left < feeder.needs) {
             const left = feeder.left === 0 ? "no parts" : `${feeder.left} ${feeder.left === 1 ? "part" : "parts"}`;

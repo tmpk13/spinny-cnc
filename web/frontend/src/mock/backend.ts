@@ -45,7 +45,7 @@ import {
     shiftPaths,
 } from "./jobs.ts";
 import { groupMoves, jointPreview, pathMoves, type PlannedMove } from "../moves.ts";
-import { ID_PATTERN, SHIPPED_PROFILES, buildCamJob, buildModelJob, camGcode, parseProfile, setValue, summaryOf } from "./cam.ts";
+import { ID_PATTERN, SHIPPED_PROFILES, appendTable, buildCamJob, buildModelJob, camGcode, parseProfile, setValue, summaryOf } from "./cam.ts";
 import {
     CAMERA_DEFAULTS,
     DEFAULT_SETTINGS,
@@ -53,6 +53,7 @@ import {
     INT_MAX,
     MACHINE_ID_PATTERN,
     MICROSTEPS,
+    MOCK_BUS_LOOSE,
     MOCK_MACHINE_TEXTS,
     gcodeMachineOf,
     BUFFERED_INPUTS,
@@ -9338,6 +9339,9 @@ export class MockBackend implements Api, EventFeed {
     /** The job's parts checked against the feeders, as the backend's feeder check: no fit, nothing moved, the bus not asked. */
     async pnpFeederCheck(jobId: string, refs?: string[]): Promise<FeederCheck> {
         const device = this.placingDevice();
+        if (!this.jobStore.has(jobId)) {
+            throw new ApiError(404, "no such job");
+        }
         const parts = markFiltered(mockComponents(this.requireJob(jobId)), this.partsFilterKept);
         if (parts.length === 0) {
             throw new ApiError(400, "only a .kicad_pcb upload keeps the board its parts are read from");
@@ -9728,17 +9732,27 @@ export class MockBackend implements Api, EventFeed {
         return { reply, ...this.placingStateOf() };
     }
 
-    /** The feeders on the mock's bus: the profile's, each at its slot, or at the first address no other takes. */
+    /**
+     * The feeders on the mock's bus, by address: the ones no file feeder
+     * names (MOCK_BUS_LOOSE) where their slots put them, then the profile's,
+     * each at its slot, or at the first address no other takes. A file
+     * feeder of a loose one's id is that feeder, where it sits.
+     */
     private fakeBus(device: MockDevice): Map<number, string> {
         const bus = new Map<number, string>();
+        const loose = MOCK_BUS_LOOSE[device.id] ?? [];
+        for (const unit of loose) {
+            bus.set(unit.address, unit.id);
+        }
+        const placed = (id: string): boolean => loose.some((unit) => unit.id === id);
         const free = [...device.slots.map((slot) => slot.address), ...Array.from({ length: 254 }, (_, index) => index + 1)];
         for (const feeder of device.feeders) {
-            if (feeder.bus_id !== null && feeder.slot !== null) {
+            if (feeder.bus_id !== null && feeder.slot !== null && !placed(feeder.bus_id)) {
                 bus.set(feeder.slot, feeder.bus_id);
             }
         }
         for (const feeder of device.feeders) {
-            if (feeder.bus_id !== null && feeder.slot === null) {
+            if (feeder.bus_id !== null && feeder.slot === null && !placed(feeder.bus_id)) {
                 const address = free.find((candidate) => !bus.has(candidate))!;
                 bus.set(address, feeder.bus_id);
             }
@@ -9796,6 +9810,32 @@ export class MockBackend implements Api, EventFeed {
         return "rs485-reply: TIMEOUT";
     }
 
+    /**
+     * Keeps where the bus answered for each feeder, as the backend's
+     * _bus_answers: the newest answer stands, so a scan of every address
+     * (`asked` null) forgets every id it did not find, and a look for some
+     * ids forgets those of them that did not answer. For the machine
+     * connected only.
+     */
+    private busAnswers(device: MockDevice, found: ReadonlyMap<string, number>, asked: string[] | null): void {
+        if (!this.deviceLink.connected || this.gcodeId !== device.id) {
+            return;
+        }
+        if (asked === null) {
+            this.busSeen.clear();
+        }
+        for (const id of asked ?? []) {
+            if (!found.has(id)) {
+                this.busSeen.delete(id);
+            }
+        }
+        for (const [id, address] of found) {
+            // Put last, so the newest answer at an address is the last one.
+            this.busSeen.delete(id);
+            this.busSeen.set(id, address);
+        }
+    }
+
     /** One command on the bus and its answer, as the backend's FeederBus sends it. */
     private busExchange(device: MockDevice, to: number, code: number, payload: number[] = []): BusPacket | null {
         const bus = device.bus!;
@@ -9829,7 +9869,6 @@ export class MockBackend implements Api, EventFeed {
                 throw new ApiError(502, `feeder ${feeder.id}: no feeder answered to the id ${feeder.bus_id}: is it in its slot?`);
             }
             address = found.sender;
-            this.busSeen.set(feeder.bus_id!, address);
         }
         for (let attempt = 0; attempt < 2; attempt++) {
             if (!this.busReady.has(address)) {
@@ -9867,9 +9906,7 @@ export class MockBackend implements Api, EventFeed {
                 return feeder;
             }
             const found = this.busExchange(device, device.bus!.broadcast, device.bus!.codes["find"]!, idBytes(feeder.bus_id));
-            if (found !== null && found.payload[0] === device.bus!.codes["ok"]) {
-                this.busSeen.set(feeder.bus_id, found.sender);
-            }
+            this.busAnswers(device, found !== null && found.payload[0] === device.bus!.codes["ok"] ? new Map([[feeder.bus_id, found.sender]]) : new Map(), [feeder.bus_id]);
             const slot = found !== null && found.payload[0] === device.bus!.codes["ok"] ? device.slots.find((entry) => entry.address === found.sender) : undefined;
             return slot ? { ...feeder, slot: slot.address, at: slotPlace(slot.at, slot.rotation, feeder.offset), rotation: feeder.rotation + slot.rotation } : feeder;
         });
@@ -9914,9 +9951,8 @@ export class MockBackend implements Api, EventFeed {
             }
             found.sort((a, b) => a.address - b.address);
         }
-        for (const entry of found) {
-            this.busSeen.set(entry.id, entry.address);
-        }
+        const asked = feeders === undefined ? null : device.feeders.filter((feeder) => feeders.includes(feeder.id) && feeder.bus_id !== null).map((feeder) => feeder.bus_id!);
+        this.busAnswers(device, new Map(found.map((entry) => [entry.id, entry.address])), asked);
         this.emitPlacing();
         return { feeders: found, missing, ...this.placingStateOf() };
     }
@@ -9986,6 +10022,19 @@ export class MockBackend implements Api, EventFeed {
             changed = setValue(text, path, value);
         } catch (error) {
             throw new ApiError(400, errorText(error));
+        }
+        const saved = await this.saveMachineFile(id, changed);
+        this.emitPlacing();
+        return saved;
+    }
+
+    /** A [[table]] added at the end of a machine file, written once the whole file reads, as the backend's tables route. */
+    async addMachineTable(id: string, table: string, values: Record<string, CamValue>): Promise<MachineResponse> {
+        let changed: string;
+        try {
+            changed = appendTable(this.machineText(id), table, values);
+        } catch (error) {
+            throw error instanceof ApiError ? error : new ApiError(400, errorText(error));
         }
         const saved = await this.saveMachineFile(id, changed);
         this.emitPlacing();

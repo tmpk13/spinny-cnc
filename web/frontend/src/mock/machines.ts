@@ -21,19 +21,68 @@ import type {
 import { deviceDocument, parseGcodeTables, type MockDevice } from "./openpnp.ts";
 
 /**
+ * Feeders for the mock's LumenPnP, which the shipped file leaves to its
+ * owner, so the Feeders step and panel have something to show: two
+ * Photon feeders on the bus (one found by its id, one in the slot its file
+ * names) and a strip, holding the mock board's test points TP1 and TP2.
+ * Its TP3 no feeder holds. Mock only: machines/opulo-lumen-rev5.toml has
+ * no feeder and no slot.
+ */
+export const MOCK_LUMEN_FEEDERS = `
+# The in-page mock's own slots and feeders: the shipped file has none.
+[[slot]]
+address = 1
+at = [100.0, 30.0, 12.0]
+
+[[slot]]
+address = 2
+at = [115.0, 30.0, 12.0]
+
+[[feeder]]
+id = "tp-9mm2"
+refs = ["TP1", "TP2"]
+bus_id = "0102030405060708090A0B0C"
+advance = 4
+
+[[feeder]]
+id = "r-10k-0603"
+match = "10k 0603"
+bus_id = "1112131415161718191A1B1C"
+slot = 2
+advance = 4
+
+[[feeder]]
+id = "c-100n-0402"
+match = "100n 0402"
+at = [150.0, 30.0, 12.0]
+pitch = [2.0, 0.0]
+count = 50
+`;
+
+/**
+ * Feeders on a mock machine's bus that its file does not name, by the
+ * file's id: a Photon feeder's id and the address its slot's floor gives
+ * it. The LumenPnP has one in slot 3, so a scan finds a feeder to add.
+ */
+export const MOCK_BUS_LOOSE: Record<string, { id: string; address: number }[]> = {
+    "opulo-lumen-rev5": [{ id: "2122232425262728292A2B2C", address: 3 }],
+};
+
+/**
  * Six of the shipped machine files, by id in the order the backend lists
  * them: the polar laser with and without its focus axis, the cartesian
  * laser and the cartesian mill, one file for each kind of machine on this
  * project's firmware the mock's tests read and load, and the two G-code
  * pick and place machines (the generic Marlin one, whose feeder a plan can
- * use, and the LumenPnP, whose port the mock lists). The backend lists
- * every file in machines/; the K40 and the dispenser are not bundled.
+ * use, and the LumenPnP, whose port the mock lists, with the mock's own
+ * feeders). The backend lists every file in machines/; the K40 and the
+ * dispenser are not bundled.
  */
 export const MOCK_MACHINE_TEXTS: { id: string; text: string }[] = [
     { id: "cartesian-laser", text: cartesianLaser },
     { id: "cartesian-mill", text: cartesianMill },
     { id: "openpnp-marlin", text: openpnpMarlin },
-    { id: "opulo-lumen-rev5", text: lumenPnp },
+    { id: "opulo-lumen-rev5", text: `${lumenPnp.replace(/\s+$/, "")}\n${MOCK_LUMEN_FEEDERS}` },
     { id: "polar-laser-focus", text: polarLaserFocus },
     { id: "polar-laser", text: polarLaser },
 ];

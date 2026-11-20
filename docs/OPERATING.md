@@ -1139,6 +1139,16 @@ Steps panel's *Place parts with a G-code machine*):
    every part has a feeder whose place is known and none runs short; until
    then a run's steps open on it. The Feeders panel lists the parts no
    feeder holds above the feeders, and a feeder's row says what it lacks.
+   *Add feeder*, on a group of those parts or on a scanned feeder whose id
+   no feeder of the file has, opens in place: the feeder's id (made from
+   the parts' value and footprint), its parts (their value and footprint's
+   words, which it writes as `match`, or the group by reference, `refs`),
+   its id on the bus (the row's, or one a scan found that the file lacks:
+   scan first) and its advance, the tape's part pitch (2, 4 or 8 mm, or
+   typed). *Save* writes it as a `[[feeder]]` at the end of the machine
+   file, its comments kept. Feeders picked in the list (a press, Shift,
+   Ctrl or Cmd) get a row of buttons under it: *Feed* moves each picked
+   feeder on the bus once, *Count again* counts them from their first part.
 5. *Plan*, in the Placing part of the Run panel, makes the placement program from the references and the
    feeders and shows it; nothing moves (it works with the machine
    disconnected too, for the one last connected). *Run* places the
