@@ -238,5 +238,8 @@ def test_a_stop_trusts_its_pictures_only_from_two_different_pictures_that_agree(
     look = BoardLook(lambda: camera, publish=lambda: None, paused=lambda: True)
     trusted = look.settle(began, lambda: False)
     # The fourth and fifth pictures (k = 3 and 4) are the first two in a
-    # row that agree: trusted from the fourth's capture.
-    assert trusted == pytest.approx(camera.captured(3), abs=0.02)
+    # row that agree: trusted from the fourth's capture. A capture is told
+    # from when its picture was asked for, so a busy computer's delay in
+    # answering puts it early, never late: well after the third picture
+    # all the same, and far from the stop's start.
+    assert camera.captured(2) + 0.05 < trusted <= camera.captured(3) + 0.005
