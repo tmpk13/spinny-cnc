@@ -415,6 +415,27 @@ def test_a_home_of_one_axis_leaves_the_height_untrusted(client):
     assert client.get("/api/pnp/placing").json()["homed"] is True
 
 
+def test_a_machine_connected_again_at_once_is_polled_by_one_thread(tmp_path):
+    import threading
+
+    fake = FakeMarlin(position=(100.0, 50.0, 0.0))
+    backend = rig_backend(tmp_path, {"rig": PROFILE}, lambda url, baud: fake)
+    backend.gcode_poll_seconds = 0.3
+    app = create_app(backend, frontend=tmp_path / "no-dist")
+    with TestClient(app) as client:
+        connect(client, "rig")
+        assert client.post("/api/disconnect").status_code == 200
+        connect(client, "rig")
+        # Past the first poll's sleep: the first connection's poll has seen
+        # its connection close, whatever came after it.
+        time.sleep(0.8)
+        polls = [thread for thread in threading.enumerate() if thread.name == "gcode-poll" and thread.is_alive()]
+        try:
+            assert len(polls) == 1
+        finally:
+            client.post("/api/disconnect")
+
+
 def test_the_console_sends_a_line_as_typed(client):
     connect(client, "rig")
     assert client.post("/api/command", json={"line": "M114"}).json()["lines"][-1] == "ok"

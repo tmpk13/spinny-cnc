@@ -164,6 +164,7 @@ class GcodePart:
     def _close_gcode(self) -> None:
         """Lets the G-code machine's port go: a placing run on it is stopped
         first, after the line in flight."""
+        self._end_gcode_poll()
         self.forget_bus_answers()
         if self.gcode.url is None and not self.gcode.connected:
             self._gcode_id = None
@@ -186,16 +187,28 @@ class GcodePart:
         self.broadcast.publish_threadsafe({"type": "console", "dir": direction, "text": text, "poll": poll})
 
     def _start_gcode_poll(self) -> None:
+        self._end_gcode_poll()
         if self.gcode_poll_seconds <= 0:
             return
-        thread = threading.Thread(target=self._gcode_poll_loop, args=(self.gcode.url,), name="gcode-poll", daemon=True)
+        done = threading.Event()
+        self._gcode_poll_done = done
+        thread = threading.Thread(target=self._gcode_poll_loop, args=(self.gcode.url, done), name="gcode-poll", daemon=True)
         thread.start()
 
-    def _gcode_poll_loop(self, url: str | None) -> None:
+    def _end_gcode_poll(self) -> None:
+        """Stops the poll of the connection that ends: one opened again at
+        the same url at once starts its own."""
+        done = getattr(self, "_gcode_poll_done", None)
+        if done is not None:
+            done.set()
+
+    def _gcode_poll_loop(self, url: str | None, done: threading.Event) -> None:
         """Reads the head's place every `gcode_poll_seconds` while the
-        machine stays connected at `url` and nothing else is in flight."""
-        while self.gcode.connected and self.gcode.url == url:
-            time.sleep(self.gcode_poll_seconds)
+        machine stays connected at `url`, until `done` (the connection
+        ended), and while nothing else is in flight."""
+        while self.gcode.connected and self.gcode.url == url and not done.is_set():
+            if done.wait(self.gcode_poll_seconds):
+                return
             if not self.gcode.connected or self.gcode.url != url or self.gcode.running:
                 continue
             try:
