@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import type { JogRequest } from "../src/types.ts";
 import { HOLD_TICK_MS, mountJog } from "../src/views/jog.ts";
+import { mountStatusBar } from "../src/views/statusbar.ts";
 import { connected, findButton, settle, setup } from "./harness.ts";
 
 const SMOOTH_KEY = "spinny.jog.smooth";
@@ -89,5 +90,29 @@ describe("hold to move", () => {
         expect(calls.filter((call) => call.name === "jog").length).toBe(pieces);
         document.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowUp", code: "ArrowUp", bubbles: true }));
         store.set({ snapshot: { ...connected(), connected: false } });
+    });
+
+    test("the big Stop ends a held key's jog", async () => {
+        localStorage.setItem(SMOOTH_KEY, "1");
+        const { store, ctx, root, calls, api } = setup();
+        await api.connect("/dev/ttyACM0");
+        store.set({ snapshot: connected() });
+        mountJog(root, ctx);
+        const bar = document.createElement("header");
+        document.body.appendChild(bar);
+        mountStatusBar(bar, ctx);
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", code: "ArrowUp", bubbles: true }));
+        await ticks(2.5);
+        const stop = findButton(bar, "Stop");
+        stop.dispatchEvent(new PointerEvent("pointerdown", { button: 0, bubbles: true, pointerId: 2 }));
+        stop.click();
+        await settle();
+        expect(calls.some((call) => call.name === "stopAll")).toBe(true);
+        const pieces = calls.filter((call) => call.name === "jog").length;
+        await ticks(3);
+        expect(calls.filter((call) => call.name === "jog").length).toBe(pieces);
+        document.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowUp", code: "ArrowUp", bubbles: true }));
+        store.set({ snapshot: { ...connected(), connected: false } });
+        bar.remove();
     });
 });

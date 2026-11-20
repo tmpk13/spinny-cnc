@@ -389,8 +389,9 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
     // A piece on its way may be queued after a cancel sent at the release
     // (the backend takes the two requests side by side), so a hold let go
     // with a piece in flight is cancelled again once that piece is answered.
-    let hold: { timer: ReturnType<typeof setInterval>; started: number; inFlight: Promise<unknown> | null } | null = null;
-    function startHold(piece: (seconds: number) => Promise<unknown>): void {
+    // A held button is the hold's source, so its own presses do not end it.
+    let hold: { timer: ReturnType<typeof setInterval>; started: number; inFlight: Promise<unknown> | null; source: Element | null } | null = null;
+    function startHold(piece: (seconds: number) => Promise<unknown>, source: Element | null = null): void {
         stopHold();
         let last = performance.now() - HOLD_TICK_MS;
         const tick = (): void => {
@@ -414,7 +415,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
             });
             own.inFlight = sent;
         };
-        hold = { timer: setInterval(tick, HOLD_TICK_MS), started: performance.now(), inFlight: null };
+        hold = { timer: setInterval(tick, HOLD_TICK_MS), started: performance.now(), inFlight: null, source };
         tick();
     }
     function stopHold(): void {
@@ -436,6 +437,14 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
         }
     }
     globalThis.addEventListener?.("blur", () => stopHold());
+    // A press anywhere else while a hold runs ends it: the big Stop, or a
+    // second finger on a touch screen, must not leave the hold sending
+    // pieces after the machine was told to stop.
+    document.addEventListener("pointerdown", (event) => {
+        if (hold !== null && !(hold.source !== null && event.target instanceof Node && hold.source.contains(event.target))) {
+            stopHold();
+        }
+    }, true);
     document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "hidden") {
             stopHold();
@@ -482,7 +491,7 @@ export function mountJog(root: HTMLElement, ctx: Ctx, page = "run", active: () =
             }
             held = true;
             press.setPointerCapture?.(event.pointerId);
-            startHold(piece);
+            startHold(piece, press);
         });
         for (const name of ["pointerup", "pointercancel", "lostpointercapture"]) {
             press.addEventListener(name, () => stopHold());
