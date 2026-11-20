@@ -2,9 +2,9 @@
 // or a right click on its head) and the tab bar's folder of tabs left out.
 // One menu is open at a time. It closes on a pick, on Escape, on a press
 // outside it, on a scroll or a resize, and gives the focus back to what
-// opened it. The arrow keys move between its items and go no further: the
-// jog keys listen on the document and skip a key whose default is
-// prevented, so a key meant for the menu never moves the machine.
+// opened it. The arrow keys move between its items, and no key pressed in
+// it goes further: the jog keys listen on the document, so a key meant for
+// the menu never moves the machine.
 
 import { popUp } from "./dismiss.ts";
 import { el } from "./dom.ts";
@@ -104,6 +104,10 @@ export function openMenu(entries: MenuEntry[], at: HTMLElement | { x: number; y:
             closeMenu(false);
             return;
         } else {
+            // Any other key (the side arrows, PageUp and PageDown, a letter
+            // a machine file binds to a joint) is the menu's too: it keeps
+            // its default, so Space and Enter still press the item.
+            event.stopPropagation();
             return;
         }
         event.preventDefault();
