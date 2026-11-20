@@ -105,6 +105,19 @@ def test_g28_homes_to_its_place_and_g92_and_relative_moves_count():
     assert machine.position == (6.0, 2.0, 31.5)
 
 
+def test_g28_naming_axes_homes_only_those():
+    # Marlin's G28 X homes X alone: Y and Z stay where they are, numbers
+    # and all.
+    machine = fresh(position=(40.0, 30.0, 12.0), home=(0.0, 0.0, 31.5), home_error=(0.2, 0.3))
+    assert send(machine, "G28 X") == ["echo:busy: processing", "ok"]
+    assert machine.position == (0.0, 30.0, 12.0)
+    assert machine.bed_position[1:] == (30.0, 12.0)
+    send(machine, "G28 Z")
+    assert machine.position == (0.0, 30.0, 31.5)
+    send(machine, "G28")
+    assert machine.position == (0.0, 0.0, 31.5)
+
+
 def test_the_firmware_names_itself_as_opulo_marlin():
     machine = fresh()
     assert firmware_of(send(machine, "M115")) == {"firmware": "Marlin 2.1.2 (Opulo)", "machine": "LumenPnP"}

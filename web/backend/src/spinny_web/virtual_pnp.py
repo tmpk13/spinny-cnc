@@ -544,7 +544,7 @@ class VirtualMarlin:
             self._answer("ok\r\n")
         elif word == "G28":
             self._answer("echo:busy: processing\r\n")
-            self._home()
+            self._home(fields)
             self._answer("ok\r\n")
         elif word == "G90":
             self.relative = False
@@ -688,15 +688,23 @@ class VirtualMarlin:
             with self._lock:
                 self._segments.clear()
 
-    def _home(self) -> None:
+    def _home(self, fields: dict[str, str]) -> None:
+        """G28 as Marlin takes it: the axes it names (X, Y, Z), every one
+        when it names none."""
         self.homed = True
         if self.home_place is None:
             return
+        every = not any(letter in fields for letter in AXES)
+        homing = [index for index, letter in enumerate("XYZ") if every or letter in fields]
         with self._lock:
-            # The switches set the numbers again, a little off the bed.
-            self.origin = [self.home_error[0], self.home_error[1], 0.0, 0.0, 0.0]
+            if every:
+                self.origin = [0.0, 0.0, 0.0, 0.0, 0.0]
+            for index in homing:
+                # The switches set the numbers again, a little off the bed.
+                self.origin[index] = self.home_error[index] if index < 2 else 0.0
             target = list(self._place)
-        target[0], target[1], target[2] = self.home_place
+        for index in homing:
+            target[index] = self.home_place[index]
         self._queue_move(target, HOMING_FEED)
         self._wait_moves()
 
