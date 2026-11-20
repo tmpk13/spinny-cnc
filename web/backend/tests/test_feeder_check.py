@@ -17,6 +17,7 @@ from test_openpnp import PROFILE, TRAY, device, part
 
 from spinny_web.app import create_app
 from spinny_web.jobs import Design, Group, Job
+from spinny_web.virtual_pnp import Photon
 from spinny_web.openpnp import NO_FEEDER, board_fit, feeder_check, parse, part_feeders, plan, ref_words
 
 R0603 = "Resistor_SMD:R_0603_1608Metric"
@@ -210,21 +211,21 @@ def test_the_route_answers_with_nothing_sent_and_keeps_where_the_bus_answered_un
     }
     assert client.post("/api/pnp/feeders/check", json={"job": job, "refs": ["C2"]}).json()["ready"] is True
     # Taken out of its slot, a scan that does not find it forgets it.
-    del client.fake.bus.feeders[4]
+    client.fake.bus.remove(C1U)
     client.post("/api/pnp/bus/scan")
     assert c1u_of(client, job)["seen"] is False
     # Put in a slot the file has no place for, found by its id.
-    client.fake.bus.feeders[5] = C1U
+    client.fake.bus.feeders.append(Photon(id=C1U, floor=5))
     client.post("/api/pnp/bus/scan", json={"feeders": ["c-1u"]})
     assert c1u_of(client, job) == {
         "id": "c-1u", "refs": ["C2"], "needs": 1, "left": None, "place_known": False, "bus_id": C1U, "address": 5, "seen": True,
     }
     # Not found by its id: forgotten.
-    del client.fake.bus.feeders[5]
+    client.fake.bus.remove(C1U)
     client.post("/api/pnp/bus/scan", json={"feeders": ["c-1u"]})
     assert c1u_of(client, job)["address"] is None
     # The plan asks the bus for a feeder whose file gives no slot, by its id: kept too.
-    client.fake.bus.feeders[4] = C1U
+    client.fake.bus.feeders.append(Photon(id=C1U, floor=4))
     client.post("/api/pnp/references", json={"job": job, "ref": "C1", "at": [200.0, 50.0]})
     client.post("/api/pnp/references", json={"job": job, "ref": "C2", "at": [210.0, 50.0]})
     assert [entry["ref"] for entry in client.post("/api/pnp/plan", json={"job": job}).json()["parts"]] == ["C1", "C2"]

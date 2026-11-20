@@ -16,6 +16,7 @@ from test_feederbus import C1U, C100N
 from spinny_web.app import create_app
 from spinny_web.placing_part import OVER_SLOT_NEEDS_OFFSET, SLOT_NEEDS_HEIGHT, SLOT_NEEDS_OFFSET
 from spinny_web.topcam import SCALE_NEEDED
+from spinny_web.virtual_pnp import Photon
 
 # The top camera's picture center from the nozzle as measured; the file
 # says another as designed, which a slot taken with the camera never takes.
@@ -190,8 +191,7 @@ def test_find_centers_the_camera_on_the_part_of_the_feeder_last_seen_there(clien
     connect(client, "lumen")
     # c-100n moved to address 4, where a scan finds it; its part lies 0.6
     # and -0.4 mm off where the camera looks from the head at 100, 50.
-    client.fake.bus.feeders.clear()
-    client.fake.bus.feeders[4] = C100N
+    client.fake.bus.feeders[:] = [Photon(id=C100N, floor=4)]
     client.post("/api/pnp/bus/scan")
     part = (124.1, 114.85)
     client.backend.top.client = DeviceTopCamera(client.fake, OFFSET, [("bright", part[0], part[1], 1.0, 0.5)])
