@@ -36,8 +36,8 @@ class TomlStore:
         # Writes take turns: a patch reads the file, changes a line and
         # writes it whole, and a write in between would be lost under it.
         self._writing = threading.RLock()
-        # Each file as last parsed, by the time it was written.
-        self._parsed: dict[str, tuple[int, Any]] = {}
+        # Each file as last parsed, by its time, size and inode then.
+        self._parsed: dict[str, tuple[tuple[int, int, int], Any]] = {}
 
     # --- what a kind gives ---------------------------------------------------------
 
@@ -78,11 +78,16 @@ class TomlStore:
         for it on every change it publishes reads it once."""
         path = self.path(item_id)
         try:
-            stamp = path.stat().st_mtime_ns
+            found = path.stat()
         except FileNotFoundError:
             raise self.missing(f"no {self.noun} {item_id!r}") from None
         except OSError as exc:
             raise self.error(f"{path}: {exc.strerror or exc}") from exc
+        # The time alone can stay the same over a write: a file system's
+        # clock may tick coarser than two writes are apart. A write through
+        # the store is a new file (a new inode); one in place by hand most
+        # likely changes the size.
+        stamp = (found.st_mtime_ns, found.st_size, found.st_ino)
         cached = self._parsed.get(item_id)
         if cached is not None and cached[0] == stamp:
             return cached[1]
@@ -129,6 +134,8 @@ class TomlStore:
                 # Through a temporary of its own: two saves at once each move
                 # a whole file, where a shared one left the second without its own.
                 write_whole(path, text)
+                # Read afresh next time, whatever the file's time says.
+                self._parsed.pop(item_id, None)
         except OSError as exc:
             raise self.error(f"cannot write {path}: {exc.strerror or exc}") from exc
         return {"document": self.describe(parsed), "text": text}
