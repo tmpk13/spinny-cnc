@@ -225,8 +225,8 @@ describe("a run of Auto over the mock's pick and place machine", () => {
         expect(placing.homed).toBe(true);
         expect(placing.references.filter((entry) => entry.job === board.id).map((entry) => entry.by)).toEqual(["fiducial", "fiducial"]);
         // Pressed again: the place found before may be the board placed
-        // before, so the camera looks again; the references are kept, and
-        // nothing starts a run.
+        // before, so the camera looks again, and sees the board where its
+        // references put it; nothing starts a run.
         lines.length = 0;
         runner.start();
         for (let turns = 0; turns < 4000 && runner.running(); turns++) {
@@ -234,7 +234,7 @@ describe("a run of Auto over the mock's pick and place machine", () => {
         }
         expect(lines[0]?.text).toBe("Searching for the board");
         expect(lines.at(-1)).toMatchObject({ kind: "end", step: "run" });
-        expect(lines.at(-1)?.text).toContain("its 2 references");
+        expect(lines.at(-1)?.text).toContain("The camera sees the board where its 2 references put it.");
         expect(calls.map((call) => call.name).filter((name) => ["topSearch", "topPlace", "pnpRun"].includes(name))).toEqual(["topSearch", "topPlace", "topSearch"]);
         expect(store.get().placing!.references.filter((entry) => entry.job === board.id).map((entry) => entry.by)).toEqual(["fiducial", "fiducial"]);
     });

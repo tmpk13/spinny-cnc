@@ -8226,13 +8226,16 @@ export class MockBackend implements Api, EventFeed {
         return locked;
     }
 
-    /** Where the board lies on the G-code machine: as its references put it, else a little off a place of the mock's own. */
+    /**
+     * Where the board lies on the G-code machine: where its references truly
+     * are (see trueReferenceAt), else a little off a place of the mock's own.
+     */
     private topTruth(jobId: string): BoardEstimate {
         const job = this.requireJob(jobId);
         const middle = jobSize(job).middle;
         let fit: { rotation: number; shift: [number, number] } = { rotation: 0.8, shift: [100, 60] };
         try {
-            const found = this.deviceFitOf(jobId, mockComponents(job));
+            const found = this.deviceFitOf(jobId, mockComponents(job), "nozzle", true);
             fit = { rotation: found.rotation, shift: [found.shift[0], found.shift[1]] };
         } catch {
             // No references: the mock's own place.
@@ -9370,7 +9373,7 @@ export class MockBackend implements Api, EventFeed {
      * reference of its own, and turns a lone one by its edges' turn. The
      * backend's _board_fit.
      */
-    private deviceFitOf(jobId: string, parts: Component[], frame: "nozzle" | "camera" = "nozzle"): AlignFit {
+    private deviceFitOf(jobId: string, parts: Component[], frame: "nozzle" | "camera" = "nozzle", truth = false): AlignFit {
         const byRef = new Map(parts.map((part) => [part.ref, part]));
         const designOf = (entry: PnpReference): [number, number] | null => {
             if (entry.by === "corner") {
@@ -9384,10 +9387,10 @@ export class MockBackend implements Api, EventFeed {
         const used = found.length > 1 ? found : entries;
         // With no offset known the camera's places are the head's, not the
         // nozzle's: a fit is of one frame, the one asked for.
-        if (!this.topOffsetInUse().known && used.some((entry) => (entry.offset !== undefined) !== (frame === "camera"))) {
+        if (!truth && !this.topOffsetInUse().known && used.some((entry) => (entry.offset !== undefined) !== (frame === "camera"))) {
             throw new ApiError(400, "the board's place was taken by the top camera, whose offset from the nozzle is not known: measure it: Offset by bottom camera, or a mark (Nozzle on mark, then Measure offset)");
         }
-        const pairs: [[number, number], [number, number]][] = used.map((entry) => [designOf(entry)!, this.referenceAt(entry)]);
+        const pairs: [[number, number], [number, number]][] = used.map((entry) => [designOf(entry)!, truth ? this.trueReferenceAt(entry) : this.referenceAt(entry)]);
         const angle = this.placing().angle ?? (used.length === 1 ? used[0]!.angle ?? null : null);
         try {
             return deviceFit(pairs, angle);
@@ -9667,6 +9670,19 @@ export class MockBackend implements Api, EventFeed {
      * difference; one taken by the nozzle, or kept before references
      * carried an offset, stays.
      */
+    /**
+     * Where a reference truly is on the mock's machine. One taken through
+     * the top camera was taken through the offset then in use, and the
+     * camera truly sits at TOP_TRUTH's: its place is off by that offset's
+     * error, which a real board does not follow.
+     */
+    private trueReferenceAt(entry: PnpReference): [number, number] {
+        if (!entry.offset) {
+            return [entry.at[0], entry.at[1]];
+        }
+        return [round4(entry.at[0] + TOP_TRUTH.offset[0] - entry.offset[0]), round4(entry.at[1] + TOP_TRUTH.offset[1] - entry.offset[1])];
+    }
+
     private referenceAt(entry: PnpReference): [number, number] {
         if (!entry.offset) {
             return [entry.at[0], entry.at[1]];
