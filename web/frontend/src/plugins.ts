@@ -228,10 +228,15 @@ export class PluginRuntime {
         this.failedAs.delete(info.id);
         const running: Running = { hash: info.hash, own: null, cleanups: [], panels: 0 };
         this.running.set(info.id, running);
-        const fail = (said: string): string => {
-            if (this.running.get(info.id) === running) {
-                this.stop(info.id);
+        const fail = (said: string): string | null => {
+            if (this.running.get(info.id) !== running) {
+                // Turned off, or started again, while it loaded or
+                // activated: what it added since goes, and its failure is
+                // not the plugin's state now.
+                this.undo(info.id, running);
+                return null;
             }
+            this.stop(info.id);
             this.failures.set(info.id, said);
             this.failedAs.set(info.id, info.hash);
             this.changed();

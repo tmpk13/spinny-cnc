@@ -225,6 +225,41 @@ describe("the plugin runtime", () => {
         expect(document.querySelector("#plugin-noisy")).toBeNull();
     });
 
+    test("an activate that fails after its plugin was turned off and on again leaves no failure and no panel", async () => {
+        makePages();
+        let calls = 0;
+        let late: (error: Error) => void = () => undefined;
+        const { runtime } = runtimeWith({
+            a: {
+                activate: async (host: PluginHost) => {
+                    calls += 1;
+                    const call = calls;
+                    if (call === 1) {
+                        await new Promise<void>((_, reject) => {
+                            late = reject;
+                        }).catch((error: unknown) => {
+                            host.panel({ title: "first try", page: "run" });
+                            throw error;
+                        });
+                    }
+                    host.panel({ title: `try ${call}`, page: "run" });
+                },
+            },
+        });
+        const first = runtime.start(info("a"));
+        await settle();
+        runtime.stop("a");
+        expect(await runtime.start(info("a"))).toBeNull();
+        expect(runtime.isRunning("a")).toBe(true);
+        late(new Error("too late"));
+        expect(await first).toBeNull();
+        expect(runtime.isRunning("a")).toBe(true);
+        expect(runtime.failures.has("a")).toBe(false);
+        const titles = Array.from(document.querySelectorAll(".plugin-panel h2")).map((head) => head.textContent);
+        expect(titles).toEqual(["try 2"]);
+        runtime.stop("a");
+    });
+
     test("sync runs what is on as its text, stops the rest, and does not try a failed text again", async () => {
         makePages();
         const { runtime, loaded } = runtimeWith({
