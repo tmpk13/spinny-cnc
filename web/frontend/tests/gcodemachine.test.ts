@@ -61,13 +61,30 @@ async function txCount(mock: MockBackend): Promise<number> {
 describe("a G-code machine used like the other machines, in the mock", () => {
     test("the LumenPnP file reads, and its port is found by its USB name", async () => {
         const lumen = gcodeMachineOf(lumenText, "opulo-lumen-rev5");
-        expect(lumen.safe_z).toBe(31.5);
-        expect(lumen.pick).toEqual(["M106 P1 S180", "M106"]);
-        expect(lumen.camera_position).toEqual([61.92, 219.82]);
-        expect(lumen.top?.offset).toEqual([23.544, 65.188]);
-        expect(lumen.top?.home_fiducial).toEqual([60.91, 175.23]);
-        expect([lumen.top?.roll, lumen.top?.mm_per_px, lumen.top?.bed]).toEqual([180, 0.0161, [24, 66, 456, 552]]);
-        expect(lumen.match).toEqual(["lumen"]);
+        // The operator calibrates this file (the cameras' places, the top
+        // camera's offset): its numbers are checked against what the file
+        // itself says, so a new calibration is not a failure here.
+        const file = Bun.TOML.parse(lumenText) as {
+            port: { match: string[] };
+            gcode: { pick: string[] };
+            motion: { safe_z: number };
+            up_camera: { position: [number, number] };
+            top_camera: {
+                offset: [number, number];
+                home_fiducial: [number, number];
+                roll: number;
+                mm_per_px: number;
+                bed: [number, number, number, number];
+            };
+        };
+        expect(lumen.safe_z).toBe(file.motion.safe_z);
+        expect(lumen.pick).toEqual(file.gcode.pick);
+        expect(lumen.camera_position).toEqual(file.up_camera.position);
+        expect(lumen.top?.offset).toEqual(file.top_camera.offset);
+        expect(lumen.top?.home_fiducial).toEqual(file.top_camera.home_fiducial);
+        const top = file.top_camera;
+        expect([lumen.top?.roll, lumen.top?.mm_per_px, lumen.top?.bed]).toEqual([top.roll, top.mm_per_px, top.bed]);
+        expect(lumen.match).toEqual(file.port.match);
         const ports = await new MockBackend().ports();
         expect(ports.find((port) => port.device === "/dev/ttyACM1")?.machine).toBe("opulo-lumen-rev5");
         expect(ports.find((port) => port.device === "/dev/ttyACM0")?.machine).toBeNull();
