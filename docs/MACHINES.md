@@ -534,7 +534,7 @@ part = [0.2, 0.1, 0.8, 0.9]      # a part on the nozzle, inside this box and the
 
 [top_camera]             # a camera on the head looking down
 z = 0                    # the height the head looks from; left out, the safe height
-offset = [40.0, 0.0]     # its picture's center from the nozzle as designed; Measure offset finds it
+offset = [40.0, 0.0]     # its picture's center from the nozzle as designed; Offset by bottom camera, or Measure offset from a mark, finds it
 roll = 180               # degrees from the picture's x axis to +X, counterclockwise seen from above, as mounted (180: upside down); used until Measure offset measures the scale and roll; left out, the measured one or 0
 bed = [20.0, 60.0, 450.0, 550.0]  # where boards lie, x0 y0 x1 y1 of the places the picture's center goes over: a search with no place known and no box drawn scans it on a lattice spaced by the board's size, then halfway between; left out, a square the board's diagonal on a side about the head
 board_area = [40.0, 80.0, 200.0, 200.0]  # where a board is expected, x0 y0 x1 y1 in the frame of bed and inside it: a search with nothing known looks there first, then the rest of the bed; drawn and set on the Machine view panel; left out, the whole bed

@@ -1268,7 +1268,20 @@ and press *Start* on the Top camera view (Run), jog the nozzle's tip
 onto a mark it can see (a dot on paper, a hole) and press *Nozzle on
 mark*, then *Measure offset*: the head moves so the camera should see the
 mark (by the file's `offset`, or from where it stands when there is
-none), measures the picture and centers the mark. *Home by fiducial*
+none), measures the picture and centers the mark. *Offset by bottom
+camera* (under the Top camera panel's More) needs no mark: it centers the
+nozzle over the bottom camera as *Center nozzle* does, brings the top
+camera over the bottom camera with both nozzles up, and each camera finds
+the other (the top camera the bottom camera's ring light, the bottom
+camera the top camera's lens). Each look alone is off by the cameras'
+lean: a small camera's picture center looks a degree or two off its
+lens' axis, and on a LumenPnP the two looks came out 2 mm apart. The
+offset kept is the two combined by where the nozzle's tip lies between
+the cameras, read off their scales, which takes the lean out. It needs
+both cameras running with the light on, the bottom camera's place known
+(the file's `[up_camera] position`, or *Center nozzle* once), and the top
+camera's picture measured over a board (*Measure camera*) for the best
+of the two scales. *Home by fiducial*
 in the Machine panel
 (with `home_fiducial` in the file's `[top_camera]`, which the OpenPnP
 import reads from the head's homing fiducial) homes the machine, then

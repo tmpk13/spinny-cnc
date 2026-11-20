@@ -30,7 +30,7 @@ of them:
 | Height and focus | Jog (Travel H), Height map (map, Focus offset, Focus here, Rayleigh), Run (the map's mode), Setup steps 3 to 6 | 4 |
 | Run, hold, stop | Run, Plot's Run, Placing, Console (Hold !, Resume ~, Reset) | 4 |
 | Starting a camera | Camera (Start, Stop, device), Camera view (the picture, "start it in the Camera panel"), Find board (which camera, "start it in its panel") | 3 per camera |
-| Calibrating a camera | Camera (offset, roll, mm per px, Find mark), Top camera (Measure camera, Nozzle on mark, Measure offset), Bottom camera (its place, Center nozzle, Measure runout), Nozzle (mm per px, roll, mirrored, Center nozzle, Look at part), Head (nozzle and camera moves) | 5 |
+| Calibrating a camera | Camera (offset, roll, mm per px, Find mark), Top camera (Measure camera, Offset by bottom camera, Nozzle on mark, Measure offset), Bottom camera (its place, Center nozzle, Measure runout), Nozzle (mm per px, roll, mirrored, Center nozzle, Look at part), Head (nozzle and camera moves) | 5 |
 | Logging looks | Log every look, Photo and Clear log, marked "all cameras", in each of the three camera panels | 3 copies |
 | Machine file values on Use pages | Head (Tune the machine file: heights, feeds, dwells, vacuum), Find board (Write skew to machine file), Camera (offsets to "copy into the machine file"), Machine view (board area, picture, model), Feeders ("add tables on the Config page") | 5 |
 | Opening a board | Jobs (drop, pick a file), Parts (Board job, Upload board), Board (Open a board), CAM (pick files), Plot (New job) | 5 |
@@ -122,7 +122,7 @@ The largest panels, in controls and words in view:
 | **Tests** | the centering and calibration test burns | Tests |
 | **Machines** | the machine files, Use this machine, the port and Connect, Add a machine (new, copy, from OpenPnP), the file editor | Machine file, Connection, Import from OpenPnP |
 | **Firmware** | the settings table (differences only by default), Write to board, Read from board, Save to flash | Settings, Machine file (Write, Read, Save to flash) |
-| **Cameras** | for each camera of this machine: device, size, fps, Detect; place and scale (offset, roll, mm per px, mirrored, the bottom camera's place); spots (nozzle, part, mark); lens and colors; crops; the routines (Find mark, Make mark, Mark is here, Measure camera, Nozzle on mark, Measure offset, Center nozzle, Measure runout, Look at part); changes with Undo. Once for all cameras: Log every look, Photo, Clear log, the search records | Camera, Bottom camera, Top camera, Nozzle, Lens and colors, Camera changes |
+| **Cameras** | for each camera of this machine: device, size, fps, Detect; place and scale (offset, roll, mm per px, mirrored, the bottom camera's place); spots (nozzle, part, mark); lens and colors; crops; the routines (Find mark, Make mark, Mark is here, Measure camera, Offset by bottom camera, Nozzle on mark, Measure offset, Center nozzle, Measure runout, Look at part); changes with Undo. Once for all cameras: Log every look, Photo, Clear log, the search records | Camera, Bottom camera, Top camera, Nozzle, Lens and colors, Camera changes |
 | **Head** | Safe Z, Place Z, feeds, dwells, vacuum thresholds, Read vacuum | Head (Tune the machine file, Read vacuum) |
 | **Bed** | the board area, the machine's picture and model, the home fiducial, the axes' skew, the feeder slots | Machine view, Top camera (Find home fiducial), Find board (Write skew), Feeders' slots |
 | **CAM profiles** | a profile's axes, tools and operations, and its file | CAM, Profile file |
