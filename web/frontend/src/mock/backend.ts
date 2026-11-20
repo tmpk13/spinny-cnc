@@ -133,6 +133,7 @@ import {
     declareLine,
     deviceDocument,
     deviceFit,
+    feederCheck,
     fromController,
     gnum,
     gotoLines,
@@ -195,6 +196,7 @@ import type {
     BusFeeder,
     BusMissing,
     BusScan,
+    FeederCheck,
     CalibrateRequest,
     CalibrateResponse,
     CameraColors,
@@ -2276,6 +2278,12 @@ export class MockBackend implements Api, EventFeed {
     private busReady = new Set<number>();
     private busFeeding = new Map<number, number>();
     private busNumber = 0;
+    /**
+     * Where the bus last answered for each feeder, by its id: a scan, a
+     * look for it by its id, or a run's search at its start, kept until the
+     * machine disconnects, as the backend keeps it for the feeder check.
+     */
+    private busSeen = new Map<string, number>();
     /** The device's top camera: its settings, whether it runs, its routine, and the fiducials last found. */
     private topConfig: TopSettings = { ...TOP_DEFAULTS };
     private topRunning = false;
@@ -7510,6 +7518,7 @@ export class MockBackend implements Api, EventFeed {
             this.url = null;
         }
         this.gcodeClose();
+        this.busSeen.clear();
         this.gcodeId = id;
         this.lastGcode = id;
         this.machineUsed = id;
@@ -7586,6 +7595,7 @@ export class MockBackend implements Api, EventFeed {
         this.deviceLink = { ...this.deviceLink, connected: false, url: null };
         this.gcodeId = null;
         this.url = null;
+        this.busSeen.clear();
         this.emitPlacing();
     }
 
@@ -9325,6 +9335,18 @@ export class MockBackend implements Api, EventFeed {
         return planSummary(this.devicePlanOf(job, refs ?? null).plan);
     }
 
+    /** The job's parts checked against the feeders, as the backend's feeder check: no fit, nothing moved, the bus not asked. */
+    async pnpFeederCheck(jobId: string, refs?: string[]): Promise<FeederCheck> {
+        const device = this.placingDevice();
+        const parts = markFiltered(mockComponents(this.requireJob(jobId)), this.partsFilterKept);
+        if (parts.length === 0) {
+            throw new ApiError(400, "only a .kicad_pcb upload keeps the board its parts are read from");
+        }
+        // Where the bus answered counts for the machine connected only.
+        const seen = this.deviceLink.connected && this.gcodeId === device.id ? this.busSeen : new Map<string, number>();
+        return feederCheck(device, parts, refs ?? null, this.placing().taken, seen);
+    }
+
     pnpProgramUrl(job: string, refs?: string[]): string {
         try {
             return `data:text/plain;charset=utf-8,${encodeURIComponent(planText(this.devicePlanOf(job, refs ?? null).plan))}`;
@@ -9807,6 +9829,7 @@ export class MockBackend implements Api, EventFeed {
                 throw new ApiError(502, `feeder ${feeder.id}: no feeder answered to the id ${feeder.bus_id}: is it in its slot?`);
             }
             address = found.sender;
+            this.busSeen.set(feeder.bus_id!, address);
         }
         for (let attempt = 0; attempt < 2; attempt++) {
             if (!this.busReady.has(address)) {
@@ -9844,6 +9867,9 @@ export class MockBackend implements Api, EventFeed {
                 return feeder;
             }
             const found = this.busExchange(device, device.bus!.broadcast, device.bus!.codes["find"]!, idBytes(feeder.bus_id));
+            if (found !== null && found.payload[0] === device.bus!.codes["ok"]) {
+                this.busSeen.set(feeder.bus_id, found.sender);
+            }
             const slot = found !== null && found.payload[0] === device.bus!.codes["ok"] ? device.slots.find((entry) => entry.address === found.sender) : undefined;
             return slot ? { ...feeder, slot: slot.address, at: slotPlace(slot.at, slot.rotation, feeder.offset), rotation: feeder.rotation + slot.rotation } : feeder;
         });
@@ -9887,6 +9913,9 @@ export class MockBackend implements Api, EventFeed {
                 }
             }
             found.sort((a, b) => a.address - b.address);
+        }
+        for (const entry of found) {
+            this.busSeen.set(entry.id, entry.address);
         }
         this.emitPlacing();
         return { feeders: found, missing, ...this.placingStateOf() };

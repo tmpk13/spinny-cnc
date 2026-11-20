@@ -1130,7 +1130,16 @@ Steps panel's *Place parts with a G-code machine*):
    the top camera* ticked, the picked part's pads and body (as its
    footprint draws them, turned as it lies) are drawn about the top
    camera's crosshair: jog until the part fills them, then *Camera here*.
-4. *Plan*, in the Placing part of the Run panel, makes the placement program from the references and the
+4. Feeders: the step checks the board's parts against the file's feeders
+   as a plan would take them, with nothing moved and the bus not asked.
+   Its line says how many parts come from how many feeders, which parts
+   no feeder holds, a feeder whose place is not known (a feeder on the bus
+   not found by a scan yet, or found at an address with no `[[slot]]`),
+   and one with fewer parts left than the board takes. It is done once
+   every part has a feeder whose place is known and none runs short; until
+   then a run's steps open on it. The Feeders panel lists the parts no
+   feeder holds above the feeders, and a feeder's row says what it lacks.
+5. *Plan*, in the Placing part of the Run panel, makes the placement program from the references and the
    feeders and shows it; nothing moves (it works with the machine
    disconnected too, for the one last connected). *Run* places the
    parts; a run window shows its progress and its steps (each pick,

@@ -14,6 +14,7 @@ import { formatDuration, formatLength } from "../format.ts";
 import { machineInUse } from "../machineuse.ts";
 import { isMilling, profileBadge, profileOf } from "../profile.ts";
 import type { AppState } from "../state.ts";
+import { feedersDone, feedersLine } from "./feedercheck.ts";
 import { mapComplete, mapUsable, runActive } from "./heightmap.ts";
 import { gcodePlacing, referencesOf } from "./placing.ts";
 import type { PageId } from "./tabs.ts";
@@ -196,7 +197,7 @@ export function referencesText(references: { by?: string }[]): string {
 /**
  * The steps of placing parts with a G-code pick and place machine:
  * connect, home, pick the board and its parts, say where the board sits,
- * load the feeders, place.
+ * check the feeders against the parts, place.
  */
 export function placingSteps(state: AppState): AreaView[] {
     const placing = state.placing;
@@ -247,14 +248,16 @@ export function placingSteps(state: AppState): AreaView[] {
             line: references > 0 ? referencesText(taken) : "The board's place is not known yet: find it by the camera, or take a reference.",
         },
         {
+            // Done when the feeder check says a run would place every part:
+            // each has a feeder, each feeder's place is known, none is short.
             id: "feeders",
             label: "Feeders",
             tip: "what is loaded, low or missing",
             columns: [["pnp-board"], ["pnp-feeders"], ["machine"]],
             cols: WORK_AND_PANEL,
             dock: true,
-            step: { done: false, optional: true },
-            line: "The feeders the parts come from.",
+            step: { done: feedersDone(state), optional: false },
+            line: feedersLine(state),
         },
         {
             id: "run",

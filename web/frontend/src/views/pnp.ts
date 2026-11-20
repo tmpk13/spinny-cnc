@@ -26,6 +26,9 @@ import { PLACING_SETUP, gcodePlacing, mountHead, upCameraText } from "./placing.
 import { keptOut, mountPartsFilter, pickedToPlace, readShowKeptOut, setPickedToPlace, shownParts, writeShowKeptOut } from "./partsfilter.ts";
 import { mountBoardSearch } from "./partsearch.ts";
 import { mountMachineView } from "./machineview.ts";
+import { footprintName, refreshFeederCheck } from "./feedercheck.ts";
+// A footprint's name without its library, which the Parts list shows, is the feeder check's too.
+export { footprintName };
 import { mountPnpFeeders } from "./pnpfeeders.ts";
 import { mountPnpRefs } from "./pnprefs.ts";
 import { mountPnpRun } from "./pnprun.ts";
@@ -90,12 +93,6 @@ export function scrollToShow(scrollTop: number, view: { top: number; bottom: num
         return scrollTop + (row.bottom - view.bottom);
     }
     return scrollTop;
-}
-
-/** A footprint's name without its library. */
-export function footprintName(footprint: string): string {
-    const at = footprint.indexOf(":");
-    return at >= 0 ? footprint.slice(at + 1) : footprint;
 }
 
 export type SortKey = "ref" | "value" | "footprint" | "x" | "y" | "rotation" | "side";
@@ -1153,7 +1150,11 @@ export function mountPnp(roots: PnpRoots, ctx: Ctx, headBox: () => MachineBox | 
         const job = ctx.store.get().job?.id ?? "";
         const box = el("input", { type: "checkbox", "aria-label": `Place ${part.ref}` }) as HTMLInputElement;
         box.checked = pickedToPlace(job).has(part.ref);
-        box.addEventListener("change", () => setPickedToPlace(job, part.ref, box.checked));
+        box.addEventListener("change", () => {
+            setPickedToPlace(job, part.ref, box.checked);
+            // The parts a placing run asks for changed: so does the feeder check.
+            void refreshFeederCheck(ctx);
+        });
         const label = el("label", { class: "muted pnp-place-pick", title: "kept out of the position files: tick to place it all the same" }, " kept out ", box, " place");
         // A press on the box is not a press on the row, which picks the part.
         label.addEventListener("click", (event) => event.stopPropagation());

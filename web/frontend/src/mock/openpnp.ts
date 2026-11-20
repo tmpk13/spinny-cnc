@@ -10,7 +10,7 @@ import { errorText } from "../api.ts";
 import { checkTasks, TOP_TASKS, UP_TASKS, type CropBox } from "../crops.ts";
 import { type TomlTable, type TomlValue } from "../toml.ts";
 import { HEADER_FIELDS, slotPlace } from "../feederbus.ts";
-import type { AlignFit, Component, GcodeDocument, PartClass, PlacingPlan, SpotPolarity } from "../types.ts";
+import type { AlignFit, Component, FeederCheck, FeederCheckFeeder, GcodeDocument, PartClass, PlacingPlan, SpotPolarity } from "../types.ts";
 
 export const DEVICE_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const AXIS = /^[A-Z]$/;
@@ -1219,6 +1219,131 @@ export function placeLines(device: MockDevice, point: [number, number], turn: nu
     ];
 }
 
+/** Why a part a plan takes up is left out when no feeder holds it. */
+export const NO_FEEDER = "no feeder holds it";
+
+/**
+ * A part a plan takes up, in the plan's order: its feeder (null for none),
+ * and why it is left out before any feeder's own state is asked about
+ * (null when it is not). `listed`: it would be placed but for its feeder,
+ * as the feeder check lists it; a part left out for the job's own reason
+ * (not a part of this job, a fiducial asked for, the parts filter, dnp,
+ * the back, kept out of the position files) is not.
+ */
+export interface PartFeeder<F> {
+    ref: string;
+    part: Component | null;
+    feeder: F | null;
+    reason: string | null;
+    listed: boolean;
+}
+
+/**
+ * Each part a plan of `refs` (null: every part) takes up, with its feeder
+ * or why it is left out: the backend's part_feeders, which its plan and
+ * its feeder check share, so the two cannot disagree on a part.
+ */
+export function partFeeders<F extends { match: string; refs?: string[] }>(feeders: F[], parts: Component[], refs: string[] | null): PartFeeder<F>[] {
+    const taken: PartFeeder<F>[] = [];
+    const wanted = refs !== null ? new Set(refs) : null;
+    if (wanted !== null) {
+        const known = new Set(parts.map((part) => part.ref));
+        for (const missing of [...wanted].filter((ref) => !known.has(ref)).sort()) {
+            taken.push({ ref: missing, part: null, feeder: null, reason: "not a part of this job", listed: false });
+        }
+    }
+    const leave = (part: Component, reason: string): void => {
+        taken.push({ ref: part.ref, part, feeder: null, reason, listed: false });
+    };
+    for (const part of parts) {
+        if (wanted !== null && !wanted.has(part.ref)) {
+            continue;
+        }
+        if (part.fiducial) {
+            if (wanted !== null) {
+                leave(part, "a fiducial, not a part");
+            }
+            continue;
+        }
+        if (part.filtered) {
+            leave(part, "left out by the parts filter");
+            continue;
+        }
+        if (part.dnp) {
+            leave(part, "not to be fitted (dnp)");
+            continue;
+        }
+        if (part.side === "back") {
+            leave(part, "on the back");
+            continue;
+        }
+        const feeder = feederFor(feeders, part.value, part.footprint, part.ref);
+        // Kept out of the position files: placed only when asked for by name, or named by its feeder.
+        if (part.exclude_from_pos_files && wanted === null && !(feeder?.refs ?? []).includes(part.ref)) {
+            leave(part, "kept out of the position files: pick it to place it");
+            continue;
+        }
+        taken.push({ ref: part.ref, part, feeder, reason: feeder ? null : NO_FEEDER, listed: true });
+    }
+    return taken;
+}
+
+/** Words in a list: "a", "a and b", "a, b and c". */
+function andList(words: string[]): string {
+    return words.length <= 1 ? words[0] ?? "" : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
+}
+
+/**
+ * The job's parts checked against the feeders, as the backend's
+ * feeder_check: each part a plan would place with its feeder; each feeder
+ * they come from with the parts it gives, what it has left (its count less
+ * `taken`; null with no count) and whether its pick place is known (a strip
+ * or a tray always; a feeder on the bus by its file's slot, or by an
+ * address with a [[slot]] that the bus last answered for it at, `seen`);
+ * the problems in words, and whether a run would place every part. Nothing
+ * here asks the bus.
+ */
+export function feederCheck(device: MockDevice, parts: Component[], refs: string[] | null, taken: Record<string, number>, seen: ReadonlyMap<string, number>): FeederCheck {
+    const entries = partFeeders(device.feeders, parts, refs).filter((entry) => entry.listed && entry.part !== null);
+    const slotted = new Set(device.slots.map((slot) => slot.address));
+    const feeders: FeederCheckFeeder[] = device.feeders.filter((feeder) => entries.some((entry) => entry.feeder === feeder)).map((feeder) => {
+        const gives = entries.filter((entry) => entry.feeder === feeder).map((entry) => entry.ref);
+        const found = feeder.bus_id !== null ? seen.get(feeder.bus_id) : undefined;
+        return {
+            id: feeder.id,
+            refs: gives,
+            needs: gives.length,
+            left: feeder.count > 0 ? Math.max(0, feeder.count - (taken[feeder.id] ?? 0)) : null,
+            place_known: feeder.bus_id === null || feeder.at !== null || (found !== undefined && slotted.has(found)),
+            bus_id: feeder.bus_id,
+            address: found ?? feeder.slot,
+            seen: found !== undefined,
+        };
+    });
+    const problems: string[] = [];
+    const loose = entries.filter((entry) => entry.feeder === null).map((entry) => entry.ref);
+    if (loose.length > 0) {
+        problems.push(`${andList(loose)}: no feeder holds ${loose.length === 1 ? "it" : "them"}`);
+    }
+    for (const feeder of feeders) {
+        if (!feeder.place_known) {
+            problems.push(feeder.seen
+                ? `feeder ${feeder.id} answered at address ${feeder.address}, which has no [[slot]] place`
+                : `feeder ${feeder.id}'s place is not known: scan the feeder bus for it`);
+        }
+        if (feeder.left !== null && feeder.left < feeder.needs) {
+            const left = feeder.left === 0 ? "no parts" : `${feeder.left} ${feeder.left === 1 ? "part" : "parts"}`;
+            problems.push(`feeder ${feeder.id} has ${left} left, ${feeder.needs} needed`);
+        }
+    }
+    return {
+        parts: entries.map((entry) => ({ ref: entry.ref, value: entry.part!.value, footprint: entry.part!.footprint, feeder: entry.feeder?.id ?? null, reason: entry.reason })),
+        feeders,
+        problems,
+        ready: entries.length > 0 && entries.every((entry) => entry.feeder !== null) && feeders.every((feeder) => feeder.place_known && (feeder.left === null || feeder.left >= feeder.needs)),
+    };
+}
+
 /** The placement program, as the backend makes it. */
 export function planDevice(
     device: MockDevice,
@@ -1234,47 +1359,14 @@ export function planDevice(
     const blocks: MockBlock[] = [];
     const skipped: { ref: string; reason: string }[] = [];
     const marked = new Set<string>();
-    const wanted = refs !== null ? new Set(refs) : null;
-    if (wanted !== null) {
-        const known = new Set(parts.map((part) => part.ref));
-        for (const missing of [...wanted].filter((ref) => !known.has(ref)).sort()) {
-            skipped.push({ ref: missing, reason: "not a part of this job" });
-        }
-    }
     const apply = (point: [number, number]): [number, number] => {
         const [tx, ty] = turnPoint(point, fit.rotation);
         return [tx + fit.shift[0], ty + fit.shift[1]];
     };
-    for (const part of parts) {
-        if (wanted !== null && !wanted.has(part.ref)) {
-            continue;
-        }
-        if (part.fiducial) {
-            if (wanted !== null) {
-                skipped.push({ ref: part.ref, reason: "a fiducial, not a part" });
-            }
-            continue;
-        }
-        if (part.filtered) {
-            skipped.push({ ref: part.ref, reason: "left out by the parts filter" });
-            continue;
-        }
-        if (part.dnp) {
-            skipped.push({ ref: part.ref, reason: "not to be fitted (dnp)" });
-            continue;
-        }
-        if (part.side === "back") {
-            skipped.push({ ref: part.ref, reason: "on the back" });
-            continue;
-        }
-        const feeder = feederFor(device.feeders, part.value, part.footprint, part.ref);
-        // Kept out of the position files: placed only when asked for by name, or named by its feeder.
-        if (part.exclude_from_pos_files && wanted === null && !(feeder?.refs ?? []).includes(part.ref)) {
-            skipped.push({ ref: part.ref, reason: "kept out of the position files: pick it to place it" });
-            continue;
-        }
-        if (!feeder) {
-            skipped.push({ ref: part.ref, reason: "no feeder holds it" });
+    for (const entry of partFeeders(device.feeders, parts, refs)) {
+        const { part, feeder } = entry;
+        if (part === null || feeder === null) {
+            skipped.push({ ref: entry.ref, reason: entry.reason ?? NO_FEEDER });
             continue;
         }
         if (feeder.vision && !visionReady) {

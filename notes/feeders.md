@@ -1,6 +1,7 @@
 # Feeders (2026-11-19)
 
-The plan these were built from is [docs/FEEDERS.md](../docs/FEEDERS.md).
+The feeders plan as built ([docs/FEEDERS.md](../docs/FEEDERS.md)): what
+was not obvious, and why it is the way it is.
 
 ## The run and the bus (2026-11-19)
 
@@ -129,3 +130,29 @@ The plan these were built from is [docs/FEEDERS.md](../docs/FEEDERS.md).
   offset by up to the centering tolerance. The shade is the pocket of the
   feeder the bus last answered for at that address, else of the feeder
   whose `slot` it is.
+
+## The page
+
+- **The check is the store's, asked by the page and never polled**
+  (src/views/feedercheck.ts). It keeps a key of everything its answer
+  depends on in the page's state (the job, the parts asked for, the
+  machine and whether it is connected, the file's feeders and slots, the
+  counts), so a `placing` event, which comes with every status report,
+  asks nothing unless one of those changed. A scan asks again whatever the
+  key says: where the bus answered is known to the backend alone. A kept
+  out part ticked to be placed changes only localStorage, so the Parts
+  panel's box asks itself.
+- **A failed check is kept with its reason, not toasted.** It runs by
+  itself on every change; the Feeders step's line says why there is none.
+- **The step's line is made from the check's fields, not its `problems`.**
+  The line has room for one sentence: the counts first, then the parts no
+  feeder holds (three named, the rest counted), then two feeders' wants and
+  a count of the rest. `problems` are the backend's words for a list.
+- **Auto stops at Feeders only when a check is back and not ready.** With
+  none back (a page that never mounted the panel) it goes on to "Ready to
+  place" as before, rather than wait for an answer nothing will ask for.
+- **The mock's plan loop is split as the backend's** (`partFeeders` in
+  src/mock/openpnp.ts, the twin of `part_feeders`): the plan and the check
+  take the same parts for the same reasons. Each entry keeps its place in
+  the plan's order, so `skipped` lists the job's reasons and the parts no
+  feeder holds interleaved, as before the split.

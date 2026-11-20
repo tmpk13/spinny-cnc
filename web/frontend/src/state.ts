@@ -17,6 +17,7 @@ import type {
     Compensate,
     ComponentsResponse,
     ConsoleLine,
+    FeederCheck,
     PlacingState,
     Grid,
     HeightMapState,
@@ -35,6 +36,20 @@ import type {
 } from "./types.ts";
 
 export type Listener<T> = (state: T, previous: T) => void;
+
+/**
+ * The last feeder check's answer, with what it was asked about: the job,
+ * and a key of everything in the page's state the answer depends on (the
+ * machine, its file's feeders and slots, the counts, the parts asked
+ * for), so a check is asked again only when one of them changes. `error`
+ * says why the check failed; `check` is then null.
+ */
+export interface FeederCheckState {
+    key: string;
+    job: string;
+    check: FeederCheck | null;
+    error: string | null;
+}
 
 export class Store<T extends object> {
     private state: T;
@@ -138,6 +153,8 @@ export interface AppState {
     pnpPart: string | null;
     /** What the PNP tab keeps of the G-code machine it places with, and that machine's link; null until read. */
     placing: PlacingState | null;
+    /** The picked board's parts checked against that machine's feeders, the last answer; null with nothing to check. */
+    feederCheck: FeederCheckState | null;
     /** The saved positions on the board, as the backend keeps them. */
     markers: Marker[];
     /** The Auto tab's conversation and whether a turn is under way; null until read. */
@@ -197,6 +214,7 @@ export function initialState(mock: boolean): AppState {
         components: null,
         pnpPart: null,
         placing: null,
+        feederCheck: null,
         markers: [],
         auto: null,
         autoSettings: null,

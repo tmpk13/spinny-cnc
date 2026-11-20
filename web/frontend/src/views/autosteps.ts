@@ -4,8 +4,8 @@
 // G-code machine, starts the camera, looks for the board and takes the
 // place found. It stops at the first thing that takes a person (a board to
 // pick, a place the camera and the references disagree on, a job to move
-// onto its marks) and at the last step, which it never presses: a run is
-// started by hand.
+// onto its marks, feeders the check finds wanting) and at the last step,
+// which it never presses: a run is started by hand.
 //
 // Everything it starts is one of the page's own requests, the one a button
 // of the step sends, and is started once in a run of Auto: what did not
@@ -23,6 +23,7 @@ import type { AppState } from "../state.ts";
 import type { BoardEstimate, Component, Job, PnpReference } from "../types.ts";
 import { connectOffered, offeredPorts, portName } from "./connection.ts";
 import type { Ctx } from "./context.ts";
+import { checkLine, currentCheck } from "./feedercheck.ts";
 import { searchWill, type LookCamera } from "./findboard.ts";
 import { runActive } from "./heightmap.ts";
 import { gcodePlacing, referencesOf, topRoutineText } from "./placing.ts";
@@ -224,7 +225,7 @@ function topBoardMove(state: AppState, memory: AutoMemory, job: Job, parts: Comp
         : need("board", `${said}: put the picture's center on a corner of it and press Corner here (By camera, More), or take a reference by hand.`);
 }
 
-/** The steps of a G-code pick and place machine: connect, home, the board and its parts, its place by the top camera; then the placing is the operator's. */
+/** The steps of a G-code pick and place machine: connect, home, the board and its parts, its place by the top camera, the feeders as the check finds them; then the placing is the operator's. */
 function placingMove(state: AppState, memory: AutoMemory): AutoMove {
     const placing = state.placing;
     const connect = connectMove(state, memory, placing?.connected === true);
@@ -251,6 +252,12 @@ function placingMove(state: AppState, memory: AutoMemory): AutoMove {
     const board = topBoardMove(state, memory, job, parts);
     if (typeof board !== "string") {
         return board;
+    }
+    // A part no feeder holds, a feeder whose place is not known or one
+    // that runs short is the operator's to settle, at the Feeders step.
+    const feeders = currentCheck(state)?.check ?? null;
+    if (feeders !== null && !feeders.ready) {
+        return need("feeders", `${board} ${checkLine(feeders)}`);
     }
     return end("run", `${board} Ready to place: Plan, check it, then Run.`);
 }

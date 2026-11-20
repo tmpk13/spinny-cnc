@@ -7,21 +7,60 @@
 // a feeder there presents its part at. Feeders picked in the list (a press
 // picks one, Shift a run of them, Ctrl or Cmd adds or drops one) are what
 // the scan looks for, each by its id, in place of every address.
+//
+// Above the list, the parts of the board picked that no feeder holds, as
+// the feeder check finds them (src/views/feedercheck.ts); in the list, a
+// feeder the job takes more parts from than it has left, or whose place is
+// not known, says so in its row.
 
 import { askConfirm } from "../confirm.ts";
 import { button, el, lockFor, replace, setLocked } from "../dom.ts";
 import { formatFixed } from "../format.ts";
 import type { AppState } from "../state.ts";
-import type { BusFeeder, BusMissing, GcodeDocument, FeederSummary } from "../types.ts";
+import type { BusFeeder, BusMissing, FeederCheck, FeederCheckFeeder, GcodeDocument, FeederSummary } from "../types.ts";
 import { into, type Ctx } from "./context.ts";
+import { currentCheck, footprintName, refreshFeederCheck, watchFeederCheck } from "./feedercheck.ts";
 
-/** Where a feeder presents its parts, in words. */
-export function feederPlaceText(feeder: FeederSummary): string {
+/** Where a feeder presents its parts, in words; with the check's word on it, where the bus last answered for one with no slot in the file. */
+export function feederPlaceText(feeder: FeederSummary, checked: FeederCheckFeeder | null = null): string {
     if (feeder.at) {
         const slot = feeder.bus_id ? `slot ${feeder.slot}, ` : "";
         return `${slot}X ${formatFixed(feeder.at[0], 2)} Y ${formatFixed(feeder.at[1], 2)} Z ${formatFixed(feeder.at[2], 2)}`;
     }
-    return "slot found on the bus when a run starts";
+    if (checked?.seen && checked.address !== null) {
+        return checked.place_known ? `found at address ${checked.address}` : `found at address ${checked.address}, which has no slot place`;
+    }
+    return checked !== null && !checked.place_known ? "not found on the bus yet: scan it" : "slot found on the bus when a run starts";
+}
+
+/** What a feeder has given, and, when the job takes more than it has left, how many it needs. */
+export function feederTakenText(feeder: FeederSummary, taken: number, checked: FeederCheckFeeder | null = null): string {
+    const given = `${taken}${feeder.count > 0 ? ` of ${feeder.count}` : ""}`;
+    return checked !== null && checked.left !== null && checked.left < checked.needs ? `${given}, ${checked.needs} needed` : given;
+}
+
+/** A group of parts no feeder holds: one value and footprint, and the parts of it. */
+export interface LooseGroup {
+    value: string;
+    footprint: string;
+    refs: string[];
+}
+
+/** The parts a check found no feeder for, by value and footprint, in the check's order. */
+export function looseGroups(check: FeederCheck): LooseGroup[] {
+    const groups: LooseGroup[] = [];
+    for (const part of check.parts) {
+        if (part.feeder !== null) {
+            continue;
+        }
+        const group = groups.find((entry) => entry.value === part.value && entry.footprint === part.footprint);
+        if (group) {
+            group.refs.push(part.ref);
+        } else {
+            groups.push({ value: part.value, footprint: part.footprint, refs: [part.ref] });
+        }
+    }
+    return groups;
 }
 
 /** The machine file's text with a [[slot]] for an address at a place: the one there changed, else a new one at the end. */
@@ -100,9 +139,11 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
     const clearPicks = button("Clear", () => setPicked(new Set(), null), "btn btn-quiet btn-small", "pick no feeder: the scan asks every address");
     const pickRow = el("div", { class: "button-row feeder-picks" }, pickLine, clearPicks);
     const listBox = el("div", { class: "pnp-parts-box" }, list);
+    // The parts of the board picked that no feeder holds.
+    const looseList = el("ul", { class: "groups feeder-loose hidden", "aria-label": "Parts no feeder holds" });
     root.append(
         el("div", { class: "panel-head" }, el("h2", {}, "Feeders")),
-        el("div", { class: "panel-body" }, note, pickRow, listBox, busBox),
+        el("div", { class: "panel-body" }, note, looseList, pickRow, listBox, busBox),
     );
 
     let found: BusFeeder[] = [];
@@ -134,6 +175,8 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
             missing = unanswered ?? [];
             ctx.store.set({ placing: state });
             drawScan(ctx.store.get());
+            // The backend now knows where the bus answered for these feeders.
+            void refreshFeederCheck(ctx, true);
             if (feeders.length === 0 && missing.length === 0) {
                 ctx.toast("info", "no feeder answered on the bus");
             }
@@ -205,6 +248,24 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
         }));
     }
 
+    // What the parts with no feeder were last drawn from.
+    let looseKey = "";
+    function drawLoose(check: FeederCheck | null): void {
+        const groups = check ? looseGroups(check) : [];
+        const key = JSON.stringify(groups);
+        if (key === looseKey) {
+            return;
+        }
+        looseKey = key;
+        replace(looseList, ...groups.map((group) => el("li", { class: "group" },
+            el("div", { class: "group-row feeder-loose-row" },
+                el("span", { class: "group-name" }, group.refs.join(" ")),
+                el("span", { class: "muted" }, `${group.value}, ${footprintName(group.footprint)}`),
+            ),
+        )));
+        looseList.classList.toggle("hidden", groups.length === 0);
+    }
+
     let drawn = "";
     function render(state: AppState): void {
         const doc = state.placing?.document ?? null;
@@ -215,7 +276,10 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
             // A feeder gone from the file is picked no more.
             picked = new Set([...picked].filter((id) => ids.includes(id)));
         }
-        const key = JSON.stringify([feeders, device?.taken ?? {}, doc?.bus ?? false, [...picked]]);
+        const check = currentCheck(state)?.check ?? null;
+        const checked = (id: string): FeederCheckFeeder | null => check?.feeders.find((entry) => entry.id === id) ?? null;
+        drawLoose(check);
+        const key = JSON.stringify([feeders, device?.taken ?? {}, doc?.bus ?? false, [...picked], check?.feeders ?? []]);
         if (key !== drawn) {
             drawn = key;
             feedButtons.clear();
@@ -234,6 +298,9 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
                             await into(ctx, "placing", ctx.api.pnpResetFeeders(feeder.id));
                         }
                     }, "btn btn-quiet btn-small", "count this feeder's parts from its first again"));
+                    // A want the check found is the row's to say, in the color for one.
+                    const wants = checked(feeder.id);
+                    const short = wants !== null && wants.left !== null && wants.left < wants.needs;
                     const row = el("tr", {
                         class: picked.has(feeder.id) ? "selected" : "",
                         "aria-selected": picked.has(feeder.id) ? "true" : "false",
@@ -241,8 +308,8 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
                     },
                         el("td", { class: "mono" }, feeder.id),
                         el("td", {}, (feeder.refs?.length ?? 0) > 0 ? feeder.refs!.join(" ") : feeder.match),
-                        el("td", { class: "muted" }, feederPlaceText(feeder)),
-                        el("td", { class: "mono" }, `${device?.taken[feeder.id] ?? 0}${feeder.count > 0 ? ` of ${feeder.count}` : ""}`),
+                        el("td", { class: "muted", "data-need": wants !== null && !wants.place_known }, feederPlaceText(feeder, wants)),
+                        el("td", { class: "mono", "data-need": short }, feederTakenText(feeder, device?.taken[feeder.id] ?? 0, wants)),
                         el("td", {}, ...actions),
                     );
                     row.addEventListener("click", (event) => {
@@ -289,6 +356,7 @@ export function mountPnpFeeders(root: HTMLElement, ctx: Ctx): void {
     ctx.store.subscribe((state) => {
         render(state);
         drawScan(state);
-    }, ["placing", "pnp"]);
+    }, ["placing", "pnp", "feederCheck", "job", "components"]);
     render(ctx.store.get());
+    watchFeederCheck(ctx);
 }

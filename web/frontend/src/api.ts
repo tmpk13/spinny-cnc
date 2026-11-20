@@ -34,6 +34,7 @@ import type {
     ComponentsResponse,
     ControlledCamera,
     CornerName,
+    FeederCheck,
     GotoRequest,
     HeightMap,
     HeightMapState,
@@ -422,6 +423,8 @@ export interface Api {
     pnpReference(request: { job: string; ref: string; at?: [number, number]; camera?: boolean }): Promise<PlacingState>;
     pnpDropReferences(job: string, ref?: string): Promise<PlacingState>;
     pnpPlan(job: string, refs?: string[]): Promise<PlacingPlan>;
+    /** The job's parts checked against the feeders, as a plan of them would take them; nothing moves and the bus is not asked. */
+    pnpFeederCheck(job: string, refs?: string[]): Promise<FeederCheck>;
     /** Where the program's G-code downloads from. */
     pnpProgramUrl(job: string, refs?: string[]): string;
     /** Places the parts; with `fiducials` the top camera finds the board's fiducials first. */
@@ -1344,6 +1347,10 @@ export class HttpApi implements Api {
 
     pnpPlan(job: string, refs?: string[]): Promise<PlacingPlan> {
         return this.request<PlacingPlan>("POST", "/api/pnp/plan", refs !== undefined ? { job, refs } : { job });
+    }
+
+    pnpFeederCheck(job: string, refs?: string[]): Promise<FeederCheck> {
+        return this.request<FeederCheck>("POST", "/api/pnp/feeders/check", refs !== undefined ? { job, refs } : { job });
     }
 
     pnpProgramUrl(job: string, refs?: string[]): string {

@@ -1436,6 +1436,42 @@ export interface BusScan {
     missing: BusMissing[];
 }
 
+/** A part a job would place, as the feeder check has it: its feeder's id, or null with why none. */
+export interface FeederCheckPart {
+    ref: string;
+    value: string;
+    footprint: string;
+    feeder: string | null;
+    /** Null, or why it has no feeder ("no feeder holds it"). */
+    reason: string | null;
+}
+
+/**
+ * A feeder the job's parts come from: the parts it gives, how many, what
+ * it has left (its count less what it has given; null for a feeder with
+ * no count), whether its pick place is known, and for a feeder on the bus
+ * its id there, the address it last answered at since the machine
+ * connected (else its file's slot, else null), and whether it answered.
+ */
+export interface FeederCheckFeeder {
+    id: string;
+    refs: string[];
+    needs: number;
+    left: number | null;
+    place_known: boolean;
+    bus_id: string | null;
+    address: number | null;
+    seen: boolean;
+}
+
+/** A job's parts checked against the feeders, nothing moved and the bus not asked: each part's feeder, each feeder's load, the problems in words, and whether a run would place every part. */
+export interface FeederCheck {
+    parts: FeederCheckPart[];
+    feeders: FeederCheckFeeder[];
+    problems: string[];
+    ready: boolean;
+}
+
 /** The vacuum sensor: the lines that read it, the pattern whose group is the reading, the readings with a part held and empty (none: read by hand only). */
 export interface GcodeVacuum {
     read: string[];

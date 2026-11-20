@@ -4140,6 +4140,23 @@ table.pnp-parts tr.dnp td {
     margin: 0.15rem 0;
 }
 
+/* The Feeders panel: the parts no feeder holds, a row each, and in the
+   feeders' list what the job wants of a feeder that it does not have (a
+   place, enough parts), in the color for what needs someone. */
+.feeder-loose-row {
+    flex-wrap: wrap;
+    min-height: var(--touch);
+    padding: 0.25rem 0.5rem 0.25rem 0.6rem;
+}
+
+.feeder-loose-row .muted {
+    font-size: 0.85rem;
+}
+
+table.device-feeders td[data-need] {
+    color: var(--hold);
+}
+
 /* The parts to align to: a press picks each; those with a reference are
    green, the one picked ringed in the picked part's magenta. */
 .align-chip.taken {
