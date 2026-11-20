@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import itertools
 import math
+import time
 
 import pytest
 from device_fakes import SeenBoard
@@ -511,6 +512,37 @@ def test_a_look_keeps_the_newest_locked_scale_through_clear_guesses_and_lost_pos
     look.forget()
     poses.pop(0)
     assert look.sample() == "none" and look.scale_seen == pytest.approx(0.0161)
+
+
+def test_a_slow_pose_answer_places_its_picture_by_when_it_was_asked_for():
+    board = seen()
+    raw = {**board.pose((170.0, 95.0), 0.0, False, 0.0161, 1280, 720, 1), "age_ms": 50.0}
+
+    class Client:
+        running = True
+
+        def pose(self):
+            # pcbv answers at once; the answer takes its time to arrive.
+            time.sleep(0.2)
+            return raw
+
+    stand_in = Client()
+    look = BoardLook(lambda: stand_in, lambda: None, paused=lambda: True)
+    look.job = "j1"
+    look._to_job = DESIGN.board_to_job
+    asked_for: list[float] = []
+
+    def place(captured):
+        asked_for.append(captured)
+        return PictureFrame((170.0, 95.0), 0.0, False)
+
+    look._place = place
+    began = time.monotonic()
+    look.sample()
+    # Taken 50 ms before pcbv answered, which was before the slow answer
+    # arrived: placed by the reply's arrival, a moving head's picture would
+    # land 0.2 s further along its path than where it was taken.
+    assert asked_for and asked_for[0] <= began - 0.04
 
 
 def test_looks_from_places_far_apart_turn_the_board_by_the_head_s_moves_whatever_the_roll():

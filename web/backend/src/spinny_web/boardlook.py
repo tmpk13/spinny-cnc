@@ -1411,6 +1411,10 @@ class BoardLook:
         record = self.record
         if self.job is None or to_job is None or place is None or not self.client.running:
             return "off"
+        # A picture's age is told from when pcbv answered, which is near
+        # the ask: an answer slow to arrive would put the picture later
+        # along a moving head's path than where it was taken.
+        asked = time.monotonic()
         try:
             raw = self.client.pose()
         except VisionError as exc:
@@ -1430,7 +1434,7 @@ class BoardLook:
         self._frame = seq
         self._last_error = None
         age = raw.get("age_ms")
-        captured = received - float(age) / 1000.0 if _number(age) else received
+        captured = asked - float(age) / 1000.0 if _number(age) else asked
         state = raw.get("state")
         estimate: Estimate | None = None
         problem: str | None = None
@@ -1466,7 +1470,7 @@ class BoardLook:
         if raw.get("candidates") and _number(age):
             # The candidates are of the frame their search ran on, which
             # may have been taken before the newest, from another place.
-            searched_where = place(received - float(age) / 1000.0)
+            searched_where = place(asked - float(age) / 1000.0)
         if hasattr(self.consensus, "crop"):
             # A crop changed in the machine file holds from the next picture.
             self.consensus.crop = self.board_crop()
@@ -2537,12 +2541,14 @@ def fly_scan(
                 if picture is not None:
                     latest = history.latest()
                     if latest is not None and (last_tile is None or math.dist(latest, last_tile) >= spacing):
+                        # Placed by when it was asked for, as a pose is.
+                        asked = time.monotonic()
                         try:
                             meta, jpeg = look.client.frame(width=640, overlay=False, quality=75)
                         except Exception:  # a picture never stops a scan
                             meta, jpeg = {}, b""
                         age = meta.get("age_ms")
-                        where = place(time.monotonic() - (float(age) / 1000.0 if _number(age) else 0.0))
+                        where = place(asked - (float(age) / 1000.0 if _number(age) else 0.0))
                         width, height = meta.get("width"), meta.get("height")
                         if jpeg and isinstance(where, PictureFrame) and isinstance(width, int) and isinstance(height, int) and width > 0:
                             look.mosaic.add_jpeg(jpeg, width, height, where.center, roll, False, picture[2], picture[0])
