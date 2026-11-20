@@ -692,7 +692,9 @@ crosshair, the circle a spot is looked for within, a spot found with its
 ellipse and box, a search box, the board where the looks put it, the
 known points below) and pcbv's pose of a loaded board; the marks keep
 thin lines at any zoom. A spot a routine or *Look once* finds stays over
-the picture until *Clear marks*, each newer one joining the older (only
+the picture until *Clear marks*, or for the seconds typed in the field
+beside it (fractions too, 3.431 say; kept per camera; 0, the default,
+never clears a spot by itself), each newer one joining the older (only
 the newest keeps the circle it was looked for within and the line from
 the center); by default they follow the machine, staying over what they
 marked as the head moves (the head's place for the bottom camera, which

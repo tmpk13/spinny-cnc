@@ -3,9 +3,10 @@
 // the bottom camera's (fixed to the machine, looking up at the nozzle) and,
 // with a G-code machine, its top camera's (on the head, looking down). Each
 // keeps what its routines and Look once found (the circle looked within,
-// the spot's ellipse and rectangle) until Clear marks, following the
-// machine; shows the circle a part or a mark is looked for within, and for
-// the top camera the box a board search keeps to and the board where its
+// the spot's ellipse and rectangle) until Clear marks or the seconds
+// typed beside it are up, following the machine; shows the circle a part
+// or a mark is looked for within, and for the top camera the box a board
+// search keeps to and the board where its
 // looks put it; each rings the points whose place is known (known.ts), and
 // the top camera draws the picked part's pads and body about its crosshair
 // to line the part up with (partshape.ts). A drag moves the head
@@ -37,7 +38,7 @@ export function frameSize(frame: { width: number; height: number } | null | unde
 /**
  * The spots a camera's state shows: its routine's newest (live while the
  * routine runs) and its last Look once, each keyed by what it says, so a
- * picture keeps every new one until Clear marks.
+ * picture keeps every new one until Clear marks or its seconds are up.
  */
 export function shownSpots(routine: { state: string; spot: RoutineSpot | null } | null | undefined, look: SpotLook | null | undefined): ShownSpot[] {
     const spots: ShownSpot[] = [];

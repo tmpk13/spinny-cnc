@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { boardMarks, boxShares, frameSize, nozzleBoxMarks, reachMark, shownSpots } from "../src/views/camview.ts";
-import { addTurn, armBox, armedPick, ARROWS, arrowMove, arrowStep, armPick, clampZoom, crosshairMarks, disarmPick, dragMove, followShift, frameRequestWidth, growBox, keptMarks, levelText, machineToPicture, MAX_KEPT_SPOTS, mountPicture, pictureToMachine, readArrowWay, readCrosshair, readQuarters, shiftMark, type ShownSpot, spotMarks, stepZoom, takeSpots, turnTransform, UNTURNED, unturnOffset, uprightTurn, zoomText, undoShown } from "../src/views/picture.ts";
+import { addTurn, armBox, armedPick, ARROWS, arrowMove, arrowStep, armPick, clampZoom, clearDueAt, crosshairMarks, readClearAfter, youngSpots, disarmPick, dragMove, followShift, frameRequestWidth, growBox, keptMarks, levelText, machineToPicture, MAX_KEPT_SPOTS, mountPicture, pictureToMachine, readArrowWay, readCrosshair, readQuarters, shiftMark, type ShownSpot, spotMarks, stepZoom, takeSpots, turnTransform, UNTURNED, unturnOffset, uprightTurn, zoomText, undoShown } from "../src/views/picture.ts";
 import type { FindingEntry } from "../src/types.ts";
 import { click, setup, settle } from "./harness.ts";
 
@@ -152,6 +152,28 @@ describe("picture geometry", () => {
         expect(kept[0]!.key).toBe("n0");
     });
 
+    test("spots go once the seconds they stay are up, fractions too; 0 keeps them", () => {
+        const seen = new Set<string>();
+        let kept = takeSpots([], [{ key: "a", spot: {}, tone: "look" }], seen, true, null, 1000);
+        kept = takeSpots(kept, [{ key: "b", spot: {}, tone: "look" }], seen, true, null, 2000);
+        expect(kept.map((entry) => entry.since)).toEqual([1000, 2000]);
+        // 3.431 s: the first goes at 4431 ms, the second at 5431 ms.
+        expect(clearDueAt(kept, 3.431)).toBe(4431);
+        expect(youngSpots(kept, 3.431, 4430).map((entry) => entry.key)).toEqual(["a", "b"]);
+        expect(youngSpots(kept, 3.431, 4431).map((entry) => entry.key)).toEqual(["b"]);
+        expect(youngSpots(kept, 3.431, 5431)).toEqual([]);
+        // 0 never clears.
+        expect(youngSpots(kept, 0, 1e12)).toBe(kept);
+        expect(clearDueAt(kept, 0)).toBeNull();
+        expect(clearDueAt([], 3)).toBeNull();
+        // What a store keeps, read back; anything else is never.
+        expect(readClearAfter("3.431")).toBe(3.431);
+        expect(readClearAfter("0")).toBe(0);
+        expect(readClearAfter("-2")).toBe(0);
+        expect(readClearAfter("soon")).toBe(0);
+        expect(readClearAfter(null)).toBe(0);
+    });
+
     test("kept spots follow what they mark as the machine moves: against a riding camera's moves, with a fixed camera's head", () => {
         const calibration = { mmPerPx: 0.1, roll: 0, mirror: false };
         // The point under a riding camera's center went 1 mm to +X: what it saw moves 10 px left.
@@ -160,8 +182,8 @@ describe("picture geometry", () => {
         const [, up] = followShift(false, [0, 0], [0, 1], calibration);
         expect(up).toBeCloseTo(-10, 9);
         const kept = [
-            { key: "a", spot: { found: true, dx: 10, dy: 0, major: 20, minor: 10 }, tone: "spot" as const, at: [50, 20] as [number, number] },
-            { key: "b", spot: { found: true, dx: -10, dy: 0, major: 20, minor: 10 }, tone: "look" as const, at: null },
+            { key: "a", spot: { found: true, dx: 10, dy: 0, major: 20, minor: 10 }, tone: "spot" as const, at: [50, 20] as [number, number], since: 0 },
+            { key: "b", spot: { found: true, dx: -10, dy: 0, major: 20, minor: 10 }, tone: "look" as const, at: null, since: 0 },
         ];
         const marks = keptMarks(kept, [1000, 500], true, { now: [51, 20], calibration });
         const ellipses = marks.filter((mark) => mark.kind === "ellipse") as { x: number }[];
@@ -635,6 +657,77 @@ describe("the picture view", () => {
         expect(ellipses()).toEqual([]);
         localStorage.removeItem("spinny.picture.test-kept.follow");
         view.stop();
+    });
+
+    test("the seconds typed beside Clear marks clear each spot by itself once up, kept per camera; 0 or nothing readable keeps them", async () => {
+        const { ctx } = setup();
+        let spots: ShownSpot[] | null = null;
+        const view = mountPicture({
+            key: "test-clear-after",
+            label: "Test camera",
+            rides: true,
+            running: () => true,
+            frameUrl: (width) => `data:image/svg+xml,w=${width}`,
+            pcbvOverlay: () => false,
+            size: () => [1000, 500],
+            calibration: () => ({ mmPerPx: 0.1, roll: 0, mirror: false }),
+            center: () => [0, 0],
+            marks: () => [],
+            spots: () => spots,
+            move: async () => undefined,
+            noScale: "no scale",
+            visible: () => true,
+        }, ctx);
+        document.body.append(view.root);
+        const layer = view.root.querySelector(".picture-marks") as SVGElement;
+        const ellipses = (): number => layer.querySelectorAll("ellipse").length;
+        const field = view.root.querySelector<HTMLInputElement>(".picture-clear input")!;
+        const type = (text: string): void => {
+            field.value = text;
+            field.dispatchEvent(new Event("change", { bubbles: true }));
+        };
+        const spot = (dx: number) => ({ found: true, dx, dy: 0, major: 20, minor: 10 });
+        // Never cleared by itself at first.
+        expect(field.value).toBe("0");
+        // Something below zero, or no number, gets the seconds back.
+        type("-1");
+        expect(field.value).toBe("0");
+        type("0.06");
+        expect(localStorage.getItem("spinny.picture.test-clear-after.clearAfter")).toBe("0.06");
+        spots = [{ key: "routine a", spot: spot(10), tone: "spot", live: true }];
+        view.render(ctx.store.get());
+        expect(ellipses()).toBe(1);
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        expect(ellipses()).toBe(0);
+        // 0: the next one stays.
+        type("0");
+        spots = [{ key: "routine b", spot: spot(20), tone: "spot", live: true }];
+        view.render(ctx.store.get());
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(ellipses()).toBe(1);
+        type("soon");
+        expect(field.value).toBe("0");
+        view.stop();
+        // A picture of the same camera mounted again reads the seconds kept.
+        localStorage.setItem("spinny.picture.test-clear-after.clearAfter", "3.431");
+        const again = mountPicture({
+            key: "test-clear-after",
+            label: "Test camera",
+            rides: true,
+            running: () => true,
+            frameUrl: (width) => `data:image/svg+xml,w=${width}`,
+            pcbvOverlay: () => false,
+            size: () => [1000, 500],
+            calibration: () => null,
+            center: () => null,
+            marks: () => [],
+            move: async () => undefined,
+            noScale: "no scale",
+            visible: () => true,
+        }, ctx);
+        expect(again.root.querySelector<HTMLInputElement>(".picture-clear input")!.value).toBe("3.431");
+        again.stop();
+        localStorage.removeItem("spinny.picture.test-clear-after.clearAfter");
     });
 
     test("Edges draws the straight edges pcbv finds while on, scaled to the picture, and says why when they cannot be had", async () => {

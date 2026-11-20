@@ -4423,6 +4423,11 @@ table.device-feeders td[data-need] {
     font-size: 0.8rem;
 }
 
+/* Clear marks is a word, not a stepper's sign: the weight of any other button. */
+.picture-clear > .btn.stepper-end {
+    font-weight: 500;
+}
+
 .picture-box-line {
     flex: 1 1 12rem;
 }

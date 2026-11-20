@@ -28,8 +28,10 @@
 // through the jog keys), kept per camera; a drag always moves the head so
 // what the camera sees follows the pointer.
 // A spot a routine or a look found stays over the picture until Clear
-// marks, moving with the machine so it stays over what it marked (or, the
-// View menu's Marks follow the machine off, where it was drawn). Edges
+// marks, or for the seconds typed beside it (fractions too; kept per
+// camera; 0, the default, never clears it by itself), moving with the
+// machine so it stays over what it marked (or, the View menu's Marks
+// follow the machine off, where it was drawn). Edges
 // (kept per camera) draws the straight edges pcbv finds, asked once a
 // second while on and shown. What a routine applied (spinny_web.findings:
 // kept at once, in the log of changes) shows for a few seconds in a row of
@@ -497,12 +499,14 @@ export interface ShownSpot {
 }
 
 /**
- * A spot kept over the picture until Clear marks, with the place that
- * carried what the picture showed when it was found (`at`, null when not
- * known, which keeps it fixed to the picture).
+ * A spot kept over the picture until Clear marks or its time is up, with
+ * the place that carried what the picture showed when it was found (`at`,
+ * null when not known, which keeps it fixed to the picture) and when it
+ * first showed (`since`, ms since the epoch).
  */
 export interface KeptSpot extends ShownSpot {
     at: [number, number] | null;
+    since: number;
 }
 
 /** Spots a picture keeps at most; the oldest go past it. */
@@ -510,19 +514,43 @@ export const MAX_KEPT_SPOTS = 40;
 
 /**
  * The spots kept once the ones a state shows now are taken in: those not
- * seen before join the kept ones, each with the place `at` carries now.
- * With `primed` false (the first state the camera's state is known in)
- * only a routine under way is taken, the rest being looks from before the
- * picture was shown. `seen` gains every key.
+ * seen before join the kept ones, each with the place `at` carries now and
+ * `time` (ms since the epoch) as when it first showed. With `primed` false
+ * (the first state the camera's state is known in) only a routine under
+ * way is taken, the rest being looks from before the picture was shown.
+ * `seen` gains every key.
  */
-export function takeSpots(kept: KeptSpot[], shown: ShownSpot[], seen: Set<string>, primed: boolean, at: [number, number] | null): KeptSpot[] {
+export function takeSpots(kept: KeptSpot[], shown: ShownSpot[], seen: Set<string>, primed: boolean, at: [number, number] | null, time = Date.now()): KeptSpot[] {
     const fresh = shown.filter((entry) => !seen.has(entry.key) && (primed || entry.live === true));
     shown.forEach((entry) => seen.add(entry.key));
     if (fresh.length === 0) {
         return kept;
     }
-    const next = [...kept, ...fresh.map((entry) => ({ ...entry, at }))];
+    const next = [...kept, ...fresh.map((entry) => ({ ...entry, at, since: time }))];
     return next.length > MAX_KEPT_SPOTS ? next.slice(next.length - MAX_KEPT_SPOTS) : next;
+}
+
+/** A kept time spots stay over the picture, seconds: a number not below zero, fractions too; 0 (never cleared) for anything else. */
+export function readClearAfter(kept: string | null): number {
+    const value = kept === null ? NaN : Number(kept);
+    return Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+/** The spots kept that are younger than `after` seconds at `now` (ms since the epoch); with `after` 0 every one stays. */
+export function youngSpots(kept: KeptSpot[], after: number, now: number): KeptSpot[] {
+    if (after <= 0) {
+        return kept;
+    }
+    const young = kept.filter((entry) => now - entry.since < after * 1000);
+    return young.length === kept.length ? kept : young;
+}
+
+/** When the oldest spot kept is due to go after `after` seconds, ms since the epoch; null when none is (none kept, or `after` 0). */
+export function clearDueAt(kept: KeptSpot[], after: number): number | null {
+    if (after <= 0 || kept.length === 0) {
+        return null;
+    }
+    return Math.min(...kept.map((entry) => entry.since)) + after * 1000;
 }
 
 /**
@@ -667,7 +695,8 @@ export interface PictureOptions {
     /**
      * The spots the camera's state shows now (its routine's newest, its
      * last Look once), each kept over the picture from when it first shows
-     * until Clear marks; null while the camera's state is not known.
+     * until Clear marks or the seconds typed beside it are up; null while
+     * the camera's state is not known.
      */
     spots?(state: AppState): ShownSpot[] | null;
     /**
@@ -771,6 +800,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     const followKey = `spinny.picture.${store}.follow`;
     const edgesKey = `spinny.picture.${store}.edges`;
     const arrowsKey = `spinny.picture.${store}.arrows`;
+    const clearAfterKey = `spinny.picture.${store}.clearAfter`;
     let zoom = 1;
     // The edge view: on when switched on (kept per camera), the edges last
     // read and when, and whether a request is out.
@@ -788,6 +818,11 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     let kept: KeptSpot[] = [];
     const seen = new Set<string>();
     let primed = false;
+    // Seconds each spot stays before it is cleared by itself, 0 never
+    // (kept per camera); the timer due when the oldest goes, and when.
+    let clearAfter = readClearAfter(readStored(clearAfterKey));
+    let clearTimer: ReturnType<typeof setTimeout> | null = null;
+    let clearDue: number | null = null;
     // Quarters the picture is turned by hand, counterclockwise, over Upright's turn.
     let byHand = readQuarters(readStored(turnKey));
     let crosshair = readCrosshair(readStored(crosshairKey), readStored(crosshairSizeKey));
@@ -847,7 +882,13 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     const clearMarks = button("Clear marks", () => {
         kept = [];
         draw(ctx.store.get());
-    }, "btn btn-quiet btn-small", "take away the spots routines and Look once found: they stay over the picture until this");
+    }, "btn btn-quiet btn-small stepper-end", "take away now the spots routines and Look once found");
+    // The seconds each spot stays, typed beside Clear marks in one box.
+    const clearField = numberField({ value: clearAfter, min: 0, step: 1, width: "4rem" });
+    clearField.setAttribute("aria-label", `${options.label} marks cleared after, seconds`);
+    const CLEAR_TITLE = "seconds each spot found stays over the picture before it is cleared by itself, fractions too (3.431); 0 keeps it until Clear marks (kept for this camera)";
+    clearField.title = CLEAR_TITLE;
+    const clearLine = el("div", { class: "stepper picture-clear" }, clearMarks, el("label", { class: "stepper-middle" }, clearField, el("span", { class: "stepper-unit" }, "s")));
     const EDGES_TITLE = "draw the straight edges pcbv finds in the picture (what Corner by edges reads), asked once a second while on";
     const edgesButton = button("Edges", () => {
         edgesOn = !edgesOn;
@@ -894,7 +935,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
     if (options.edges) {
         caption.append(edgesButton);
     }
-    caption.append(clearMarks, view);
+    caption.append(clearLine, view);
     /** The picture waits for a pick: a crosshair, and a line saying what for. */
     const showPick = (): void => {
         const label = armedPick(options.key);
@@ -1169,6 +1210,52 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         kept = takeSpots(kept, shown, seen, primed, followPlace(state));
         primed = true;
     }
+
+    /** Drops the spots whose time is up and sets the timer for when the oldest left goes. */
+    function clearOld(): void {
+        kept = youngSpots(kept, clearAfter, Date.now());
+        const due = clearDueAt(kept, clearAfter);
+        if (due === clearDue) {
+            return;
+        }
+        if (clearTimer !== null) {
+            clearTimeout(clearTimer);
+        }
+        clearTimer = null;
+        clearDue = due;
+        if (due !== null) {
+            clearTimer = setTimeout(() => {
+                clearTimer = null;
+                clearDue = null;
+                draw(ctx.store.get());
+            }, Math.max(0, due - Date.now()));
+        }
+    }
+
+    /** Takes the seconds typed beside Clear marks; a field that holds no number, or one below zero, gets the seconds back. */
+    function typedClearAfter(): void {
+        const value = parseNumber(clearField.value.trim());
+        if (value !== null && Number.isFinite(value) && value >= 0) {
+            clearAfter = value;
+            writeStored(clearAfterKey, String(value));
+        } else {
+            clearField.value = String(clearAfter);
+        }
+        clearField.classList.remove("invalid");
+        clearField.removeAttribute("aria-invalid");
+        clearField.title = CLEAR_TITLE;
+        draw(ctx.store.get());
+    }
+    clearField.addEventListener("change", typedClearAfter);
+    clearField.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            typedClearAfter();
+        } else if (event.key === "Escape") {
+            clearField.value = String(clearAfter);
+            typedClearAfter();
+        }
+    });
 
     /**
      * The box at its kept height or the shape of the picture as shown, and
@@ -1593,6 +1680,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
 
     function draw(state: AppState): void {
         takeShown(state);
+        clearOld();
         takeApplied(state);
         showApplied();
         const [width, height] = fullSize(state);
@@ -1730,6 +1818,11 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         setZoom,
         stop() {
             clearInterval(timer);
+            if (clearTimer !== null) {
+                clearTimeout(clearTimer);
+                clearTimer = null;
+                clearDue = null;
+            }
             hideApplied();
             observer?.disconnect();
             pickWatchers.delete(showPick);

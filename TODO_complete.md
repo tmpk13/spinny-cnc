@@ -879,3 +879,4 @@
 - Auto in the Run area's steps: does what the page can by itself (connect, home a G-code machine, start the camera, find the board, take its place, center its fiducials), says what it does and stops where a person is needed; it never starts a run. The human in the loop item's picture with the drawn offset, Adjust and the folding side bar are not built.
 - Find by camera without the offset first: a top camera's search plans by the file's scale, places taken through the camera keep the offset they were taken with and follow one measured later.
 - The quick scan has a name: Search reads Scan the bed with nothing known of the board's place; By camera is open at first with a G-code machine.
+- Clear marks has a field of seconds beside it: each spot found clears itself that long after it showed (fractions too, 3.431; kept per camera); 0 never clears, and the button still clears at once.
