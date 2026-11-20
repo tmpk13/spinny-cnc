@@ -9,8 +9,9 @@ import { describe, expect, test } from "bun:test";
 import { Projector, frameOf, pxPerMm, type Camera } from "../src/camera.ts";
 import { previewOptions } from "../src/preview.ts";
 import type { PaintInput } from "../src/render/canvas2d.ts";
+import { WorkerHost } from "../src/render/host.ts";
 import { packJob, unpackJob } from "../src/render/pack.ts";
-import { Renderer, hardwareGl } from "../src/render/renderer.ts";
+import { Renderer, blankState, hardwareGl } from "../src/render/renderer.ts";
 import {
     type Item,
     type RenderJob,
@@ -361,5 +362,58 @@ describe("the renderer", () => {
         expect(calls.some((call) => call.name === "clear")).toBe(true);
         expect(calls.some((call) => call.name === "drawArrays")).toBe(true);
         renderer.dispose();
+    });
+});
+
+/** A worker that takes what it is sent and answers nothing until the test answers for it. */
+class SilentWorker {
+    static made: SilentWorker[] = [];
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror: ((event: ErrorEvent) => void) | null = null;
+    posted: unknown[] = [];
+    terminated = false;
+
+    constructor() {
+        SilentWorker.made.push(this);
+    }
+
+    postMessage(message: unknown): void {
+        this.posted.push(message);
+    }
+
+    terminate(): void {
+        this.terminated = true;
+    }
+}
+
+/** How a promise stands after a few tasks: settled either way, or still pending. */
+async function standing(promise: Promise<unknown>): Promise<"resolved" | "rejected" | "pending"> {
+    return Promise.race([
+        promise.then(() => "resolved" as const, () => "rejected" as const),
+        new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 20)),
+    ]);
+}
+
+describe("the drawing worker's host", () => {
+    test("a picture asked for before the worker draws, or when it fails, is refused rather than left waiting", async () => {
+        const real = globalThis.Worker;
+        globalThis.Worker = SilentWorker as unknown as typeof Worker;
+        try {
+            const canvas = (): HTMLCanvasElement => ({ transferControlToOffscreen: () => ({}) }) as unknown as HTMLCanvasElement;
+            const failed: boolean[] = [];
+            const host = new WorkerHost(canvas(), canvas(), blankState(), "auto", { drawn: () => undefined, failed: (started) => failed.push(started) });
+            const worker = SilentWorker.made.at(-1)!;
+            // Not ready yet: the worker has no renderer, and drops the ask.
+            expect(await standing(host.snapshot())).toBe("rejected");
+            // Ready and started: an ask that is under way when the worker fails.
+            worker.onmessage?.({ data: { kind: "ready" } } as MessageEvent);
+            const asked = host.snapshot();
+            worker.onerror?.({ message: "gone", preventDefault: () => undefined } as unknown as ErrorEvent);
+            expect(failed).toEqual([true]);
+            expect(await standing(asked)).toBe("rejected");
+            host.dispose();
+        } finally {
+            globalThis.Worker = real;
+        }
     });
 });

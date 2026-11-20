@@ -125,7 +125,8 @@ export class WorkerHost implements Host {
     private timer: ReturnType<typeof setTimeout> | null;
     /** The whole state until the worker starts, then nothing: changes go straight over. */
     private readonly waiting: RenderState;
-    private readonly snapshots = new Map<number, (snapshot: Snapshot) => void>();
+    /** Pictures asked for and not yet answered, settled either way. */
+    private readonly snapshots = new Map<number, { resolve: (snapshot: Snapshot) => void; reject: (error: Error) => void }>();
     private nextSnapshot = 1;
 
     /** Throws where no worker can be made: the page draws instead. */
@@ -157,10 +158,14 @@ export class WorkerHost implements Host {
         return undefined;
     }
 
+    /** Refused until the worker has the canvases (it answers no ask before then) and once it has failed. */
     snapshot(): Promise<Snapshot> {
+        if (!this.started || this.failed) {
+            return Promise.reject(new Error("the drawing worker is not drawing"));
+        }
         const id = this.nextSnapshot++;
-        return new Promise((resolve) => {
-            this.snapshots.set(id, resolve);
+        return new Promise((resolve, reject) => {
+            this.snapshots.set(id, { resolve, reject });
             this.post({ kind: "snapshot", id });
         });
     }
@@ -172,6 +177,11 @@ export class WorkerHost implements Host {
         }
         this.failed = true;
         this.worker.terminate();
+        // A stopped worker answers nothing more.
+        for (const { reject } of this.snapshots.values()) {
+            reject(new Error("the drawing worker stopped"));
+        }
+        this.snapshots.clear();
     }
 
     private post(message: ToWorker, transfer: Transferable[] = []): void {
@@ -211,7 +221,7 @@ export class WorkerHost implements Host {
                 this.events.drawn(message.ms, message.painter);
                 return;
             case "snapshot":
-                this.snapshots.get(message.id)?.(message.snapshot);
+                this.snapshots.get(message.id)?.resolve(message.snapshot);
                 this.snapshots.delete(message.id);
                 return;
             case "error":
