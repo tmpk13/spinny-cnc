@@ -330,6 +330,7 @@ describe("HttpApi board finding routes", () => {
         await api.cameraEdges("top");
         await api.cameraFind(2);
         await api.topOffset(1);
+        await api.topOffsetFacing(2, true);
         await api.pnpFiducials("j1");
         await api.findings();
         await api.findings("top", 20);
@@ -345,6 +346,7 @@ describe("HttpApi board finding routes", () => {
             ["GET", "/api/cameras/edges?camera=top", null],
             ["POST", "/api/camera/find", { step: 2 }],
             ["POST", "/api/pnp/top/offset", { step: 1 }],
+            ["POST", "/api/pnp/top/offset/facing", { step: 2, nozzle: true }],
             ["POST", "/api/pnp/fiducials", { job: "j1" }],
             ["GET", "/api/findings", null],
             ["GET", "/api/findings?camera=top&limit=20", null],

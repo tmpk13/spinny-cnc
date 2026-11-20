@@ -1,7 +1,8 @@
 // A G-code machine's top camera, on its head and looking down: its
 // device picked from the cameras found or typed, its size, rate and the
 // shade of a mark, its picture controls, and its offset from the nozzle
-// measured from a mark the nozzle's tip was put on, and Home by fiducial
+// measured by the bottom camera (the two cameras looking at each other) or
+// from a mark the nozzle's tip was put on, and Home by fiducial
 // (or Find home fiducial, no home first) on a machine whose file names the
 // homing fiducial on its bed.
 // Its picture shows in the Top camera view panel, with Start, Stop and
@@ -9,7 +10,8 @@
 // the machine's own buttons when a place for them is handed in. In view
 // here are starting it, which camera it is, what it last saw, its offset
 // in a line and Measure camera; how it is read, the board it looks at,
-// measuring the offset from a mark and the log are folded under More. The looks
+// measuring the offset (by the bottom camera, or from a mark) and the log
+// are folded under More. The looks
 // of its routines are kept in its camera log. The look for a board, its
 // search and the place found are the Find board panel's (findboard.ts).
 
@@ -23,7 +25,7 @@ import { mountCameraSight } from "./camerasight.ts";
 import { mountCameraPick } from "./camerapick.ts";
 import { mountCameraLog } from "./camlog.ts";
 import { into, type Ctx } from "./context.ts";
-import { topCameraText, topRoutineText } from "./placing.ts";
+import { facingText, topCameraText, topRoutineText } from "./placing.ts";
 import { explain } from "../terms.ts";
 import { infoTip } from "./infotip.ts";
 import { lookOnceText, polaritySelect } from "./pnp.ts";
@@ -77,6 +79,9 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
     markHere.title = "the nozzle's tip is on a mark: keep its place for Measure offset";
     const step = numberField({ value: 2, min: 0, max: 20, step: 0.5, width: "5rem" });
     step.setAttribute("aria-label", "Top camera step mm");
+    const facing = button("Offset by bottom camera", () => into(ctx, "placing", ctx.api.topOffsetFacing(2, true)), "btn",
+        "center the nozzle over the bottom camera, then bring the top camera over it: each camera finds the other and the offset is kept, no mark needed");
+    const facingLine = el("p", { class: "muted" });
     const measure = button("Measure offset", () => measureOffset(), "btn");
     measure.title = "move the top camera over the mark to measure its offset from the nozzle";
     const measureCamera = button("Measure camera", () => into(ctx, "placing", ctx.api.topMeasure()), "btn",
@@ -86,7 +91,7 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
     const findFiducial = button("Find home fiducial", () => into(ctx, "placing", ctx.api.topHome(false)), "btn btn-quiet",
         "find the bed's homing fiducial from where the head's numbers are, with no home first, and correct them from it: a check after a long run or a knock");
     const abort = button("Abort", () => into(ctx, "placing", ctx.api.topAbort()), "btn btn-danger urgent");
-    abort.title = "stop the top camera's routine (Measure offset, Home by fiducial, Find fiducials or Search) and the machine";
+    abort.title = "stop the top camera's routine (Measure offset, Offset by bottom camera, Home by fiducial, Find fiducials or Search) and the machine";
     const routineLine = el("p", { class: "muted vision-routine" });
     const fiducialLine = el("span", { class: "muted" });
     const log = el("div", { class: "camlog-box" });
@@ -119,6 +124,9 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
                 ),
                 el("div", { class: "button-row" }, apply, places.picture ? null : lookOnce),
                 ...placeFolds(folds, "top", controls.root, sight.root, changes.root),
+                heading("Offset by bottom camera", "the nozzle is centered over the bottom camera, then the top camera is brought over it; the top camera finds the bottom camera and the bottom camera the top camera's lens, and the two looks together give the offset with the cameras' lean taken out"),
+                el("div", { class: "button-row" }, facing),
+                facingLine,
                 heading("Offset from a mark", "put the nozzle's tip on a mark and press Nozzle on mark; Measure offset then moves the camera over the mark, by the step, and keeps how far it sits from the nozzle"),
                 el("div", { class: "button-row" }, markHere, labeled("Step mm", step, "labeled inline"), measure),
                 heading("Log", "the pictures the camera's routines looked at, and photos taken by hand"),
@@ -223,6 +231,10 @@ export function mountTopCamera(root: HTMLElement, ctx: Ctx, visible: () => boole
         lockFor(markHere, [!connected, "connect the machine first"], [running || moving || busy, "the machine is busy"]);
         lockFor(measureCamera, [!connected, "connect the machine first"], [running || moving || busy, "the machine is busy"], [top?.running !== true, "start the top camera first"]);
         lockFor(measure, [!connected, "connect the machine first"], [running || moving || busy, "the machine is busy"], [top?.running !== true, "start the top camera first"], [!top?.mark_at, "put the nozzle on a mark and press Nozzle on mark first"]);
+        lockFor(facing, [!connected, "connect the machine first"], [running || moving || busy, "the machine is busy"], [top?.running !== true, "start the top camera first"],
+            [state.pnp?.running !== true, "start the bottom camera first"], [!state.placing?.camera?.position, "the bottom camera's place is not known: Center nozzle over it once first"]);
+        facingLine.textContent = facingText(top);
+        facingLine.classList.toggle("hidden", facingLine.textContent === "");
         const home = state.placing?.document?.top?.home_fiducial ?? null;
         for (const control of [homeFiducial, findFiducial]) {
             lockFor(control,

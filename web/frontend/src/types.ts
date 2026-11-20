@@ -1685,7 +1685,7 @@ export type TopStep = "lifting" | "moving" | "lowering" | "scale" | "centering" 
 
 /** The top camera's routine: its offset measured, or the board's fiducials found (a step per fiducial). */
 export interface TopRoutine {
-    kind: "offset" | "fiducials" | "search" | "scan" | "home" | "picture";
+    kind: "offset" | "facing" | "fiducials" | "search" | "scan" | "home" | "picture";
     target?: "machine" | "gcode";
     state: RoutineState;
     step: TopStep;
@@ -1711,6 +1711,28 @@ export interface TopState extends TopSettings {
     controls?: Record<string, number>;
     /** The newest result its routines applied (spinny_web.findings); null with none. */
     applied?: FindingEntry | null;
+    /** The last Offset by bottom camera's numbers; null before one. Missing from an older backend. */
+    facing?: TopFacing | null;
+}
+
+/**
+ * Offset by bottom camera's numbers: the offset kept, the one each look
+ * alone gives (the top camera down at the bottom camera, the top camera's
+ * lens seen from below) and how far apart they are, mm; the share of the
+ * way up from the bottom camera to the top camera the nozzle's tip lies
+ * at, by which the two are combined, and the same read off each camera's
+ * scales (null when not known).
+ */
+export interface TopFacing {
+    offset: [number, number];
+    by_down: [number, number];
+    by_up: [number, number];
+    gap: number;
+    share: number;
+    share_down: number | null;
+    share_up: number | null;
+    /** The offset it replaced; null when none was measured. */
+    before?: [number, number] | null;
 }
 
 /**

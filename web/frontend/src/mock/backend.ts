@@ -308,6 +308,7 @@ import type {
     SpotPolarity,
     SpotReply,
     StopAnswer,
+    TopFacing,
     TopRoutine,
     TopSettings,
     TopState,
@@ -2159,6 +2160,11 @@ function refusePowerWithFocus(job: Job, mode: string): void {
 /** The fake backend: the Api and the EventFeed in one object. */
 /** How far off its numbers the mock's home leaves the head, mm: what Home by fiducial finds and declares away. */
 const MOCK_HOME_ERROR: [number, number] = [0.2, -0.15];
+// Offset by bottom camera on the mock: the look down's offset this far off
+// the truth (the cameras' lean), and the share of the way up from the bottom
+// camera to the top one the nozzle's tip lies at, near the LumenPnP's.
+const MOCK_FACING_LEAN: [number, number] = [0.57, 0.2];
+const MOCK_FACING_SHARE = 0.3;
 
 export class MockBackend implements Api, EventFeed {
     readonly machine = new MockMachine(MOCK_MACHINE_SETTINGS);
@@ -2238,6 +2244,9 @@ export class MockBackend implements Api, EventFeed {
     private seesawSaid = -Infinity;
     /** Whether the fiducial home under way homes the machine first. */
     private topHomeFirst = true;
+    /** Whether the Offset by bottom camera under way centers the nozzle first, and the numbers of the last one. */
+    private topFacingNozzle = true;
+    private topFacing: TopFacing | null = null;
     private gcodeFirmware: string | null = null;
     /** The connected G-code machine's link: a fake controller that answers every line `ok`, its head's place, and what it was told. */
     private deviceLink: {
@@ -2292,7 +2301,7 @@ export class MockBackend implements Api, EventFeed {
     private topConfig: TopSettings = { ...TOP_DEFAULTS };
     private topRunning = false;
     private topRoutine: TopRoutine | null = null;
-    private topSession: { kind: "offset" | "fiducials" | "search" | "home" | "picture"; steps: string[]; elapsed: number; device: MockDevice; job: string | null; progress: TopRoutine } | null = null;
+    private topSession: { kind: "offset" | "facing" | "fiducials" | "search" | "home" | "picture"; steps: string[]; elapsed: number; device: MockDevice; job: string | null; progress: TopRoutine } | null = null;
     /** What the cameras' routines applied, each undoable (spinny_web.findings): the cameras' settings are its targets. */
     private findingsLog: MockFindings = new MockFindings(
         {
@@ -7982,6 +7991,7 @@ export class MockBackend implements Api, EventFeed {
             routine: this.topRoutine ? { ...this.topRoutine } : null,
             applied: this.findingsLog.newest("top"),
             fiducials: this.topFiducials,
+            facing: this.topFacing,
             look: this.topLookOnce ? { ...this.topLookOnce } : null,
             board_look: this.topBoardLook.state(),
             controls: { ...this.keptControls.top },
@@ -8049,7 +8059,7 @@ export class MockBackend implements Api, EventFeed {
         return this.placingStateOf();
     }
 
-    private beginTop(kind: "offset" | "fiducials" | "search" | "home" | "picture", steps: string[], device: MockDevice, job: string | null): void {
+    private beginTop(kind: "offset" | "facing" | "fiducials" | "search" | "home" | "picture", steps: string[], device: MockDevice, job: string | null): void {
         if (!this.deviceLink.connected) {
             throw new ApiError(400, "no G-code machine is connected: connect one from the top bar");
         }
@@ -8082,6 +8092,27 @@ export class MockBackend implements Api, EventFeed {
             throw new ApiError(400, "put the nozzle's tip over a mark and press Nozzle on mark first");
         }
         this.beginTop("offset", ["lifting", "moving", "lowering", "scale", "centering", "done"], device, null);
+        return this.placingStateOf();
+    }
+
+    /** Offset by bottom camera, as the backend's top_offset_facing: the nozzle centered over the bottom camera (with `nozzle`), then the two cameras' looks at each other, the offset kept. */
+    async topOffsetFacing(step: number, nozzle: boolean): Promise<PlacingState> {
+        const device = this.gcodeIdle();
+        if (!(Number.isFinite(step) && step > 0 && step <= 5)) {
+            throw new ApiError(400, "the step must be over 0 and at most 5 mm");
+        }
+        if (!this.pnpRunning) {
+            throw new ApiError(400, "the bottom camera is not running: start it first");
+        }
+        const place = this.placing().upPlace;
+        if (nozzle && place.position === null && device.camera_position === null) {
+            throw new ApiError(400, "the bottom camera's place is not known: Center nozzle over it once by hand, or give [up_camera] position in the machine file");
+        }
+        if (!nozzle && !(place.position !== null && place.mm_per_px > 0)) {
+            throw new ApiError(400, "the nozzle is not centered over the bottom camera yet: center it first, or let this routine do it");
+        }
+        this.topFacingNozzle = nozzle;
+        this.beginTop("facing", ["nozzle", "moving", "scale", "centering", "done"], device, null);
         return this.placingStateOf();
     }
 
@@ -9111,6 +9142,45 @@ export class MockBackend implements Api, EventFeed {
         return { found, fit, words };
     }
 
+    /**
+     * The end of Offset by bottom camera: the nozzle's place kept when it
+     * was centered, the head left with the top camera's lens over the
+     * bottom camera, and the offset kept; each look alone off by the mock
+     * cameras' lean (MOCK_FACING_LEAN looking down), the two combined at
+     * MOCK_FACING_SHARE of the way up giving the truth.
+     */
+    private finishFacing(device: MockDevice): void {
+        if (this.topFacingNozzle) {
+            const [x, y] = DEVICE_CAMERA_WHERE;
+            const undo = this.upPlaceUndo();
+            this.placing().upPlace = { position: [x, y], mm_per_px: UP_TRUTH.mmPerPx, roll: UP_TRUTH.roll, mirror: UP_TRUTH.mirror, runout: this.placing().upPlace.runout };
+            this.message("info", this.findingsLog.apply("up", "nozzle", `nozzle centered over the bottom camera at X ${gnum(x)} Y ${gnum(y)} (mock)`, [], { spot: { dx: 0, dy: 0, mm: 0 } }, undo()));
+        }
+        const nozzleAt = this.placing().upPlace.position ?? DEVICE_CAMERA_WHERE;
+        const [ox, oy] = TOP_TRUTH.offset;
+        const share = MOCK_FACING_SHARE;
+        const [lx, ly] = MOCK_FACING_LEAN;
+        const byDown: [number, number] = [ox + lx, oy + ly];
+        const byUp: [number, number] = [ox - (lx * (1 - share)) / share, oy - (ly * (1 - share)) / share];
+        this.deviceLine(device, xyLine(device, nozzleAt[0] - byUp[0], nozzleAt[1] - byUp[1]));
+        const round4 = (value: number): number => Math.round(value * 10000) / 10000;
+        this.topFacing = {
+            offset: [ox, oy],
+            by_down: [round4(byDown[0]), round4(byDown[1])],
+            by_up: [round4(byUp[0]), round4(byUp[1])],
+            gap: round4(Math.hypot(byDown[0] - byUp[0], byDown[1] - byUp[1])),
+            share,
+            share_down: share,
+            share_up: share - 0.013,
+            before: this.topConfig.offset ? [...this.topConfig.offset] : null,
+        };
+        const signed = (value: number): string => `${value >= 0 ? "+" : ""}${value.toFixed(3)}`;
+        const words = `the top camera looks from X ${signed(ox)} Y ${signed(oy)} mm off the nozzle, by the bottom camera: looking down at it X ${signed(byDown[0])} Y ${signed(byDown[1])},`
+            + ` its lens seen from below X ${signed(byUp[0])} Y ${signed(byUp[1])} (${this.topFacing.gap.toFixed(2)} mm apart, the cameras' lean),`
+            + ` the tip ${share.toFixed(2)} of the way up from the bottom camera to the top (mock)`;
+        this.message("info", this.findingsLog.keep("top", "offset", words, { offset: [ox, oy] }));
+    }
+
     /** The top camera's routine on the mock's clock, a step at a time. */
     private serviceTopRoutine(dt: number): void {
         const session = this.topSession;
@@ -9148,6 +9218,8 @@ export class MockBackend implements Api, EventFeed {
             } else if (session.kind === "picture") {
                 const words = `the top camera's picture measured by the head's moves: ${(TOP_TRUTH.mmPerPx * 1000).toFixed(2)} um a pixel, roll ${TOP_TRUTH.roll.toFixed(2)} degrees (mock)`;
                 this.message("info", this.findingsLog.keep("top", "camera", words, { mm_per_px: TOP_TRUTH.mmPerPx, roll: TOP_TRUTH.roll, mirror: TOP_TRUTH.mirror }));
+            } else if (session.kind === "facing") {
+                this.finishFacing(session.device);
             } else if (session.kind === "offset") {
                 const mark = this.topConfig.mark_at ?? [0, 0];
                 const [ox, oy] = TOP_TRUTH.offset;

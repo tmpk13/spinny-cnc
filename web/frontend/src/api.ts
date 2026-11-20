@@ -458,6 +458,8 @@ export interface Api {
     topMark(): Promise<PlacingState>;
     /** Measures where the top camera looks from the nozzle, from the mark; `step` 0 keeps the scale. */
     topOffset(step: number): Promise<PlacingState>;
+    /** Offset by bottom camera: the top camera's offset from the nozzle with no mark, the two cameras looking at each other; `step` mm the head moves to measure both looks, `nozzle` centers the nozzle over the bottom camera first (false: its place as kept). */
+    topOffsetFacing(step: number, nozzle: boolean): Promise<PlacingState>;
     /** Measure camera: the top camera's scale, roll and mirror from the head's moves over anything with texture, no mark. */
     topMeasure(): Promise<PlacingState>;
     /** Homes, then finds the bed's homing fiducial with the top camera and declares where the head is from it. */
@@ -1436,6 +1438,10 @@ export class HttpApi implements Api {
 
     topOffset(step: number): Promise<PlacingState> {
         return this.request<PlacingState>("POST", "/api/pnp/top/offset", { step });
+    }
+
+    topOffsetFacing(step: number, nozzle: boolean): Promise<PlacingState> {
+        return this.request<PlacingState>("POST", "/api/pnp/top/offset/facing", { step, nozzle });
     }
 
     topHome(home = true): Promise<PlacingState> {

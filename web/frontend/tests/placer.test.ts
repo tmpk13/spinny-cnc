@@ -4,7 +4,7 @@ import { DEVICE_LINES_PER_SECOND, MockBackend } from "../src/mock/backend.ts";
 import { MARKS_NOTE, POCKET_NOTE, blockLines, checkLines, deviceFit, planDevice, tipShift, vacuumReading } from "../src/mock/openpnp.ts";
 import { TOP_TRUTH } from "../src/mock/pnp.ts";
 import type { Component, PlacingPlan, PlacingState } from "../src/types.ts";
-import { fiducialText, partsLeft, placingRunText, topCameraText, topRoutineText } from "../src/views/placing.ts";
+import { facingText, fiducialText, partsLeft, placingRunText, topCameraText, topRoutineText } from "../src/views/placing.ts";
 import { mountPnp } from "../src/views/pnp.ts";
 import { parseDevice } from "./gcoderig.ts";
 import { settle, setup, pnpRoots } from "./harness.ts";
@@ -214,6 +214,45 @@ describe("the cameras and the vacuum on the mock's G-code machine", () => {
         // A run asked to find fiducials needs the top camera running.
         await backend.topStop();
         await expect(backend.pnpRun(job.id, [components[1]!.ref], true)).rejects.toMatchObject({ status: 400 });
+    });
+});
+
+describe("Offset by bottom camera on the mock's G-code machine", () => {
+    test("centers the nozzle, keeps the offset both looks give, and is undone", async () => {
+        const backend = new MockBackend({ timers: false });
+        const file = await backend.machineFile("openpnp-marlin");
+        await backend.saveMachineFile("openpnp-marlin", `${file.text}\n[up_camera]\nz = -10\nposition = [150.4, 29.7]\n${TOP}`);
+        await backend.connect("/dev/ttyACM1", "openpnp-marlin");
+        // Both cameras must run, and the step stay within 5 mm.
+        await expect(backend.topOffsetFacing(2, true)).rejects.toMatchObject({ status: 400 });
+        await backend.pnpStart();
+        await backend.topStart();
+        await expect(backend.topOffsetFacing(6, true)).rejects.toMatchObject({ status: 400 });
+        // Without the nozzle the kept place is needed: none is kept yet.
+        await expect(backend.topOffsetFacing(2, false)).rejects.toMatchObject({ status: 400 });
+        await backend.topOffsetFacing(2, true);
+        expect((await backend.placingState()).top?.routine?.kind).toBe("facing");
+        expect(topRoutineText((await backend.placingState()).top)).toContain("Measuring the offset by the bottom camera");
+        await routines(backend);
+        const state = await backend.placingState();
+        const top = state.top!;
+        expect(top.offset).toEqual(TOP_TRUTH.offset);
+        expect(state.camera.position).not.toBeNull();
+        // Each look alone is off; the two combined give the offset kept.
+        const facing = top.facing!;
+        expect(facing.gap).toBeGreaterThan(1);
+        const share = facing.share;
+        expect((1 - share) * facing.by_down[0] + share * facing.by_up[0]).toBeCloseTo(TOP_TRUTH.offset[0], 3);
+        expect((1 - share) * facing.by_down[1] + share * facing.by_up[1]).toBeCloseTo(TOP_TRUTH.offset[1], 3);
+        expect(facingText(top)).toContain("kept X 35.000 Y -10.000");
+        expect(top.applied?.kind).toBe("offset");
+        expect(top.applied?.text).toContain("by the bottom camera");
+        const undone = await backend.undoFinding(top.applied!.id);
+        expect((undone.state as PlacingState).top?.offset).toBeNull();
+        // The nozzle's place now kept, the routine runs without the nozzle.
+        await backend.topOffsetFacing(2, false);
+        await routines(backend);
+        expect((await backend.placingState()).top?.offset).toEqual(TOP_TRUTH.offset);
     });
 });
 

@@ -150,10 +150,21 @@ export function topCameraText(top: TopState | null | undefined): string {
     if (!top?.offset || !(top.mm_per_px > 0)) {
         return top?.mark_at
             ? `Mark kept at X ${formatFixed(top.mark_at[0], 3)} Y ${formatFixed(top.mark_at[1], 3)}: now press Measure offset.`
-            : "Top camera offset not measured: put the nozzle tip on a mark, press Nozzle on mark, then Measure offset.";
+            : "Top camera offset not measured: Offset by bottom camera, or a mark (Nozzle on mark, then Measure offset).";
     }
     return `Top camera looks from X ${formatFixed(top.offset[0], 3)} Y ${formatFixed(top.offset[1], 3)} off the nozzle, `
         + `${formatFixed(top.mm_per_px * 1000, 1)} um/px, roll ${formatFixed(top.roll, 2)} deg${top.mirror ? ", mirrored" : ""}.`;
+}
+
+/** The last Offset by bottom camera's two looks and what was kept, in words; empty before one. */
+export function facingText(top: TopState | null | undefined): string {
+    const facing = top?.facing;
+    if (!facing) {
+        return "";
+    }
+    const at = (point: [number, number]): string => `X ${formatFixed(point[0], 3)} Y ${formatFixed(point[1], 3)}`;
+    return `Last: looking down ${at(facing.by_down)}, its lens from below ${at(facing.by_up)} (${formatFixed(facing.gap, 2)} mm apart);`
+        + ` kept ${at(facing.offset)}, the tip ${formatFixed(facing.share, 2)} of the way up.`;
 }
 
 /** The top camera's routine, in words. */
@@ -163,7 +174,7 @@ export function topRoutineText(top: TopState | null | undefined): string {
         return "";
     }
     const whats: Record<string, string> = {
-        offset: "Measuring the offset", picture: "Measuring the picture", fiducials: "Finding the fiducials", search: "Looking for the board", scan: "Scanning the board", home: "Homing by the fiducial",
+        offset: "Measuring the offset", facing: "Measuring the offset by the bottom camera", picture: "Measuring the picture", fiducials: "Finding the fiducials", search: "Looking for the board", scan: "Scanning the board", home: "Homing by the fiducial",
     };
     const what = whats[routine.kind] ?? "The routine";
     switch (routine.state) {
