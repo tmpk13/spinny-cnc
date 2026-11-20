@@ -274,9 +274,20 @@ export function mountCam(root: HTMLElement, ctx: Ctx, fileRoot: HTMLElement): vo
         setStatus(problem ?? "edited, not saved", problem !== null);
     });
     pick.addEventListener("change", () => {
-        picked = pick.value;
-        writeStored(PICK_KEY, picked);
-        void load(picked);
+        const next = pick.value;
+        if (next === picked) {
+            return;
+        }
+        void (async () => {
+            // An edit not saved is not thrown away without a word.
+            if (dirty && picked !== null && !(await askConfirm(`Leave ${picked}? Unsaved edits are lost.`, "Leave"))) {
+                pick.value = picked;
+                return;
+            }
+            picked = next;
+            writeStored(PICK_KEY, next);
+            await load(next);
+        })();
     });
 
     function setStatus(text: string, error: boolean): void {
