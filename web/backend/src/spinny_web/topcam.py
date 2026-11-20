@@ -86,7 +86,9 @@ STILL_SECONDS = 1.5
 # pictures.round_edge, over FACING_PICTURES pictures averaged), and the top
 # camera's lens on the bottom camera's picture center (pcbv's round spot,
 # UpCamera.lens_look). The nozzle's place less each of those head places is
-# an offset; neither is the one placing needs.
+# an offset; neither is the one placing needs. The routine ends with the top
+# camera over the nozzle's place by the offset found (still at the travel
+# height), where placing would put it to look at what the tip was over.
 #
 # A camera's picture center looks along a line through its lens, and on a
 # small camera the sensor sits a little off the lens' axis, so that line
@@ -684,8 +686,9 @@ class TopCamera(PickCamera):
         the place measured is kept through `keep_place` (logged against
         `target`, as Center nozzle's); without, `place` is the nozzle's
         place as kept. Then the two cameras look at each other with the head
-        at the travel height, `step` mm the scale moves, and the offset is
-        kept. `guess` is the file's offset, gone by while none is measured;
+        at the travel height, `step` mm the scale moves, the offset is kept
+        and the head brought to put the top camera over the nozzle's place
+        by it. `guess` is the file's offset, gone by while none is measured;
         `board_scale` the top camera's mm a pixel at the board when the
         settings have none measured."""
         if not (math.isfinite(step) and 0.0 < step <= FACING_MAX_STEP):
@@ -780,6 +783,11 @@ class TopCamera(PickCamera):
             "before": list(settings.offset) if settings.offset is not None else None,
         }
         self._message("info", self.findings.keep("offset", facing_words(result), {"offset": offset}))
+        # Kept first, so a stop on this last move loses no measurement. The
+        # looks leave the head wherever the lens' centering did, the cameras'
+        # lean (2 mm on a LumenPnP) off either picture's center; here the top
+        # camera stands where the nozzle was centered, as placing uses it.
+        _reach(mover, (nozzle_at[0] - offset[0], nozzle_at[1] - offset[1]))
 
     def _facing_nozzle(self, mover: Mover, up: UpCamera, place: CameraPlace, keep_place: Callable[[CameraPlace], None], target: str | None) -> CameraPlace:
         """The nozzle centered over the bottom camera as Center nozzle does,

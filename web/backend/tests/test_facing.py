@@ -291,6 +291,11 @@ def test_offset_by_the_bottom_camera_centers_the_nozzle_then_cancels_the_cameras
     assert numbers["share"] == pytest.approx(SHARE, abs=0.005) and numbers["share_up"] == pytest.approx(TIP / TOP, abs=0.005)
     assert numbers["down_scale"] == pytest.approx(top_scale(RING), rel=0.01) and numbers["up_scale"] == pytest.approx(bottom_scale(TOP), rel=0.01)
     assert numbers["lens"]["shade"] == "dark" and numbers["before"] is None
+    # It ends with the top camera over where the nozzle was centered, by the
+    # offset found, at the travel height: not where the lens' look left it.
+    x, y, z = client.fake.bed_position
+    assert (x, y) == pytest.approx((NOZZLE[0] - TRUE_OFFSET[0], NOZZLE[1] - TRUE_OFFSET[1]), abs=0.01)
+    assert z >= 5.0
     # The bottom camera's routine showed while the nozzle was centered.
     assert client.get("/api/pnp").json()["routine"]["state"] == "done"
     # Kept at once and logged: Undo takes the offset back.
@@ -311,6 +316,7 @@ def test_offset_by_the_bottom_camera_without_the_nozzle_keeps_the_head_up(client
     routine = facing(client, step=1.5, nozzle=False)
     assert routine["state"] == "done", routine
     assert client.get("/api/pnp/placing").json()["top"]["offset"] == pytest.approx(TRUE_OFFSET, abs=0.01)
+    assert client.fake.bed_position[:2] == pytest.approx((NOZZLE[0] - TRUE_OFFSET[0], NOZZLE[1] - TRUE_OFFSET[1]), abs=0.01)
     # Only moves across at the travel height: no Z line below it.
     heights = [float(word[1:]) for line in client.fake.lines for word in line.split() if word.startswith("Z")]
     assert all(z >= 5.0 for z in heights), heights

@@ -113,7 +113,11 @@ fitted to the head's moves; the rms says how well it follows the head.
 
 - Order: the nozzle first (its place fresh, the looks then start from
   it less the offset in use), the looks at the travel height after, so
-  the routine ends with the nozzles up. A kept nozzle place from another
+  the routine ends with the nozzles up. Last, with the offset kept, the
+  head goes to put the top camera over the nozzle's place by it (user's
+  ask, 2026-11-19): the looks alone left it where the lens' centering did,
+  the lean (1.4 mm on the LumenPnP) off the top camera's picture center
+  and nowhere placing would stand. A stop on that move keeps the offset. A kept nozzle place from another
   session (another home, a skew change) would put the offset off by as
   much, so the page always centers the nozzle; `nozzle: false` is for
   repeat runs and tests.

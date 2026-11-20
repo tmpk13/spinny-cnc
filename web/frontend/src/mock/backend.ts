@@ -9162,7 +9162,8 @@ export class MockBackend implements Api, EventFeed {
         const [lx, ly] = MOCK_FACING_LEAN;
         const byDown: [number, number] = [ox + lx, oy + ly];
         const byUp: [number, number] = [ox - (lx * (1 - share)) / share, oy - (ly * (1 - share)) / share];
-        this.deviceLine(device, xyLine(device, nozzleAt[0] - byUp[0], nozzleAt[1] - byUp[1]));
+        // As the backend's: the top camera ends over the nozzle's place by the offset found.
+        this.deviceLine(device, xyLine(device, nozzleAt[0] - ox, nozzleAt[1] - oy));
         const round4 = (value: number): number => Math.round(value * 10000) / 10000;
         this.topFacing = {
             offset: [ox, oy],
