@@ -252,7 +252,7 @@ describe("picture geometry", () => {
 });
 
 describe("the picture view", () => {
-    function mounted(rides = true, orientation?: { roll: number; mirror: boolean }, key = `test-${rides}`) {
+    function mounted(rides = true, orientation?: { roll: number; mirror: boolean }, key = `test-${rides}`, boxes = true) {
         const { ctx } = setup();
         const moves: [number, number][] = [];
         const view = mountPicture({
@@ -272,7 +272,7 @@ describe("the picture view", () => {
             },
             noScale: "no scale",
             visible: () => true,
-            boxes: true,
+            boxes,
         }, ctx);
         document.body.append(view.root);
         const stage = view.root.querySelector(".picture-stage") as HTMLElement;
@@ -453,6 +453,23 @@ describe("the picture view", () => {
         pointer(stage, "pointerup", 250, 125, true);
         expect(view.box()).toEqual([-50, 20, 50, 70]);
         view.setBox(null);
+        view.stop();
+    });
+
+    test("a Shift drag on a picture that draws no search box moves nothing: the gesture draws a box on the picture that has one", async () => {
+        // The Cameras page's twin of a picture, and the bottom camera's, take no search box.
+        const { view, stage, moves } = mounted(true, undefined, "test-no-box", false);
+        pointer(stage, "pointerdown", 0, 0, true);
+        pointer(stage, "pointermove", 250, 125, true);
+        pointer(stage, "pointerup", 250, 125, true);
+        await settle();
+        expect(moves).toHaveLength(0);
+        expect(view.box()).toBeNull();
+        // A plain drag still moves the head.
+        pointer(stage, "pointerdown", 100, 100);
+        pointer(stage, "pointerup", 150, 100);
+        await settle();
+        expect(moves).toHaveLength(1);
         view.stop();
     });
 

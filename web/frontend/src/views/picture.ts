@@ -1447,9 +1447,11 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         return [width / 2 + pan[0] + (fx * width) / zoom, height / 2 + pan[1] + (fy * height) / zoom];
     }
 
-    // A press: where it began and is now, and whether it draws a box (a
-    // search box with Shift, or the box an armed box pick waits for).
-    let press: { from: [number, number]; to: [number, number]; client: [number, number]; boxing: boolean; cropping: boolean } | null = null;
+    // A press: where it began and is now, whether it draws a box (a search
+    // box with Shift, or the box an armed box pick waits for), and whether
+    // Shift was held (on a picture that draws no search box such a drag
+    // moves nothing).
+    let press: { from: [number, number]; to: [number, number]; client: [number, number]; boxing: boolean; cropping: boolean; shifted: boolean } | null = null;
     // A drag with the middle button, or with Alt, pans the view instead:
     // where it began and the pan then.
     let panning: { client: [number, number]; pan: [number, number] } | null = null;
@@ -1468,7 +1470,7 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
         const boxPick = picks.get(options.key)?.box === true;
         // With a crop picked in the View menu a drag draws its box, unless a pick is armed.
         const cropping = !boxPick && !picks.has(options.key) && cropEdit !== null;
-        press = { from: at, to: at, client: [event.clientX, event.clientY], boxing: boxPick || cropping || (event.shiftKey && options.boxes === true), cropping };
+        press = { from: at, to: at, client: [event.clientX, event.clientY], boxing: boxPick || cropping || (event.shiftKey && options.boxes === true), cropping, shifted: event.shiftKey };
         stage.setPointerCapture?.(event.pointerId);
         stage.classList.add(press.boxing ? "boxing" : "dragging");
     });
@@ -1528,6 +1530,12 @@ export function mountPicture(options: PictureOptions, ctx: Ctx): PictureView {
             cropEdit = { task: cropEdit.task, draft: drawn };
             showCrop(ctx.store.get());
             draw(ctx.store.get());
+            return;
+        }
+        // Shift and a drag draw a search box where a picture takes one; here
+        // the gesture meant for a box moves nothing rather than the head.
+        if (done.shifted && !done.boxing) {
+            ctx.toast("info", "this picture draws no search box (the head and top cameras' pictures in the Run area do): a drag without Shift moves the head");
             return;
         }
         const state = ctx.store.get();
