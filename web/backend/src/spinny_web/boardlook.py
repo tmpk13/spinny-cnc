@@ -1498,15 +1498,10 @@ class BoardLook:
         if not self.busy_test:
             return ceiling
         try:
-            asked = time.monotonic()
-            last, reply = fresh_gray(self.client, began, BUSY_WIDTH, stopped)
-            age = reply.get("age_ms")
-            last_at = asked - float(age) / 1000.0 if _number(age) else asked
+            last, reply, last_at = _fresh_picture(self.client, began, stopped)
             while last_at < ceiling:
-                asked = time.monotonic()
-                gray, reply = fresh_gray(self.client, last_at + 1e-3, BUSY_WIDTH, stopped)
-                age = reply.get("age_ms")
-                captured = asked - float(age) / 1000.0 if _number(age) else asked
+                gray, reply_now, captured = _fresh_picture(self.client, last_at + 1e-3, stopped, reply.get("frame"))
+                reply = reply_now
                 if gray.shape == last.shape:
                     dx, dy, _ = phase_shift(cut(last, self.crop()), cut(gray, self.crop()))
                     if math.hypot(dx, dy) <= SETTLED_PX:
@@ -1635,6 +1630,32 @@ class BoardLook:
 
 # What pcbv or the client says when the camera can answer no more.
 DEAD_WORDS = ("the service has stopped", "the camera is not running", "pcbv went away")
+
+
+def _fresh_picture(client, since: float, stopped: Callable[[], bool], other=None, limit: float = 3.0) -> tuple[np.ndarray, dict, float]:
+    """The camera's newest picture as luma at BUSY_WIDTH, taken `since` or
+    later and other than the picture numbered `other`, its reply and when
+    it was taken: asked again until one comes, each picture's capture told
+    from the one ask that brought it. pcbv answers its newest picture again
+    until the next is taken, so a capture told from the clock before many
+    asks comes out early by the wait, and the same picture would pass for
+    the next one; a ValueError when none comes within `limit` seconds, or
+    once `stopped`."""
+    deadline = time.monotonic() + limit
+    while True:
+        if stopped():
+            raise ValueError("stopped")
+        asked = time.monotonic()
+        # Whatever picture is newest, from this one ask.
+        gray, reply = fresh_gray(client, -math.inf, BUSY_WIDTH)
+        age = reply.get("age_ms")
+        captured = asked - float(age) / 1000.0 if _number(age) else asked
+        frame = reply.get("frame")
+        if captured >= since and (other is None or frame is None or frame != other):
+            return gray, reply, captured
+        if time.monotonic() >= deadline:
+            raise ValueError("the camera gave no new picture: is it still running?")
+        time.sleep(min(0.03, max(0.005, since - captured)))
 
 
 def dead_camera(text: str) -> bool:

@@ -198,3 +198,45 @@ def test_a_stop_trusts_its_pictures_once_two_in_a_row_agree_not_after_a_fixed_ti
     look.busy_test = False
     assert look.settle(began, lambda: False) == pytest.approx(began + 0.3)
 
+
+
+class FrameRateCamera(RingingCamera):
+    """A camera that takes a picture every `period` s from `start` on, and
+    answers each request with its newest picture and that picture's age, as
+    pcbv does: asked again before the next picture comes, it gives the same
+    one. The k-th picture is shifted by the k-th of `offsets`."""
+
+    def __init__(self, offsets, start: float, period: float) -> None:
+        super().__init__(offsets)
+        self.start = start
+        self.period = period
+
+    def captured(self, k: int) -> float:
+        return self.start + k * self.period
+
+    def gray(self, width=None):
+        from test_pictures import picture
+
+        now = time.monotonic()
+        k = max(int((now - self.start) // self.period), 0)
+        self.asked += 1
+        offset = self.offsets[min(k, len(self.offsets) - 1)]
+        pixels = picture(self.surface, (7.0 + 0.024 * offset, 7.0), 0.024, 0.0, False)
+        data = np.clip(pixels, 0, 255).astype(np.uint8).tobytes()
+        age = (now - self.captured(k)) * 1000.0
+        return {"width": 320, "height": 180, "frame": k, "age_ms": age, "format": "gray"}, data
+
+
+def test_a_stop_trusts_its_pictures_only_from_two_different_pictures_that_agree(monkeypatch):
+    """A camera gives a picture every 120 ms (slower than the fake draws
+    one) and the newest again when asked sooner: the picture taken just
+    before the stop began is waited past, and the same picture read twice
+    is not two pictures agreeing."""
+    monkeypatch.setattr(camera_module, "SETTLE_SECONDS", 5.0)
+    began = time.monotonic()
+    camera = FrameRateCamera([3.0, 1.2, 0.5, 0.03, 0.0], began - 0.01, 0.12)
+    look = BoardLook(lambda: camera, publish=lambda: None, paused=lambda: True)
+    trusted = look.settle(began, lambda: False)
+    # The fourth and fifth pictures (k = 3 and 4) are the first two in a
+    # row that agree: trusted from the fourth's capture.
+    assert trusted == pytest.approx(camera.captured(3), abs=0.02)
