@@ -881,3 +881,4 @@
 - The quick scan has a name: Search reads Scan the bed with nothing known of the board's place; By camera is open at first with a G-code machine.
 - Clear marks has a field of seconds beside it: each spot found clears itself that long after it showed (fractions too, 3.431; kept per camera); 0 never clears, and the button still clears at once.
 - Offset by bottom camera (Top camera panel, More): the top camera's offset with no mark: the nozzle centered over the bottom camera, then each camera finds the other and the two looks are combined to take out the cameras' lean (2 mm apart on the LumenPnP); tested there with X/Y moves only.
+- Offset by bottom camera ends with the top camera over the nozzle's place by the offset found, not where the last look left it (3057f13).

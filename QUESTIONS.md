@@ -398,3 +398,11 @@ Why it matters: `[[slot]]` keys a place by address. The place belongs to the phy
 - C. The page programs only slots with no address (OpenPnP's wizard case) and never renumbers one.
 Applied: A, in d2b94c3.
 Answer:
+
+## Q68. Where should Offset by bottom camera leave the head when it finishes?
+Why it matters: the last place is what both camera pictures show afterward, and the next move starts from it.
+- A. The top camera over the place the nozzle was centered at, by the offset just found (recommended): the place placing would use; the ring sits about 0.6 mm off the top camera's picture center on the LumenPnP because of the cameras' lean.
+- B. The nozzle over the bottom camera, still at the travel height: the bottom camera shows the nozzle centered (out of focus).
+- C. The top camera's picture centered on the bottom camera's ring (the look down's place): the ring is centered in the top camera's picture, but this is 0.6 mm from where placing would put the camera.
+Applied: A, in 3057f13.
+Answer:
