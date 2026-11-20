@@ -712,6 +712,16 @@ export function spotOf(job: RenderJob): number {
     return job.spot > 0 ? job.spot : 0.1;
 }
 
+/** How wide a job's lines are drawn, CSS px: the spot's width, but at least 1.2 px to be read; a device pixel while a large job's view moves. */
+export function lineWidthPx(spot: number, scale: number, coarse: boolean, dpr: number): number {
+    return Math.max(spot * scale, coarse ? 1 / dpr : 1.2);
+}
+
+/** A dot's radius as drawn, CSS px: its radius on the board at `scale`, but at least 1.5 px so it does not vanish. */
+export function dotRadiusPx(radius: number, scale: number): number {
+    return Math.max(radius * scale, 1.5);
+}
+
 /**
  * The job's paths in the order they are cut: the groups that are on, in
  * order, a path at a time, a model's group as one entry ([group, -1]).
@@ -943,9 +953,7 @@ function workItems(work: Item[], frame: SceneFrame, job: RenderJob): void {
         work.push({ kind: "copper", color: colors.copper, alpha: 0.35 });
     }
     const spot = spotOf(job);
-    // The spot's width, but at least 1.2 px to be read; a device pixel
-    // while a large job's view moves.
-    const width = Math.max(spot * scale, state.coarse ? 1 / state.dpr : 1.2);
+    const width = lineWidthPx(spot, scale, state.coarse, state.dpr);
     // The picked paths: a halo a few px wider than the line, under it.
     if (state.selection.length > 0) {
         work.push({ kind: "lines", source: { kind: "picked" }, ink: { color: colors.select, width: width + 7, alpha: 0.45 } });

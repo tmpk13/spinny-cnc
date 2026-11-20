@@ -29,6 +29,7 @@ import {
     orbit,
     overview,
     pan,
+    pxPerMm,
     quarterTurn,
     sameCamera,
     zoomAt,
@@ -50,12 +51,16 @@ import {
     type RenderState,
     type SelectBox,
     cutOrderOf,
+    dotRadius,
+    dotRadiusPx,
     initialRenderState,
     jobReach,
     limitReach,
+    lineWidthPx,
     renderJobOf,
     sameColors,
     sameGrid,
+    spotOf,
 } from "./render/scene.ts";
 import type { SpeedLimits } from "./speed.ts";
 import type { Board, Grid, HeightMap, Job, Joint, Marker, Point } from "./types.ts";
@@ -294,8 +299,10 @@ export class Preview {
 
     /**
      * The path of the job under a canvas point: the one whose line (or dot)
-     * comes nearest, within `PICK_PX`; null when none is that near. A
-     * model's moves are no paths and are not picked.
+     * as drawn, as wide as the spot (or its pad), comes nearest, within
+     * `PICK_PX` of its edge; where the point is on several, the one whose
+     * middle is nearest. Null when none is that near. A model's moves are no
+     * paths and are not picked.
      */
     pick(x: number, y: number): PathRef | null {
         const job = this.job;
@@ -304,7 +311,10 @@ export class Preview {
         }
         const view = new Projector(frameOf(this.state.camera), this.state.width, this.state.height);
         const at = new Float64Array(2);
-        let best: { ref: PathRef; distance: number } | null = null;
+        const scale = pxPerMm(this.state.camera, this.state.height);
+        const spot = spotOf(job);
+        const halfWidth = lineWidthPx(spot, scale, this.state.coarse, this.state.dpr) / 2;
+        let best: { ref: PathRef; edge: number; distance: number } | null = null;
         job.groups.forEach((group, g) => {
             group.paths.forEach((path, p) => {
                 let nearest = Infinity;
@@ -323,8 +333,10 @@ export class Preview {
                     px = qx;
                     py = qy;
                 }
-                if (nearest <= PICK_PX && (best === null || nearest < best.distance)) {
-                    best = { ref: [g, p], distance: nearest };
+                const drawn = path.length === 1 ? dotRadiusPx(dotRadius(group.areas?.[p], spot), scale) : halfWidth;
+                const edge = Math.max(0, nearest - drawn);
+                if (edge <= PICK_PX && (best === null || edge < best.edge || (edge === best.edge && nearest < best.distance))) {
+                    best = { ref: [g, p], edge, distance: nearest };
                 }
             });
         });
