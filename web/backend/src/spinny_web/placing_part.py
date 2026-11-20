@@ -1878,6 +1878,10 @@ class PlacingPart:
 
     def pnp_reset_feeders(self, body: PnpFeederBody) -> dict:
         self.placing_machine()
+        # A run counts its feeders' parts on from its own count and writes
+        # it after every pick: a reset made now would be written over.
+        if self.gcode.running:
+            raise HTTPException(status_code=409, detail="a placing run is under way: count the feeders again once it ends")
         config = self._placing_config()
         taken = config.setdefault("taken", {})
         if body.feeder is None:

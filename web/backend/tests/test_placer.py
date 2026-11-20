@@ -1452,3 +1452,19 @@ def test_a_run_asked_for_while_a_slots_find_moves_the_head_waits_for_it(client):
     wait_for(lambda: not client.get("/api/pnp/placing").json()["running"])
     assert started == [False], "a run started while a slot's find was moving the head"
     assert answer.status_code == 200, answer.text
+
+
+def test_a_feeders_count_is_not_reset_under_a_run_that_counts_on(client):
+    # A run counts its feeders' parts on from its own count: a reset made
+    # meanwhile was answered as done, then written over by the run's next
+    # pick, and the next run took the pockets after those.
+    job_id = rig(client, profile(rest=BUS))
+    # The feed takes far longer than the test waits: the reset comes during it.
+    client.fake.bus = FakePhotonBus({3: PHOTON}, asks=100000)
+    client.post("/api/pnp/references", json={"job": job_id, "ref": "R1", "at": [100.0, 50.0]})
+    assert client.post("/api/pnp/run", json={"job": job_id, "refs": ["R1"]}).status_code == 200
+    wait_for(lambda: client.fake.bus.fed)
+    reset = client.post("/api/pnp/feeders/reset", json={"feeder": "photon"})
+    client.post("/api/pnp/run/stop")
+    wait_for(lambda: not client.get("/api/pnp/placing").json()["running"])
+    assert reset.status_code == 409, reset.text
