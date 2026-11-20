@@ -244,6 +244,11 @@ class VisionClient:
         said: list[str] = []
         stderr: threading.Thread | None = None
         with self._lock:
+            if self._stream is not None and not self._stream.alive:
+                # A pcbv that ended on its own reads as stopped: its stream
+                # is let go here, so it can be started again.
+                dead, self._stream, self.device = self._stream, None, None
+                self._end(dead)
             if self._stream is not None:
                 raise VisionError("the camera is already running")
             if device.startswith("socket://"):

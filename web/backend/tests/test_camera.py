@@ -335,6 +335,33 @@ def test_a_pcbv_that_cannot_open_its_camera_says_why(tmp_path):
     assert not client.running
 
 
+def test_a_pcbv_that_died_starts_again_and_the_camera_with_it(pcbv):
+    client = VisionClient()
+    client.start("/dev/video9", "640x480", 15, pcbv)
+    stream = client._stream
+    assert stream is not None and stream.process is not None
+    stream.process.kill()
+    stream.process.wait(timeout=5.0)
+    assert not client.running
+    try:
+        # Shown stopped, it starts again rather than being refused as running.
+        hello = client.start("/dev/video8", "640x480", 15, pcbv)
+        assert hello["camera"] == "/dev/video8" and client.running and client.device == "/dev/video8"
+    finally:
+        client.close()
+    camera = camera_module.Camera({}, lambda: None, lambda: None, lambda level, text: None)
+    camera.update({"pcbv": pcbv, "device": "/dev/video9"})
+    camera.start()
+    try:
+        camera.client._stream.process.kill()
+        camera.client._stream.process.wait(timeout=5.0)
+        assert not camera.running
+        camera.start()
+        assert camera.running
+    finally:
+        camera.shutdown()
+
+
 def test_pcbv_is_found_or_named(tmp_path):
     with pytest.raises(VisionError, match="not on PATH"):
         find_pcbv("no-such-program-anywhere")
