@@ -99,8 +99,27 @@ export function mountVersion(root: HTMLElement, ctx: Ctx): void {
         if (busy && polling === null) {
             polling = setTimeout(() => {
                 polling = null;
-                void refresh();
+                void poll();
             }, UPDATE_POLL_MS);
+        }
+    }
+
+    /**
+     * Asks how the update goes. A poll that is not answered (the backend
+     * started again, the link down a moment) is asked again a while later,
+     * without a toast each time, so the panel does not stay on an update
+     * that is over with its buttons locked.
+     */
+    async function poll(): Promise<void> {
+        try {
+            show(await ctx.api.updateState());
+        } catch {
+            if (polling === null) {
+                polling = setTimeout(() => {
+                    polling = null;
+                    void poll();
+                }, UPDATE_POLL_MS * 4);
+            }
         }
     }
 

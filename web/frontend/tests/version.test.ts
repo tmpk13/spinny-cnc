@@ -103,6 +103,41 @@ describe("version panel", () => {
         root.remove();
     });
 
+    test("a poll the backend does not answer is asked again: the panel does not stay on an update under way", async () => {
+        const store = new Store<AppState>(initialState(true));
+        const backend = new MockBackend({ timers: false });
+        const ctx = createContext(backend, store);
+        const downloading: UpdateState = {
+            ...RELEASE, latest: { version: "0.2.0", published: "2026-11-12T00:00:00Z", prerelease: false, archive: "spinny-0.2.0-x86_64-linux.tar.gz" } as UpdateState["latest"],
+            status: "newer", checked: "2026-11-20T00:00:00Z", state: "downloading", done: 1e6, total: 4e7,
+        };
+        let asked = 0;
+        backend.updateState = async () => {
+            asked += 1;
+            if (asked === 1) {
+                return downloading;
+            }
+            if (asked === 2) {
+                throw new Error("Failed to fetch");
+            }
+            // The backend started again: the update it had going is gone.
+            return { ...RELEASE, latest: downloading.latest, status: "newer", checked: downloading.checked };
+        };
+        const root = document.createElement("section");
+        document.body.append(root);
+        mountVersion(root, ctx);
+        await settle();
+        expect(root.textContent).toContain("Downloading spinny-0.2.0-x86_64-linux.tar.gz");
+        const install = Array.from(root.querySelectorAll("button")).find((b) => b.textContent === "Update")!;
+        expect(install.dataset["reason"]).toBe("an update is under way");
+        await new Promise((resolve) => setTimeout(resolve, 4000));
+        await settle();
+        expect(asked).toBeGreaterThanOrEqual(3);
+        expect(root.textContent).not.toContain("Downloading");
+        expect(install.dataset["locked"]).toBeUndefined();
+        root.remove();
+    }, 10_000);
+
     test("the routes are asked as the backend has them", async () => {
         const calls: [string, string][] = [];
         const api = new HttpApi("http://host", async (url: string, init?: RequestInit) => {
