@@ -202,8 +202,15 @@ export function mountTodo(bar: HTMLElement, ctx: Ctx): TodoDrawer {
         if (event.key === "Enter" && !event.isComposing) {
             event.preventDefault();
             const text = input.value;
+            const id = newTodoId();
             input.value = "";
-            void change(addTodo(text, newTodoId()));
+            // A line the backend did not keep goes back in the box, unless
+            // something else was typed there since.
+            void change(addTodo(text, id)).then(() => {
+                if (text.trim() !== "" && !shown.items.some((entry) => entry.id === id) && input.value === "") {
+                    input.value = text;
+                }
+            });
         }
     });
     // Escape closes it wherever the focus is; a press anywhere else too.

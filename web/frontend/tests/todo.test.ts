@@ -168,6 +168,28 @@ describe("the to-do drawer", () => {
         expect((await backend.todo()).items).toEqual([item("a", "one", true), item("b", "from elsewhere")]);
     });
 
+    test("a line the backend did not keep goes back in the box, not lost", async () => {
+        const { backend, drawer } = mount();
+        drawer.open();
+        await settle();
+        const kept = backend.setTodo.bind(backend);
+        backend.setTodo = async () => {
+            throw new Error("Failed to fetch");
+        };
+        const input = drawer.drawer.querySelector<HTMLInputElement>(".todo-input")!;
+        type(input, "clean the lens");
+        await drawer.settled();
+        await settle();
+        expect(rowsOf(drawer.drawer)).toEqual([]);
+        expect(input.value).toBe("clean the lens");
+        // Kept once the backend answers again.
+        backend.setTodo = kept;
+        type(input, input.value);
+        await drawer.settled();
+        expect(rowsOf(drawer.drawer)).toEqual(["- clean the lens"]);
+        expect(input.value).toBe("");
+    });
+
     test("the button, Escape and a press outside close it; Escape gives the focus back to the button", async () => {
         const { drawer } = mount();
         drawer.toggle.click();
