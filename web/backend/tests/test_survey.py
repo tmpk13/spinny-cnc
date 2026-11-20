@@ -8,6 +8,7 @@ import json
 import math
 import stat
 import sys
+import time
 
 import numpy as np
 import pytest
@@ -431,6 +432,30 @@ def test_sweep_asks_again_for_a_picture_taken_before_the_head_came_to_rest(tmp_p
     old.ages = [None]
     assert survey.sweep(old, tmp_path / "u", places, 0.0, 640, {}, say=said.append) == 1
     assert old.asked == 1 and "age_ms" not in survey.read_stops(tmp_path / "u")[0]
+
+
+def test_a_slow_answer_never_passes_a_picture_from_before_the_rest_as_fresh(tmp_path, monkeypatch):
+    monkeypatch.setattr(survey, "FRESH_SECONDS", 0.4)
+
+    class Slow(FakeBackend):
+        """A camera stuck on a picture taken just before the head came to
+        rest; the backend tells its age as it answers, and the answer takes
+        0.2 s to arrive."""
+
+        def goto(self, place):
+            super().goto(place)
+            self.captured = time.monotonic() - 0.02
+
+        def picture(self, path, timeout=120.0):
+            self.asked = getattr(self, "asked", 0) + 1
+            age = time.monotonic() - self.captured
+            time.sleep(0.2)
+            return b"old picture", age
+
+    backend = Slow()
+    assert survey.sweep(backend, tmp_path / "s", [(10.0, 20.0)], 0.0, 640, {}, say=lambda text: None) == 1
+    stop = survey.read_stops(tmp_path / "s")[0]
+    assert stop.get("stale") is True and backend.asked > 1
 
 
 def test_a_search_kept_without_its_frame_takes_the_record_header(tmp_path):

@@ -671,12 +671,16 @@ def sweep(backend: Backend, folder: Path, places: list[Point], settle: float, wi
             # nothing for a moment answers its last picture again (the
             # first survey kept the stop before's picture at 2 of its 169
             # stops, and both were graded as wrong locks).
+            # The age is told as the backend answers, after the ask: the
+            # capture told from the time asked is never later than it was.
             path = f"/api/pnp/top/frame.jpg?width={width}&overlay=0"
+            asked = time.monotonic()
             picture, age = backend.picture(path)
-            while age is not None and time.monotonic() - age < rested and time.monotonic() - rested < settle + FRESH_SECONDS:
+            while age is not None and asked - age < rested and time.monotonic() - rested < settle + FRESH_SECONDS:
                 time.sleep(0.1)
+                asked = time.monotonic()
                 picture, age = backend.picture(path)
-            stale = age is not None and time.monotonic() - age < rested
+            stale = age is not None and asked - age < rested
             picture_of(folder, index).write_bytes(picture)
             placing = backend.placing()
             look = (placing.get("top") or {}).get("board_look") or {}
