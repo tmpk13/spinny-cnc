@@ -378,6 +378,35 @@ describe("the panel menu", () => {
         expect(scrolls.every((node) => node.hidden)).toBe(true);
     });
 
+    test("keys that jog (arrows, space, PageUp and PageDown) pressed in the page settings stop short of the jog keys", () => {
+        const app = makeApp();
+        const panels = mountPanels(app);
+        const tools = document.createElement("div");
+        app.append(tools);
+        mountPageSettings(tools, panels);
+        tools.querySelector<HTMLButtonElement>(".tabs-gear")!.click();
+        const sheet = tools.querySelector<HTMLElement>(".page-settings")!;
+        expect(sheet.hidden).toBe(false);
+        const inside = sheet.querySelector<HTMLElement>("button, input[type=checkbox]")!;
+        const heard: string[] = [];
+        const listener = (event: KeyboardEvent): void => {
+            if (!event.defaultPrevented) {
+                heard.push(event.key);
+            }
+        };
+        document.addEventListener("keydown", listener);
+        try {
+            for (const key of ["ArrowLeft", " ", "PageUp", "PageDown"]) {
+                inside.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+            }
+        } finally {
+            document.removeEventListener("keydown", listener);
+            // Closed whatever the outcome: an open sheet takes every Escape.
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        }
+        expect(heard).toEqual([]);
+    });
+
     test("the bar's eye shows while a panel is hidden and toggles the peek; Done editing ends edit mode", () => {
         const app = makeApp();
         const panels = mountPanels(app);

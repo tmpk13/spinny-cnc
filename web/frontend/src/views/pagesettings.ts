@@ -293,8 +293,8 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
     }, true);
     sheet.addEventListener("keydown", (event) => {
         // The jog keys listen on the document; a key meant for a box or a
-        // pick here stops short of them.
-        if (event.key.startsWith("Arrow") || event.key === " ") {
+        // pick here stops short of them, PageUp and PageDown (a mill's Z) too.
+        if (event.key.startsWith("Arrow") || event.key === "PageUp" || event.key === "PageDown" || event.key === " ") {
             event.stopPropagation();
         }
     });

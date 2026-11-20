@@ -221,9 +221,9 @@ export function mountTodo(bar: HTMLElement, ctx: Ctx): TodoDrawer {
         }
     }, true);
     // The jog keys listen on the document: a key meant for a box or a check
-    // here stops short of them.
+    // here stops short of them, PageUp and PageDown (a mill's Z) too.
     drawer.addEventListener("keydown", (event) => {
-        if (event.key.startsWith("Arrow") || event.key === " ") {
+        if (event.key.startsWith("Arrow") || event.key === "PageUp" || event.key === "PageDown" || event.key === " ") {
             event.stopPropagation();
         }
     });

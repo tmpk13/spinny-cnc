@@ -204,4 +204,25 @@ describe("the to-do drawer", () => {
         document.removeEventListener("keydown", listener);
         expect(heard).toEqual(["a"]);
     });
+
+    test("PageUp and PageDown on a row's check stop short of the jog keys too: a mill binds them to Z", async () => {
+        const { backend, drawer } = mount();
+        await backend.setTodo([item("a", "one")], null);
+        drawer.open();
+        await settle();
+        const box = drawer.drawer.querySelector<HTMLInputElement>(".todo-item input[type=checkbox]")!;
+        box.focus();
+        const heard: string[] = [];
+        const listener = (event: KeyboardEvent): void => {
+            if (!event.defaultPrevented) {
+                heard.push(event.key);
+            }
+        };
+        document.addEventListener("keydown", listener);
+        for (const key of ["PageUp", "PageDown"]) {
+            box.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+        }
+        document.removeEventListener("keydown", listener);
+        expect(heard).toEqual([]);
+    });
 });
