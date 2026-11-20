@@ -31,3 +31,12 @@
   run's start says it as a warning per feeder (at each plan, as the "no
   [[slot]] place" warning is said); the plan's skip reason stays "slot is
   not known", as `plan()` also serves the feeder check.
+- Identify (0xC1): the photon firmware answers ok, then flashes white
+  three times with `delay()`, 1.8 s, and unlike a feed it does not clear
+  what reached it meanwhile, so a packet sent during the flash is acted on
+  late, after M485 has timed out. `FeederBus.identify` therefore waits 2 s
+  (on its injectable `sleep`) before it returns, and the route flashes the
+  feeders one after another: a request to that feeder right after would
+  read as no answer, and a feed would still happen, later. The virtual
+  bus plays the flash as 1.8 s of its clock in which the feeder hears
+  nothing.

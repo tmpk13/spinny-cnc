@@ -40,7 +40,7 @@ from .boardlook import (
     search_extra,
     search_stops,
 )
-from .feederbus import BusError, FeederBus, slot_place
+from .feederbus import BusError, FeederBus, check_id, slot_place
 from .findings import Target, UndoRefused
 from .gcode_link import GcodeLinkError, GcodeMover
 from .gcode_part import HOME_TIMEOUTS
@@ -1530,6 +1530,47 @@ class PlacingPart:
             raise GcodeLinkError(f"feeder {feeder_id}: {exc}") from exc
         self.publish_message("info", f"feeder {feeder_id} advanced {num(feeder.advance)} mm (bus address {address})")
         return self.publish_placing()
+
+    def pnp_bus_identify(self, feeders: list[str] | None, ids: list[str] | None) -> dict:
+        """Feeders on the bus flash one after another, to tell which one in
+        the machine is which: the file's feeders by name (`feeders`) and
+        feeders by their ids on the bus (`ids`, as a scan row gives them),
+        each once. `identified` lists the ids that answered; `missing`
+        names each feeder that did not, or has no bus_id, as a scan does."""
+        machine = self._placing_idle()
+        if not feeders and not ids:
+            raise ValueError("name the feeders to identify, or their ids on the bus")
+        bus = self._bus(machine)
+        by_name = {feeder.id: feeder for feeder in machine.feeders}
+        unknown = [name for name in feeders or [] if name not in by_name]
+        if unknown:
+            raise HTTPException(status_code=404, detail=f"{machine.name}'s file has no feeder {unknown[0]!r}")
+        named = {feeder.bus_id: feeder.id for feeder in machine.feeders if feeder.bus_id is not None}
+        missing: list[dict] = []
+        # Each feeder's id on the bus, with the name it is reported by: the
+        # file's when the file has it, else the id itself.
+        wanted: dict[str, str] = {}
+        for name in feeders or []:
+            feeder = by_name[name]
+            if feeder.bus_id is None:
+                missing.append({"feeder": name, "id": None, "reason": "not on the bus: its file gives no bus_id"})
+            else:
+                wanted.setdefault(feeder.bus_id, name)
+        for text in ids or []:
+            bus_id = check_id(text)
+            wanted.setdefault(bus_id, named.get(bus_id, bus_id))
+        identified: list[str] = []
+        for bus_id, name in wanted.items():
+            try:
+                address = bus.identify(bus_id)
+            except BusError as exc:
+                missing.append({"feeder": name, "id": bus_id, "reason": str(exc)})
+                continue
+            if address is None:
+                missing.append({"feeder": name, "id": bus_id, "reason": "did not answer to its id: is it in a slot?"})
+            else:
+                identified.append(bus_id)
+        return {**self.publish_placing(), "identified": identified, "missing": missing}
 
     def pnp_boards_reset(self) -> dict:
         self.placing_machine()

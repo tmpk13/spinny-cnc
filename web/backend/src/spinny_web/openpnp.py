@@ -858,7 +858,7 @@ def machine_of(machine: Machine, where: str | None = None) -> GcodeMachine:
             raise read.fail("bus", "reply", "must hold a group, ( ), around the answer's hex")
         codes = {
             name: read.integer(wire, name, "bus", getattr(defaults, name), 0, 255)
-            for name in ("get_id", "init", "feed", "status", "find", "ok", "wrong_id", "unreachable", "uninitialized", "busy")
+            for name in ("get_id", "init", "feed", "status", "find", "identify", "ok", "wrong_id", "unreachable", "uninitialized", "busy")
         }
         bus = BusProfile(
             send=send,

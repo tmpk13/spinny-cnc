@@ -84,6 +84,8 @@ PHOTON_OK = 0x00
 PHOTON_WRONG_ID = 0x01
 PHOTON_UNINITIALIZED = 0x03
 PHOTON_BUSY = 0x04
+# How long a Photon feeder flashes for an identify, hearing nothing, s.
+PHOTON_FLASH = 1.8
 
 
 def turn(point: Point, degrees: float) -> Point:
@@ -120,13 +122,15 @@ class Photon:
     """One Photon feeder in its slot: its hardware id, as hex; the address
     byte the slot floor's chip holds (0 when it was never programmed, None
     for a slot with no chip, which the feeder reads as 255); whether it was
-    initialized since it was put in; and the status asks its feed still
-    answers busy to."""
+    initialized since it was put in; the status asks its feed still
+    answers busy to; and until when, by the bus's clock, it flashes for an
+    identify and hears nothing."""
 
     id: str
     floor: int | None
     initialized: bool = False
     feeding: int = 0
+    deaf_until: float = float("-inf")
 
     @property
     def address(self) -> int:
@@ -141,19 +145,22 @@ class PhotonBus:
     address to the id (hex) of the feeder whose slot's floor holds it;
     `unaddressed` are the ids of feeders in slots whose floor was never
     programmed (address 0), `chipless` of feeders in slots with no floor
-    chip (255). A feed takes `asks` status asks to finish.
+    chip (255). A feed takes `asks` status asks to finish; an identify
+    flashes for 1.8 s of `clock`.
 
     Two feeders answering at once garble each other on the wire, and
     Marlin's M485 takes only a packet whose check holds, so it prints a
     timeout then."""
 
-    def __init__(self, feeders: dict[int, str], asks: int = 2, unaddressed=(), chipless=()) -> None:
+    def __init__(self, feeders: dict[int, str], asks: int = 2, unaddressed=(), chipless=(), clock=time.monotonic) -> None:
         self.feeders: list[Photon] = [Photon(id=feeder.upper(), floor=address) for address, feeder in feeders.items()]
         self.feeders += [Photon(id=feeder.upper(), floor=0) for feeder in unaddressed]
         self.feeders += [Photon(id=feeder.upper(), floor=None) for feeder in chipless]
         self.asks = asks
-        # Every feed asked: (address, tenths of a mm).
+        self.clock = clock
+        # Every feed asked: (address, tenths of a mm); every feeder that flashed, by id.
         self.fed: list[tuple[int, int]] = []
+        self.identified: list[str] = []
 
     @property
     def ready(self) -> set[int]:
@@ -177,11 +184,12 @@ class PhotonBus:
         if packet is None or not packet.payload:
             return PHOTON_TIMEOUT
         code, body = packet.payload[0], packet.payload[1:]
+        now = self.clock()
         answers = []
         for feeder in self.feeders:
-            if packet.to not in (feeder.address, 255):
+            if packet.to not in (feeder.address, 255) or now < feeder.deaf_until:
                 continue
-            said = self._handle(feeder, code, body)
+            said = self._handle(feeder, code, body, now)
             if said is not None:
                 # From the address it has once it has acted.
                 answers.append(Packet(to=packet.sender, sender=feeder.address, number=packet.number, payload=said))
@@ -189,7 +197,7 @@ class PhotonBus:
             return PHOTON_TIMEOUT
         return "rs485-reply: " + answers[0].encode(HEADER_FIELDS)
 
-    def _handle(self, feeder: Photon, code: int, body: bytes) -> bytes | None:
+    def _handle(self, feeder: Photon, code: int, body: bytes, now: float) -> bytes | None:
         """What a feeder answers a command with (its payload), or None for no answer."""
         own = bytes.fromhex(feeder.id)
         mine = body[: len(own)] == own
@@ -214,6 +222,13 @@ class PhotonBus:
             return bytes([PHOTON_OK])
         if code == 0xC0:
             return bytes([PHOTON_OK]) if mine else None
+        if code == 0xC1:
+            if not mine:
+                return None
+            # Its answer goes out before it flashes.
+            feeder.deaf_until = now + PHOTON_FLASH
+            self.identified.append(feeder.id)
+            return bytes([PHOTON_OK])
         return None
 
 

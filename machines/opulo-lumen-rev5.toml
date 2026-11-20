@@ -236,6 +236,7 @@ init = 2
 feed = 4                  # with the tenths of a mm to move
 status = 6
 find = 192                # 0xC0, to every feeder with an id: answered from its address
+identify = 193            # 0xC1, to every feeder with an id: that one flashes white three times
 ok = 0                    # the answers' codes
 wrong_id = 1
 unreachable = 2

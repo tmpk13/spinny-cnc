@@ -1199,6 +1199,7 @@ reference, the angle, a count) needs a G-code machine to keep it for.
 | `POST /api/pnp/boards/reset` | the count of boards finished back to 0 |
 | `POST /api/pnp/bus/scan` | every address from 1 to `max_address` asked for its feeder's id: `{"feeders": [{"address": 3, "id": "0102...", "feeder": "c-100n" or null, "slot": true}], "missing": [], ...state}`, `slot` saying the file has a `[[slot]]` for that address; with a body `{"feeders": ["c-100n", "c-1u"]}` only those of the file's feeders are looked for, each by its id (one question each), and `missing` names each that did not answer or has no `bus_id`, `{"feeder", "id", "reason"}`; 400 without `[bus]`, 404 for a feeder the file lacks |
 | `POST /api/pnp/bus/feed` | `{"feeder": "c-100n"}`: one advance of a feeder on the bus (found by its id when its slot is not given, initialized, fed, waited for); 404 for a feeder the file lacks, 502 when the feeder does not answer, refuses, or has no address (below) |
+| `POST /api/pnp/bus/identify` | `{"feeders": ["c-100n"], "ids": ["0102..."]}`, one of the two at least: each feeder named (the file's by name, others by their id on the bus, as a scan row gives it) flashes in turn, told by `identify` sent to the broadcast address with its id, which the feeder answers whatever its address, none included; the next one waits two seconds, a flashing Photon feeder hearing nothing: `{"identified": ["0102..."], "missing": [{"feeder", "id", "reason"}], ...state}`, `missing` as a scan's (`feeder` the file's name, else the id); 400 for neither or an id that is not 24 hex digits, 404 for a feeder the file lacks |
 | `POST /api/pnp/feeders/reset` | `{"feeder": "id"}`, or `{}` for every one: counted from the first part again |
 | `POST /api/pnp/nozzle` | on a G-code machine, the bottom camera's nozzle routine (as above) with the nozzle turned to 0, its moves the file's move word and wait command, its place read with the position command; what it measures is kept as the placing state's `camera`. The routine shows in the bottom camera state with `"target": "gcode"` |
 | `POST /api/pnp/runout` | over the bottom camera, the tip found at six turns of the nozzle: the circle they lie on gives `camera.runout` (the tip off the turning axis at 0, mm), which places and looks then make up for; a tip going round the wrong way for `rotation_cw` fails naming it. Kind `runout` in the bottom camera's routine |
@@ -1230,7 +1231,7 @@ other byte, in order); then the payload, whose first byte is the command's
 code, or in an answer how it went. `host` and `broadcast` are addresses,
 `tries` the tries per exchange, `max_address` the last address a scan
 asks, `poll_ms` the wait between status asks; the commands' codes are
-`get_id`, `init`, `feed`, `status` and `find`, the answers' `ok`,
+`get_id`, `init`, `feed`, `status`, `find` and `identify`, the answers' `ok`,
 `wrong_id`, `unreachable`, `uninitialized` and `busy` (Photon's values are
 the defaults). Before each pick from a feeder on the bus a run finds it
 by its id (a `find` to the broadcast address, answered from its own),

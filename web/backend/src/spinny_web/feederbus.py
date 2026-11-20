@@ -40,6 +40,10 @@ ID_BYTES = 12
 # it too long by far, so it bounds the asking rather than being waited out.
 FEED_WAIT_FACTOR = 3.0
 FEED_WAIT_FLOOR = 2.0
+# A Photon feeder told to identify itself flashes white three times, 1.8 s,
+# and answers nothing meanwhile (what reaches it then is acted on once it
+# is done): nothing is said on the bus for this long after.
+IDENTIFY_WAIT = 2.0
 
 
 class BusError(Exception):
@@ -88,6 +92,7 @@ class BusProfile:
     feed: int = 0x04
     status: int = 0x06
     find: int = 0xC0
+    identify: int = 0xC1
     ok: int = 0x00
     wrong_id: int = 0x01
     unreachable: int = 0x02
@@ -207,6 +212,21 @@ class FeederBus:
         if why is not None:
             raise NoAddress(answer.sender, why)
         self.found[feeder_id] = answer.sender
+        return answer.sender
+
+    def identify(self, feeder_id: str) -> int | None:
+        """Makes the feeder with this id flash, to tell which one it is,
+        asked of every feeder at once (it works with any address, none
+        included): the address it answered from, or None when none
+        answered. It hears nothing while it flashes, so this returns only
+        once it listens again. BusError for an answer that is not ok."""
+        answer = self.exchange(self.profile.broadcast, self.profile.identify, bytes.fromhex(check_id(feeder_id)))
+        if answer is None:
+            return None
+        code = self._code(answer)
+        if code != self.profile.ok:
+            raise BusError(f"the feeder answered the identify with code {code}")
+        self.sleep(IDENTIFY_WAIT)
         return answer.sender
 
     def feeder_at(self, address: int) -> str | None:

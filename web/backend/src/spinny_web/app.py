@@ -748,6 +748,13 @@ class PnpBusScanBody(BaseModel):
     feeders: list[str] | None = None
 
 
+class PnpBusIdentifyBody(BaseModel):
+    # The feeders to flash: the machine file's by name, and others by their
+    # ids on the bus (24 hex digits, as a scan row gives them); one at least.
+    feeders: list[str] | None = None
+    ids: list[str] | None = None
+
+
 class PnpLightBody(BaseModel):
     on: bool
 
@@ -5580,6 +5587,10 @@ def create_app(
     @app.post("/api/pnp/bus/feed")
     def pnp_bus_feed(body: PnpBusFeedBody):
         return guarded(lambda: backend.pnp_bus_feed(body.feeder))
+
+    @app.post("/api/pnp/bus/identify")
+    def pnp_bus_identify(body: PnpBusIdentifyBody):
+        return guarded(lambda: backend.pnp_bus_identify(body.feeders, body.ids))
 
     @app.post("/api/pnp/feeders/reset")
     def pnp_reset_feeders(body: PnpFeederBody | None = None):

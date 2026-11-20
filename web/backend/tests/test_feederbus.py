@@ -13,6 +13,8 @@ from fastapi.testclient import TestClient
 from device_fakes import FakeMarlin, FakePhotonBus
 from gcode_rig import connect, gcode_file, rig_backend
 
+from spinny_web import feederbus
+
 from spinny_laser.machines import MachineError
 from spinny_web.app import create_app
 from spinny_web.feederbus import HEADER_FIELDS, BusError, FeederBus, NoAddress, Packet, crc8, decode, slot_place
@@ -122,6 +124,7 @@ def test_the_bus_and_its_feeders_read_placed_by_their_slots_or_left_to_the_run()
     c100n, c1u = device.feeders
     assert c100n.bus_id == C100N and c100n.at == pytest.approx((100.0, 401.0, 10.5)) and c100n.rotation == 90.0
     assert c1u.bus_id == C1U and c1u.at is None and c1u.slot is None
+    assert device.bus.identify == 0xC1
     fit = board_fit([((0.0, 0.0), (0.0, 0.0))], 0.0)
     program = plan(device, [part("C1", "100n", 1.0, 0.0), part("C2", "1u", 2.0, 0.0)], fit, {})
     assert [block.ref for block in program.blocks] == ["C1"]
@@ -138,6 +141,7 @@ def test_the_bus_and_its_feeders_read_placed_by_their_slots_or_left_to_the_run()
         (("slot = 3\n", "slot = 9\n"), "[feeder 1] slot 9 has no [[slot]] with its place"),
         (('advance = 2\n', 'advance = 2\nat = [1.0, 2.0, 3.0]\n'), "[feeder 1] at is not for a feeder on the bus"),
         ((f'bus_id = "{C1U.lower()}"', 'bus_id = "12"'), "[feeder 2] bus_id must be the feeder's id"),
+        (("poll_ms = 10", "poll_ms = 10\nidentify = 300"), "[bus] identify must be a whole number from 0 to 255"),
     ],
 )
 def test_a_bus_that_does_not_read_names_its_key(change, words):
@@ -211,6 +215,35 @@ def test_a_feeder_answering_from_an_address_no_slot_has_has_none_and_is_never_fe
         bus.advance(C1U, 20)
     asked = [decode(line[5:], HEADER_FIELDS) for line in bus.sent[before:]]  # type: ignore[attr-defined]
     assert [(packet.to, packet.payload[0]) for packet in asked] == [(255, 0xC0)] and fake.fed == []
+
+
+def test_identify_flashes_the_feeder_with_the_id_and_waits_until_it_listens_again():
+    now = [0.0]
+    fake = FakePhotonBus({3: C100N}, unaddressed=[C1U], clock=lambda: now[0])
+    bus = bus_over(fake)
+    slept: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        slept.append(seconds)
+        now[0] += seconds
+
+    bus.sleep = sleep
+    # As the plan's table has it: to the broadcast, 0xC1 and the id, answered
+    # ok from the feeder's address, none included.
+    assert bus.identify(C1U) == 0 and fake.identified == [C1U]
+    (packet,) = [decode(line[5:], HEADER_FIELDS) for line in bus.sent]  # type: ignore[attr-defined]
+    assert (packet.to, packet.payload) == (255, bytes([0xC1]) + bytes.fromhex(C1U))
+    # It returns once the feeder listens again.
+    assert slept == [2.0] and bus.identify(C100N) == 3 and bus.feeder_at(3) == C100N
+    # Without the wait the feeder, still flashing, answers nothing.
+    bus.sleep = lambda seconds: None
+    assert bus.identify(C100N) == 3 and bus.feeder_at(3) is None
+    now[0] += 1.8
+    assert bus.feeder_at(3) == C100N
+    # A feeder not on the bus: no answer, and no wait.
+    slept.clear()
+    bus.sleep = sleep
+    assert bus.identify("00112233445566778899AABB") is None and slept == []
 
 
 @pytest.mark.parametrize("address", [0, 255, 33])
@@ -317,3 +350,29 @@ def test_a_run_leaves_out_the_parts_of_a_feeder_with_no_address_and_says_why(cli
     packets = [decode(line[5:], HEADER_FIELDS) for line in client.fake.lines[before:] if line.startswith("M485")]
     assert all(packet.payload[0] == 0xC0 for packet in packets if packet.to in (0, 255))
 
+
+
+
+def test_identify_flashes_the_feeders_picked_one_after_another_and_names_the_missing(client, monkeypatch):
+    monkeypatch.setattr(feederbus, "IDENTIFY_WAIT", 0.0)
+    strip = '[[feeder]]\nid = "tape"\nmatch = "10k"\nat = [10.0, 20.0, 1.0]\n'
+    (client.backend.machine_store.directory / "lumen.toml").write_text(gcode_file(PROFILE + strip), encoding="utf-8")
+    connect(client, "lumen")
+    client.fake.bus.remove(C1U)
+    stray = "00112233445566778899AABB"
+    before = len(client.fake.lines)
+    # c-100n named twice, by name and by its id from a scan row: it flashes once.
+    response = client.post("/api/pnp/bus/identify", json={"feeders": ["c-100n", "c-1u", "tape"], "ids": [C100N.lower(), stray]})
+    assert response.status_code == 200, response.text
+    answer = response.json()
+    assert answer["identified"] == [C100N] and client.fake.bus.identified == [C100N] and answer["machine"] == "lumen"
+    assert answer["missing"] == [
+        {"feeder": "tape", "id": None, "reason": "not on the bus: its file gives no bus_id"},
+        {"feeder": "c-1u", "id": C1U, "reason": "did not answer to its id: is it in a slot?"},
+        {"feeder": stray, "id": stray, "reason": "did not answer to its id: is it in a slot?"},
+    ]
+    asked = [decode(line[5:], HEADER_FIELDS) for line in client.fake.lines[before:] if line.startswith("M485")]
+    assert {packet.to for packet in asked} == {255} and {packet.payload[0] for packet in asked} == {0xC1}
+    assert client.post("/api/pnp/bus/identify", json={}).status_code == 400
+    assert client.post("/api/pnp/bus/identify", json={"ids": ["12"]}).status_code == 400
+    assert client.post("/api/pnp/bus/identify", json={"feeders": ["nope"]}).status_code == 404
