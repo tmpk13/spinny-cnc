@@ -160,6 +160,38 @@ def test_a_gerber_is_read_with_the_outline_and_drill_file_beside_it():
     assert read.notes == []
 
 
+def test_a_gerber_takes_its_own_board_outline_and_drills_from_a_shared_folder(tmp_path):
+    # Two boards plotted into one folder, their names alike up to the first
+    # dash: led-matrix is read, and led-driver's files are another board's.
+    for name in ("F_Cu.gbr", "Edge_Cuts.gbr", "PTH.drl"):
+        shutil.copy(DATA / f"board-{name}", tmp_path / f"led-matrix-{name}")
+    (tmp_path / "led-driver-Edge_Cuts.gbr").write_text(
+        "%FSLAX46Y46*%\n%MOMM*%\n%ADD10C,0.050000*%\nD10*\n"
+        "X0Y0D02*\nX300000000Y0D01*\nX300000000Y300000000D01*\nX0Y300000000D01*\nX0Y0D01*\nM02*\n"
+    )
+    (tmp_path / "led-driver-PTH.drl").write_text(
+        "M48\nFMAT,2\nMETRIC\nT1C3.000\n%\nG90\nG05\nT1\nX10.0Y10.0\nT0\nM30\n"
+    )
+    read = board.read(tmp_path / "led-matrix-F_Cu.gbr")
+    own = board.read(DATA / "board-F_Cu.gbr")
+    assert read.outline == own.outline
+    assert sorted(diameter for _, diameter, _ in read.holes) == [0.8, 0.8, 1.0]
+    assert read.notes == ["led-driver-PTH.drl is not read: led-matrix-F_Cu's drill files start with 'led-matrix'"]
+
+
+def test_a_board_without_drills_of_its_own_takes_none_of_another_boards(tmp_path):
+    shutil.copy(DATA / "board-F_Cu.gbr", tmp_path / "led-panel-F_Cu.gbr")
+    shutil.copy(DATA / "board-PTH.drl", tmp_path / "led-driver-PTH.drl")
+    shutil.copy(DATA / "board-Edge_Cuts.gbr", tmp_path / "led-driver-Edge_Cuts.gbr")
+    read = board.read(tmp_path / "led-panel-F_Cu.gbr")
+    assert read.holes == [] and read.outline == []
+    # A drill file named after no board in the folder is still read.
+    shutil.copy(DATA / "board-PTH.drl", tmp_path / "drill.drl")
+    read = board.read(tmp_path / "led-panel-F_Cu.gbr")
+    assert sorted(diameter for _, diameter, _ in read.holes) == [0.8, 0.8, 1.0]
+    assert read.notes == ["led-driver-PTH.drl is not read: led-panel-F_Cu's drill files start with 'led-panel'"]
+
+
 def test_a_layer_that_fills_nothing_is_read_empty_for_the_caller_to_judge(tmp_path):
     lines = tmp_path / "board-User_1.gbr"
     # One line drawn with a zero width aperture: a line, and no area.

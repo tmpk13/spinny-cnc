@@ -128,7 +128,7 @@ def resolve_input(args, temporary: list) -> tuple[Path, Path | None, Path | None
     outline = None if outline_mode in (AUTO, NONE) else Path(args.outline)
     drill = None if drill_mode in (AUTO, NONE) else Path(args.drill)
     if outline_mode == AUTO:
-        outline = board.find_layer(directory, "Edge.Cuts")
+        outline = board.find_layer(directory, "Edge.Cuts", board=source.stem)
     if drill_mode == AUTO:
         drill = isocli.find_drill(directory, source.stem)
         if drill is None:

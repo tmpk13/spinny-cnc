@@ -145,12 +145,14 @@ def read(path: Path | str, layer: str = DEFAULT_LAYER) -> BoardLayer:
             source = "gerber"
             read_layer = layer_of(path)
         image = gerber.read(plotted)
+        # The folder beside a gerber may hold other boards' files too: the
+        # outline and drills are this board's, by its whole name.
+        stem = board_name(path)
         try:
-            outline_path: Path | None = find_layer(into, OUTLINE_LAYER)
+            outline_path: Path | None = find_layer(into, OUTLINE_LAYER, board=stem)
         except LayerError:
             outline_path = None
         outline = board_outline.read(outline_path) if outline_path is not None else []
-        stem = path.stem.split("-")[0]
         drill_paths, others = drill_files(into, stem) if into.is_dir() else ([], [])
         holes: list[Hole] = []
         for drill_path in drill_paths:
@@ -183,13 +185,31 @@ def drill_files(directory: Path, stem: str) -> tuple[list[Path], list[Path]]:
 
     KiCad writes the plated holes and the unplated ones (mounting holes)
     to two files, <board>-PTH.drl and <board>-NPTH.drl, unless asked for
-    one <board>.drl, so every file whose name starts with the board's
-    stem is read; with none named so, every drill file is.
+    one <board>.drl, so every file named so after the board is read. With
+    none, every drill file is, but those named so after another board whose
+    gerbers are in the folder too.
     """
     found = sorted(p for p in directory.iterdir() if p.is_file() and p.suffix.lower() == ".drl")
-    named = [p for p in found if p.name.startswith(stem)]
-    taken = named or found
+    taken = [p for p in found if _named_after(p, stem)]
+    if not taken:
+        boards = {board_name(p) for p in directory.iterdir() if p.is_file() and _NAMED.search(p.stem)} - {stem}
+        taken = [p for p in found if not any(_named_after(p, other) for other in boards)]
     return taken, [p for p in found if p not in taken]
+
+
+def _named_after(path: Path, board: str) -> bool:
+    """Whether a plotted file's name is the board's: <board>.drl, or
+    <board>-<what>.<ext> as kicad-cli names them."""
+    return path.stem == board or path.stem.startswith(f"{board}-")
+
+
+def board_name(path: Path | str) -> str:
+    """The board a plotted file is of, by its name without the layer
+    kicad-cli adds to it (led-matrix for led-matrix-F_Cu.gtl), or the whole
+    name when it carries none."""
+    stem = Path(path).stem
+    match = _NAMED.search(stem)
+    return stem[: match.start()] if match and match.start() > 0 else stem
 
 
 def check_layer(layer: object) -> None:
@@ -266,15 +286,18 @@ def layer_word(layer: str | None) -> str:
     return _WORDS.get(layer.rsplit(".", 1)[-1], layer)
 
 
-def find_layer(directory: Path, layer: str, table: dict[str, str] | None = None) -> Path:
+def find_layer(directory: Path, layer: str, table: dict[str, str] | None = None, board: str | None = None) -> Path:
     """The gerber of the layer in a directory of plotted files, whatever its
     extension, under the layer's own name or the name it is shown by (see
-    `layer_names`); a job file or a drill file is never it."""
+    `layer_names`); a job file or a drill file is never it. With `board`,
+    a file kicad-cli named after another board is never it either."""
     files = sorted(
         path
         for path in Path(directory).iterdir()
         if path.is_file() and path.suffix.lower() not in (".gbrjob", ".drl")
     )
+    if board is not None:
+        files = [path for path in files if board_name(path) in (board, path.stem)]
     for name in layer_names(layer, table):
         suffix = layer_suffix(name)
         named = [path for path in files if path.stem == suffix or path.stem.endswith(f"-{suffix}")]
