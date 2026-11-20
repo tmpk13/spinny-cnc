@@ -195,7 +195,11 @@ function topBoardMove(state: AppState, memory: AutoMemory, job: Job, parts: Comp
         const why = memory.failed.get("fiducials") ?? (routine !== null && routine.state !== "done" ? routine.error ?? routine.state : null);
         return why ? `The board was found by the camera; its fiducials were not (${why}).` : "The board was found by the camera, its fiducials centered.";
     }
-    if (estimate === null && !memory.tried.has("top-search")) {
+    if (!memory.tried.has("top-search")) {
+        // A place found before this run may be the board placed before this
+        // one (the look keeps it until a search or Clear guesses): the
+        // camera looks once in every run before a place found is compared
+        // with the references or taken.
         if (top.running !== true) {
             return once(memory, startCamera("board", "top", (now) => now.placing?.top?.running === true), "The top camera did not start");
         }
@@ -206,7 +210,9 @@ function topBoardMove(state: AppState, memory: AutoMemory, job: Job, parts: Comp
         const will = searchWill(state, "top", false) === "bed" ? "Scanning the bed for the board" : "Searching for the board";
         return act("board", "top-search", will, (io) => put(io, "placing", io.ctx.api.topSearch(null)));
     }
-    if (estimate !== null) {
+    // A search that was refused leaves the place found before it, which is
+    // not the board's now.
+    if (estimate !== null && !memory.failed.has("top-search")) {
         if (references.length === 0) {
             return act("board", "top-place", "Taking the place found", (io) => put(io, "placing", io.ctx.api.topPlace(job.id)));
         }

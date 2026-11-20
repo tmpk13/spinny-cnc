@@ -102,6 +102,17 @@ describe("what Auto does next", () => {
         expect(lost.say).toContain("The camera did not find the board: its 2 references are kept.");
     });
 
+    test("a board found before Auto began is looked for again before its place is trusted", () => {
+        // The look's place may be the board placed before this one: a run of
+        // Auto searches once before it compares or takes it.
+        const kept: PnpReference[] = [{ job: job.id, ref: "R1", at: [100, 60], by: "nozzle" }, { job: job.id, ref: "R2", at: [130, 60], by: "nozzle" }];
+        expect(autoMove(placingState({ references: kept, top: top({ board_look: found() }) }), autoMemory())).toMatchObject({ kind: "act", key: "top-search" });
+        expect(autoMove(placingState({ top: top({ board_look: found() }) }), autoMemory())).toMatchObject({ kind: "act", key: "top-search" });
+        // Searched in this run: the place found is the board's now.
+        expect(autoMove(placingState({ references: kept, top: top({ board_look: found() }) }), tried("top-search"))).toMatchObject({ kind: "end", step: "run" });
+        expect(autoMove(placingState({ top: top({ board_look: found() }) }), tried("top-search"))).toMatchObject({ kind: "act", key: "top-place" });
+    });
+
     test("no board found and no reference: the operator takes a corner or a reference", () => {
         const lost = autoMove(placingState({ top: top({ board_look: { job: job.id, found: false } }) }), tried("top-search"));
         expect(lost).toMatchObject({ kind: "need", step: "board" });
@@ -213,13 +224,19 @@ describe("a run of Auto over the mock's pick and place machine", () => {
         const placing = store.get().placing!;
         expect(placing.homed).toBe(true);
         expect(placing.references.filter((entry) => entry.job === board.id).map((entry) => entry.by)).toEqual(["fiducial", "fiducial"]);
-        // Pressed again with nothing changed: the camera sees the board where the references put it.
+        // Pressed again: the place found before may be the board placed
+        // before, so the camera looks again; the references are kept, and
+        // nothing starts a run.
         lines.length = 0;
         runner.start();
         for (let turns = 0; turns < 4000 && runner.running(); turns++) {
             await settle();
         }
-        expect(lines.at(-1)?.text).toContain("The camera sees the board where its 2 references put it.");
+        expect(lines[0]?.text).toBe("Searching for the board");
+        expect(lines.at(-1)).toMatchObject({ kind: "end", step: "run" });
+        expect(lines.at(-1)?.text).toContain("its 2 references");
+        expect(calls.map((call) => call.name).filter((name) => ["topSearch", "topPlace", "pnpRun"].includes(name))).toEqual(["topSearch", "topPlace", "topSearch"]);
+        expect(store.get().placing!.references.filter((entry) => entry.job === board.id).map((entry) => entry.by)).toEqual(["fiducial", "fiducial"]);
     });
 
     test("Stop Auto ends the run and the search it began", async () => {
