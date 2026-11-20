@@ -587,7 +587,8 @@ class Posterior(Consensus):
         mean). Counted for every view a pose is taken in, so they are kept
         while its fit stays and each view's size and scale stay, and the
         views still to count are counted together; a view taken on the
-        move goes through features_in, which knows the camera's delay."""
+        move goes through features_in, which knows the camera's delay, and
+        so does a view with a board crop, whose pads count only inside it."""
         mean = hypothesis.mean
         key = mean.tobytes()
         cached = self._seen.get(hypothesis.id)
@@ -603,7 +604,7 @@ class Posterior(Consensus):
             held = counts.get(view.index)
             if held is not None and held[0] == shape:
                 continue
-            if view.frame.velocity != (0.0, 0.0):
+            if view.frame.velocity != (0.0, 0.0) or view.crop is not None:
                 counts[view.index] = (shape, float(self.features_in(mean, view)[0]))
             else:
                 still.append(view)

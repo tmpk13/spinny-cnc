@@ -891,3 +891,31 @@ def test_a_search_keeps_its_pictures_as_a_map_and_clear_guesses_keeps_the_board_
         assert look_.job == "j1" and not look_.consensus.guesses and look_.state()["estimate"] is None
     finally:
         look_.stop()
+
+
+def test_a_crop_keeps_a_hypothesis_from_being_missed_where_pcbv_did_not_look():
+    """With a board crop pcbv looks only inside it: a picture whose crop
+    holds none of the board's pads at a hypothesis' pose says nothing of
+    that hypothesis, though the rest of the picture holds pads, and each
+    view counts a hypothesis' pads where the poses drawn from the prior
+    are counted (features_in)."""
+    middle = truth_middle()
+    box = (middle[0] - 25.0, middle[1] - 25.0, middle[0] + 25.0, middle[1] + 25.0)
+    posterior = Posterior(board(), box, threshold=0.5, scale=SCALE)
+    # pcbv's board look keeps to the picture's left quarter.
+    posterior.crop = (0.0, 0.0, 0.25, 1.0)
+    pcbv = FakePcbv()
+    look(posterior, pcbv, machine_of((12.0, 10.0)))
+    hypothesis = posterior.hypotheses[0]
+    before = posterior._evidence(hypothesis)
+    # A picture over the board's left edge: its right half holds pads, its
+    # left quarter (the crop) only the bed beside the board.
+    beside = machine_of((-6.0, 15.0))
+    assert pcbv.in_view(beside) >= LOCK_FEATURES
+    pcbv.searches += 1
+    lost = {"frame": pcbv.searches, "age_ms": 0, "width": SIZE[0], "height": SIZE[1], "searched": True, "search": pcbv.searches, "state": "lost"}
+    feed(posterior, lost, PictureFrame(beside, 0.0, False))
+    view = posterior.views[-1]
+    assert float(posterior.features_in(hypothesis.mean, view)[0]) == 0.0
+    assert posterior._seen_counts(hypothesis)[view.index] == 0.0
+    assert posterior._evidence(hypothesis) == pytest.approx(before, abs=1e-6)
