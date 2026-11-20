@@ -555,6 +555,10 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
 
     /** The list and the file again, and the settings with them: a file edited by hand may have changed the controls the jog panel draws. */
     async function reloadAll(): Promise<void> {
+        // Reading the file again throws away what was typed and not saved.
+        if (dirty && picked !== null && !(await askConfirm(`Read ${picked} again from disk? Unsaved edits are lost.`, "Reload"))) {
+            return;
+        }
         await refresh();
         if (ctx.store.get().snapshot.connected) {
             await ctx.refreshSettings();
@@ -899,6 +903,10 @@ export function mountConfig(root: HTMLElement, ctx: Ctx, listRoot: HTMLElement):
     return {
         async open(id: string): Promise<void> {
             if (id === picked) {
+                // The file is open already: read again only when nothing typed is lost.
+                if (dirty && !(await askConfirm(`Read ${id} again from disk? Unsaved edits are lost.`, "Reload"))) {
+                    return;
+                }
                 await open(id);
                 return;
             }
