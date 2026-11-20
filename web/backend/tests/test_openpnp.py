@@ -503,6 +503,37 @@ def test_a_lost_link_can_be_connected_again():
     assert link.connected and first.closed and link.command("M114", 2.0)[-1] == "ok"
 
 
+def test_a_line_in_flight_ends_when_its_link_is_disconnected():
+    fake = FakeMarlin()
+    fake.silent = True
+    link = connected_quietly(fake)
+    failed: list[str] = []
+
+    def home() -> None:
+        try:
+            link.command("G28", 20.0)
+        except GcodeLinkError as exc:
+            failed.append(str(exc))
+
+    waiting = threading.Thread(target=home, daemon=True)
+    waiting.start()
+    time.sleep(0.2)
+    link.disconnect()
+    # The line in flight is not left waiting out its timeout, holding the
+    # link's turn from the next connection's lines.
+    waiting.join(timeout=2.0)
+    assert not waiting.is_alive() and failed
+    link.connect("socket://127.0.0.1:9", 115200, 0, (), 2.0)
+    fake.silent = False
+    assert link.command("M114", 2.0)[-1] == "ok"
+
+
+def connected_quietly(fake: FakeMarlin) -> GcodeLink:
+    link = GcodeLink(lambda: None, opener=lambda url, baud: fake)
+    link.connect("socket://127.0.0.1:9", 115200, 0, (), 2.0)
+    return link
+
+
 def test_any_axis_letter_reads_from_a_position():
     assert read_position(["X:1.00 Y:2.00 Z:3.00 U:4.50 Count X:0", "ok"], ("X", "Y", "W", "U")) == {"x": 1.0, "y": 2.0, "rotation": 4.5}
 

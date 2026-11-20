@@ -343,10 +343,13 @@ class GcodeLink:
         port = self._port
         if port is None or self._lost is not None:
             raise GcodeLinkError(self._lost or "the machine is not connected")
+        # This connection's answers: a connection opened after this one
+        # closes has its own.
+        replies = self._replies
         # What came unasked since the last answer is not this line's.
         while True:
             try:
-                self._replies.get_nowait()
+                replies.get_nowait()
             except queue.Empty:
                 break
         self._note("tx", code)
@@ -362,10 +365,13 @@ class GcodeLink:
             if remaining <= 0:
                 raise GcodeLinkError(f"'{code}': no answer in {timeout:g} s")
             try:
-                text = self._replies.get(timeout=min(0.1, remaining))
+                text = replies.get(timeout=min(0.1, remaining))
             except queue.Empty:
                 if self._lost is not None:
                     raise GcodeLinkError(self._lost) from None
+                if self._port is not port:
+                    # Disconnected: no answer comes on a port let go.
+                    raise GcodeLinkError(f"'{code}': the machine was disconnected") from None
                 continue
             if OK.match(text):
                 reply.append(text)
