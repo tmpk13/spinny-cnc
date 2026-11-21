@@ -72,6 +72,14 @@ Read without sending a line (check 1 below):
   `wlan0-ip` empty (not on Wi-Fi).
 - `GET /device/runningStatus`: `curMode.mode` `P_IDLE` at rest, alarm
   lists, CPU temperature, and a clock that starts at 1970.
+- On 8780 (check 2): nothing on connect; `G21` and `G90` are each
+  answered `ok\n`, so a sender can pace lines by them. `?\n` is answered
+  `<MPos:0,0,0,0>\nok\n\x00ok\n`: four positions, no state word, then
+  a second `ok` behind a NUL byte, two answers for one line. A bare `?`
+  with no newline gets nothing in 2 s: it is a line, not a realtime
+  character. So a sender counting `ok`s never sends `?` (the state comes
+  from `runningStatus`), and its reader drops NUL bytes. Connecting and
+  these lines left `runningStatus` at `P_IDLE`.
 - Port 80 answers HTTP 504 "Access Forbid", 8087 is an HTTP server that
   names itself xTool, 8081 does not speak HTTP.
 - The serial number, MAC and the device name's suffix stay out of the
@@ -183,7 +191,8 @@ nothing.
    2026-11-21: V1, see The F1 here.
 2. The answers: what the F1 says to a line that moves nothing, to M115 and
    to `?`, and whether each line gets an `ok` (LightBurn drives it as
-   GRBL, which suggests so). Never a bare `M114`.
+   GRBL, which suggests so). Never a bare `M114`. Done 2026-11-21 with
+   `G21`, `G90` and `?` (M115 not sent): see The F1 here.
 3. Which way is up: an asymmetric mark (an F) on scrap at low power. One
    F1 Ultra's X came out mirrored.
 4. Travel: does `G0` keep the beam off with an S set before it. BeamInk's
