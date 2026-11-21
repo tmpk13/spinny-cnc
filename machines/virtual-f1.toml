@@ -25,7 +25,7 @@ machine_type = "S1"
 [field]
 size = [121.98, 121.98]
 flip_x = false
-flip_y = false
+flip_y = true
 travel_rate = 180000
 
 [sources]

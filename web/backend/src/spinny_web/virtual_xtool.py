@@ -5,15 +5,17 @@ the serial number and MAC replaced): machineInfo and runningStatus over
 HTTP, `ok` for every G-code line on its TCP port, and `?` as a line with
 the position and two oks, the second behind a NUL byte; a `?` with no line
 end gets nothing. It follows `G0`/`G1` X and Y for that position and
-`M114 S1`/`S2` for the source, and keeps every line it was sent.
+`M114 S1`/`S2` for the source, and keeps every line it was sent. A
+line session the F1 here ended with `$P` left it at P_WORK_DONE, so the
+virtual one goes there at `$P`. A file handed over (held as it was sent)
+is answered Success and waits as Work/workReady, a press of the button
+runs it as Work/working, and a stop leaves P_IDLE, as on the F1 here.
 
-What the recording does not say is the virtual F1's own, named so it
-cannot pass for the F1's: an empty line gets no answer, a job file handed
-over is held as it was sent, and its virtual button (`POST /virtual/button`,
-which the F1 has none of) runs the file held, the state reading
-VIRTUAL_RUNNING until a stop or `run_seconds` later. The F1's states while
-it works, what its upload answers and how a V1 job is started are not
-known here (docs/XTOOL_F1.md, checks 5 and on).
+What the recording does not say is the virtual F1's own: an empty line
+gets no answer; its button is `POST /virtual/button`, a request the F1
+has none of, standing for the press on the machine; and a file left to
+run ends `run_seconds` later at P_WORK_DONE, where a line session ended,
+since how a file ends on its own was not seen.
 
 `mute` leaves every G-code line unanswered, as a machine that stopped
 answering would.
@@ -38,8 +40,11 @@ from spinny_laser import machines as machine_files
 from .xtool import machine_of
 
 RECORDING = Path(__file__).with_name("xtool_v1_recording.json")
-IDLE = "P_IDLE"
-RUNNING = "VIRTUAL_RUNNING"
+# The states as (mode, subMode), each as the F1 here reported it.
+IDLE = ("P_IDLE", "")
+DONE = ("P_WORK_DONE", "")
+READY = ("Work", "workReady")
+WORKING = ("Work", "working")
 BUTTON_PATH = "/virtual/button"
 STOP_PATH = "/processing/stop"
 # The answer to `?` as the F1 gave it, with its position filled in.
@@ -79,7 +84,7 @@ class VirtualXtool:
         self.lines: list[str] = []
         self.files: list[tuple[str, str]] = []
         self.stops = 0
-        self.mode = IDLE
+        self.state = IDLE
         self.position = (0.0, 0.0)
         self.source = 1
         self._run_ends = 0.0
@@ -174,6 +179,8 @@ class VirtualXtool:
                 reply = STATUS_ANSWER.format(x=x, y=y)
             else:
                 self._follow(line)
+                if line == "$P":
+                    self.state = DONE
                 reply = "ok\n"
         return "" if self.mute else reply
 
@@ -196,28 +203,29 @@ class VirtualXtool:
 
     def http(self, method: str, path: str, body: bytes, content_type: str) -> tuple[int, dict]:
         with self._lock:
-            if self.mode == RUNNING and time.monotonic() >= self._run_ends:
-                self.mode = IDLE
+            if self.state == WORKING and time.monotonic() >= self._run_ends:
+                self.state = DONE
             if method == "GET" and path == "/device/machineInfo":
                 return 200, self.info
             if method == "GET" and path == "/device/runningStatus":
                 status = copy.deepcopy(self.recording["runningStatus"])
-                status["data"]["curMode"]["mode"] = self.mode
+                status["data"]["curMode"]["mode"], status["data"]["curMode"]["subMode"] = self.state
                 return 200, status
             if method == "POST" and path == self.upload:
                 held = _upload(body, content_type)
                 if held is None:
                     return 400, {"code": 400, "msg": "virtual F1: no file in the request"}
                 self.files.append(held)
-                return 200, {"code": 0, "msg": "virtual F1: file held"}
+                self.state = READY
+                return 200, {"code": 0, "msg": "Success"}
             if path == STOP_PATH:
                 self.stops += 1
-                self.mode = IDLE
+                self.state = IDLE
                 return 200, {"code": 0, "msg": "Success"}
             if method == "POST" and path == BUTTON_PATH:
-                if not self.files:
-                    return 409, {"code": 409, "msg": "virtual F1: no file held"}
-                self.mode = RUNNING
+                if self.state != READY:
+                    return 409, {"code": 409, "msg": "virtual F1: no file waits for the button"}
+                self.state = WORKING
                 self._run_ends = time.monotonic() + self.run_seconds
                 return 200, {"code": 0, "msg": "virtual F1: running the file held"}
         return 404, {"code": 404, "msg": f"virtual F1: nothing at {method} {path}"}

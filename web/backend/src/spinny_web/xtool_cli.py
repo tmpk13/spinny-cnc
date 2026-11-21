@@ -124,11 +124,15 @@ def main(argv: list[str] | None = None) -> int:
         path = Path(args.file)
         text = path.read_text(encoding="ascii")
         state = link.state()
-        if not state.idle:
+        if not state.at_rest:
             raise XtoolError(f"{machine.name} is not at rest ({state.mode}): stop it or let it finish first")
         sent = link.send_job(text, path.name)
         print(f"handed over {sent['bytes']} bytes at {sent['path']}; the machine answered {sent['answer']!r}")
-        print("start it with the machine's own button; spinny-xtool stop stops it")
+        after = link.state()
+        if after.ready:
+            print("it waits for the machine's own button; spinny-xtool stop stops it")
+        else:
+            print(f"the machine reads {after.mode} {after.sub_mode}: not waiting for its button as an F1 does")
         return 0
     except (XtoolError, XtoolJobError, machine_files.MachineError, OSError, UnicodeError) as exc:
         print(f"spinny-xtool: {exc}", file=sys.stderr)

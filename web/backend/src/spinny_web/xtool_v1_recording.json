@@ -86,5 +86,110 @@
       "sent": "?",
       "answer": ""
     }
-  ]
+  ],
+  "session": {
+    "about": "Checks 3 and 4 on cardboard, 2026-11-21: BeamInk's start and end lines around an F, each line answered ok within 0.12 s of the first (queued, not drawn), and the state after it.",
+    "lines": [
+      {
+        "sent": "$L\n",
+        "answer": "ok\n"
+      },
+      {
+        "sent": "G0 F180000\n",
+        "answer": "ok\n"
+      },
+      {
+        "sent": "M3 S0\n",
+        "answer": "ok\n"
+      },
+      {
+        "sent": "G1 F180000\n",
+        "answer": "ok\n"
+      },
+      {
+        "sent": "M114 S1\n",
+        "answer": "ok\n"
+      },
+      {
+        "sent": "G21\n",
+        "answer": "ok\n"
+      },
+      {
+        "sent": "G90\n",
+        "answer": "ok\n"
+      },
+      {
+        "sent": "G0X57.990Y55.990\n",
+        "answer": "ok\n"
+      },
+      {
+        "sent": "G0 S0\n",
+        "answer": "ok\n"
+      },
+      {
+        "sent": "G1X57.990Y65.990S150F3000\n",
+        "answer": "ok\n"
+      },
+      {
+        "sent": "G1X63.990Y65.990S150F3000\n",
+        "answer": "ok\n"
+      },
+      {
+        "sent": "G0X57.990Y60.990\n",
+        "answer": "ok\n"
+      },
+      {
+        "sent": "G0 S0\n",
+        "answer": "ok\n"
+      },
+      {
+        "sent": "G1X61.990Y60.990S150F3000\n",
+        "answer": "ok\n"
+      },
+      {
+        "sent": "G90\n",
+        "answer": "ok\n"
+      },
+      {
+        "sent": "G0 S0\n",
+        "answer": "ok\n"
+      },
+      {
+        "sent": "G0 F180000\n",
+        "answer": "ok\n"
+      },
+      {
+        "sent": "G1 F180000\n",
+        "answer": "ok\n"
+      },
+      {
+        "sent": "M6 P1\n",
+        "answer": "ok\n"
+      },
+      {
+        "sent": "$P\n",
+        "answer": "ok\n"
+      }
+    ],
+    "mode_after": "P_WORK_DONE"
+  },
+  "upload": {
+    "about": "Check 5 on cardboard, 2026-11-21: a file handed over at /processing/upload as a multipart form's file field, what the F1 answered, its state waiting for its button, running after the press, and after POST /processing/stop (P_IDLE within half a second; the square burned, nothing else).",
+    "answer": {
+      "code": 0,
+      "msg": "Success"
+    },
+    "after_upload": {
+      "mode": "Work",
+      "subMode": "workReady"
+    },
+    "after_button": {
+      "mode": "Work",
+      "subMode": "working"
+    },
+    "after_stop": {
+      "mode": "P_IDLE",
+      "subMode": ""
+    }
+  }
 }

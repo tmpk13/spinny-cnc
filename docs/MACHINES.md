@@ -681,7 +681,7 @@ host = "201.234.3.1"            # where it answers (the F1 over USB)
 gcode_port = 8780               # G-code lines, each answered ok
 http_port = 8080                # machineInfo, runningStatus, the upload, the stop
 timeout = 5.0                   # s for one request, or a line's ok
-upload = "/processing/upload"   # where a job file is handed over
+upload = "/processing/upload"   # where a job file is handed over; the F1 holds it for its button
 upload_as = "multipart"         # a form's `file` field, or `body`: the file as the request's body
 
 [firmware]
@@ -692,7 +692,7 @@ machine_type = "S1"             # what machineInfo's machineType must say ("" fo
 [field]
 size = [121.98, 121.98]         # mm, X and Y (machineInfo's workSize); needed
 flip_x = false                  # a board axis mirrored into the field
-flip_y = false
+flip_y = true                   # the F1's Y grows toward its front
 travel_rate = 180000            # mm/min the spot crosses dark, for the time estimate
 
 [sources]                       # each source's select line, the first the default

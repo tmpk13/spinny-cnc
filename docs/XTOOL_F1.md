@@ -91,6 +91,26 @@ Read without sending a line (check 1 below):
 - The serial number, MAC and the device name's suffix stay out of the
   repo, replay fixtures included.
 
+On scrap (checks 3 to 5, cardboard, the blue at 15 %, 50 mm/s), each
+with the owner at the machine:
+
+- Check 3: an F written as it is came out upside down, not mirrored
+  left to right. The F1's Y grows toward its front, so its machine
+  file says `flip_y = true`.
+- Check 4: a travel (`G0` to the place, then `G0 S0`, as BeamInk
+  writes it) is dark: the jump between the F's bars left no line.
+- The 20 lines of that session (BeamInk's start and end around the F)
+  were each answered `ok` within 0.12 s of the first: an `ok` says a
+  line was taken, not drawn. `$L`, `M6 P1` and `$P` are answered `ok`.
+  After the session `runningStatus` read `P_WORK_DONE` until the next
+  job, so `P_WORK_DONE` counts as at rest beside `P_IDLE`.
+- Check 5: `POST /processing/upload` with the file as a multipart
+  form's `file` field answered `{"code": 0, "msg": "Success"}`. The
+  F1 then read `Work`/`workReady` and waited; its own button ran the
+  file as `Work`/`working`; `POST /processing/stop` during the file's
+  dark part brought it to `P_IDLE` within half a second. The file's
+  square burned beside the F, and nothing else.
+
 The link: over USB the F1 is a Linux Ethernet gadget (`0525:a4a2`, Linux
 3.4.113-sun8i) with a DHCP server at 201.234.3.1 that hands the host
 201.234.3.2. Two things on the host get in the way:
@@ -200,16 +220,17 @@ nothing.
    GRBL, which suggests so). Never a bare `M114`. Done 2026-11-21 with
    `G21`, `G90` and `?` (M115 not sent): see The F1 here.
 3. Which way is up: an asymmetric mark (an F) on scrap at low power. One
-   F1 Ultra's X came out mirrored.
+   F1 Ultra's X came out mirrored. Done 2026-11-21: Y mirrored.
 4. Travel: does `G0` keep the beam off with an S set before it. BeamInk's
-   order (move, then `G0 S0`) says it does.
+   order (move, then `G0 S0`) says it does. Done 2026-11-21: dark.
 5. An uploaded file: does `/processing/upload` (multipart `file`, the
    Cambridge driver's) take it, or the REST family's
    `/cnc/data?action=upload&zip=false&id=-1` (ha-xtool's notes); does the
    F1's button start it, or `/processing/start` (listed for the family
    with no method); and which `runningStatus` modes it shows while it
    runs (ha-xtool lists the P2's: `Work.workReady`, `Work.working`,
-   `Work.workPause`, `P_WORK_DONE`).
+   `Work.workPause`, `P_WORK_DONE`). Done 2026-11-21: `/processing/upload`
+   takes it, the button starts it, the stop ends it: see The F1 here.
 6. The field: the calibration card across the 120 mm field measures what
    the F1's own lens correction leaves.
 7. The process: blue power and speed for the resist on a coupon, and what
@@ -277,10 +298,13 @@ The backend side of the recommendation, tried on the virtual F1 only:
 
 Not built: the page (connect from the top bar, a run from the Run area
 with its progress, frame, the source picked there), a start call, per
-group sources, WS-V2. Untried on the F1: the upload and what follows it
-(check 5), the stop, and every line that fires the beam (checks 3, 4, 6
-and 7). The jobs here ask for the diode machine's 400 mm/min, which the
-F1 runs but slowly; its own speeds and powers are check 7's.
+group sources, WS-V2. Tried on the F1 (checks 3 to 5): the writer's
+lines, the upload, the button and the stop. Untried: a file left to
+run to its end (the virtual F1 ends it at `P_WORK_DONE`, as a line
+session ended), a stop while a file waits for the button, the
+infrared, and checks 6 and 7. The jobs here ask for the diode
+machine's 400 mm/min, which the F1 runs but slowly; its own speeds
+and powers are check 7's.
 
 ## What the repo does not carry
 

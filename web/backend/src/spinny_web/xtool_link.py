@@ -34,8 +34,14 @@ from typing import Protocol
 
 from .xtool import FIRMWARE_PORT, LINE, XtoolMachine
 
-# The state the F1 reports at rest; anything else is reported as it reads.
-IDLE = "P_IDLE"
+# The states the F1 reports at rest: idle, and done with the last job (a
+# line session that ended with $P left it at P_WORK_DONE until the next).
+# Anything else is reported as it reads.
+REST = ("P_IDLE", "P_WORK_DONE")
+# A file handed over and waiting for the machine's button, and one running,
+# as (mode, subMode) (check 5, 2026-11-21).
+READY = ("Work", "workReady")
+WORKING = ("Work", "working")
 # V1's HTTP paths, the upload's aside (the machine file says where).
 INFO_PATH = "/device/machineInfo"
 STATUS_PATH = "/device/runningStatus"
@@ -94,8 +100,17 @@ class State:
     alarm: object
 
     @property
-    def idle(self) -> bool:
-        return self.mode == IDLE
+    def at_rest(self) -> bool:
+        return self.mode in REST
+
+    @property
+    def ready(self) -> bool:
+        """A file is held, waiting for the machine's button."""
+        return (self.mode, self.sub_mode) == READY
+
+    @property
+    def working(self) -> bool:
+        return (self.mode, self.sub_mode) == WORKING
 
     @classmethod
     def from_data(cls, data: dict) -> "State":
@@ -109,7 +124,7 @@ class State:
         )
 
     def to_dict(self) -> dict:
-        return {"mode": self.mode, "sub_mode": self.sub_mode, "task": self.task, "alarm": self.alarm, "idle": self.idle}
+        return {"mode": self.mode, "sub_mode": self.sub_mode, "task": self.task, "alarm": self.alarm, "at_rest": self.at_rest, "ready": self.ready, "working": self.working}
 
 
 class Transport(Protocol):
@@ -210,7 +225,8 @@ class V1Transport:
     def send_job(self, text: str, name: str) -> dict:
         """Hands the machine a whole job file at the file's upload path, as
         a form's `file` field or as the request's body; what it answered.
-        Nothing here starts the job: the machine's own button does."""
+        Nothing here starts the job: the F1 holds it as Work/workReady
+        until its own button is pressed (check 5)."""
         if not LINE.match(name) or not name or "/" in name or '"' in name:
             raise XtoolError(f"{name!r} is not a file name to hand over")
         payload = text.encode("ascii")

@@ -4,8 +4,9 @@
 # link is up (docs/XTOOL_F1.md, The F1 here: nmcli con up xtool-f1).
 #
 # `mise run f1 -- info` reads it; `mise run f1 -- write JOB` writes a job
-# as its G-code file. The lines are BeamInk's, which draws on an F1 live;
-# what an uploaded file does is check 5 in docs/XTOOL_F1.md, not yet run.
+# as its G-code file, `-- send FILE --at-the-laser` hands it over, and it
+# waits for the F1's own button. The lines are BeamInk's, which draws on
+# an F1 live; checks 3 to 5 in docs/XTOOL_F1.md tried them on scrap.
 name = "xTool F1"
 description = "Galvo laser, 10 W blue and 2 W infrared, 121.98 mm field, on V1 firmware"
 controller = "xtool"
@@ -19,8 +20,9 @@ http_port = 8080
 # Seconds for one HTTP request, or for a line's ok.
 timeout = 5.0
 # Where a job file is handed over, as a form's `file` field (multipart)
-# or as the request's body (body). Untried on the F1: the REST family's
-# other upload is "/cnc/data?action=upload&zip=false&id=-1".
+# or as the request's body (body). The F1 here takes a multipart one
+# and holds it for its button (check 5); the REST family's other upload
+# path is "/cnc/data?action=upload&zip=false&id=-1".
 upload = "/processing/upload"
 upload_as = "multipart"
 
@@ -36,10 +38,10 @@ machine_type = "S1"
 [field]
 # machineInfo's workSize.
 size = [121.98, 121.98]
-# Which board axes come out mirrored is check 3 (an F on scrap); until
-# then the board's X and Y are written as they are.
+# The F1's Y grows toward its front: an F written as it is came out
+# upside down, not mirrored left to right (check 3, 2026-11-21).
 flip_x = false
-flip_y = false
+flip_y = true
 # mm/min the spot crosses the field dark, for the time estimate.
 travel_rate = 180000
 

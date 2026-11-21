@@ -8,6 +8,7 @@ import dataclasses
 import json
 import socket
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from spinny_laser.machines import MachineError
 from spinny_web import xtool_cli
 from spinny_web.jobs import Group, Job
 from spinny_web.machines import MachineStore
-from spinny_web.virtual_xtool import BUTTON_PATH, RUNNING, VirtualXtool, load_recording
+from spinny_web.virtual_xtool import BUTTON_PATH, VirtualXtool, load_recording
 from spinny_web.xtool import XtoolJobError, XtoolMachine, centered, machine_of, write
 from spinny_web.xtool_link import XtoolError, check_firmware, transport_for
 
@@ -41,6 +42,11 @@ def f1(*edits: tuple[str, str]) -> XtoolMachine:
         assert old in text, old
         text = text.replace(old, new, 1)
     return read(text)
+
+
+def plain() -> XtoolMachine:
+    """The F1's file with neither axis mirrored, so board and field agree."""
+    return f1(("flip_y = true", "flip_y = false"))
 
 
 def job(*groups: Group) -> Job:
@@ -80,7 +86,7 @@ def test_the_shipped_files_read_as_the_f1_here_and_its_virtual_twin():
         ('generation = "v1"', 'generation = "v2"', r"\[firmware\] generation must be one of v1"),
         ('tried = ["40.51.013.2020.01.ht5"]', "tried = []", r"\[firmware\] tried must list the firmware packages"),
         ("size = [121.98, 121.98]", "size = [121.98, 0]", r"\[field\] size must be two numbers above 0"),
-        ("flip_y = false", "flip_y = false\nmirror = true", r"\[field\] mirror is not a key here"),
+        ("flip_y = true", "flip_y = true\nmirror = true", r"\[field\] mirror is not a key here"),
         ('blue = "M114 S1"', 'Blue = "M114 S1"', r"\[sources\] Blue is not a source name"),
         ('"{source}", ', "", r"\[lines\] start must hold the line \{source\} once"),
         ('"$P"]', '"$P {x}"]', r"\[lines\] end '\$P \{x\}' holds a brace"),
@@ -119,7 +125,7 @@ def test_the_store_checks_the_tables_and_shows_them(tmp_path):
 
 
 def test_a_job_is_the_start_a_travel_its_cuts_and_the_end():
-    machine = machine_of(machine_files.load(F1))
+    machine = plain()
     written = write(job(), machine, offset=(10.0, 20.0))
     assert body(written) == [
         "G0X10.000Y20.000",
@@ -138,21 +144,22 @@ def test_a_job_is_the_start_a_travel_its_cuts_and_the_end():
 
 
 def test_a_job_is_centered_in_the_field_unless_placed():
-    machine = machine_of(machine_files.load(F1))
+    machine = plain()
     assert centered(job(), machine) == pytest.approx((55.99, 55.99))
     assert body(write(job(), machine))[0] == "G0X55.990Y55.990"
 
 
 def test_the_file_mirrors_the_axes_it_names():
-    machine = f1(("flip_y = false", "flip_y = true"))
+    # The F1 here, its Y toward its front (check 3).
+    machine = machine_of(machine_files.load(F1))
     lines = body(write(job(), machine, offset=(10.0, 20.0)))
     assert lines[0] == "G0X10.000Y101.980" and lines[2] == "G1X20.000Y101.980S300F6000" and lines[3] == "G1X20.000Y91.980S300F6000"
-    machine = f1(("flip_x = false", "flip_x = true"))
+    machine = f1(("flip_x = false", "flip_x = true"), ("flip_y = true", "flip_y = false"))
     assert body(write(job(), machine, offset=(10.0, 20.0)))[0] == "G0X111.980Y20.000"
 
 
 def test_passes_disabled_groups_and_a_plan_that_starts_where_the_spot_rests():
-    machine = machine_of(machine_files.load(F1))
+    machine = plain()
     twice = job(Group(label="outline", power=250.4, speed=3000.6, passes=2, paths=[SQUARE]), Group(label="off", enabled=False, power=5000, paths=[SQUARE]))
     lines = body(write(twice, machine, offset=(10.0, 20.0)))
     # A closed loop starts its second pass where it ended: no travel between.
@@ -223,6 +230,24 @@ def test_the_virtual_f1_answers_as_the_f1_here_did():
             assert json.load(answer) == recording["machineInfo"]
         with urllib.request.urlopen(f"http://127.0.0.1:{virtual.http_port}/device/runningStatus", timeout=3) as answer:
             assert json.load(answer) == recording["runningStatus"]
+    # The session of checks 3 and 4: every line ok, and done after it.
+    with VirtualXtool() as virtual:
+        with socket.create_connection(("127.0.0.1", virtual.gcode_port), timeout=3) as connection:
+            for entry in recording["session"]["lines"]:
+                assert exchange(connection, entry["sent"], entry["answer"]) == entry["answer"].encode("ascii"), entry
+        link = link_to(virtual)
+        assert link.state().mode == recording["session"]["mode_after"] and link.state().at_rest
+    # Check 5: a file handed over waits for the button, runs, and stops.
+    upload = recording["upload"]
+    with VirtualXtool() as virtual:
+        link = link_to(virtual)
+        assert link.send_job("G21\n", "check5.gcode")["answer"] == upload["answer"]
+        mode = lambda: {"mode": link.state().mode, "subMode": link.state().sub_mode}  # noqa: E731
+        assert mode() == upload["after_upload"]
+        press(virtual)
+        assert mode() == upload["after_button"]
+        link.stop()
+        assert mode() == upload["after_stop"]
     # What names the machine stays out of the recording.
     data = recording["machineInfo"]["data"]
     assert (data["sn"], data["mac"], data["deviceName"]) == ("SERIAL", "00:00:00:00:00:00", "xTool_F1_000000")
@@ -237,6 +262,12 @@ def virtual():
         yield running
 
 
+def press(virtual: VirtualXtool) -> None:
+    """The virtual F1's button, standing for the press on the machine."""
+    request = urllib.request.Request(f"http://127.0.0.1:{virtual.http_port}{BUTTON_PATH}", data=b"", method="POST")
+    urllib.request.urlopen(request, timeout=3).close()
+
+
 def link_to(virtual: VirtualXtool, **changes):
     machine = dataclasses.replace(machine_of(machine_files.load(VIRTUAL)), **changes)
     return transport_for(machine, "127.0.0.1", virtual.gcode_port, virtual.http_port)
@@ -249,7 +280,7 @@ def test_the_info_and_state_are_read_and_the_firmware_held_to_the_file(virtual):
     assert info.size == pytest.approx((121.98, 121.98))
     check_firmware(info, link.machine)
     state = link.state()
-    assert state.idle and (state.mode, state.alarm) == ("P_IDLE", None)
+    assert state.at_rest and (state.mode, state.alarm) == ("P_IDLE", None)
     with pytest.raises(XtoolError, match=r"says it is type S1, the file is for F2"):
         check_firmware(info, dataclasses.replace(link.machine, machine_type="F2"))
 
@@ -289,15 +320,28 @@ def test_a_job_is_handed_over_whole_and_waits_for_the_button(virtual):
     text = write(job(), link.machine).text
     sent = link.send_job(text, "ab12-virtual-f1.gcode")
     assert sent["bytes"] == len(text) and sent["path"] == "/processing/upload"
-    assert virtual.files == [("ab12-virtual-f1.gcode", text)] and link.state().idle
+    # Held, waiting for the machine's button: not at rest, not running.
+    state = link.state()
+    assert virtual.files == [("ab12-virtual-f1.gcode", text)] and state.ready and not state.at_rest and not state.working
     # As the request's body, for an upload path that takes it so.
     link_to(virtual, upload_as="body").send_job(text, "plain.gcode")
     assert virtual.files[-1] == ("", text)
-    # The virtual button runs it; the stop goes out over HTTP.
-    request = urllib.request.Request(f"http://127.0.0.1:{virtual.http_port}{BUTTON_PATH}", data=b"", method="POST")
-    urllib.request.urlopen(request, timeout=3).close()
-    assert link.state().mode == RUNNING and not link.state().idle
-    assert link.stop() == "POST" and link.state().idle and virtual.stops == 1
+    # The button runs it; the stop goes out over HTTP.
+    press(virtual)
+    assert link.state().working and not link.state().at_rest
+    assert link.stop() == "POST" and link.state().at_rest and virtual.stops == 1
+
+
+def test_a_file_left_to_run_ends_at_rest():
+    with VirtualXtool(run_seconds=0.05) as quick:
+        link = link_to(quick)
+        link.send_job("G21\n", "short.gcode")
+        press(quick)
+        time.sleep(0.1)
+        assert link.state().mode == "P_WORK_DONE" and link.state().at_rest
+        # And a press with nothing waiting does nothing.
+        with pytest.raises(urllib.error.HTTPError):
+            press(quick)
 
 
 def test_nothing_reached_and_the_firmware_port_never_named():
@@ -326,8 +370,9 @@ def test_the_command_writes_reads_sends_and_stops(virtual, tmp_path, capsys):
     job_file.write_text(job().model_dump_json(), encoding="utf-8")
     out = tmp_path / "out" / "ab12.gcode"
     assert run(virtual, "write", str(job_file), "-o", str(out), "--offset", "10,20") == 0
-    assert out.read_text(encoding="ascii").splitlines()[len(START)] == "G0X10.000Y20.000"
-    assert "in the field: X 10.000 to 20.000, Y 20.000 to 30.000" in capsys.readouterr().out
+    # The virtual F1's file is the F1's, its Y toward the front.
+    assert out.read_text(encoding="ascii").splitlines()[len(START)] == "G0X10.000Y101.980"
+    assert "in the field: X 10.000 to 20.000, Y 91.980 to 101.980" in capsys.readouterr().out
 
     assert run(virtual, "info") == 0
     assert "firmware: tried with this file" in capsys.readouterr().out
@@ -337,6 +382,10 @@ def test_the_command_writes_reads_sends_and_stops(virtual, tmp_path, capsys):
     assert run(virtual, "lines", "G21") == 2 and virtual.lines == []
     assert run(virtual, "send", str(out), "--at-the-laser") == 0
     assert virtual.files == [("ab12.gcode", out.read_text(encoding="ascii"))]
+    assert "it waits for the machine's own button" in capsys.readouterr().out
+    # A file already waiting is not replaced by another.
+    assert run(virtual, "send", str(out), "--at-the-laser") == 1 and len(virtual.files) == 1
+    assert "is not at rest (Work)" in capsys.readouterr().err
     assert run(virtual, "lines", "G21", "--at-the-laser") == 0 and virtual.lines == ["G21"]
     assert run(virtual, "stop") == 0 and virtual.stops == 1
     capsys.readouterr()
