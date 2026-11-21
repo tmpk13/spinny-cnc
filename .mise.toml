@@ -84,6 +84,14 @@ run = "cargo run -q --manifest-path ../spinny-firmware/Cargo.toml -p spinny-virt
 description = "A virtual LumenPnP for the PNP tab: its Marlin on socket://127.0.0.1:2327 (machines/virtual-pnp.toml), Photon feeders, cameras at http://127.0.0.1:2328/snapshot (bottom) and :2329 (top)"
 run = "uv run spinny-virtual-pnp --machine machines/virtual-pnp.toml"
 
+[tasks.virtual-f1]
+description = "A virtual xTool F1 on V1 firmware answering as the F1 here did: G-code on 127.0.0.1:2330, HTTP on :2331 (machines/virtual-f1.toml)"
+run = "uv run spinny-virtual-f1 --machine machines/virtual-f1.toml"
+
+[tasks.f1]
+description = "An xTool F1 (machines/xtool-f1.toml, or --machine): -- info | write JOB | send FILE --at-the-laser | lines LINE... --at-the-laser | stop"
+run = "uv run spinny-xtool"
+
 [tasks.virtual-mill]
 description = "Virtual firmware on socket://127.0.0.1:2323 as the cartesian spindle machine over a tilted board"
 run = "cargo run -q --manifest-path ../spinny-firmware/Cargo.toml -p spinny-virtual -- --listen 127.0.0.1:2323 --machine machines/cartesian-mill.toml --surface -1.5,0.01,-0.02"

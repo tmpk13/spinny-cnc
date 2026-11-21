@@ -1304,6 +1304,11 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         except LinkError as exc:
             raise ValueError(str(exc)) from exc
         if machine is not None:
+            if self.machine_store.get(machine).controller == machine_files.XTOOL:
+                raise ValueError(
+                    f"{machine} is an xTool galvo: the page does not drive one yet;"
+                    " mise run f1 writes a job for it and hands it over (docs/XTOOL_F1.md)"
+                )
             if self.machine_store.get(machine).controller != machine_files.GCODE:
                 raise ValueError(f"{machine} is a machine on this project's firmware: connect to its board without naming a file")
             return self._gcode_connect(url, machine)
@@ -2551,7 +2556,7 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         machine = self.machine(machine_id)
         if machine.controller == machine_files.GCODE:
             self.config["placing_machine"] = machine_id
-        else:
+        elif machine.controller == machine_files.SPINNY:
             self.config["last_machine"] = machine_id
         self.config["machine_used"] = machine_id
         self._save_config()
@@ -2592,6 +2597,8 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
             controller = machine_files.parse(text, machine_id, f"{machine_id}.toml").controller
         except machine_files.MachineError:
             controller = machine_files.SPINNY
+        if controller == machine_files.XTOOL:
+            raise ValueError("an xTool galvo's file takes nothing from a board: its own firmware keeps its settings")
         if controller != machine_files.SPINNY:
             raise ValueError("a G-code machine's file takes nothing from a board: its controller keeps its own settings")
         values = self._values(force=True)
@@ -2610,6 +2617,8 @@ class Backend(GcodePart, PlacingPart, ProbingPart):
         A G-code machine's file has none to write: its controller keeps its
         own, and connecting to it is what makes it the machine."""
         machine = self.machine(machine_id)
+        if machine.controller == machine_files.XTOOL:
+            raise ValueError(f"{machine.name} is an xTool galvo: its own firmware keeps its settings, and nothing is loaded onto it")
         if machine.controller != machine_files.SPINNY:
             raise ValueError(f"{machine.name} is a G-code machine: its controller keeps its own settings; connect to it from the top bar")
         # A controller that lists none of a file's settings runs firmware

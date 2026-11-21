@@ -1,0 +1,90 @@
+{
+  "about": "What an xTool F1 on REST V1 firmware answered on 2026-11-21, read without a line that moves (docs/XTOOL_F1.md, The F1 here). Its serial number, MAC and device name suffix are replaced. The virtual F1 answers from this, and the tests hold it to it, so a firmware that answers otherwise is recorded again and shows up as a failing test.",
+  "machineInfo": {
+    "code": 0,
+    "data": {
+      "deviceName": "xTool_F1_000000",
+      "firmware": {
+        "accessories": {
+          "purifier_gd330_app": "40.206.004.3422.01"
+        },
+        "build_time": "Apr 23 2024,10:02:06",
+        "package_version": "40.51.013.2020.01.ht5",
+        "version": {
+          "master_h3_img": "40.51.003.2020.00.ht2",
+          "master_h3_laserservice": "40.51.013.2020.01.ht5",
+          "motion_gd450_app": "40.51.004.2121.01.V03"
+        }
+      },
+      "hardware": {
+        "h3": "V8",
+        "motion_gd450": "0.79",
+        "purifier_gd330": "13346"
+      },
+      "hardwareVersion": 0.0,
+      "ip": {
+        "eth0-0-ip": "169.254.2.1",
+        "eth0-ip": "",
+        "usb0-ip": "201.234.3.1",
+        "wlan0-ip": ""
+      },
+      "laserPower": [
+        10,
+        2
+      ],
+      "laserType": [
+        "RED",
+        "BLUE"
+      ],
+      "mac": "00:00:00:00:00:00",
+      "machineSubType": "LG4",
+      "machineType": "S1",
+      "sn": "SERIAL",
+      "workSize": {
+        "x": 121.97999572753906,
+        "y": 121.97999572753906
+      }
+    },
+    "msg": "Success"
+  },
+  "runningStatus": {
+    "code": 0,
+    "data": {
+      "alarmInfo": {
+        "alarm": null,
+        "desc": "The system runs all the warnings that have occurred"
+      },
+      "cpuTemp": 28,
+      "curAlarmInfo": {
+        "alarm": null,
+        "desc": "Warnings that exist while the system is running"
+      },
+      "curMode": {
+        "desc": "normal",
+        "mode": "P_IDLE",
+        "subMode": "",
+        "taskId": ""
+      },
+      "devTime": "1970-01-01 00:33:07"
+    },
+    "msg": "Success"
+  },
+  "lines": [
+    {
+      "sent": "G21\n",
+      "answer": "ok\n"
+    },
+    {
+      "sent": "G90\n",
+      "answer": "ok\n"
+    },
+    {
+      "sent": "?\n",
+      "answer": "<MPos:0,0,0,0>\nok\n\u0000ok\n"
+    },
+    {
+      "sent": "?",
+      "answer": ""
+    }
+  ]
+}

@@ -2,7 +2,8 @@
 checked, saved, changed a value at a time, given a table or a feeder bus
 slot's place, and removed. The parse is
 `spinny_laser.machines`, and for a G-code machine its own tables are read
-by `openpnp.machine_of` as well, so a file is checked whole either way;
+by `openpnp.machine_of` as well (an xTool galvo's by `xtool.machine_of`),
+so a file is checked whole either way;
 this is the directory around it."""
 
 from __future__ import annotations
@@ -12,11 +13,12 @@ import tomllib
 
 from spinny_laser import machines as machine_files
 from spinny_laser.cam import append_table, set_value
-from spinny_laser.machines import GCODE, Machine, MachineError
+from spinny_laser.machines import GCODE, XTOOL, Machine, MachineError
 
 from .cam import NotFound
 from .openpnp import GcodeMachine, machine_of
 from .stores import TomlStore
+from .xtool import machine_of as xtool_machine_of
 
 
 class MachineStore(TomlStore):
@@ -37,6 +39,8 @@ class MachineStore(TomlStore):
             # Its own tables are read now, so a file that saves is one a
             # connect can use.
             machine_of(machine, where)
+        elif machine.controller == XTOOL:
+            xtool_machine_of(machine, where)
         return machine
 
     def describe(self, parsed: Machine) -> dict:
@@ -45,6 +49,8 @@ class MachineStore(TomlStore):
         document = parsed.document()
         if parsed.controller == GCODE:
             document["gcode"] = machine_of(parsed).document()
+        elif parsed.controller == XTOOL:
+            document["xtool"] = xtool_machine_of(parsed).document()
         return document
 
     def gcode(self, machine_id: str) -> GcodeMachine:
