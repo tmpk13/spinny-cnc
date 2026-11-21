@@ -4,7 +4,7 @@
 //
 //     { "name": "run-board", "page": "run", "width": 1440, "height": 900,
 //       "dark": true, "storage": { "spinny.look": "{...}" },
-//       "machine": "laser", "job": true, "view": "Board",
+//       "machine": "laser", "job": true, "mode": "PNP use",
 //       "before": "document.querySelector('#jobs .more > summary').click()",
 //       "click": ["#jog button:has-text('Fine')"],
 //       "drag": { "from": ".panel-tab:has-text('Markers')", "to": [180, 130] },
@@ -14,14 +14,15 @@
 // where only the name is needed: the page opened (?page=), the window's
 // size, the dark theme, localStorage set before the page loads, the mock
 // machine connected (the one whose port's name holds the word, any case:
-// "laser" or "lumen"), the first job picked, the view of the area pressed
-// by its name on the view bar, JavaScript run in the page before the shot
+// "laser" or "lumen"), the first job picked, the mode picked by its name
+// in the top bar (then the page named shown again, when the mode lists
+// it: a mode goes to the area it opens on), JavaScript run in the page before the shot
 // (what it returns is printed), elements clicked in turn with the mouse, a
 // drag with the mouse from an element to a point, JavaScript run after
 // them, one element shot instead of the window, the wait before the shot
 // (ms), and whether to measure what the first view holds (measure.ts: the
 // controls and words in view, the boxes, the colors, the work's share of
-// the window). The machine, the job and the view come first, in that
+// the window). The machine, the job and the mode come first, in that
 // order, then the script before.
 //
 // Chromium is the one the layout check uses (CHROMIUM overrides it).
@@ -39,7 +40,7 @@ export interface Shot {
     storage?: Record<string, string>;
     machine?: string;
     job?: boolean;
-    view?: string;
+    mode?: string;
     before?: string;
     click?: string[];
     drag?: { from: string; to: [number, number] };
@@ -84,22 +85,25 @@ async function pickJob(): Promise<string> {
     return "picked a job";
 }
 
-/** Runs in the page: presses the view named `label` on the view bar of the pane in front; says what it did. */
-async function pressView(label: string): Promise<string> {
-    const bars = Array.from(document.querySelectorAll<HTMLElement>(".viewbar")).filter((bar) => !bar.hidden && bar.getBoundingClientRect().width > 0);
-    for (const bar of bars) {
-        // A step's button holds its number or its tick before its name.
-        const press = Array.from(bar.querySelectorAll<HTMLButtonElement>("button")).find((button) => {
-            const text = button.textContent?.trim() ?? "";
-            return text === label || text.replace(/^\d+/, "") === label;
-        });
-        if (press) {
-            press.click();
-            await new Promise((done) => setTimeout(done, 300));
-            return `view ${label}`;
-        }
+/** Runs in the page: picks the mode named `name` in the top bar, then shows `page` again where the mode lists it; says what it did. */
+async function pickMode([name, page]: [string, string | null]): Promise<string> {
+    const pick = document.querySelector<HTMLSelectElement>("select.mode-pick");
+    const option = pick ? Array.from(pick.options).find((each) => each.textContent?.replace(/ \(changed\)$/, "") === name) : undefined;
+    if (!pick || !option) {
+        return `no mode named ${name}`;
     }
-    return `no view named ${label}`;
+    pick.value = option.value;
+    pick.dispatchEvent(new Event("change"));
+    await new Promise((done) => setTimeout(done, 300));
+    if (page !== null) {
+        const tab = document.querySelector<HTMLButtonElement>(`.tabs .tab[data-page="${page}"]`);
+        if (!tab || tab.hidden) {
+            return `mode ${name}, which has no ${page}`;
+        }
+        tab.click();
+        await new Promise((done) => setTimeout(done, 300));
+    }
+    return `mode ${name}`;
 }
 
 /** Lets go of the messages passing by, as a press on each does: they are not the screen at rest, and cover what is under them. */
@@ -149,8 +153,8 @@ export async function takeShots(shots: Shot[], outDir: string | null, say: (line
             if (shot.job) {
                 told("", await page.evaluate(pickJob));
             }
-            if (shot.view) {
-                told("", await page.evaluate(pressView, shot.view));
+            if (shot.mode) {
+                told("", await page.evaluate(pickMode, [shot.mode, shot.page ?? null] as [string, string | null]));
             }
             if (shot.before) {
                 told("", await page.evaluate(shot.before));

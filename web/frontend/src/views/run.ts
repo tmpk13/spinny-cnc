@@ -6,7 +6,7 @@
 // Hold and Stop while one runs, Resume and Stop while it is held. On the
 // Run area it leads with what the run will go by, in words: the job's
 // length and time, where the job sits and the heights, the last two with a
-// link to the step that sets them. The height map choice the
+// link to the panel that sets them. The height map choice the
 // operator makes is the store's (`mapPick`), so any copy shows the same
 // one, and the panel puts the choice it settles on in `mapChoice` for the
 // other panels to describe.
@@ -17,7 +17,7 @@ import { formatDuration, formatLength, formatMm, parseNumber } from "../format.t
 import { isCartesian, isDispensing, isMilling, profileOf } from "../profile.ts";
 import type { AppState } from "../state.ts";
 import type { Compensate, Group, HeightMap, Job, Progress, ResumePlan, ResumeRecord, ResumeRequest } from "../types.ts";
-import { heightText, placeText } from "./areaviews.ts";
+import { heightText, placeText } from "./stages.ts";
 import type { Ctx } from "./context.ts";
 import { changedWord, focusHereWord, withFocusHere, withWords } from "./focushere.ts";
 import { focusAgainText, mapUsable, mapUse, runActive, runMapUse, showMapUse } from "./heightmap.ts";
@@ -137,7 +137,7 @@ export function mountRun(root: HTMLElement, ctx: Ctx, options: RunOptions = {}):
     const title = el("span", { class: "muted run-job" });
     const stats = options.stats ? el("p", { class: "muted run-stats" }) : null;
     // What the run will go by, in words; the place and the heights lead
-    // to the steps that set them.
+    // to the panels that set them.
     const readyJob = el("dd", {});
     const readyPlace = el("span", {});
     const readyHeight = el("span", {});

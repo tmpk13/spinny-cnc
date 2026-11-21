@@ -9,7 +9,7 @@ import { appendTable } from "../src/mock/cam.ts";
 import { feederCheck, partFeeders, planDevice } from "../src/mock/openpnp.ts";
 import { initialState, type AppState } from "../src/state.ts";
 import type { Component, FeederCheck, FeederCheckFeeder, Job, PlacingState } from "../src/types.ts";
-import { placingSteps, stepToOpen } from "../src/views/areaviews.ts";
+import { nextStage, placingStages } from "../src/views/stages.ts";
 import { autoMemory, autoMove } from "../src/views/autosteps.ts";
 import { into } from "../src/views/context.ts";
 import { checkLine, feedersDone, feedersLine, refreshFeederCheck, refsText } from "../src/views/feedercheck.ts";
@@ -165,11 +165,11 @@ describe("the feeder check in words", () => {
     });
 });
 
-describe("the Feeders step", () => {
+describe("the Feeders stage", () => {
     test("done when the check says every part would be placed; its line says what it found", () => {
         const ready = placingState(checkOf(3, [wants("a")], [], true));
-        const feeders = placingSteps(ready).find((step) => step.id === "feeders")!;
-        expect(feeders.step).toEqual({ done: true, optional: false });
+        const feeders = placingStages(ready).find((stage) => stage.id === "feeders")!;
+        expect(feeders).toMatchObject({ done: true, optional: false, panel: "pnp-feeders" });
         expect(feeders.line).toBe("3 parts from 1 feeder: every place known, none short.");
         const wanting = placingState(checkOf(2, [wants("a")], ["R3"]));
         expect(feedersDone(wanting)).toBe(false);
@@ -187,17 +187,17 @@ describe("the Feeders step", () => {
         expect(feedersLine(other)).toBe("Checking the feeders against the board's parts.");
     });
 
-    test("a run needs it: the area opens at Feeders until the check is ready", () => {
+    test("a run needs it: the work stands at Feeders until the check is ready", () => {
         const references = [{ job: job.id, ref: "R1", at: [1, 2] as [number, number] }];
         const wanting = placingState(checkOf(1, [wants("a")], ["R3"]));
         wanting.placing = { ...wanting.placing!, references };
-        expect(stepToOpen(placingSteps(wanting))).toBe("feeders");
+        expect(nextStage(placingStages(wanting))?.id).toBe("feeders");
         const ready = placingState(checkOf(1, [wants("a")], [], true));
         ready.placing = { ...ready.placing!, references };
-        expect(stepToOpen(placingSteps(ready))).toBe("run");
+        expect(nextStage(placingStages(ready))?.id).toBe("run");
     });
 
-    test("Auto stops at the Feeders step when the check finds them wanting, and says why", () => {
+    test("Auto stops at the Feeders stage when the check finds them wanting, and says why", () => {
         const references = [{ job: job.id, ref: "R1", at: [1, 2] as [number, number], by: "nozzle" as const }];
         const state = placingState(checkOf(1, [wants("a")], ["R3"]));
         state.placing = { ...state.placing!, references, top: undefined };

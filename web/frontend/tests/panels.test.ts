@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { closeMenu } from "../src/menu.ts";
 import { initialState, Store, type AppState } from "../src/state.ts";
 import { mountPageSettings } from "../src/views/pagesettings.ts";
-import { LAYOUT_KEY, markCut, markupDefaults, moreMark, mountPanels, PRESETS_KEY, revealPanel } from "../src/views/panels.ts";
+import { LAYOUT_KEY, markCut, markupDefaults, moreMark, mountPanels, revealPanel } from "../src/views/panels.ts";
 import { mountTabs, parseTabPrefs, readPage, TABS_KEY, writeTabPrefs } from "../src/views/tabs.ts";
 
 /** A page like index.html's: two columns of panels with heads of each kind. */
@@ -46,7 +46,7 @@ afterEach(() => {
     closeMenu(false);
     document.getElementById("app")?.remove();
     // Every test file shares this storage.
-    for (const key of [LAYOUT_KEY, PRESETS_KEY, TABS_KEY, "spinny.page"]) {
+    for (const key of [LAYOUT_KEY, TABS_KEY, "spinny.page"]) {
         localStorage.removeItem(key);
     }
 });
@@ -553,7 +553,7 @@ describe("folders", () => {
         app.querySelector<HTMLButtonElement>(".panel-folder-head .panel-menu-button")!.click();
         pick("Take the folder apart");
         expect(app.querySelector(".panel-folder")).toBeNull();
-        panels.resetPage("jobs");
+        panels.setLayouts({});
         expect(app.querySelector(".panel-folder .panel-folder-name")?.textContent).toBe("View");
     });
 });
@@ -597,27 +597,40 @@ describe("the page's own markup", () => {
     });
 });
 
-describe("kept layouts", () => {
-    test("a layout kept by name comes back from its name; Default is the markup's", () => {
+describe("every page's layouts", () => {
+    test("are read in their stored form and put back whole; a page left out is laid out as the markup has it", () => {
         const app = makeApp();
         const panels = mountPanels(app);
-        expect(panels.currentPreset()).toBe("Default");
+        expect(panels.layouts()).toEqual({});
         openMenuOf("p-console");
         pick("Stack with above");
-        expect(panels.currentPreset()).toBeNull();
-        expect(panels.savePreset("Default")).toContain("built-in");
-        expect(panels.savePreset(" bench ")).toBeNull();
-        expect(panels.presetNames()).toEqual(["bench"]);
-        expect(panels.currentPreset()).toBe("bench");
-        panels.resetPage("jobs");
+        const stacked = panels.layouts();
+        expect(Object.keys(stacked)).toEqual(["jobs"]);
+        expect(JSON.parse(localStorage.getItem(LAYOUT_KEY)!)).toEqual(JSON.parse(JSON.stringify(stacked)));
+        panels.setLayouts({});
         expect(app.querySelector(".panel-tabs")).toBeNull();
-        expect(panels.currentPreset()).toBe("Default");
-        panels.applyPreset("bench");
+        expect(panels.layouts()).toEqual({});
+        let heard = 0;
+        panels.onChange(() => heard++);
+        panels.setLayouts(stacked);
         expect(app.querySelector(".panel-tabs")).not.toBeNull();
-        panels.applyPreset("Default");
-        expect(app.querySelector(".panel-tabs")).toBeNull();
-        panels.deletePreset("bench");
-        expect(panels.presetNames()).toEqual([]);
+        expect(heard).toBeGreaterThan(0);
+        expect(panels.defaults()["jobs"]).toEqual([["p-dro", "p-laser", "p-steps"], ["p-preview", "p-console", "p-device"]]);
+    });
+
+    test("a page whose every panel is hidden is blank, but for a peek", () => {
+        const app = makeApp();
+        const panels = mountPanels(app);
+        expect(panels.blankPages()).toEqual([]);
+        const hidden = Object.fromEntries(["p-dro", "p-laser", "p-steps", "p-preview", "p-console"].map((id) => [id, { hidden: true }]));
+        panels.setLayouts({ jobs: { columns: [], panels: hidden } });
+        // The panel its own view hides still counts: the layout shows it.
+        expect(panels.blankPages()).toEqual([]);
+        panels.setLayouts({ jobs: { columns: [], panels: { ...hidden, "p-device": { hidden: true } } } });
+        expect(panels.blankPages()).toEqual(["jobs"]);
+        panels.setPeeking(true);
+        expect(panels.blankPages()).toEqual([]);
+        panels.setPeeking(false);
     });
 
     test("edit mode is a mark on the app", () => {

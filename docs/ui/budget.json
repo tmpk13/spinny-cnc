@@ -6,236 +6,235 @@
   "height": 900
  },
  {
-  "name": "home",
+  "name": "laser use: home",
   "page": "home",
   "machine": "laser",
   "job": true,
+  "mode": "Laser/mill use",
   "width": 1440,
   "height": 900
  },
  {
-  "name": "job, none picked",
-  "page": "job",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "job",
+  "name": "laser use: job",
   "page": "job",
   "machine": "laser",
   "job": true,
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "job: draw",
-  "page": "job",
-  "machine": "laser",
-  "job": true,
-  "view": "Draw",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "job: assistant",
-  "page": "job",
-  "machine": "laser",
-  "job": true,
-  "view": "Assistant",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "job: json",
-  "page": "job",
-  "machine": "laser",
-  "job": true,
-  "view": "JSON",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "run: connect",
-  "page": "run",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "run: job",
-  "page": "run",
-  "machine": "laser",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "run: board",
-  "page": "run",
-  "machine": "laser",
-  "job": true,
-  "view": "Board",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "run: height",
-  "page": "run",
-  "machine": "laser",
-  "job": true,
-  "view": "Height",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "run",
-  "page": "run",
-  "machine": "laser",
-  "job": true,
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "pick and place: home",
-  "page": "run",
-  "machine": "lumen",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "pick and place: parts",
-  "page": "run",
-  "machine": "lumen",
-  "view": "Parts",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "pick and place: board",
-  "page": "run",
-  "machine": "lumen",
-  "view": "Board",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "pick and place: feeders",
-  "page": "run",
-  "machine": "lumen",
-  "view": "Feeders",
+  "mode": "Laser/mill use",
   "width": 1440,
   "height": 900,
-  "before": "(async () => { const input = document.querySelector(\"input[type=file][accept='.kicad_pcb']\"); const files = new DataTransfer(); files.items.add(new File(['(kicad_pcb)'], 'board.kicad_pcb')); input.files = files.files; input.dispatchEvent(new Event('change')); await new Promise((done) => setTimeout(done, 800)); Array.from(document.querySelectorAll('#pnp-feeders button')).find((press) => press.textContent === 'Scan bus').click(); await new Promise((done) => setTimeout(done, 500)); return 'board opened, bus scanned'; })()"
+  "budget": {
+   "controls": 63,
+   "why": "every panel the mode shows in this area at once: the user chose modes over views of a few panels (2026-11-21, QUESTIONS.md Q73)"
+  }
  },
  {
-  "name": "pick and place: place",
+  "name": "laser use: run",
   "page": "run",
-  "machine": "lumen",
-  "view": "Place",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "checklist",
-  "page": "facts",
   "machine": "laser",
+  "job": true,
+  "mode": "Laser/mill use",
   "width": 1440,
-  "height": 900
+  "height": 900,
+  "budget": {
+   "controls": 62,
+   "why": "every panel the mode shows in this area at once: the user chose modes over views of a few panels (2026-11-21, QUESTIONS.md Q73)"
+  }
  },
  {
-  "name": "machines",
-  "page": "machines",
-  "machine": "laser",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "machines: keys",
-  "page": "machines",
-  "machine": "laser",
-  "view": "Keys",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "machines: import",
-  "page": "machines",
-  "machine": "laser",
-  "view": "Import",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "cameras",
-  "page": "cameras",
-  "machine": "laser",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "cameras, pick and place",
-  "page": "cameras",
-  "machine": "lumen",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "cameras: bottom",
-  "page": "cameras",
-  "machine": "lumen",
-  "view": "Bottom camera",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "cameras: top",
-  "page": "cameras",
-  "machine": "lumen",
-  "view": "Top camera",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "cameras: head and bed",
-  "page": "cameras",
-  "machine": "lumen",
-  "view": "Head and bed",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "cam",
-  "page": "cam",
-  "machine": "laser",
-  "width": 1440,
-  "height": 900
- },
- {
-  "name": "page",
+  "name": "laser use: ui",
   "page": "ui",
   "machine": "laser",
+  "job": true,
+  "mode": "Laser/mill use",
   "width": 1440,
   "height": 900
  },
  {
-  "name": "phone: home",
+  "name": "laser config: home",
   "page": "home",
   "machine": "laser",
   "job": true,
-  "width": 390,
-  "height": 844
+  "mode": "Laser/mill config",
+  "width": 1440,
+  "height": 900
  },
  {
-  "name": "phone: job",
-  "page": "job",
-  "machine": "laser",
-  "job": true,
-  "width": 390,
-  "height": 844
- },
- {
-  "name": "phone: run",
+  "name": "laser config: run",
   "page": "run",
   "machine": "laser",
   "job": true,
+  "mode": "Laser/mill config",
+  "width": 1440,
+  "height": 900,
+  "budget": {
+   "controls": 65,
+   "words": 202,
+   "why": "every panel the mode shows in this area at once: the user chose modes over views of a few panels (2026-11-21, QUESTIONS.md Q73)"
+  }
+ },
+ {
+  "name": "laser config: facts",
+  "page": "facts",
+  "machine": "laser",
+  "job": true,
+  "mode": "Laser/mill config",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "laser config: machines",
+  "page": "machines",
+  "machine": "laser",
+  "job": true,
+  "mode": "Laser/mill config",
+  "width": 1440,
+  "height": 900,
+  "budget": {
+   "controls": 47,
+   "words": 212,
+   "why": "every panel the mode shows in this area at once: the user chose modes over views of a few panels (2026-11-21, QUESTIONS.md Q73)"
+  }
+ },
+ {
+  "name": "laser config: cameras",
+  "page": "cameras",
+  "machine": "laser",
+  "job": true,
+  "mode": "Laser/mill config",
+  "width": 1440,
+  "height": 900,
+  "budget": {
+   "controls": 42,
+   "why": "every panel the mode shows in this area at once: the user chose modes over views of a few panels (2026-11-21, QUESTIONS.md Q73)"
+  }
+ },
+ {
+  "name": "laser config: cam",
+  "page": "cam",
+  "machine": "laser",
+  "job": true,
+  "mode": "Laser/mill config",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "laser config: ui",
+  "page": "ui",
+  "machine": "laser",
+  "job": true,
+  "mode": "Laser/mill config",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "pnp use: home",
+  "page": "home",
+  "machine": "lumen",
+  "mode": "PNP use",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "pnp use: run",
+  "page": "run",
+  "machine": "lumen",
+  "mode": "PNP use",
+  "width": 1440,
+  "height": 900,
+  "budget": {
+   "controls": 74,
+   "words": 233,
+   "why": "every panel the mode shows in this area at once: the user chose modes over views of a few panels (2026-11-21, QUESTIONS.md Q73)"
+  }
+ },
+ {
+  "name": "pnp use: ui",
+  "page": "ui",
+  "machine": "lumen",
+  "mode": "PNP use",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "pnp config: home",
+  "page": "home",
+  "machine": "lumen",
+  "mode": "PNP config",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "pnp config: run",
+  "page": "run",
+  "machine": "lumen",
+  "mode": "PNP config",
+  "width": 1440,
+  "height": 900,
+  "budget": {
+   "controls": 55,
+   "why": "every panel the mode shows in this area at once: the user chose modes over views of a few panels (2026-11-21, QUESTIONS.md Q73)"
+  }
+ },
+ {
+  "name": "pnp config: facts",
+  "page": "facts",
+  "machine": "lumen",
+  "mode": "PNP config",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "pnp config: machines",
+  "page": "machines",
+  "machine": "lumen",
+  "mode": "PNP config",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "pnp config: cameras",
+  "page": "cameras",
+  "machine": "lumen",
+  "mode": "PNP config",
+  "width": 1440,
+  "height": 900,
+  "budget": {
+   "controls": 48,
+   "why": "every panel the mode shows in this area at once: the user chose modes over views of a few panels (2026-11-21, QUESTIONS.md Q73)"
+  }
+ },
+ {
+  "name": "pnp config: ui",
+  "page": "ui",
+  "machine": "lumen",
+  "mode": "PNP config",
+  "width": 1440,
+  "height": 900
+ },
+ {
+  "name": "phone, laser use: home",
+  "page": "home",
+  "machine": "laser",
+  "job": true,
+  "mode": "Laser/mill use",
+  "width": 390,
+  "height": 844
+ },
+ {
+  "name": "phone, laser use: job",
+  "page": "job",
+  "machine": "laser",
+  "job": true,
+  "mode": "Laser/mill use",
+  "width": 390,
+  "height": 844
+ },
+ {
+  "name": "phone, laser use: run",
+  "page": "run",
+  "machine": "laser",
+  "job": true,
+  "mode": "Laser/mill use",
   "width": 390,
   "height": 844
  }

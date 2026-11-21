@@ -2,27 +2,25 @@ import { describe, expect, test } from "bun:test";
 import {
     blockIsRow,
     bringToFront,
+    arrangedLayout,
     canonicalLayout,
     canonicalLayouts,
     cleanWidths,
     columnIds,
-    DEFAULT_PRESET,
     defaultLayout,
     isDefault,
     isRow,
     isStuck,
     locate,
-    matchingPreset,
     MIN_WIDTH,
     moveBlock,
     moveToColumn,
     normalizeLayout,
     placeBlock,
-    presetNameProblem,
     readObject,
-    readPresets,
     resetPanel,
     sameArrangement,
+    sameLayouts,
     setPrefs,
     setRow,
     setWidths,
@@ -464,21 +462,28 @@ describe("pages and kept layouts", () => {
         expect(readObject('{"jobs":1}')).toEqual({ jobs: 1 });
     });
 
-    test("kept names: Default is not one of them, a name must be given", () => {
-        expect(readPresets(JSON.stringify({ Default: {}, default: {}, " ": {}, mill: {}, bad: 3 }))).toEqual({ mill: {} });
-        expect(presetNameProblem("")).not.toBeNull();
-        expect(presetNameProblem("  ")).not.toBeNull();
-        expect(presetNameProblem("default")).toContain("built-in");
-        expect(presetNameProblem("x".repeat(41))).not.toBeNull();
-        expect(presetNameProblem("mill")).toBeNull();
+    test("two sets of layouts are the same once each is in its stored form", () => {
+        const mill = canonicalLayouts({ jobs: stackOnto(fresh(), "console", "preview") }, pages);
+        expect(sameLayouts({}, { jobs: fresh() }, pages)).toBe(true);
+        expect(sameLayouts(JSON.parse(JSON.stringify(mill)) as Record<string, unknown>, { jobs: stackOnto(fresh(), "console", "preview") }, pages)).toBe(true);
+        expect(sameLayouts(mill, {}, pages)).toBe(false);
+    });
+});
+
+describe("a page arranged by a spec", () => {
+    test("its panels first in their columns, the others where the markup has them, the hidden ones hidden", () => {
+        const layout = arrangedLayout({ columns: [["console"], ["dro", ["preview", "laser"]]], hidden: ["steps"], folded: ["console"] }, MARKUP);
+        // Jog and the markers stay in the first column, Steps in the second before Preview, the last column as it was.
+        expect(columnIds(layout)).toEqual([["console", "jog", "markers"], ["dro", "steps", "preview", "laser"], ["jobs", "heightmap", "run"]]);
+        expect(layout.columns[1]![2]).toEqual([{ ids: ["preview", "laser"], front: "preview" }]);
+        expect(layout.panels).toEqual({ console: { collapsed: true }, steps: { hidden: true } });
     });
 
-    test("the kept name matching the panels as they are, Default when nothing differs", () => {
-        const mill = canonicalLayouts({ jobs: stackOnto(fresh(), "console", "preview") }, pages);
-        const kept = { mill: JSON.parse(JSON.stringify(mill)) as Record<string, unknown> };
-        expect(matchingPreset({}, kept, pages)).toBe(DEFAULT_PRESET);
-        expect(matchingPreset(mill, kept, pages)).toBe("mill");
-        const other = canonicalLayouts({ jobs: stick(fresh(), "laser") }, pages);
-        expect(matchingPreset(other, kept, pages)).toBeNull();
+    test("ids the page lacks are passed over; a panel added later shows, in its markup's place", () => {
+        const later = withStacks([[...MARKUP[0]!, "plugin"], [...MARKUP[1]!], [...MARKUP[2]!]], {});
+        const layout = arrangedLayout({ columns: [["nowhere", "dro"]], hidden: ["laser", "gone"] }, later);
+        expect(columnIds(layout)[0]).toContain("plugin");
+        expect(layout.panels["plugin"]).toBeUndefined();
+        expect(Object.keys(layout.panels)).toEqual(["laser"]);
     });
 });

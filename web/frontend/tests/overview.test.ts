@@ -22,25 +22,25 @@ describe("the next thing to do", () => {
     test("with nothing connected it is to connect: the port found on the button, else where a port is typed", () => {
         const { store } = setup();
         const state = store.get();
-        expect(nextAction({ ...state, ports: [] })).toMatchObject({ kind: "ports", title: "Connect the machine", label: "Machines and ports", step: null });
+        expect(nextAction({ ...state, ports: [] })).toMatchObject({ kind: "ports", title: "Connect the machine", label: "Machines and ports", stage: null, panel: "connection" });
         expect(nextAction({ ...state, ports: [port] })).toMatchObject({ kind: "connect", label: "Connect spinny laser controller", detail: "spinny laser controller is plugged in." });
     });
 
-    test("connected, it is the Run area's first step a run needs that is not done", () => {
+    test("connected, it is the first stage a run needs that is not done, and the panel that does it", () => {
         const { store } = setup();
         const state: AppState = { ...store.get(), snapshot: connected(), jobs: [summary] };
-        // No job picked: the Job step.
-        expect(nextAction(state)).toMatchObject({ kind: "step", step: "job", label: "Continue: Job", detail: "No job picked yet." });
+        // No job picked: the Job stage, in the Jobs panel.
+        expect(nextAction(state)).toMatchObject({ kind: "stage", stage: "job", panel: "jobs", label: "Continue: Job", detail: "No job picked yet." });
         // A job picked: the run itself, whose button names it.
         const picked = nextAction({ ...state, job });
-        expect(picked).toMatchObject({ kind: "step", step: "run", title: "Run", label: "Go to Run" });
+        expect(picked).toMatchObject({ kind: "stage", stage: "run", panel: "run", title: "Run", label: "Go to Run" });
         expect(picked.detail).toStartWith("board: ");
     });
 
     test("a run under way comes before everything", () => {
         const { store } = setup();
         const state: AppState = { ...store.get(), snapshot: connected(), jobs: [summary], job, progress };
-        expect(nextAction(state)).toMatchObject({ kind: "run", title: "A run is under way", detail: "Running board: 25%.", label: "Show the run", step: "run" });
+        expect(nextAction(state)).toMatchObject({ kind: "run", title: "A run is under way", detail: "Running board: 25%.", label: "Show the run", panel: "run" });
         expect(nextAction({ ...state, progress: { ...progress, state: "hold" } })).toMatchObject({ title: "A run is held", detail: "Holding board: 25%." });
     });
 
@@ -68,20 +68,22 @@ describe("the Next panel", () => {
         await settle();
         await settle();
         expect(store.get().snapshot.connected).toBe(true);
-        // Connected, with no job picked: on to the Job step.
+        // Connected, with no job picked: on to the Job stage.
         expect(root.querySelector(".home-title")?.textContent).toStartWith("Job: ");
         expect(findButton(root, "Continue: Job")).toBeTruthy();
     });
 
-    test("its button goes to the Run area at the step named", () => {
+    test("its button goes to the panel of the stage named", () => {
         const { ctx, root, store } = setup();
         const app = document.createElement("div");
         app.id = "app";
+        app.innerHTML = `<main id="page-run" class="page"><div class="column"><section id="run" class="panel"></section></div></main>`;
         document.body.append(app);
         store.set({ snapshot: connected(), jobs: [summary], job });
         mountOverview(root, ctx);
         findButton(root, "Go to Run").click();
         expect(app.getAttribute("data-page")).toBe("run");
+        expect(app.querySelector("#run")!.classList.contains("pulse")).toBe(true);
         app.remove();
     });
 });

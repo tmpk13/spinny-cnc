@@ -37,7 +37,7 @@ import { mountPnp, PNP_SETUP, type PnpPanels } from "./views/pnp.ts";
 import { mountFindBoard } from "./views/findboard.ts";
 import { mountPreviewPanel } from "./views/previewpanel.ts";
 import { mountReportLink } from "./views/reportlink.ts";
-import { mountRunConnect, mountRunJob } from "./views/runstart.ts";
+import { mountRunJob } from "./views/runstart.ts";
 import { mountStatusBar } from "./views/statusbar.ts";
 import { mountSteps, SETUPS, setupsFor } from "./views/steps.ts";
 import { mountFit } from "./views/fit.ts";
@@ -50,7 +50,8 @@ import { mountSetupLinks } from "./views/setuplinks.ts";
 import { mountSplitHandle } from "./views/split.ts";
 import { mountTodo } from "./views/todo.ts";
 import { mountToasts } from "./views/toasts.ts";
-import { mountViewBars } from "./views/viewbar.ts";
+import { mountModePick, mountModes } from "./views/modes.ts";
+import { mountAutoBar } from "./views/autosteps.ts";
 import { mountVision } from "./views/vision.ts";
 
 export function createContext(api: Api, store: Store<AppState>): Ctx {
@@ -338,7 +339,7 @@ function main(): void {
         }
         return node;
     };
-    mountStatusBar(panel("status"), ctx);
+    const bar = mountStatusBar(panel("status"), ctx);
     mountConnection(panel("connection"), ctx);
     mountFocusBanner(panel("status"), ctx);
     const tabTools = mountTabs(panel("tabs"), store);
@@ -368,9 +369,6 @@ function main(): void {
     // The Run area's own picture of the job: the one picked, with the
     // head on it and the trail of the run.
     mountPreviewPanel(panel("run-preview"), ctx, (state) => state.job);
-    // Its first two steps: the machine to connect, the job to run.
-    mountRunConnect(panel("run-connect"), ctx);
-    mountRunJob(panel("run-job"), ctx);
     const vision = mountVision(panel("camera"), ctx, panel("camera-view"), { controls: panel("camera-controls"), sight: panel("camera-sight"), changes: panel("camera-changes") }, panel("camera-picture"));
     mountAlign(place.parts.align, ctx);
     // The Setup side's Checklist: what the machine knows, where each value
@@ -446,10 +444,13 @@ function main(): void {
     mountPlugins(panel("plugins"), ctx);
     // Last, once every view has drawn its panel's head: the layout layer
     // adds its controls to the heads and puts the panels where the
-    // operator left them.
-    mountPageSettings(tabTools, mountPanels(panel("app")));
-    // Each area's views, once the layout layer can put one on its page.
-    mountViewBars(ctx, { use: panel("views-use"), setup: panel("views-setup") }, { auto: { startCamera } });
+    // operator left them; the modes over it, picked from the top bar.
+    const panels = mountPanels(panel("app"));
+    const modes = mountModes(panels);
+    mountModePick(bar.mode, modes);
+    mountPageSettings(tabTools, panels, modes);
+    // Auto, in the top bar: the stages of a run the page can do by itself.
+    mountAutoBar(bar.auto, { ctx, startCamera, sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)) });
     // The two sides: the handle between them side by side, the keys that
     // swap them, the links between them (and to the other tabs showing
     // them), and the Use side's panels' links to what they run on.

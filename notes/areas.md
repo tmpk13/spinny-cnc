@@ -2,9 +2,10 @@
 
 The plan is docs/UI_PANELS.md (what goes inside each panel) and
 docs/UI_REDESIGN.md (the frame). This file holds the decisions taken
-while building them and what was not obvious. Since 2026-11-17 an area
-shows one view of its panels at a time and the Machine panel is a dock:
-notes/views.md.
+while building them and what was not obvious. From 2026-11-17 an area
+showed one view of its panels at a time and the Machine panel was a dock
+(notes/views.md); since 2026-11-21 an area shows its panels by mode
+(notes/modes.md).
 
 ## Decisions
 

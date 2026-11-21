@@ -26,6 +26,9 @@
 // (TabPrefs): the tab the page opens on, whether the bar folds to a thin
 // strip that opens on hover or a press, and tabs kept out of the bar, which
 // then open from a More folder at the bar's end.
+//
+// An area the mode in use leaves nothing to show (src/modes.ts) has no tab
+// while another area shows; a side with no area to show has no name either.
 
 import { el, readStored, svgIcon, writeStored } from "../dom.ts";
 import { countText } from "../format.ts";
@@ -228,6 +231,8 @@ const shown: Record<Side, PageId> = parseSidePages(null);
 let front: Side = "use";
 let split: SplitPrefs = { on: false, share: SPLIT_SHARE };
 const sideListeners: (() => void)[] = [];
+/** The areas with no panel to show in the mode in use. */
+let blank = new Set<PageId>();
 
 /** Hears every change of side, of a side's page or of the split. */
 export function onSides(listener: () => void): void {
@@ -293,6 +298,47 @@ export function setSplitShare(share: number, keep = true): void {
 /** Brings a side to the front with the page it last showed. */
 export function showSide(side: Side): void {
     showPage(shown[side]);
+}
+
+/** Whether an area has nothing to show in the mode in use. */
+export function isBlank(page: PageId): boolean {
+    return blank.has(page);
+}
+
+/** The first area of a side with something to show, in the rail's order; null for none. */
+export function firstShownOf(side: Side): PageId | null {
+    return pagesOf(side).find((page) => !blank.has(page)) ?? null;
+}
+
+/** The first area with something to show: of the side in front, else of the other; Home when every one is blank. */
+export function firstShown(): PageId {
+    return firstShownOf(front) ?? firstShownOf(otherSide(front)) ?? "home";
+}
+
+/**
+ * Names the areas with nothing to show in the mode in use. A side out of
+ * view that last showed one of them turns to its first area with
+ * something, so a swap to it does not land on an empty page; the area in
+ * view keeps its tab until another is shown.
+ */
+export function setBlankPages(pages: readonly string[]): void {
+    blank = new Set(pages.map((page) => pageNamed(page)).filter((page): page is PageId => page !== null));
+    let moved = false;
+    for (const side of SIDES.map((entry) => entry.id)) {
+        if (blank.has(shown[side]) && !sideInView(side)) {
+            const page = firstShownOf(side);
+            if (page !== null) {
+                shown[side] = page;
+                moved = true;
+            }
+        }
+    }
+    if (moved) {
+        writeStored(SIDE_PAGES_KEY, JSON.stringify(shown));
+    }
+    for (const listener of sideListeners) {
+        listener();
+    }
 }
 
 /**
@@ -412,17 +458,22 @@ export function mountTabs(root: HTMLElement, store: Store<AppState>): HTMLElemen
     function draw(): void {
         const both = isSplit();
         const page = shown[front];
+        // An area with nothing to show in the mode has no tab, unless it is the one in view.
+        const inView = (id: PageId): boolean => shown[sideOf(id)] === id && (both || sideOf(id) === front);
+        const gone = (id: PageId): boolean => blank.has(id) && !inView(id);
         for (const { page: id, tab } of tabs) {
-            tab.hidden = prefs.hidden.includes(id);
+            tab.hidden = prefs.hidden.includes(id) || gone(id);
         }
         // The rail has room for both sides' areas; a narrow window's bar
         // folds the other side's away behind its name.
         const rail = railShown();
         for (const entry of groups) {
             const open = both || entry.side === front || rail;
+            // A side the mode leaves nothing to show has no name to swap to.
+            const empty = pagesOf(entry.side).every(gone);
             entry.list.hidden = !open;
-            entry.button.hidden = rail;
-            entry.name.hidden = !rail;
+            entry.button.hidden = rail || empty;
+            entry.name.hidden = !rail || empty;
             entry.button.setAttribute("aria-pressed", entry.side === front ? "true" : "false");
             entry.button.toggleAttribute("data-open", open);
             entry.button.title = open
@@ -433,7 +484,7 @@ export function mountTabs(root: HTMLElement, store: Store<AppState>): HTMLElemen
         splitButton.setAttribute("aria-pressed", both ? "true" : "false");
         splitButton.title = both ? "one side at a time (|)" : "Use and Setup side by side (|)";
         splitButton.setAttribute("aria-label", splitButton.title);
-        more.hidden = prefs.hidden.length === 0;
+        more.hidden = prefs.hidden.every(gone);
         const label = PAGES.find((entry) => entry.id === page)?.label ?? page;
         // The page shown when its own tab is kept out: More stands for it.
         const inMore = prefs.hidden.includes(page);
@@ -449,7 +500,7 @@ export function mountTabs(root: HTMLElement, store: Store<AppState>): HTMLElemen
     }
 
     more.addEventListener("click", () => {
-        openMenu(prefs.hidden.map((id) => ({
+        openMenu(prefs.hidden.filter((id) => !blank.has(id)).map((id) => ({
             label: PAGES.find((entry) => entry.id === id)!.label,
             checked: id === shown[front],
             run: () => {

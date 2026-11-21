@@ -3,21 +3,16 @@
 // shown, and how-to is behind a question mark.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { initialState } from "../src/state.ts";
 import type { CamOperation, CamTool, Group, Job, JobSummary, Progress } from "../src/types.ts";
-import { cameraViews, machineViews, viewPanels, viewsOf } from "../src/views/areaviews.ts";
 import { helpMark } from "../src/views/context.ts";
 import { mountFindBoard } from "../src/views/findboard.ts";
 import { mountHeightMap } from "../src/views/heightmap.ts";
 import { operationSays } from "../src/views/cam.ts";
 import { groupSays, jobSizeText, mountJobs } from "../src/views/jobs.ts";
-import { mountPanels } from "../src/views/panels.ts";
 import { mountPnpRun } from "../src/views/pnprun.ts";
 import { mountPreviewPanel, viewLabel } from "../src/views/previewpanel.ts";
 import { mountRun } from "../src/views/run.ts";
 import { collectFeatures, goToFeature } from "../src/views/search.ts";
-import { mountTabs, showPage } from "../src/views/tabs.ts";
-import { mountViewBars } from "../src/views/viewbar.ts";
 import { connected, findButton, settle, setup } from "./harness.ts";
 
 const summary = { id: "a1", name: "board", source: "gerber", spot: 0.1, offset: { x: 0, y: 0 }, rotation: 0, groups: [], stats: { length_mm: 120, seconds: 90 } } as unknown as JobSummary;
@@ -27,7 +22,7 @@ const progress: Progress = { job: "a1", state: "running", sent: 60, acked: 50, t
 afterEach(() => {
     document.getElementById("app")?.remove();
     document.body.replaceChildren();
-    for (const key of ["spinny.views", "spinny.layout", "spinny.page", "spinny.side-pages", "spinny.preview.options", "spinny.find.test-layers"]) {
+    for (const key of ["spinny.layout", "spinny.page", "spinny.side-pages", "spinny.preview.options", "spinny.find.test-layers"]) {
         localStorage.removeItem(key);
     }
 });
@@ -230,48 +225,6 @@ describe("a question mark", () => {
         expect(mark.textContent).toBe("?");
         mark.click();
         expect(store.get().toasts.at(-1)?.text).toBe("Drag the picture to move the head.");
-    });
-});
-
-describe("the Setup side's views", () => {
-    test("Machines: the machine and its file, the keys beside the file, the import", () => {
-        expect(machineViews().map((view) => view.label)).toEqual(["Machine", "Keys", "Import"]);
-        expect(viewPanels(machineViews()[0]!)).toEqual(["connection", "machine-file"]);
-        expect(viewPanels(machineViews()[1]!)).toEqual(["machine-file", "settings"]);
-        expect(viewsOf("machines", initialState(true)).length).toBe(3);
-    });
-
-    test("Cameras: a view a camera, and the bar lists the ones whose panels the machine has", () => {
-        expect(cameraViews().map((view) => view.id)).toEqual(["head-camera", "bottom-camera", "top-camera", "head"]);
-        const app = document.createElement("div");
-        app.id = "app";
-        const panel = (id: string, hidden = false): string => `<section id="${id}" class="panel${hidden ? " hidden" : ""}" aria-label="${id}"><div class="panel-head"><h2>${id}</h2></div></section>`;
-        app.innerHTML = `
-            <nav id="tabs" class="tabs"></nav>
-            <div id="pane-use" class="pane" data-side="use"><nav id="views-use" class="viewbar" hidden></nav>
-                <main id="page-home" class="grid page"><div class="column">${panel("overview")}</div></main></div>
-            <div id="pane-setup" class="pane" data-side="setup"><nav id="views-setup" class="viewbar" hidden></nav>
-                <main id="page-cameras" class="grid page">
-                    <div class="column">${panel("camera")}${panel("camera-controls")}${panel("camera-sight")}${panel("camera-changes")}${panel("pnp-nozzle")}</div>
-                    <div class="column">${panel("pnp-camera")}${panel("pnp-top", true)}${panel("pnp-top-controls", true)}${panel("pnp-top-sight", true)}${panel("pnp-top-changes", true)}</div>
-                    <div class="column">${panel("pnp-head", true)}${panel("pnp-machine-view", true)}</div>
-                </main></div>`;
-        document.body.append(app);
-        const { ctx, store } = setup();
-        mountTabs(app.querySelector("#tabs")!, store);
-        mountPanels(app);
-        mountViewBars(ctx, { use: app.querySelector("#views-use")!, setup: app.querySelector("#views-setup")! });
-        showPage("cameras");
-        const names = (): string[] => Array.from(app.querySelectorAll("#views-setup .viewbar-name")).map((node) => node.textContent ?? "");
-        // A laser has no top camera and no pick and place head: their views are not listed.
-        expect(names()).toEqual(["Head camera", "Bottom camera"]);
-        expect(app.querySelector("#page-cameras")!.getAttribute("data-view")).toBe("head-camera");
-        // The machine connected has them: they are listed once their panels show.
-        for (const id of ["pnp-top", "pnp-head"]) {
-            app.querySelector(`#${id}`)!.classList.remove("hidden");
-        }
-        store.set({ snapshot: connected() });
-        expect(names()).toEqual(["Head camera", "Bottom camera", "Top camera", "Head and bed"]);
     });
 });
 

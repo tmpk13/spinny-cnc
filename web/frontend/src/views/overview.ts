@@ -1,7 +1,7 @@
 // The Home area: where things stand, and the one thing to do next. Three
-// panels: Next (the machine connected or not, the step the work stands at
-// with what is so there, and one button that goes on with it: connect the
-// machine found, or the Run area at that step), Needs you (what the
+// panels: Next (the machine connected or not, the stage of a run the work
+// stands at with what is so there, and one button that goes on with it:
+// connect the machine found, or the panel that does that stage), Needs you (what the
 // Checklist says a person has to do now, each line a link to where it is
 // done), and the jobs to pick from. Home holds no setting and no control
 // of the machine but Connect: everything else is a press away, in the area
@@ -11,55 +11,57 @@ import { el, replace } from "../dom.ts";
 import { factsOf, type Fact } from "../facts.ts";
 import { defaultPort } from "../ports.ts";
 import type { AppState } from "../state.ts";
-import { isSteps, machineName, runText, stepToOpen, viewsOf } from "./areaviews.ts";
 import { connectOffered, offeredPorts, portName } from "./connection.ts";
 import type { Ctx } from "./context.ts";
 import { runActive } from "./heightmap.ts";
 import { FACT_KEYS } from "./facts.ts";
 import { goTo, linkToText } from "./links.ts";
+import { machineName, nextStage, runStages, runText } from "./stages.ts";
+import { goToPanel } from "./steps.ts";
 import { showPage } from "./tabs.ts";
-import { showAreaView } from "./viewbar.ts";
 
 /** What Home offers next: its name, what is so, the button's words, and what the button does. */
 export interface NextAction {
-    /** Connect the port found, find a port, watch a run, or go on at a step of the Run area. */
-    kind: "connect" | "ports" | "run" | "step";
+    /** Connect the port found, find a port, watch a run, or go on at a stage of a run. */
+    kind: "connect" | "ports" | "run" | "stage";
     title: string;
     detail: string;
     label: string;
-    /** The Run area's step the button opens; null for an action that is not a step. */
-    step: string | null;
+    /** The stage the button goes on with; null for an action that is not one. */
+    stage: string | null;
+    /** The panel the button goes to; null for one that goes to no panel. */
+    panel: string | null;
 }
 
 /**
  * The next thing to do, from the state: watch a run under way; connect the
- * machine found, or find it; else the Run area's first step a run needs
- * that is not done (pick a job, home, place the board), ending in the run.
+ * machine found, or find it; else the first stage a run needs that is not
+ * done (pick a job, home, place the board), ending in the run.
  */
 export function nextAction(state: AppState): NextAction {
     const progress = state.progress ?? state.snapshot.run;
     if (progress !== null && runActive(progress)) {
-        return { kind: "run", title: progress.state === "hold" ? "A run is held" : "A run is under way", detail: runText(state), label: "Show the run", step: "run" };
+        return { kind: "run", title: progress.state === "hold" ? "A run is held" : "A run is under way", detail: runText(state), label: "Show the run", stage: "run", panel: "run" };
     }
     if (!state.snapshot.connected) {
         const port = defaultPort(offeredPorts(state));
         return port
-            ? { kind: "connect", title: "Connect the machine", detail: `${portName(port)} is plugged in.`, label: `Connect ${portName(port)}`, step: null }
-            : { kind: "ports", title: "Connect the machine", detail: "No port found: plug the machine in, or type its port on the Machines page.", label: "Machines and ports", step: null };
+            ? { kind: "connect", title: "Connect the machine", detail: `${portName(port)} is plugged in.`, label: `Connect ${portName(port)}`, stage: null, panel: null }
+            : { kind: "ports", title: "Connect the machine", detail: "No port found: plug the machine in, or type its port on the Machines page.", label: "Machines and ports", stage: null, panel: "connection" };
     }
-    const views = viewsOf("run", state);
-    const id = isSteps(views) ? stepToOpen(views) : null;
-    const step = views.find((view) => view.id === id);
-    if (!step) {
-        return { kind: "step", title: "Run", detail: "", label: "Go to Run", step: null };
+    const stages = runStages(state);
+    const stage = nextStage(stages);
+    if (!stage) {
+        return { kind: "stage", title: "Run", detail: "", label: "Go to Run", stage: null, panel: "run" };
     }
-    const last = step === views[views.length - 1];
+    const last = stage === stages[stages.length - 1];
     return {
-        kind: "step",
-        title: last ? step.label : `${step.label}: ${step.tip}`,
-        detail: step.line ?? "",
-        label: last ? `Go to ${step.label}` : `Continue: ${step.label}`,
-        step: step.id,
+        kind: "stage",
+        title: last ? stage.label : `${stage.label}: ${stage.tip}`,
+        detail: stage.line,
+        label: last ? `Go to ${stage.label}` : `Continue: ${stage.label}`,
+        stage: stage.id,
+        panel: stage.panel,
     };
 }
 
@@ -95,9 +97,10 @@ export function mountOverview(root: HTMLElement, ctx: Ctx): void {
                 void goTo({ panel: "connection", detail: null });
                 break;
             default:
-                showPage("run");
-                if (action.step !== null) {
-                    showAreaView("run", action.step);
+                if (action.panel !== null) {
+                    goToPanel(action.panel);
+                } else {
+                    showPage("run");
                 }
         }
     });
@@ -118,7 +121,7 @@ export function mountOverview(root: HTMLElement, ctx: Ctx): void {
         set(detail, action.detail);
         detail.hidden = action.detail === "";
         set(go, action.label);
-        go.title = action.kind === "connect" ? "open the port and read the machine's settings" : action.kind === "ports" ? "the Setup side's Machines page" : "the Run area, at this step";
+        go.title = action.kind === "connect" ? "open the port and read the machine's settings" : action.kind === "ports" ? "the Setup side's Machines page" : "the panel that does this";
     };
     ctx.store.subscribe(draw, ["snapshot", "ports", "jobs", "job", "progress", "placing", "components", "settings", "machines", "heightMap"]);
     draw(ctx.store.get());

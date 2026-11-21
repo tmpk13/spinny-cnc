@@ -13,11 +13,13 @@ cherry-pick on 2026-11-11.
   whole block, since stuck panels move together; a drop onto a panel
   stacks only when the dragged block is one stack. Left/right keep the
   place counted in blocks.
-- Layouts kept by name are global (one covers every page): a layout is a
-  way of working, and per-page names would multiply. Default is reserved.
-  Edit mode is not stored. localStorage: `spinny.layout` (the working
-  layout by page; pages matching their markup are not stored),
-  `spinny.layout.presets`, `spinny.tabs` ({start, fold, hidden}).
+- Layouts are kept by mode since 2026-11-21 (notes/modes.md), each mode
+  covering every page: a mode is a way of working, and per-page names
+  would multiply. Edit mode is not stored. localStorage: `spinny.layout`
+  (the layouts drawn, the mode in use's; pages matching their markup are
+  not stored), `spinny.modes`, `spinny.tabs` ({start, fold, hidden}).
+  `spinny.layout.presets` (layouts kept by name before modes, Default
+  reserved) is read once, into modes of the operator's own.
 - Panels folding with their own disclosure (Setup, Align, Camera, Job
   JSON) keep that fold their own way (foldPanel's key); the layer only
   opens and closes it. Storing the fold in the layout too gave two

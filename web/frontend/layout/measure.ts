@@ -64,7 +64,7 @@ export function measure(): Measure {
         if (panel) {
             return panel.id;
         }
-        return node.closest(".viewbar") ? "views" : node.closest(".tabs") ? "rail" : node.closest(".statusbar") ? "bar" : node.closest("dialog, [role=dialog]") ? "dialog" : "other";
+        return node.closest(".tabs") ? "rail" : node.closest(".statusbar") ? "bar" : node.closest("dialog, [role=dialog]") ? "dialog" : "other";
     };
     const tally = (counts: Map<string, number>): string => Array.from(counts.entries()).sort((a, b) => b[1] - a[1]).map(([where, count]) => `${where} ${count}`).join(", ");
     const all = Array.from(document.querySelectorAll("button, input:not([type=hidden]), select, textarea, a[href], summary")).filter(shown);

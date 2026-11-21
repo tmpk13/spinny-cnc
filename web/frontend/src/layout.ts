@@ -3,9 +3,9 @@
 // tabs over it), panels stuck together (drawn as one block with no gap and
 // moved as one), and each panel's own state: folded, hidden by the
 // operator, or held at a fixed height. A layout also gives the columns'
-// widths. The page's markup is the default layout; what the operator
-// changes is kept per browser, and layouts can be saved under a name and
-// brought back (presets). Pure functions over plain data, so they can be
+// widths. The page's markup is the default layout; a mode (src/modes.ts)
+// arranges a page its own way, and what the operator changes is kept per
+// browser with the mode. Pure functions over plain data, so they can be
 // tested without a page; src/views/panels.ts puts a layout on the page.
 //
 // A column is a list of blocks, a block a list of stacks stuck together,
@@ -842,13 +842,10 @@ export function moveStack(layout: PageLayout, id: string, step: -1 | 1): PageLay
     return next;
 }
 
-// --- many pages, and the layouts kept by name --------------------------------
+// --- many pages, and a page arranged by a spec --------------------------------
 
 /** The layouts of several pages by page id, as stored: only pages that differ from their markup. */
 export type Layouts = Record<string, PageLayout>;
-
-/** The name of the markup's own layout, which cannot be saved over or deleted. */
-export const DEFAULT_PRESET = "Default";
 
 /** Reads stored JSON as an object, or an empty one for nothing stored or text that is not an object. */
 export function readObject(text: string | null): Record<string, unknown> {
@@ -879,43 +876,59 @@ export function canonicalLayouts(raw: Record<string, unknown>, defaults: Record<
     return out;
 }
 
-/** The names kept (Default first), each a layout of the pages by page id. */
-export function readPresets(text: string | null): Record<string, Record<string, unknown>> {
-    const raw = readObject(text);
-    const out: Record<string, Record<string, unknown>> = {};
-    for (const [name, value] of Object.entries(raw)) {
-        if (name.trim() !== "" && name.toLowerCase() !== DEFAULT_PRESET.toLowerCase() && isObject(value)) {
-            out[name] = value;
-        }
-    }
-    return out;
+/** Whether two sets of layouts are the same once each is put in its stored form. */
+export function sameLayouts(a: Record<string, unknown>, b: Record<string, unknown>, defaults: Record<string, Defaults>): boolean {
+    return JSON.stringify(canonicalLayouts(a, defaults)) === JSON.stringify(canonicalLayouts(b, defaults));
 }
 
-/** Why a name cannot be saved under, or null when it can. */
-export function presetNameProblem(name: string): string | null {
-    const trimmed = name.trim();
-    if (trimmed === "") {
-        return "name the layout";
-    }
-    if (trimmed.toLowerCase() === DEFAULT_PRESET.toLowerCase()) {
-        return "Default is the built-in layout; pick another name";
-    }
-    if (trimmed.length > 40) {
-        return "name: at most 40 characters";
-    }
-    return null;
+/**
+ * How a page is arranged for a purpose (a mode): the panels laid out
+ * first, by column (an id, or the ids of a stack shown one at a time under
+ * their tabs), the panels hidden, and the panels folded. The page's other
+ * panels keep the markup's column, order and stacks, and show: a panel
+ * added later (a plugin's) is in every arrangement.
+ */
+export interface Arrangement {
+    columns?: (string | string[])[][];
+    hidden?: readonly string[];
+    folded?: readonly string[];
 }
 
-/** The kept name whose layouts are the ones given, Default for the markup's everywhere, or null for none. */
-export function matchingPreset(current: Layouts, presets: Record<string, Record<string, unknown>>, defaults: Record<string, Defaults>): string | null {
-    const shown = JSON.stringify(current);
-    if (shown === "{}") {
-        return DEFAULT_PRESET;
-    }
-    for (const [name, layouts] of Object.entries(presets)) {
-        if (JSON.stringify(canonicalLayouts(layouts, defaults)) === shown) {
-            return name;
+/**
+ * The layout an arrangement gives a page: its columns' panels first in
+ * each column, in its order; every other panel where the markup puts it,
+ * joining the stack the markup puts it in; the hidden ones hidden. Ids the
+ * page does not have are passed over, so an arrangement written for every
+ * kind of machine fits a page that lacks some panels.
+ */
+export function arrangedLayout(arrangement: Arrangement, defaults: Defaults): PageLayout {
+    const known = new Set(defaults.flat());
+    const placed = new Set<string>();
+    const columns: Block[][] = defaults.map(() => []);
+    (arrangement.columns ?? []).forEach((entries, index) => {
+        const column = columns[Math.min(index, columns.length - 1)];
+        for (const entry of entries) {
+            const ids = (Array.isArray(entry) ? entry : [entry]).filter((id) => known.has(id) && !placed.has(id));
+            if (!column || ids.length === 0) {
+                continue;
+            }
+            for (const id of ids) {
+                placed.add(id);
+            }
+            column.push([{ ids, front: ids[0]! }]);
+        }
+    });
+    const panels: Record<string, PanelPrefs> = {};
+    for (const id of arrangement.hidden ?? []) {
+        if (known.has(id)) {
+            panels[id] = { hidden: true };
         }
     }
-    return null;
+    for (const id of arrangement.folded ?? []) {
+        if (known.has(id) && panels[id] === undefined) {
+            panels[id] = { collapsed: true };
+        }
+    }
+    // The panels left out go where the markup has them (normalizeLayout).
+    return normalizeLayout({ columns, widths: null, panels }, defaults);
 }

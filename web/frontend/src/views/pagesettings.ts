@@ -1,10 +1,10 @@
 // The page settings, behind a gear at the right end of the tab bar: the
 // tab the page opens on, the tab bar folding to a strip, and the tabs kept
-// out of the bar; the panel layouts kept by name and the one in use, the
-// edit mode that drags panels about, the page's panels put back as the
-// markup has them, and the panels hidden, each to show again. Beside the
-// gear, once a layout is kept, a pick of the layouts swaps them in one
-// step, and in edit mode a Done editing button ends it. An eye beside the
+// out of the bar; the mode in use (src/views/modes.ts), put back as it has
+// its panels itself, a mode of one's own kept from the panels as they are
+// or deleted; the edit mode that drags panels about, the area's panels put
+// back as the mode has them, and the panels hidden, each to show again.
+// Beside the gear, in edit mode, a Done editing button ends it. An eye beside the
 // gear, while any panel is hidden, shows the hidden panels for a while
 // (marked as hidden) and hides them again; two arrows scroll the column
 // last pointed at to its top or its end. The look: the page's own fonts or
@@ -13,10 +13,11 @@
 // kept in this browser; the peek is not.
 
 import { popUp } from "../dismiss.ts";
-import { el, labeled, replace, svgIcon } from "../dom.ts";
-import { DEFAULT_PRESET } from "../layout.ts";
+import { el, labeled, replace, setLocked, svgIcon } from "../dom.ts";
 import { readLook, writeLook, type Look } from "../look.ts";
 import { closeMenu } from "../menu.ts";
+import { ownNameOf } from "../modes.ts";
+import { fillModes, type ModesController } from "./modes.ts";
 import { TO_END, TO_TOP, type PanelsController } from "./panels.ts";
 import { onPage, PAGES, readTabPrefs, writeTabPrefs, type PageId, type TabPrefs } from "./tabs.ts";
 
@@ -39,13 +40,14 @@ function gearPath(): string {
 /** An eye: its outline and its pupil. */
 const EYE = "M0.8 8c1.9 -3.1 4.4 -4.7 7.2 -4.7s5.3 1.6 7.2 4.7c-1.9 3.1 -4.4 4.7 -7.2 4.7s-5.3 -1.6 -7.2 -4.7zM8 5.4a2.6 2.6 0 1 0 0.01 0z";
 
-/** The name the layout pick shows for a layout no name keeps. */
-const UNKEPT = "";
-
-export function mountPageSettings(tools: HTMLElement, panels: PanelsController): void {
+/**
+ * Mounts the gear and its sheet in `tools`. `modes` gives the sheet its
+ * Mode part; left out (a test of the panels alone), an area's reset puts
+ * it back as the page first lays it out.
+ */
+export function mountPageSettings(tools: HTMLElement, panels: PanelsController, modes: ModesController | null = null): void {
     const gear = el("button", { type: "button", class: "tabs-gear", "aria-label": "Page settings", "aria-haspopup": "dialog", "aria-expanded": "false", "data-label": "Settings", title: "page settings" });
     gear.append(svgIcon(gearPath(), true));
-    const quick = el("select", { class: "field tabs-layouts", "aria-label": "Panel layout", title: "the panel layout; pick a kept one to swap to it" }) as HTMLSelectElement;
     const done = el("button", { type: "button", class: "btn btn-small btn-primary tabs-done", title: "stop editing the panels" }, "Done editing");
     const peek = el("button", { type: "button", class: "tabs-tool tabs-peek", "aria-label": "Show hidden panels", "aria-pressed": "false", "data-label": "Hidden panels" });
     peek.append(svgIcon(EYE, true));
@@ -58,25 +60,9 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
     toEnd.addEventListener("click", () => panels.scrollColumn("end"));
     const sheet = el("div", { class: "panel page-settings", role: "dialog", "aria-label": "Page settings" });
     sheet.hidden = true;
-    tools.append(quick, done, toTop, toEnd, peek, gear, sheet);
-
-    /** Fills a layout pick: Default, the kept names, and a blank for a layout none keeps. */
-    function fillLayouts(select: HTMLSelectElement): void {
-        const current = panels.currentPreset();
-        const names = [DEFAULT_PRESET, ...panels.presetNames()];
-        const options = names.map((name) => el("option", { value: name }, name));
-        if (current === null) {
-            options.push(el("option", { value: UNKEPT, disabled: true }, "(not kept)"));
-        }
-        replace(select, ...options);
-        select.value = current ?? UNKEPT;
-    }
+    tools.append(done, toTop, toEnd, peek, gear, sheet);
 
     function drawBar(): void {
-        quick.hidden = panels.presetNames().length === 0;
-        if (!quick.hidden) {
-            fillLayouts(quick);
-        }
         done.hidden = !panels.editing();
         // The eye shows while a panel is hidden, or while it is pressed.
         const hidden = panels.hiddenPanels().length;
@@ -95,11 +81,6 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
         peek.title = panels.peeking() ? "hide the hidden panels again" : `show the ${hidden} hidden panel${hidden === 1 ? "" : "s"} for now`;
     }
 
-    quick.addEventListener("change", () => {
-        if (quick.value !== UNKEPT) {
-            panels.applyPreset(quick.value);
-        }
-    });
     done.addEventListener("click", () => panels.setEditing(false));
 
     function setTabs(change: Partial<TabPrefs>): void {
@@ -145,43 +126,7 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
             return el("label", { class: "check", title: "a tab left out opens from More at the bar's end" }, box, ` ${page.label}`);
         });
 
-        const layout = el("select", { class: "field", "aria-label": "Panel layout", title: "a kept arrangement of every page's panels" }) as HTMLSelectElement;
-        fillLayouts(layout);
-        layout.addEventListener("change", () => {
-            if (layout.value !== UNKEPT) {
-                panels.applyPreset(layout.value);
-            }
-        });
-        const current = panels.currentPreset();
-        const remove = el("button", { type: "button", class: "btn btn-small btn-quiet" }, "Delete");
-        remove.title = "forget the layout picked";
-        if (current === null || current === DEFAULT_PRESET) {
-            remove.disabled = true;
-            remove.dataset["reason"] = current === DEFAULT_PRESET ? "Default is built in" : "pick a kept layout first";
-        }
-        remove.addEventListener("click", () => {
-            if (current !== null && current !== DEFAULT_PRESET) {
-                panels.deletePreset(current);
-            }
-        });
-        const name = el("input", { type: "text", class: "field", placeholder: "name", "aria-label": "Layout name", autocomplete: "off", spellcheck: "false" }) as HTMLInputElement;
-        name.value = current !== null && current !== DEFAULT_PRESET ? current : "";
-        const problem = el("p", { class: "hint page-settings-problem", role: "status" });
-        const keep = el("button", { type: "button", class: "btn btn-small" }, "Keep as");
-        keep.title = "keep every page's layout under the name, replacing one of that name";
-        const saveAs = (): void => {
-            const said = panels.savePreset(name.value);
-            if (said !== null) {
-                problem.textContent = said;
-            }
-        };
-        keep.addEventListener("click", saveAs);
-        name.addEventListener("keydown", (event) => {
-            if (event.key === "Enter") {
-                event.preventDefault();
-                saveAs();
-            }
-        });
+        const modeRows = modes ? modeSettings(modes) : [];
 
         const edit = el("button", { type: "button", class: "btn btn-small btn-toggle", "aria-pressed": String(panels.editing()) }, "Edit panels");
         edit.title = "show grips to drag panels between columns and onto each other";
@@ -196,8 +141,16 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
         const page = currentPage();
         const label = PAGES.find((entry) => entry.id === page)!.label;
         const reset = el("button", { type: "button", class: "btn btn-small btn-quiet" }, `Reset ${label}`);
-        reset.title = "put this page's panels back as they first were";
-        reset.addEventListener("click", () => panels.resetPage(page));
+        reset.title = modes ? `put this area's panels back as ${modes.name(modes.current())} has them` : "put this area's panels back as they first were";
+        reset.addEventListener("click", () => {
+            if (modes) {
+                modes.resetPage(page);
+            } else {
+                const next: Record<string, unknown> = { ...panels.layouts() };
+                delete next[page];
+                panels.setLayouts(next);
+            }
+        });
 
         const hidden = panels.hiddenPanels();
         const hiddenList = hidden.length === 0
@@ -235,12 +188,10 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
                 labeled("Open on", start, "labeled inline"),
                 el("label", { class: "check", title: "the bar opens on hover, or on a press of the strip" }, fold, " Fold the tab bar"),
                 el("div", { class: "page-settings-tabs", title: "a tab left out opens from More at the bar's end" }, ...shownTabs),
+                ...modeRows,
                 el("h3", {}, "Panels"),
-                el("div", { class: "button-row" }, labeled("Layout", layout, "labeled inline"), remove),
-                el("div", { class: "button-row" }, name, keep),
-                problem,
                 el("div", { class: "button-row" }, edit, reset),
-                el("h3", {}, "Hidden panels"),
+                el("h3", {}, modes ? `Hidden in ${modes.name(modes.current())}` : "Hidden panels"),
                 hiddenList,
                 el("h3", {}, "Look"),
                 labeled("Fonts", fonts, "labeled inline"),
@@ -248,6 +199,52 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
                 el("label", { class: "check", title: "each page's own color under its tab and along the top of its panels" }, colors, " Colors for tabs and panels"),
             ),
         );
+    }
+
+    /**
+     * The sheet's Mode part: the mode in use, put back as it has its
+     * panels itself, deleted when it is one of the operator's, and the
+     * panels as they are kept as a mode of one's own under a name.
+     */
+    function modeSettings(controller: ModesController): HTMLElement[] {
+        const key = controller.current();
+        const name = controller.name(key);
+        const pick = el("select", { class: "field", "aria-label": "Mode" }) as HTMLSelectElement;
+        fillModes(pick, controller);
+        pick.addEventListener("change", () => controller.pick(pick.value));
+        const reset = el("button", { type: "button", class: "btn btn-small btn-quiet" }, `Reset ${name}`);
+        reset.title = `put every area's panels back as ${name} has them`;
+        setLocked(reset, !controller.changed(), `${name} has its panels as it has them already`);
+        reset.addEventListener("click", () => controller.reset());
+        const own = ownNameOf(key) !== null;
+        const remove = el("button", { type: "button", class: "btn btn-small btn-quiet" }, `Delete ${name}`);
+        remove.title = "forget this mode of yours; All panels takes its place";
+        remove.hidden = !own;
+        remove.addEventListener("click", () => controller.remove(key));
+        const field = el("input", { type: "text", class: "field", placeholder: "name", "aria-label": "Mode name", autocomplete: "off", spellcheck: "false" }) as HTMLInputElement;
+        field.value = own ? name : "";
+        const problem = el("p", { class: "hint page-settings-problem", role: "status" });
+        const keep = el("button", { type: "button", class: "btn btn-small" }, "Keep as");
+        keep.title = "keep every area's panels as they are now as a mode of yours, under the name (replacing one of yours of that name)";
+        const keepAs = (): void => {
+            const said = controller.keep(field.value);
+            if (said !== null) {
+                problem.textContent = said;
+            }
+        };
+        keep.addEventListener("click", keepAs);
+        field.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                keepAs();
+            }
+        });
+        return [
+            el("h3", {}, "Mode"),
+            el("div", { class: "button-row" }, labeled("Mode", pick, "labeled inline"), reset, remove),
+            el("div", { class: "button-row" }, field, keep),
+            problem,
+        ];
     }
 
     let release: (() => void) | null = null;
@@ -303,6 +300,7 @@ export function mountPageSettings(tools: HTMLElement, panels: PanelsController):
         drawBar();
         drawSheet();
     });
+    modes?.onChange(() => drawSheet());
     onPage(() => drawSheet());
     drawBar();
 }

@@ -4,7 +4,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { cameraViews, viewPanels } from "../src/views/areaviews.ts";
+import { builtInOf } from "../src/modes.ts";
 import { mountCameraViews, topCenter } from "../src/views/camview.ts";
 import type { AppState } from "../src/state.ts";
 import { mountVision } from "../src/views/vision.ts";
@@ -22,16 +22,27 @@ afterEach(() => {
     }
 });
 
-describe("the Cameras page's views", () => {
-    test("each camera's view leads with its picture, its settings beside it", () => {
-        const views = cameraViews();
-        expect(viewPanels(views[0]!)).toEqual(["camera-picture", "camera", "camera-controls", "camera-sight", "camera-changes"]);
-        expect(viewPanels(views[1]!)).toEqual(["pnp-camera-picture", "pnp-camera", "pnp-nozzle", "pnp-camera-controls", "pnp-camera-sight", "pnp-camera-changes"]);
-        expect(viewPanels(views[2]!)).toEqual(["pnp-top-picture", "pnp-top", "pnp-top-controls", "pnp-top-sight", "pnp-top-changes"]);
-        // The picture is the work: the first column, and the wider one.
-        for (const view of views.slice(0, 3)) {
-            expect(view.columns[0]).toHaveLength(1);
-            expect(view.cols).toStartWith("minmax(0, 3fr)");
+describe("the Cameras page in the config modes", () => {
+    test("each camera's picture in a column of its own beside its settings; the other kind of machine's cameras hidden", () => {
+        const cases: [string, string[], string[]][] = [
+            ["laser-config", ["camera-picture", "camera", "camera-controls", "camera-sight", "camera-changes"], ["pnp-camera-picture", "pnp-top-picture", "pnp-nozzle"]],
+            ["pnp-config", ["pnp-camera-picture", "pnp-camera", "pnp-nozzle", "pnp-top-picture", "pnp-top", "pnp-head", "pnp-machine-view"], ["camera-picture", "camera"]],
+        ];
+        for (const [id, shown, hidden] of cases) {
+            const cameras = builtInOf(id)!.pages.cameras!;
+            const named = cameras.columns!.flat(2);
+            for (const panel of shown) {
+                expect(named).toContain(panel);
+            }
+            for (const panel of hidden) {
+                expect(cameras.hidden).toContain(panel);
+            }
+            // No column holds both a picture and the settings it shows.
+            for (const column of cameras.columns!) {
+                const ids = column.flat();
+                const pictures = ids.filter((panel) => panel.endsWith("-picture"));
+                expect(pictures.length === 0 || pictures.length === ids.length).toBe(true);
+            }
         }
     });
 

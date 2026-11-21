@@ -357,8 +357,8 @@ input[type="checkbox"] {
 }
 
 /* The tab bar: the tabs, the More folder holding tabs kept out of the
-   bar, and the tools at its right end (the layout pick, Done in edit
-   mode, the page settings gear). It sits over the page so its menus and,
+   bar, and the tools at its right end (Done in edit mode, the page
+   settings gear). It sits over the page so its menus and,
    folded, the opened bar cover the panels. */
 .tabs {
     position: relative;
@@ -525,14 +525,6 @@ input[type="checkbox"] {
     gap: 0.5rem;
     margin-left: auto;
     padding-block: 0.25rem;
-}
-
-.tabs-layouts.field {
-    width: auto;
-    max-width: 12rem;
-    min-height: 2.25rem;
-    padding-block: 0.15rem;
-    font-size: 0.85rem;
 }
 
 .tabs-gear,
@@ -879,10 +871,6 @@ input[type="checkbox"] {
         bottom: var(--gap);
         left: calc(var(--rail) + 0.5rem);
         max-height: calc(100vh - 6rem);
-    }
-
-    .tabs-layouts.field {
-        max-width: 100%;
     }
 
     .tabs[data-fold] {
@@ -3078,10 +3066,10 @@ table.settings tbody tr:hover td {
 
 /* Toasts */
 
-/* In the middle of the page's foot, over the lower edge of the work and
-   clear of the dock: the corners hold controls (a step's panel, the
-   dock's buttons), and a message over them hid Run. A long word (a
-   port's path) breaks rather than run out of its box. */
+/* In the middle of the page's foot, over the lower edge of the work: the
+   corners hold controls (the Run panel stuck to its column's foot), and a
+   message over them hid Run. A long word (a port's path) breaks rather
+   than run out of its box. */
 .toasts {
     position: fixed;
     left: calc(var(--rail, 0rem) + (100vw - var(--rail, 0rem)) / 2);
@@ -6472,13 +6460,6 @@ table.find-guesses tr.elsewhere td {
     display: none;
 }
 
-/* In a view the link shows only while something on the Setup side needs
-   doing for its panel: the rail lists that side's areas beside every view,
-   so a link with nothing to say is one more thing to read. */
-.page[data-view] .setup-link:not([data-need]) {
-    display: none;
-}
-
 /* --- movement (src/look.ts) -------------------------------------------- */
 
 /* Things move into place, briefly, by opacity and transform alone, so the
@@ -6687,373 +6668,17 @@ table.find-guesses tr.elsewhere td {
     border-style: dashed;
 }
 
-/* --- the frame: views and the dock (docs/UI_VISUAL.md) ------------------ */
+/* --- Home ----------------------------------------------------------------- */
 
-/* An area's views across its top, a view's panels in set places with the
-   work largest, the machine's dock along the foot. These rules come after
-   the components' own, which they adjust, and before the flow's. They are
-   in this file and not one of their own: two stylesheets linked from the
-   page load in an order the dev server picks, not the page's. */
-
-/* --- an area's views (src/views/viewbar.ts) ----------------------------- */
-
-/* The bar sits over the page in its side's pane, and takes no room while
-   the area shown has no views. Its row is max-content: an auto row beside
-   the page's flexible one came out at no height in Chromium, and the page
-   lay over the bar. */
-.pane {
-    grid-template-rows: max-content minmax(0, 1fr);
-}
-
-.pane > .viewbar {
-    grid-row: 1;
-}
-
-.pane > main.page {
-    grid-row: 2;
-}
-
-.viewbar {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    padding: 0.5rem var(--gap) 0.55rem;
-    border-bottom: thin solid var(--border);
-    min-width: 0;
-}
-
-.viewbar-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.4rem 1rem;
-    min-width: 0;
-}
-
-/* Steps: numbered circles joined by a line, each with its name beside it. */
-.viewbar-steps {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    flex: 1 1 auto;
-    min-width: 0;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-}
-
-.viewbar-item {
-    display: flex;
-    align-items: center;
-}
-
-.viewbar-item + .viewbar-item::before {
-    content: "";
-    width: 1.25rem;
-    height: 0.0625rem;
-    margin: 0 0.15rem;
-    background: var(--border-strong);
-}
-
-.viewbar-step {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.45rem;
-    min-height: 2.25rem;
-    padding: 0.25rem 0.65rem 0.25rem 0.3rem;
-    border: 0;
-    border-radius: 99rem;
-    background: none;
-    color: var(--muted);
-    font: inherit;
-    font-weight: 500;
-    cursor: pointer;
-}
-
-.viewbar-step:hover {
-    background: var(--btn-hover);
-    color: var(--strong);
-}
-
-.viewbar-dot {
-    display: grid;
-    place-items: center;
-    flex: none;
-    width: 1.6rem;
-    height: 1.6rem;
-    border: 0.09rem solid var(--border-strong);
-    border-radius: 50%;
-    background: var(--panel);
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 0.8rem;
-    font-weight: 600;
-    line-height: 1;
-}
-
-.viewbar-dot .icon {
-    width: 0.95rem;
-    height: 0.95rem;
-    fill: currentColor;
-}
-
-/* Done: green, the color of done. To do without: a dashed ring. */
-.viewbar-item[data-done] .viewbar-dot {
-    border-color: var(--green);
-    color: var(--green);
-}
-
-.viewbar-item[data-step="optional"] .viewbar-dot {
-    border-style: dashed;
-}
-
-/* The step shown: ink, the one dark thing in the row. */
-.viewbar-item[data-step="now"] .viewbar-step {
-    color: var(--strong);
-    font-weight: 650;
-}
-
-.viewbar-item[data-step="now"] .viewbar-dot {
-    border-color: var(--strong);
-    background: var(--strong);
-    color: var(--panel);
-}
-
-/* What is so in the step shown, and the way back and on. */
-.viewbar-line {
-    align-items: baseline;
-}
-
-.viewbar-words {
-    flex: 1 1 18rem;
-    min-width: 0;
-    margin: 0;
-    overflow-wrap: anywhere;
-}
-
-.viewbar-title {
-    margin-right: 0.5rem;
-    color: var(--strong);
-    font-weight: 650;
-}
-
-.viewbar-tag {
-    margin-right: 0.5rem;
-    padding: 0.05rem 0.45rem;
-    border: thin solid var(--border-strong);
-    border-radius: 99rem;
-    font-size: 0.75rem;
-}
-
-.viewbar-nav {
-    display: flex;
-    gap: 0.4rem;
-    margin-left: auto;
-}
-
-/* What Auto is doing, or where it stopped and why: a line of its own
-   under the step's, ink while it waits for someone. */
-.viewbar-auto {
-    margin: 0;
-    color: var(--muted);
-    overflow-wrap: anywhere;
-}
-
-.viewbar-auto[data-auto="need"] {
-    color: var(--strong);
-    font-weight: 600;
-}
-
-/* Where the rail shows, the steps are named and in reach right over this
-   line: Back would only say one of them again. A narrow window, whose
-   steps are small marks, keeps it. */
-@media (min-width: 64rem) {
-    .viewbar-back {
-        display: none;
-    }
-}
-
-/* Stacked in a narrow window, a step's own panel, which holds what to do
-   now, comes before the work it is done on. */
-@container pane (max-width: 63.99rem) {
-    /* The columns are not boxes there (display: contents): their panels
-       are the page's own items, so the order is given to them. */
-    .grid[data-view] > .column[data-lead-column] > * {
-        order: -1;
-    }
-}
-
-/* Plain views: tabs, the one shown raised like a panel. */
-.viewbar-tabs {
-    display: flex;
-    flex-wrap: wrap;
-    flex: 1 1 auto;
-    gap: 0.25rem;
-    min-width: 0;
-}
-
-.viewbar-tab {
-    min-height: 2.25rem;
-    padding: 0.3rem 0.8rem;
-    border: thin solid transparent;
-    border-radius: var(--radius);
-    background: none;
-    color: var(--muted);
-    font: inherit;
-    font-weight: 550;
-    cursor: pointer;
-}
-
-.viewbar-tab:hover {
-    background: var(--btn-hover);
-    color: var(--strong);
-}
-
-.viewbar-tab[aria-selected="true"] {
-    border-color: var(--border);
-    background: var(--panel);
-    color: var(--strong);
-    box-shadow: var(--shadow);
-}
-
-/* --- a view on its page -------------------------------------------------- */
-
-/* A view's panels are not arranged by hand: the layout's tools go. */
-.page[data-view] :is(.panel-menu-button, .panel-grip, .panel-resize, .panel-tabs-apart),
-.page[data-view] > .column-resize {
-    display: none;
-}
-
-@container pane (min-width: 64rem) {
-    /* The view's own columns; one with nothing in it gives its room away. */
-    .grid[data-view] {
-        grid-template-columns: var(--view-cols, minmax(0, 1fr) minmax(19rem, 26rem));
-    }
-
-    .grid[data-view] > .column[data-empty] {
-        display: none;
-    }
-
-    /* The dock: the last column laid along the foot, under the others. */
-    .grid[data-view][data-dock] {
-        grid-template-rows: minmax(0, 1fr) auto;
-    }
-
-    .grid[data-view] > .column[data-dock-column] {
-        grid-column: 1 / -1;
-        grid-row: 2;
-        overflow: visible;
-    }
-
-    /* The work takes the height its column has, and gives height up to an
-       opened dock: the preview's box follows its panel, not the window. */
-    .grid[data-view] > .column > :is(.preview-panel, .picture-panel, #pnp-board):not([data-collapsed], [data-height]) {
-        flex: 1 1 0;
-        min-height: 12rem;
-    }
-
-    /* A camera's picture keeps inside its panel. The panel has the height
-       its column gives it, so its rows are laid in a column of their own
-       and the picture's box, alone among them, gives up the height the
-       rows around it need: a box dragged tall by its grip, or a wide one
-       in a short window, stops at the panel's edge instead of running on
-       past it. The picture is fitted inside whatever box that leaves. */
-    .grid[data-view] > .column > .picture-panel:not([data-collapsed], [data-height]) {
-        display: flex;
-        flex-direction: column;
-    }
-
-    .grid[data-view] > .column > .picture-panel:not([data-collapsed], [data-height]) > * {
-        flex: none;
-    }
-
-    .grid[data-view] > .column > .picture-panel:not([data-collapsed], [data-height]) > .panel-body {
-        display: flex;
-        flex: 0 1 auto;
-        flex-direction: column;
-        min-height: 0;
-    }
-
-    .grid[data-view] > .column > .picture-panel:not([data-collapsed], [data-height]) > .panel-body > * {
-        flex: none;
-    }
-
-    .grid[data-view] > .column > .picture-panel:not([data-collapsed], [data-height]) > .panel-body > .picture-view {
-        flex: 0 1 auto;
-        min-height: 0;
-    }
-
-    .grid[data-view] > .column > .picture-panel:not([data-collapsed], [data-height]) .picture-view > * {
-        flex: none;
-    }
-
-    .grid[data-view] > .column > .picture-panel:not([data-collapsed], [data-height]) .picture-view > .picture-box {
-        flex: 0 1 auto;
-    }
-
-    .grid[data-view] > .column > .preview-panel {
-        max-height: none;
-    }
-
-    .grid[data-view] > .column > .preview-panel > .preview-box {
-        flex: 1 1 0;
-        height: auto;
-        min-height: 6rem;
-        max-height: none;
-    }
-}
-
-/* A camera's picture in front of a stack has nothing in its head but how
-   the pointer works it: the mark keeps to the panel's corner, and the
-   head takes no line of its own. */
-.page[data-view] .panel[data-stacked] {
-    position: relative;
-}
-
-.page[data-view] .panel[data-stacked] > .panel-head:has(> .help-mark):not(:has(> .button-row, > .badge, > .setup-link)) {
-    position: absolute;
-    top: var(--pad);
-    right: var(--pad);
-    min-height: 0;
-    padding: 0;
-    border: 0;
-}
-
-/* What follows such a head starts the panel: no space over it. */
-.page[data-view] .panel[data-stacked] > .panel-head:has(> .help-mark):not(:has(> .button-row, > .badge, > .setup-link)) + * {
-    margin-top: 0;
-}
-
-/* A stack's tab names the panel in front, whose head holds its own buttons
-   alone: no fold beside them. Home is a fixed page: its panels stay put. */
-.page[data-view] .panel[data-stacked] > .panel-head > .panel-chevron,
+/* Home is a fixed page: its panels stay put, in every mode. */
 #page-home :is(.panel-chevron, .panel-menu-button, .panel-grip, .panel-resize),
 #page-home > .column-resize {
     display: none;
 }
 
-/* A panel alone in its column in a view has nothing to make room for, so
-   it has no fold where the columns sit side by side; folded already (on a
-   narrower window), it keeps the mark that opens it. */
-@container pane (min-width: 64rem) {
-    .page[data-view] .column[data-single] > .panel:not([data-collapsed]) > .panel-head > .panel-chevron {
-        display: none;
-    }
-}
+/* --- a list to pick one of (Home's jobs, src/views/runstart.ts) ---------- */
 
-/* --- the Run area's first steps (src/views/runstart.ts) ------------------ */
-
-.start-line {
-    color: var(--strong);
-    font-size: 1.05rem;
-    font-weight: 600;
-}
-
-.start-detail:empty {
-    display: none;
-}
-
-/* A list to pick one of: each row a button, the one picked ringed in ink. */
+/* Each row a button, the one picked ringed in ink. */
 .pick-list {
     display: flex;
     flex-direction: column;
@@ -7119,154 +6744,50 @@ table.find-guesses tr.elsewhere td {
     font-size: 0.8rem;
 }
 
-/* --- the Machine panel in a view, and the dock (src/views/machine.ts) ---- */
-
-/* The view's own button shows in a view only: there the panel is the
-   position (and a pick and place head's quick buttons), and the jog, the
-   tool and the markers open on a press of it. */
-.dock-toggle {
-    display: none;
-}
-
-.page[data-view] .dock-toggle {
-    display: inline-flex;
-}
-
-.page[data-view] .machine:not([data-open]) > .machine-more,
-.page[data-view] .machine:not([data-open]) > .panel-head > .button-row {
-    display: none;
-}
-
-@container pane (min-width: 64rem) {
-    /* Docked, the panel lies along the foot of a view: the position in a
-       row, the head's buttons at its right end, and over them, once Jog is
-       pressed, the jog, the tool and the markers. Opening it takes height
-       from the work above; the position does not move. */
-    .column[data-dock-column] > .machine {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
-        grid-template-areas:
-            "more more"
-            "quick quick"
-            "dro head";
-        align-items: center;
-        column-gap: 1rem;
-        margin-block: 0 calc(var(--gap) / 2);
-        padding-block: 0.5rem;
-    }
-
-    .column[data-dock-column] > .machine > * {
-        margin-top: 0;
-    }
-
-    .column[data-dock-column] > .machine > .panel-head {
-        grid-area: head;
-        flex-wrap: nowrap;
-        min-height: 0;
-        padding-bottom: 0;
-        border-bottom: 0;
-    }
-
-    .column[data-dock-column] > .machine > .panel-head > :is(h2, .panel-chevron) {
-        display: none;
-    }
-
-    .column[data-dock-column] > .machine > .dro {
-        grid-area: dro;
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 0.35rem 0.5rem;
-        min-width: 0;
-    }
-
-    .column[data-dock-column] .dro-row:not(.hidden) {
-        display: contents;
-    }
-
-    /* A cell on one line: its letter, its number, its unit. */
-    .column[data-dock-column] .dro-cell {
-        container-type: normal;
-        grid-template-columns: auto auto auto;
-        grid-template-areas: "label value unit";
-        gap: 0 0.4rem;
-        padding: 0.4rem 0.5rem;
-    }
-
-    .column[data-dock-column] .dro-value {
-        min-width: 4.2em;
-        font-size: 1.05rem;
-    }
-
-    /* The queue, the mode and the motors are for the panel shown whole. */
-    .column[data-dock-column] .dro-small {
-        display: none;
-    }
-
-    /* A pick and place head's quick buttons, in a row over the position, with the jog. */
-    .column[data-dock-column] > .machine > .machine-head {
-        grid-area: quick;
-        flex-direction: row;
-        flex-wrap: wrap;
-        padding: 0 0 0.5rem;
-        border-top: 0;
-    }
-
-    .column[data-dock-column] > .machine:not([data-open]) > .machine-head {
-        display: none;
-    }
-
-    /* The jog beside the tool and the markers, in a box that scrolls
-       within the height the work can spare. */
-    .column[data-dock-column] > .machine > .machine-more {
-        grid-area: more;
-        display: grid;
-        grid-template-columns: minmax(0, 5fr) minmax(15rem, 2fr);
-        align-items: start;
-        gap: 0.5rem 1.5rem;
-        max-height: 46vh;
-        margin-bottom: 0.5rem;
-        padding: 0 0 0.5rem;
-        border-top: 0;
-        border-bottom: thin solid var(--border);
-        overflow-y: auto;
-    }
-
-    .column[data-dock-column] > .machine > .machine-more > * {
-        margin-top: 0;
-        padding-top: 0;
-        border-top: 0;
-    }
-
-    .column[data-dock-column] > .machine > .machine-more > [data-part="jog"] {
-        grid-row: 1 / span 2;
-    }
-
-    /* The joints' bars side by side where the dock is wide enough for two. */
-    .column[data-dock-column] .jog-moves > .axis-bars {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(16.5rem, 1fr));
-        align-content: start;
-    }
-
-    .column[data-dock-column] .jog-moves > .jog-pad {
-        flex: 0 1 15rem;
-    }
-}
-
-/* With the menu's dots gone, the title takes the head's free room, so the
-   view's own buttons stay at its right end. */
-.page[data-view] .panel-head > h2 {
-    margin-right: auto;
-}
-
 /* --- the top bar and the rail ------------------------------------------- */
 
-/* The bar reads from the left: the page's name, the machine, a run under
-   way; Stop keeps the right end. */
+/* The bar reads from the left: the page's name, the mode, the machine,
+   Auto, a run under way; Stop keeps the right end. */
 .statusbar .status {
     flex: 1 1 auto;
     margin-left: 0.5rem;
+}
+
+/* The mode in use (src/views/modes.ts): a pick as tall as the machine's
+   button beside it, as wide as its longest name. */
+.mode-host {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
+
+.mode-pick.field {
+    width: auto;
+    max-width: 16rem;
+    min-height: 2rem;
+    padding-block: 0.15rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+
+.auto-host {
+    display: contents;
+}
+
+/* Auto's line: what it does while it runs, then where it stopped and why;
+   cut to its box, whole on hover. */
+button.badge.auto-chip {
+    --tone: var(--jog);
+    max-width: min(32rem, 40vw);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: inherit;
+    line-height: inherit;
+    cursor: pointer;
+}
+
+button.badge.auto-chip:is([data-auto="need"], [data-auto="end"]) {
+    --tone: var(--hold);
 }
 
 /* The machine: its name and its state on one button, which opens its menu. */
@@ -7325,7 +6846,7 @@ table.find-guesses tr.elsewhere td {
     background: var(--danger-fill);
 }
 
-/* A run under way: a badge that is a button to the Run area, in the color of work. */
+/* A run under way: a badge that is a button to the Run panel, in the color of work. */
 button.badge.run-chip {
     --tone: var(--run);
     font-family: inherit;
@@ -7431,7 +6952,6 @@ button.badge.run-chip[data-run="hold"] {
     .tabs-tools .tabs-bug { order: 3; }
     .tabs-tools .tabs-gear { order: 4; }
     .tabs-tools .tabs-peek { order: 5; }
-    .tabs-tools .tabs-layouts { order: 6; }
     .tabs-tools .tabs-done { order: 7; }
 
     .tabs-tools :is(.tabs-tool, .tabs-gear, .todo-toggle) {
@@ -7608,75 +7128,23 @@ button.badge.run-chip[data-run="hold"] {
         white-space: nowrap;
     }
 
-    .statusbar .badge.mock {
+    .statusbar .badge.mock,
+    .statusbar .auto-chip {
         display: none;
+    }
+
+    /* The mode keeps a readable width; the machine's name gives way first. */
+    .mode-host {
+        flex: none;
+    }
+
+    .mode-pick.field {
+        max-width: 7.5rem;
     }
 
     .statusbar .btn-stop {
         flex: none;
         min-width: 5rem;
-    }
-
-    .viewbar {
-        padding-inline: 0.6rem;
-    }
-
-    .viewbar-steps {
-        flex-wrap: nowrap;
-        overflow-x: auto;
-        scrollbar-width: none;
-    }
-
-    .viewbar-item {
-        flex: none;
-    }
-
-    .viewbar-item:not([data-step="now"]) .viewbar-name {
-        display: none;
-    }
-
-    .viewbar-item + .viewbar-item::before {
-        width: 0.6rem;
-    }
-
-    .viewbar-step {
-        padding-right: 0.3rem;
-    }
-
-    /* The views and All panels share one line; the views give way. */
-    .viewbar-row:first-child {
-        flex-wrap: nowrap;
-    }
-
-    .viewbar-steps,
-    .viewbar-tabs {
-        flex: 1 1 0;
-        flex-wrap: nowrap;
-        overflow-x: auto;
-        scrollbar-width: none;
-    }
-
-    .viewbar-tab,
-    .viewbar-all {
-        flex: none;
-    }
-}
-
-/* --- panels in a view ---------------------------------------------------- */
-
-@container pane (min-width: 64rem) {
-    /* A panel that docks at its column's foot when every panel shows (the
-       run's) is a panel like the others in a view, where it leads. */
-    .grid[data-view] > .column > .panel[data-dock]:not([data-join-up], [data-join-down], [data-stacked]) {
-        position: static;
-        margin-top: 0;
-        border: thin solid var(--border);
-        border-radius: var(--radius-lg);
-        box-shadow: var(--shadow);
-    }
-
-    .grid[data-view] > .column > .panel[data-dock][data-first]:not([data-join-up], [data-join-down], [data-stacked]) {
-        margin-top: var(--gap);
     }
 }
 

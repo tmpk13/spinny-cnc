@@ -1,10 +1,10 @@
 // Spacing check: drives the page and its in-page mock through a set of
 // states in Chromium, on every tab at a desktop and a phone width, and
 // fails on spacing the stylesheet's flow rules are meant to rule out. The
-// states are gone through with every panel of an area shown (the area's
-// All panels view), so no panel is left out, and then once more view by
-// view: each step of the Run area for a laser and for a pick and place
-// machine, the dock open, and each view of the Job area. It fails on:
+// states are gone through in the All panels mode, so no panel is left out,
+// and then once more mode by mode (src/modes.ts): each built-in mode's
+// every area, the laser's with the polar laser connected and a job picked,
+// the pick and place machine's with the LumenPnP. It fails on:
 //
 // - Blocks stacked in a panel sit one spacing token apart (--flow-tight,
 //   --flow or --flow-wide from :root), the first flush with the top of the
@@ -221,7 +221,7 @@ function wallFindings(): Finding[] {
         // code editor's colored layer mirrors its textarea's lines, which
         // end wherever the file's lines do, as the textarea's own text does.
         // A step's numbered circle, the tag beside its name and a question mark's circle are pills too.
-        if (!words || !parent || parent.closest("svg, select, option, textarea, script, style, .badge, .code-layer, .viewbar-dot, .viewbar-tag, .help-mark")) {
+        if (!words || !parent || parent.closest("svg, select, option, textarea, script, style, .badge, .code-layer, .help-mark")) {
             continue;
         }
         const range = document.createRange();
@@ -449,48 +449,40 @@ const STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<vo
     },
 ];
 
-/** The views of the area shown, by the names on their tabs. */
-async function viewNames(page: Page): Promise<string[]> {
-    return page.evaluate(() => Array.from(document.querySelectorAll<HTMLElement>(".pane[data-front] .viewbar .viewbar-step, .pane[data-front] .viewbar .viewbar-tab"))
-        .filter((node) => node.getClientRects().length > 0)
-        .map((node) => node.querySelector(".viewbar-name")?.textContent ?? ""));
-}
-
-/** Shows a view of the area shown by a press on its tab. */
-async function view(page: Page, label: string): Promise<void> {
-    await page.evaluate((label) => {
-        Array.from(document.querySelectorAll<HTMLElement>(".pane[data-front] .viewbar .viewbar-step, .pane[data-front] .viewbar .viewbar-tab"))
-            .find((node) => node.querySelector(".viewbar-name")?.textContent === label)?.click();
+/** Picks a mode by its name in the top bar's pick. */
+async function mode(page: Page, name: string): Promise<void> {
+    await page.evaluate((name) => {
+        const pick = document.querySelector<HTMLSelectElement>("select.mode-pick")!;
+        const option = Array.from(pick.options).find((each) => each.textContent?.replace(/ \(changed\)$/, "") === name);
+        if (option) {
+            pick.value = option.value;
+            pick.dispatchEvent(new Event("change"));
+        }
         window.scrollTo(0, 0);
-    }, label);
-    await page.waitForTimeout(250);
+    }, name);
+    await page.waitForTimeout(300);
 }
 
-/** The areas view by view: each entry connects a machine, then names the areas whose every view is checked. */
-const VIEW_STATES: { name: string; pages: string[]; enter: (page: Page) => Promise<void> }[] = [
+/** The areas the rail lists now. */
+async function listedPages(page: Page): Promise<string[]> {
+    return page.evaluate(() => Array.from(document.querySelectorAll<HTMLButtonElement>(".tabs .tab")).filter((each) => !each.hidden).map((each) => each.dataset["page"] ?? ""));
+}
+
+/** The modes area by area: each entry connects a machine, then names the modes whose every area is checked. */
+const MODE_STATES: { name: string; modes: string[]; enter: (page: Page) => Promise<void> }[] = [
     {
-        name: "the polar laser, a job picked, the dock open", pages: ["run", "job"], enter: async (page) => {
+        name: "the polar laser, a job picked", modes: ["Laser/mill use", "Laser/mill config"], enter: async (page) => {
             await tab(page, "machines");
             await page.click("#connection button:has-text('Connect')");
             await page.waitForTimeout(500);
             await tab(page, "job");
             await page.locator(".job-list li .job-pick").first().click();
             await page.waitForTimeout(500);
-            await page.evaluate(() => document.querySelector<HTMLElement>("#machine .dock-toggle")?.click());
         },
     },
     {
-        name: "a job running", pages: ["run"], enter: async (page) => {
-            await tab(page, "run");
-            await view(page, "Run");
-            await page.click("#run button:has-text('Run')");
-            await page.waitForTimeout(600);
-        },
-    },
-    {
-        name: "a G-code pick and place machine", pages: ["run"], enter: async (page) => {
-            await page.click(".btn-stop");
-            await page.waitForTimeout(400);
+        name: "a G-code pick and place machine", modes: ["PNP use", "PNP config"], enter: async (page) => {
+            await mode(page, "All panels");
             await tab(page, "machines");
             await page.click("#connection button:has-text('Disconnect')");
             await page.waitForTimeout(300);
@@ -531,8 +523,8 @@ try {
         return { page, close: () => context.close() };
     };
     for (const width of [1440, 400]) {
-        // Every panel of each area: its All panels view.
-        const whole = await open(width, { "spinny.views": JSON.stringify({ run: "all", job: "all" }) });
+        // Every panel of each area: the All panels mode, the one a browser starts in.
+        const whole = await open(width, {});
         for (const state of STATES) {
             await state.enter(whole.page);
             for (const id of state.pages) {
@@ -541,19 +533,19 @@ try {
             }
         }
         await whole.close();
-        // The areas view by view, as they open.
-        const views = await open(width, {});
-        for (const state of VIEW_STATES) {
-            await state.enter(views.page);
-            for (const id of state.pages) {
-                await tab(views.page, id);
-                for (const label of await viewNames(views.page)) {
-                    await view(views.page, label);
-                    await check(views.page, `${id} > ${label}, ${state.name}, ${width}px`);
+        // The modes, area by area.
+        const modes = await open(width, {});
+        for (const state of MODE_STATES) {
+            await state.enter(modes.page);
+            for (const name of state.modes) {
+                await mode(modes.page, name);
+                for (const id of await listedPages(modes.page)) {
+                    await tab(modes.page, id);
+                    await check(modes.page, `${id} in ${name}, ${state.name}, ${width}px`);
                 }
             }
         }
-        await views.close();
+        await modes.close();
     }
     const drawings = await browser.newPage();
     await drawings.goto(`${server.url}tips`);

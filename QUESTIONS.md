@@ -275,13 +275,6 @@ Why it matters: the jog panel holds six step choosers today, one per axis, repea
 Applied: A, built in 947e6f3 without new keys: Fine is an axis's smallest step choice in its file, Normal the one it starts on, Coarse its largest; a step typed for one axis is under the jog's More.
 Answer:
 
-## Q47. What should the panel layout layer become once each step shows only its own panels?
-Why it matters: folders, stacks, side by side, named layouts and peeking are code to keep and things to learn, built while every panel showed at once.
-- A. Keep it behind Edit panels in Settings, for arranging a step's panels by hand (recommended): nothing lost, out of the way.
-- B. Retire it once the screens fit their budget: less code, and every page looks as the docs say.
-Applied: A, in 947e6f3: the layout tools arrange an area's All panels view; a step or another view has its panels in set places.
-Answer:
-
 ## Q49. When the Setup side is open in another tab behind this one, where should a Setup link go?
 Why it matters: with both sides in tabs of one window, the other tab is out of sight, and a browser rarely lets a page bring itself to the front (docs/UI_SPLIT.md, Links).
 - A. To that tab, with a toast here saying so and a Show here button (recommended): the tab kept for setup stays the one setup happens in; a press on the toast brings it here instead.
@@ -310,13 +303,6 @@ Why it matters: the firmware moved to its own repository, spinny-firmware, check
 - B. Another name or owner: the links and the checkout's origin change to it.
 - C. Private: readers of spinny-cnc on GitHub get a 404 on the protocol; it would then be better back in this repository as a copy.
 Applied: A: origin set to git@github.com:tmpk13/spinny-firmware.git in the new checkout; nothing pushed.
-Answer:
-
-## Q55. Should the Run area open on its steps, or on all its panels?
-Why it matters: a step shows the work and one panel; someone who knows the page may want every panel at once, as before (docs/UI_VISUAL.md).
-- A. On its steps (recommended): a screen holds one thing to do; All panels is one press away and stays once pressed.
-- B. On all panels, the steps one press away.
-Applied: A, in 947e6f3.
 Answer:
 
 ## Q56. Should the rail list both sides' areas, or swap between the sides?
@@ -421,4 +407,40 @@ Why it matters: Escape is the jog's stop (on a G-code machine the file's stop li
 - B. Escape closes the pop-up and stops, as a press on Stop does: one key always stops, and a menu closed with Escape during a run ends the run.
 - C. Escape closes the pop-up and stops only while a jog or goto moves the head, not a run or a camera routine.
 Applied: A, as it was (the tab bar's pop-up still lets Escape through).
+Answer:
+
+## Q71. Where should Auto go now that the step bar is gone?
+Why it matters: Auto sat beside the steps' Next; it does the stages of a run the page can do by itself (connect, home a G-code machine, find the board), and needs no step bar to work.
+- A. The top bar, beside Connect, with its line beside it; where it stops for you the page goes to that stage's panel (recommended): one press away on every page and in every mode.
+- B. Removed with the steps until their rework.
+Applied: A.
+Answer:
+
+## Q72. Should each mode keep the changes made while it shows?
+Why it matters: a panel hidden, moved or folded in PNP use either stays with PNP use or is lost on leaving it.
+- A. Yes, each its own, until Reset in the page settings; the pick says "(changed)" (recommended): going to another mode and back loses nothing, as an editor's workspaces do.
+- B. No: a mode is put back as it has its panels each time it is picked; changes last only by Keep as under a name of your own.
+Applied: A.
+Answer:
+
+## Q73. Should the built-in modes be held to the screen budget (40 controls, 200 words)?
+Why it matters: a mode shows an area's panels at once; eight of the modes' screens measure over (PNP use's Run 74 controls, the Machine panel whole being 25 of them), where the steps split the same work over several screens.
+- A. Hold each at what it measures now, with the reason, so it does not grow (recommended): the check still catches a screen getting heavier.
+- B. Make them fit: the Machine panel's jog behind a press again, more panels stacked behind tabs.
+- C. Retire the budget check.
+Applied: A, in docs/ui/budget.json.
+Answer:
+
+## Q74. Should the use modes leave the Setup side's areas out?
+Why it matters: in Laser/mill use and PNP use the rail lists only Home, Job (laser), Run and Page; the Checklist, Machines, Cameras and CAM are one mode switch, a link or the search away.
+- A. Yes, but Page (recommended): connecting is the top bar's and what needs you is on Home; a link to a hidden panel shows it.
+- B. Keep the Setup side whole in the use modes, hiding only the other kind of machine's panels.
+Applied: A.
+Answer:
+
+## Q75. Should the Steps panel (setup guides: probing, milling, the camera offset, placing) stay?
+Why it matters: "the setup steps will be removed for now" could mean the step bar alone or this panel too; the Checklist's Measure links lead to it.
+- A. Keep it as a panel, shown in All panels and hidden in the other built-in modes (recommended): the Checklist's links still land, and a hidden panel is one link away.
+- B. Remove it with the step bar until the rework.
+Applied: A.
 Answer:

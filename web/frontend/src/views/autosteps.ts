@@ -1,21 +1,24 @@
-// Auto: the steps of a run done by the page as far as it can do them by
-// itself. A press on Auto in the steps' bar walks the steps in their order
-// from the first one not done: it connects the machine found, homes a
+// Auto: the stages of a run (src/views/stages.ts) done by the page as far
+// as it can do them by itself. A press on Auto in the top bar walks the
+// stages in their order from the first one not done: it connects the machine found, homes a
 // G-code machine, starts the camera, looks for the board and takes the
 // place found. It stops at the first thing that takes a person (a board to
 // pick, a place the camera and the references disagree on, a job to move
-// onto its marks, feeders the check finds wanting) and at the last step,
-// which it never presses: a run is started by hand.
+// onto its marks, feeders the check finds wanting) and at the last stage,
+// which it never presses: a run is started by hand. Where it stops, the
+// page goes to the panel of that stage.
 //
 // Everything it starts is one of the page's own requests, the one a button
-// of the step sends, and is started once in a run of Auto: what did not
+// of the stage's panel sends, and is started once in a run of Auto: what did not
 // take is said and left to the operator, not tried again.
 //
 // `autoMove` says what is next from the state and what this run of Auto
 // has tried, so the order and the stops are checked without a machine;
-// `autoRunner` does the moves one after another.
+// `autoRunner` does the moves one after another; `mountAutoBar` is its
+// button and its line in the top bar.
 
 import { errorText } from "../api.ts";
+import { button, el } from "../dom.ts";
 import { formatFixed } from "../format.ts";
 import { defaultPort } from "../ports.ts";
 import { isMilling, profileOf } from "../profile.ts";
@@ -27,6 +30,8 @@ import { checkLine, currentCheck } from "./feedercheck.ts";
 import { searchWill, type LookCamera } from "./findboard.ts";
 import { runActive } from "./heightmap.ts";
 import { gcodePlacing, referencesOf, topRoutineText } from "./placing.ts";
+import { runStages } from "./stages.ts";
+import { goToPanel } from "./steps.ts";
 
 /** What Auto works through: the page's requests, a camera's start, and its waits. */
 export interface AutoIo {
@@ -46,10 +51,10 @@ export interface AutoMemory {
 }
 
 /**
- * Auto's next move, each in the step (a view's id) it belongs to: a request
+ * Auto's next move, each in the stage (a stage's id) it belongs to: a request
  * to send (`act`), a routine under way to wait for (`wait`), something only
- * a person can do (`need`: Auto stops, the step shown), or nothing left that
- * Auto does (`end`: it stops at the last step).
+ * a person can do (`need`: Auto stops, the stage's panel shown), or nothing
+ * left that Auto does (`end`: it stops at the last stage).
  */
 export type AutoMove =
     | { kind: "act"; step: string; key: string; say: string; run(io: AutoIo): Promise<void> }
@@ -370,7 +375,7 @@ const POLL_MS = 400;
 
 /**
  * Runs Auto's moves one after another. `changed` is told whenever the line
- * changes, with the step to show when the move is in another one.
+ * changes, with the stage each move is in.
  */
 export function autoRunner(io: AutoIo, changed: (line: AutoLine | null) => void): AutoRunner {
     let run = 0;
@@ -440,4 +445,54 @@ export function autoRunner(io: AutoIo, changed: (line: AutoLine | null) => void)
             }
         },
     };
+}
+
+/**
+ * Auto's button and its line, in the top bar's `host`: Auto starts a run
+ * of it and Stop Auto ends one; the line says what it does, and once it
+ * stops, why, with a press on the line going to the panel of that stage.
+ * Where it stops the page goes to that panel by itself, once.
+ */
+export function mountAutoBar(host: HTMLElement, io: AutoIo): AutoRunner {
+    // Stopped by its own button, Auto goes nowhere: the operator is where they mean to be.
+    let byHand = false;
+    const press = button("Auto", () => {
+        if (runner.running()) {
+            byHand = true;
+            runner.stop();
+            byHand = false;
+        } else {
+            runner.start();
+        }
+    }, "btn btn-small bar-auto",
+    "do what the page can by itself: connect the machine found, home a G-code machine, find the board with the camera and take its place; it stops where you are needed and never starts a run");
+    const line = el("button", { type: "button", class: "badge auto-chip hidden", role: "status" });
+    const panelOf = (stage: string): string | null => runStages(io.ctx.store.get()).find((entry) => entry.id === stage)?.panel ?? null;
+    let shown: AutoLine | null = null;
+    line.addEventListener("click", () => {
+        const panel = shown ? panelOf(shown.step) : null;
+        if (panel !== null) {
+            goToPanel(panel);
+        }
+        if (!runner.running()) {
+            runner.clear();
+        }
+    });
+    const runner = autoRunner(io, (next) => {
+        const stopped = next !== null && !next.running && !byHand && (shown === null || shown.running || shown.text !== next.text);
+        shown = next;
+        press.textContent = runner.running() ? "Stop Auto" : "Auto";
+        press.classList.toggle("urgent", runner.running());
+        line.classList.toggle("hidden", next === null);
+        line.textContent = next === null ? "" : `Auto: ${next.text}`;
+        line.title = next === null ? "" : next.running ? "what Auto is doing" : "where Auto stopped; press for the panel of that stage, and to put this away";
+        line.setAttribute("data-auto", next?.kind ?? "");
+        // Stopped where a person is needed: the panel that needs them.
+        const panel = stopped ? panelOf(next.step) : null;
+        if (panel !== null) {
+            goToPanel(panel);
+        }
+    });
+    host.append(press, line);
+    return runner;
 }

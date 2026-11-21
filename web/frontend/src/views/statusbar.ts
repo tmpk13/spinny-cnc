@@ -1,10 +1,12 @@
-// The top bar: the machine, a run under way, and the big Stop. The machine
+// The top bar: the mode in use (src/views/modes.ts, mounted into it once
+// the panels are), the machine, Auto (src/views/autosteps.ts), a run under
+// way, and the big Stop. The machine
 // is one button saying its state and its name (the machine file in use,
 // else the kind of machine); a press opens its menu: connect a port found,
 // disconnect, switch to a machine connected lately, home, and the Machines
 // page for the rest. While nothing is connected a Connect button beside it
 // connects the port offered first in one press. A run under way shows as a
-// chip with its job and how far it is, a press away from the Run area. The
+// chip with its job and how far it is, a press away from the Run panel. The
 // firmware's version is the machine button's tooltip; the event link shows
 // only while it is down.
 
@@ -19,8 +21,7 @@ import { connectOffered, disconnectFrom, offeredPorts, portName, recentMachines,
 import type { Ctx } from "./context.ts";
 import { runActive, runMapUse, showMapUse } from "./heightmap.ts";
 import { goTo } from "./links.ts";
-import { showPage } from "./tabs.ts";
-import { showAreaView } from "./viewbar.ts";
+import { goToPanel } from "./steps.ts";
 
 /** A report older than this, s, is a machine that has gone quiet; the link gives it up a little later. */
 export const STALE_SECONDS = 1.5;
@@ -73,7 +74,13 @@ export function runChipText(state: AppState): string {
     return `${progress.state === "hold" ? "Held" : "Running"} ${name}, ${share}%`;
 }
 
-export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
+/** The places in the top bar filled once the rest of the page is up: the mode's pick, and Auto. */
+export interface StatusBarHosts {
+    mode: HTMLElement;
+    auto: HTMLElement;
+}
+
+export function mountStatusBar(root: HTMLElement, ctx: Ctx): StatusBarHosts {
     // The machine: its state and its name on one button, which opens its menu.
     const stateBadge = el("span", { class: "badge state", "data-state": "none" }, "No link");
     // Shown only for a machine that is not the polar laser.
@@ -85,11 +92,8 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
     const firmware = el("span", { class: "firmware muted" }, "");
     // Shown only while a run is under way: the job and how far it is, and
     // whether it follows the height map.
-    const runChip = el("button", { type: "button", class: "badge run-chip hidden", title: "the run under way; press for the Run area" });
-    runChip.addEventListener("click", () => {
-        showPage("run");
-        showAreaView("run", "run");
-    });
+    const runChip = el("button", { type: "button", class: "badge run-chip hidden", title: "the run under way; press for the Run panel" });
+    runChip.addEventListener("click", () => goToPanel("run"));
     const mapChip = el("span", { class: "badge map-use hidden" });
     const link = el("span", { class: "link", "data-link": "closed" }, "feed off");
     const mock = ctx.store.get().mock ? el("span", { class: "badge mock", title: "the page's own stand-in for the backend: nothing here touches a machine" }, "mock") : null;
@@ -99,9 +103,13 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
     const stop = button("Stop", () => stopAll(), "btn btn-danger btn-stop");
     stop.title = "stop the machine: the run, probing, a routine, a jog or goto, the beam or spindle";
 
+    // The mode's pick beside the name, ahead of the machine: it says what the page shows.
+    const modeHost = el("div", { class: "mode-host" });
+    const autoHost = el("span", { class: "auto-host" });
     root.append(
         el("div", { class: "brand" }, "Spinny Laser"),
-        el("div", { class: "status" }, machineButton, connect, runChip, mapChip, firmware, link, mock),
+        modeHost,
+        el("div", { class: "status" }, machineButton, connect, autoHost, runChip, mapChip, firmware, link, mock),
         stop,
     );
 
@@ -183,4 +191,5 @@ export function mountStatusBar(root: HTMLElement, ctx: Ctx): void {
     }
     ctx.store.subscribe(render, ["snapshot", "link", "progress", "settings", "machines", "ports", "jobs"]);
     render(ctx.store.get());
+    return { mode: modeHost, auto: autoHost };
 }

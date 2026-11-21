@@ -16,10 +16,9 @@
         <!-- Two sides (src/sides.ts): the Use side's pages in one pane, the
              Setup side's in the other; one shows at a time, or both side by
              side with the handle between them. -->
+        <!-- Which panels each area shows, and where, is the mode's
+             (src/modes.ts), picked from the top bar. -->
         <div id="pane-use" class="pane" data-side="use">
-        <!-- The views of the area shown (src/views/viewbar.ts): one view's
-             panels show at a time, Run's being the steps of a run. -->
-        <nav id="views-use" class="viewbar" hidden></nav>
         <!-- The Use side's areas (src/views/tabs.ts): Home, Job and Run. -->
         <main id="page-home" class="grid home-grid page">
             <div class="column">
@@ -60,8 +59,6 @@
                 <section id="console" class="panel console" aria-label="Console"></section>
             </div>
             <div class="column">
-                <section id="run-connect" class="panel" aria-label="Connect"></section>
-                <section id="run-job" class="panel" aria-label="Job to run"></section>
                 <section id="pnp-parts" class="panel" aria-label="Parts"></section>
                 <section id="pnp-board" class="panel" aria-label="Board"></section>
                 <section id="heightmap" class="panel" aria-label="Height"></section>
@@ -72,7 +69,6 @@
         </div>
         <div id="pane-divider" class="pane-divider" role="separator" aria-orientation="vertical" aria-label="Use and Setup widths" tabindex="0"></div>
         <div id="pane-setup" class="pane" data-side="setup">
-        <nav id="views-setup" class="viewbar" hidden></nav>
         <main id="page-facts" class="grid facts-grid page">
             <div class="column">
                 <section id="facts" class="panel" aria-label="Checklist"></section>

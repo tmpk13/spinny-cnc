@@ -37,17 +37,8 @@ describe("the Machine panel", () => {
         expect(heads[0]!.contains(findButton(root, "Hold to move"))).toBe(true);
         expect(heads[0]!.contains(findButton(root, "Cancel"))).toBe(true);
         expect(root.querySelector("#jog")!.contains(findButton(root, "Fine"))).toBe(true);
-        // In a view the head's Jog opens and shuts the jog, the tool and the markers.
-        expect(heads[0]!.contains(findButton(root, "Jog"))).toBe(true);
-        expect(root.hasAttribute("data-open")).toBe(false);
-        findButton(root, "Jog").click();
-        expect(root.hasAttribute("data-open")).toBe(true);
-        panel.setOpen(false);
-        expect(root.hasAttribute("data-open")).toBe(false);
-        // A link or the search going to a part inside opens it.
-        root.querySelector("#markers")!.dispatchEvent(new CustomEvent("spinny:show", { bubbles: true }));
-        expect(root.hasAttribute("data-open")).toBe(true);
-        panel.setOpen(false);
+        // No button opens or shuts the jog: the panel is whole wherever it shows.
+        expect(Array.from(root.querySelectorAll("button")).some((each) => each.textContent === "Jog")).toBe(false);
         // The tool's quick buttons and the markers are in the panel; the head box starts hidden.
         expect(root.contains(findButton(root, "Test beam"))).toBe(true);
         expect(root.querySelector("#markers")!.closest("details")?.querySelector("summary")?.textContent).toBe("Markers");
