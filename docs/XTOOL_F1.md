@@ -189,6 +189,19 @@ both doors, the step after is a controller of our own inside the F1 (the
 K40's route), which the same interface takes as one more transport; the
 F1's galvo and laser driver signals are unknown here.
 
+## What the repo does not carry
+
+- Code taken from BeamInk keeps its MIT notice.
+- The Cambridge Hackspace driver is under the PolyForm Shield license, which
+  is source-available, not open source. Its protocol facts are used here;
+  its code is not copied.
+- xTool's LightBurn device file is cited for its start and end lines, not
+  shipped.
+- No key, certificate or other secret taken out of xTool Studio. If WS-V2
+  connects only with one, route 3 stops there: extracting it can count as
+  circumventing an access control (in the US, 17 U.S.C. 1201), and
+  publishing it more so. V1 has no access control to get past.
+
 ## Sources
 
 - [BeamInk](https://github.com/sfn-tools/BeamInk/tree/9b8b67e2cb95542ec1a670c664e41963e5bfface):
