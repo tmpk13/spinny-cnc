@@ -32,6 +32,7 @@ Reference: [operating](docs/OPERATING.md), [machine files](docs/MACHINES.md),
 [CAM](docs/CAM.md), [calibration](docs/CALIBRATION.md),
 [protocol](https://github.com/tmpk13/spinny-firmware/blob/main/docs/PROTOCOL.md), [web API](docs/WEB_API.md),
 [gcode toolchain](docs/GCODE.md), [M2 Nano assessment](docs/M2_NANO.md),
+[xTool F1 assessment](docs/XTOOL_F1.md),
 [releases](docs/RELEASE.md), [page plugins](docs/PLUGINS.md),
 [board vision: where it goes](docs/CV_DIRECTION.md),
 [page design principles](docs/UI_PRINCIPLES.md), the
