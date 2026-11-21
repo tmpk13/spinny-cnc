@@ -116,10 +116,11 @@ flowchart LR
    - The F1 writer: the pieces as `G0` and `G1` lines and the source line
      per group. Refused: focus moves, dots, a power floor, spindle and
      dispenser groups, a point outside the field.
-   - The run: progress as the Run area shows it (sent, answered, total,
-     estimate). Uploading the file (`/processing/upload`) would let the
-     machine pace itself, but gives no progress, and the sources found do
-     not name the V1 start call.
+   - The run: the whole file uploaded (`/processing/upload` on V1), then
+     started; progress from the F1's state and the time estimate, since
+     an uploaded file has no line count. Streaming lines down 8780 would
+     count them, but a galvo outruns a line stream, and new firmware
+     closes 8780.
    - Frame: trace the job's outline so the board can be lined up. How
      xTool frames on an F1 is a check; BeamInk's preview is the blue at
      2 %, which can mark.
@@ -147,8 +148,8 @@ nothing.
    F1 Ultra's X came out mirrored.
 4. Travel: does `G0` keep the beam off with an S set before it. BeamInk's
    order (move, then `G0 S0`) says it does.
-5. A stream that runs dry in the middle of a cut: does the beam go off or
-   burn a spot.
+5. An uploaded file: does `/processing/upload` take it, and does the
+   F1's button start it (the sources found name no V1 start call).
 6. The field: the calibration card across the 120 mm field measures what
    the F1's own lens correction leaves.
 7. The process: blue power and speed for the resist on a coupon, and what
@@ -156,11 +157,37 @@ nothing.
 
 ## Recommendation
 
-Check the firmware first: on WS-V2, routes 1 and 2 need a downgrade, and
-route 3 is the only way to keep it. Then route 1: one profile and two post
-options answer most of the checks on scrap. Route 2 after that, backend
-first: the link, the writer and the run touch no page code, while the
-page's panels and modes are being reworked.
+Route 2, built so the firmware can change under it:
+
+- One writer: a Run area job, through `CartesianStreamer`'s pieces, to a
+  whole F1 G-code file, with every xTool line (start, end, source select,
+  travel form) read from the machine file. It is tested without a
+  machine. Route 1 shrinks to this writer and a command that sends its
+  file: the first slice of route 2, not a second writer beside `post.py`.
+- A job is a file handed over whole, then started, never a line stream.
+  Both generations take an uploaded file (V1 `/processing/upload`, WS-V2
+  its file stream); the F1 then paces itself, so a cut never runs dry;
+  and 8780, which new firmware closes, is left out of runs. Starting by
+  the F1's own button (as a D1 starts an uploaded file, and as the
+  Cambridge driver loads WS-V2 jobs) keeps a person at the laser; a start
+  from the page can follow once the call is known.
+- A transport per firmware generation behind one small interface:
+  connect and read the machine's info, hand over a job, read the state,
+  stop. V1 first; WS-V2 only if the firmware has to be kept. Stop always
+  goes out of band.
+- The firmware version is checked at connect against the versions the
+  machine file lists as tried; any other version refuses to run until it
+  is added.
+- The first contact's exchanges are kept as replay fixtures, so a
+  firmware that answers differently fails a test rather than a board.
+
+Check the firmware first. On WS-V2, either downgrade once and keep xTool
+Studio from updating it, or write the WS-V2 transport. Build the backend
+first: the writer, the transport and the run touch no page code, while
+the page's panels and modes are being reworked. If xTool ever closes
+both doors, the step after is a controller of our own inside the F1 (the
+K40's route), which the same interface takes as one more transport; the
+F1's galvo and laser driver signals are unknown here.
 
 ## Sources
 
