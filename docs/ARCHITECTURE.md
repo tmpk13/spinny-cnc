@@ -165,21 +165,23 @@ The page is two sides, Use and Setup ([UI_SPLIT.md](UI_SPLIT.md)),
 shown one at a time, side by side in one tab, or in tabs of their own.
 The Use side's areas Home, Job and Run and the Setup side's pages are
 listed down a rail; what goes in which panel is
-[UI_PANELS.md](UI_PANELS.md). An area shows one view of itself at a time,
-a few of its panels around the work ([UI_VISUAL.md](UI_VISUAL.md)); the
-Run area's views are the steps of a run for the machine connected.
+[UI_PANELS.md](UI_PANELS.md). Which panels every area shows, and where,
+is the mode picked in the top bar (`src/modes.ts`): All panels, or one
+for a kind of work (Laser/mill use and config, PNP use and config), or
+one the operator kept. Each mode keeps the changes made while it shows.
 
 ```mermaid
 flowchart LR
-    RAIL[rail: both sides' areas] --> AREA[an area: Home, Job, Run, or a Setup page]
-    AREA --> BAR[view bar: the area's views, one shown]
-    BAR -->|a view: its panels by column| LAYER[layout layer: the view put on the page in place of the operator's layout]
-    BAR -->|All panels| OWN[the operator's own layout, kept per browser]
-    STATE[the page's state: the machine, the job, the heights, a run] -->|which steps there are, which are done| BAR
-    LAYER --> WORK[the work: the job's preview, a camera's picture]
-    LAYER --> SIDE[the step's panel: its few controls, the rest under More]
-    LAYER --> DOCK[the dock: the position, the jog on a press]
-    LINK[a link, a setup step, the search] -->|a panel out of sight| BAR
+    PICK[mode pick in the top bar] -->|a mode: every area's layouts| MODES[modes: built in, the operator's own, each one's changes kept]
+    MODES -->|the layouts as last left| LAYER[layout layer: panels by column, stacks, folds, hidden]
+    LAYER -->|a change| MODES
+    LAYER -->|areas with nothing shown| RAIL[rail: both sides' areas, a blank one left out]
+    RAIL --> AREA[an area: Home, Job, Run, or a Setup page]
+    LAYER --> AREA
+    STATE[the page's state: the machine, the job, the heights, a run] -->|which stages there are, which are done| STAGES[stages of a run, each naming its panel]
+    STAGES --> NEXT[Home's Next]
+    STAGES --> AUTO[Auto in the top bar]
+    LINK[a link, the search, Next, Auto] -->|a panel the mode hides| LAYER
 ```
 Each tab has its own store and event feed from the backend; the tabs tell
 each other which side they show, and pass on a link's target, over a

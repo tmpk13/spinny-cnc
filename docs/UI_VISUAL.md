@@ -5,7 +5,10 @@
 controls. This document looks at the screens themselves, as the eye meets
 them: what stands out, what the window is spent on, where the next action
 is. It was made on 2026-11-16, after the rail and the areas were built, and
-it is the reason for the redo described at its end.
+it is the reason for the redo described at its end. On 2026-11-21 the
+redo's views, steps and dock gave way to modes (every panel an area's
+mode shows, at once; OPERATING.md, Modes and Auto); the layers inside the
+panels, the quiet look and one step size stay.
 
 ## What was looked at
 
@@ -348,7 +351,8 @@ The head camera's page and CAM, before and after:
   polar laser and the LumenPnP; a mill shows other fields in the same
   panels (depth and plunge in a group, the spindle's numbers in Draw).
 - **The steps are the page's own**, per kind of machine
-  (web/frontend/src/views/areaviews.ts), not yet read from the machine
+  (web/frontend/src/views/areaviews.ts, since 2026-11-21 the stages of
+  web/frontend/src/views/stages.ts), not yet read from the machine
   file as TODO.md asks.
 - **Board and Height are steps a run can do without**: the page cannot
   tell whether the board was placed, so it never marks Board done.

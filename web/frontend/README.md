@@ -142,7 +142,7 @@ the board where the mock lays it, exactly, and its cameras answer a laptop
 camera's controls; the mock's twin of the backend's profile reader and planner is
 `src/mock/openpnp.ts`. The *Steps* panel (`src/views/steps.ts`, on Run)
 fills its steps in from the page's state
-([setup steps](../../docs/OPERATING.md#setup-steps)). A panel's edits not applied yet are
+([modes and Auto](../../docs/OPERATING.md#modes-and-auto)). A panel's edits not applied yet are
 counted per panel in `AppState.pending` and on its page's tab
 (`PENDING_PAGES` in `src/views/tabs.ts`).
 
@@ -177,37 +177,32 @@ cameras' pictures, Board place, Console, Parts, Board, Height, Feeders,
 Run), and *Setup*, with the *Checklist* (`src/facts.ts`,
 `src/views/facts.ts`), *Machines*, *Cameras*, *CAM* and *Page*.
 
-An area shows one view of itself at a time (`docs/UI_VISUAL.md` says
-why): a few of its panels in set places, the work on the left and what
-acts on it on the right. `src/views/areaviews.ts` says what each view
-holds: the Run area's are the steps of a run for the machine connected
-(Connect, Job, Board, Height, Run; a G-code pick and place machine's
-Connect, Home, Parts, Board, Feeders, Place), each done or not from the
-state; the Job area's are Jobs, Draw, Assistant and JSON; Machines and
-Cameras have theirs. `src/views/viewbar.ts` lists them across the top of
-each side's pane, opens a stepped area where the work stands and follows
-it until a step is pressed, and shows All panels, the area whole, as the
-layout tools arranged it. The Run area's steps have Auto there too:
-`src/views/autosteps.ts` says the next thing the page can do by itself
-from the state (`autoMove`: connect, home a G-code machine, find the
-board with the camera) and does them one after another, each a request a
-button of the step sends, stopping where a person is needed and before a
-run. A view is a layout of its own that
-`src/views/panels.ts` puts on the page in place of the operator's
-(`setView`), which is set aside and stays the one kept; a link, a setup
-step or the search going to a panel a view keeps out of sight brings up
-the view that holds it. The Run area's first two steps have small panels
-of their own (`src/views/runstart.ts`).
+Which panels each area shows, and where, is the mode in use, picked at
+the top bar's left (`src/modes.ts` says what a mode is and holds the
+built-in ones: All panels, Laser/mill use and config, PNP use and
+config; `src/views/modes.ts` puts one on the page). A mode is a set of
+layouts the layout layer (`src/views/panels.ts`) draws, so no panel
+knows of modes; each mode keeps the changes made while it shows, and an
+area a mode leaves blank drops out of the rail (`setBlankPages` in
+`src/views/tabs.ts`). The stages of a run (`src/views/stages.ts`: Connect,
+Job, Board, Height, Run; a G-code pick and place machine's Connect, Home,
+Parts, Board, Feeders, Place), each done or not from the state and each
+naming the panel that does it, lead Home's *Next* panel and Auto in the
+top bar: `src/views/autosteps.ts` says the next thing the page can do by
+itself from the state (`autoMove`: connect, home a G-code machine, find
+the board with the camera) and does them one after another, each a
+request a button of the stage's panel sends, stopping where a person is
+needed (the page goes to that panel) and before a run. Home's job list
+is `src/views/runstart.ts`.
 
 The Machine panel (`src/views/machine.ts`) is the position, the jog, the
-laser's or spindle's buttons and the markers in one; in a view it shows
-the position and opens the rest on Jog, and in a step it is docked along
-the foot. The jog (`src/views/jog.ts`) has one step size, Fine, Normal or
+laser's or spindle's buttons and the markers in one. The jog
+(`src/views/jog.ts`) has one step size, Fine, Normal or
 Coarse, for every axis, each axis taking its own step for it from the
 machine file; each step is a field, and a number typed is that axis's
-step at the size picked. Home and Unlock are in the panel's head. The top bar (`src/views/statusbar.ts`) is the machine as one
+step at the size picked. Home and Unlock are in the panel's head. The top bar (`src/views/statusbar.ts`) is the mode's pick, the machine as one
 button with a menu (connect, disconnect, switch, home), Connect while
-nothing is connected, a chip for a run under way, and Stop. Inside a
+nothing is connected, Auto and its line, a chip for a run under way, and Stop. Inside a
 panel, what every run uses is in view and the rest under a More
 (`details.more`) in the same panel; how something is done is a tooltip or
 a question mark (`helpMark` in `src/views/context.ts`). A list of things
@@ -336,7 +331,7 @@ classDiagram
         measuredBy(entries, target, name, now)  the routine result that still holds
     }
     class views {
-        context statusbar tabs split links setuplinks facts steps fit areaviews viewbar autosteps runstart overview banner machine dro jog laser markers mill jobs jobjson calibrate center heightmap focushere previewpanel vision picture camview cameracontrols camerapick camlog boardplace align pnp device auto console settingslist cam config editor toasts
+        context statusbar tabs split links setuplinks facts steps fit stages modes autosteps runstart overview banner machine dro jog laser markers mill jobs jobjson calibrate center heightmap focushere previewpanel vision picture camview cameracontrols camerapick camlog boardplace align pnp device auto console settingslist cam config editor toasts
     }
     class align {
         fitRigid(pairs) rotation, shift, scale, rms, residuals
@@ -437,6 +432,7 @@ classDiagram
         jsontext  a job as editable JSON, and where in the job a place in it is
         kicad  a board file's layers, read before an import
         machinekeys  where each setting is written in a machine file
+        modes  the built-in modes, what is kept of the modes, each mode's layouts
         regroup  a job's paths moved between its groups
         sketch  the Plot operation's sizes drawn over the preview
         speed  how fast every cut of a job goes, for the speed view

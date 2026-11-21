@@ -265,4 +265,5 @@ the jog's bars (about 60 controls) and the firmware settings list (over
 its area owns. [UI_VISUAL.md](UI_VISUAL.md) is what followed: an area
 shows one view at a time, the Machine panel is a dock with one step size,
 and the panels keep the usual in view and the rest under More; its last
-section has the counts after.
+section has the counts after. The views and the dock went on 2026-11-21:
+an area now shows its panels by mode (OPERATING.md, Modes and Auto).

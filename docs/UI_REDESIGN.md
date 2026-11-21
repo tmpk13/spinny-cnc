@@ -19,7 +19,9 @@ home per control, the panels after, new names). It was built on
 (phase 4's frame, in part).
 
 [UI_VISUAL.md](UI_VISUAL.md) looked at the screens that left and built
-most of the rest on 2026-11-17: the steps as the spine (each step a view
+most of the rest on 2026-11-17 (the steps, the views and the dock went
+again on 2026-11-21 for modes, OPERATING.md, Modes and Auto): the steps
+as the spine (each step a view
 of the Run area, phase 3), the dock and one step size (phase 2), the
 quiet page (phase 1: color for states, instructions out of the panels,
 the action that unlocks in place of a locked wall), Home as drawn below,

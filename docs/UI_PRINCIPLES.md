@@ -7,7 +7,9 @@ change against it. [UI_REDESIGN.md](UI_REDESIGN.md) applies them to
 the page, screen by screen; [UI_SPLIT.md](UI_SPLIT.md) is the page's
 two sides, Use and Setup (principle 14); [UI_VISUAL.md](UI_VISUAL.md)
 looks at the screens as the eye meets them, and is where an area came to
-show one view at a time.
+show one view at a time. Since 2026-11-21 the views are gone, the
+operator's call: every area shows its panels by mode, picked in the top
+bar (OPERATING.md, Modes and Auto).
 
 ## Who the page is for
 
@@ -68,7 +70,11 @@ new it is. A More that holds a setting changed from its default says so
 ("More: 2 changed"), so nothing hidden acts unseen. Before adding a field
 at all, try to work the value out: detect it, measure it, or default it.
 There is no beginner or expert switch: the layers are the same for
-everyone, so nothing depends on a mode someone forgot.
+everyone, so nothing depends on a mode someone forgot. The page's modes
+(since 2026-11-21) only choose which panels show and where; a control
+does the same in every mode, the mode in use is named in the top bar
+(principle 7), and a panel a mode hides is found by the search and shown
+by any link to it.
 
 **Why.** Progressive disclosure, the frequent things first and the rest
 on request, works when the split follows real use and stays at two
@@ -336,8 +342,9 @@ else?
 
 **Rule.** Each screen, in its default state, holds at most 40 controls
 and 200 words, frame included; Run and Job screens should sit well under
-it. `mise run test-budget` is the check: it opens every view of every
-area over the mock (docs/ui/budget.json), counts what the first view
+it. `mise run test-budget` is the check: it opens every area of every
+built-in mode but All panels over the mock (docs/ui/budget.json; every
+view of every area until 2026-11-21), counts what the first view
 holds (the controls and words in the window before any scroll, with
 nothing folded open), and fails for a screen over the budget, saying
 which panels hold the load. `mise run shots -- docs/ui/visual.json OUT`
@@ -345,7 +352,10 @@ prints the same counts with the boxes, the colors and the share given to
 the work ([UI_VISUAL.md](UI_VISUAL.md) has them before and after the redo
 of 2026-11-17). Going over means something belongs in another layer, not
 that the budget is wrong: a row that says its numbers and opens in place,
-a More fold, a button shown only while it can act.
+a More fold, a button shown only while it can act. Since the modes show
+an area's panels together, a mode's screen that was over on 2026-11-21
+holds at what it measured then, with the reason, so it does not grow
+(QUESTIONS.md Q73).
 
 **Why.** The numbers are this project's rule, not a law of cognition:
 no study gives a limit of buttons per screen (see the claims below). A

@@ -84,8 +84,8 @@ row stop the run. No test pairs `pocket` with `bus_id` or `feed`.
 
 ## 4. The Feeders step checks the job
 
-**Now.** The Run view's Feeders step ([areaviews.ts](../web/frontend/src/views/areaviews.ts),
-`placingSteps`) is never done, and its tip promises "what is loaded, low
+**Now.** The Run view's Feeders step (`placingSteps`, since 2026-11-21 the
+Feeders stage of [stages.ts](../web/frontend/src/views/stages.ts)) is never done, and its tip promises "what is loaded, low
 or missing". Only the Plan, under Place, says that a part has no feeder,
 and the Plan needs the board's place first.
 

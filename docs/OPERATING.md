@@ -6,15 +6,16 @@ From the first connection to a probed, compensated run. The wiring and the bring
 
 Open `http://localhost:8000` and press *Connect* in the top bar: it names
 the port found (this project's board, or a port a machine file claims) and
-opens it. Home and the Run area's first step offer the same button; a port
+opens it. Home's *Next* panel offers the same button; a port
 typed by hand is the *Connection* panel's, on the Setup side's *Machines*
 page (`socket://127.0.0.1:2323` for the virtual firmware, or
 `socket://127.0.0.1:2324` for a controller on a Pi forwarded by `mise run
 relay-pi -- user@host`). The top bar holds the machine as one button, its
 name and its state (a press opens its menu: connect a port found,
 disconnect, switch to a machine connected lately, home, and the Machines
-page; the firmware's version is its tooltip), a chip for a run under way,
-and the big *Stop*, always in view:
+page; the firmware's version is its tooltip), *Auto*
+([below](#modes-and-auto)), a chip for a run under way, and the big
+*Stop*, always in view:
 it stops a run or probing the way their own Stop does, else ends a camera
 routine, cancels a jog or goto and turns the beam or spindle off; on a
 G-code machine it sends the file's stop. One machine is connected at a
@@ -24,11 +25,10 @@ connected go first. Then jog the beam over the
 axis with the radius buttons, press "Set R=0 here", then turn the table
 with the turn buttons: a positive turn must swing the point under the beam
 counterclockwise seen from above, otherwise set `$dir_invert`. Check steps
-per unit at low speed before the first job. The Machine panel lies along
-the foot of every step of the Run area as a dock: the position always in
-view, and the jog, the tool's buttons and the markers on a press of *Jog*.
-*Home* is in the panel's head, beside *Jog*, on a machine that can home,
-so it is one press away in every step; *Unlock* shows there while the
+per unit at low speed before the first job. The Machine panel on the Run
+area holds the position, the jog, the tool's buttons and the markers.
+*Home* is in the panel's head on a machine that can home, so it is in
+sight however the panel is folded; *Unlock* shows there while the
 machine is in alarm.
 One step size serves every axis: *Fine*, *Normal* or *Coarse*, each axis
 taking its own step for it from the machine file (its smallest choice,
@@ -366,55 +366,68 @@ for priming the needle and checking the flow.
    run picks up at a line like any other, the plunger declared where the
    plan had it.
 
-### Setup steps
+### Modes and Auto
 
-The Run area shows one step of a run at a time. Its steps run across its
-top as numbered circles: *Connect*, *Job*, *Board* (where the board sits),
-*Height* (on a machine with an axis for it) and *Run*; with a G-code pick
-and place machine, *Connect*, *Home*, *Parts*, *Board*, *Feeders* and
-*Place*. A step shows the work on the left (the job's preview with the
-head on it, a camera's picture on a tab behind it) and the one panel that
-does the step on the right, with the Machine panel docked along the foot.
-A step is ticked when the page sees it done (connected, a job picked, a
-usable map, a run finished), a step a run can do without is ringed with a
-dashed line, and the line under the steps says what is so in the one
-shown. The area opens at the first step a run needs that is not done and
-moves on when a step's own action completes it; a step pressed stays, and
-*Next* goes on to the one after (a narrow window, whose steps are small
-marks, has *Back* too, and puts the step's panel before the picture). *All panels*, at the right end, shows every
-panel of the area at once, arranged with the layout tools below; pressed
-again it gives the steps back.
+The *Mode* pick at the top bar's left says which panels every area shows
+and where they sit, for one kind of work:
 
-*Auto*, beside *Next*, does the steps the page can do by itself, from the
-first one not done, showing the step it is on and saying what it does in
-a line under the step's: it connects the machine found, homes a G-code
-machine, starts the camera, looks for the board (loading the job's board
-and searching, a scan of the bed with nothing known of its place), takes
-the place found as the board's and centers its fiducials. It stops where
-a person is needed, with the reason: a board to pick, a board the camera
-does not find, a place the camera sees more than a millimeter from where
-references kept from before put the board (*Use as board place* takes
-the camera's; it never replaces references by itself). On a laser or a
-mill it looks with the head camera once *Find mark* has measured it,
-keeps the place found as marks and leaves *Apply* to you, since the whole
-job moves; the heights stay yours, a probe touching the board. It never
-starts a run: it ends on the last step, ready. Everything it sends is the
-request a button of the step sends, each once in a run of Auto; pressed
-while it goes, the button is *Stop Auto*, which also stops a search it
-began.
+- *All panels*: every panel of every area, as the page first lays them
+  out. A browser starts in it.
+- *Laser/mill use*: running a job on a laser or a mill. Run holds the
+  Machine panel, the job's preview with the head camera's picture on a
+  tab behind it, Board place, the Console (folded), Height and Run; the
+  Setup side's areas are left out but for Page.
+- *Laser/mill config*: setting a laser or a mill up. It opens on the
+  Checklist; Machines holds the machine file and the firmware's keys,
+  Cameras the head camera with its picture beside its settings, and Run
+  the Machine panel, the camera's picture, Height and Run.
+- *PNP use*: placing parts with a pick and place machine. Run holds the
+  Machine panel, the top and bottom cameras' pictures on tabs, the board,
+  Board place, the parts, the feeders and the run; Job and the Setup
+  side's areas but Page are left out.
+- *PNP config*: setting a pick and place machine up. It opens on
+  Cameras: the top and bottom cameras with their settings, the nozzle,
+  their pictures on tabs, the head and the bed; Run keeps the Machine
+  panel, the pictures and the feeders.
 
-With all panels shown the area also has the Steps panel, which follows a
-common setup as a row of numbered circles: *Probe and follow a height
-map*, *Mill a board*, *Measure the camera offset* or *Place parts* (only
-the ones the machine has what for, once it is connected). A step fills in
-when the page sees it done, the next one is ringed and said in words
-under the row, and a press on any step goes to the panel that does it.
+An area a mode leaves nothing to show drops out of the rail, and a side
+with none left has no name there. A mode picked goes to the area it
+opens on (*All panels* stays where the page is). Each mode keeps what is
+changed while it shows (a panel hidden or shown, moved, stacked,
+folded, a width), so going to another mode and back loses nothing; the
+pick says *(changed)* after its name, and *Reset* in the page settings
+puts the mode back as it has its panels itself. *Keep as* there keeps
+the panels as they are as a mode of your own, under a name, listed under
+*Yours* in the pick and opening on the area shown when it was kept. A
+link, the Checklist or the search going to a panel the mode hides shows
+it, which the mode then keeps as a change; the eye at the rail's foot
+shows every hidden panel for a while.
 
-The Job area has views the same way, as tabs: *Jobs* (the list, the
-preview and the picked job), *Draw*, *Assistant* and *JSON*. So have the
-Machines page (*Machine*, *Keys*, *Import*) and the Cameras page (a view a
-camera, its picture beside its settings, and *Head and bed*). A link, a setup step or the search going to
-a panel the view shown does not hold brings up the view that holds it.
+*Auto*, in the top bar, does the stages of a run the page can do by
+itself, from the first one not done, saying what it does in a line
+beside it: it connects the machine found, homes a G-code machine, starts
+the camera, looks for the board (loading the job's board and searching,
+a scan of the bed with nothing known of its place), takes the place
+found as the board's and centers its fiducials. It stops where a person
+is needed, with the reason, and the page goes to the panel to do it in:
+a board to pick, a board the camera does not find, a place the camera
+sees more than a millimeter from where references kept from before put
+the board (*Use as board place* takes the camera's; it never replaces
+references by itself). A press on its line goes to that panel again and
+puts the line away. On a laser or a mill it looks with the head camera
+once *Find mark* has measured it, keeps the place found as marks and
+leaves *Apply* to you, since the whole job moves; the heights stay
+yours, a probe touching the board. It never starts a run: it ends ready.
+Everything it sends is the request a button of the panel sends, each
+once in a run of Auto; pressed while it goes, the button is *Stop Auto*,
+which also stops a search it began.
+
+*All panels* also has the Steps panel, which follows a common setup as a
+row of numbered circles: *Probe and follow a height map*, *Mill a
+board*, *Measure the camera offset* or *Place parts* (only the ones the
+machine has what for, once it is connected). A step fills in when the
+page sees it done, the next one is ringed and said in words under the
+row, and a press on any step goes to the panel that does it.
 
 ### Edits not applied
 
@@ -454,7 +467,8 @@ here*), and otherwise here, with Back to return. How it works and why:
 
 *Home* says where things stand: the machine connected or not, the next
 thing to do with one button that does it (connect the port found, or the
-Run area at the step the work stands at), what the Checklist says needs
+panel of the stage the work stands at: the jobs, Board place, Height, the
+run), what the Checklist says needs
 someone, each line a link to where it is done, and the jobs to pick from.
 
 Color is kept for states: the next action is the one dark button of a
@@ -469,8 +483,8 @@ run uses is in view and the rest under a *More* in the same panel, which
 says what it holds; how something is done is a button's tooltip, or a
 question mark's (pressed, it says its words as a message).
 
-The layout tools arrange an area's *All panels* view; a step or another
-view has its panels in set places. There, every panel's head has a fold button (the chevron before its name) and a
+The layout tools arrange the panels of the mode in use. Every panel's
+head (but Home's, which stay put) has a fold button (the chevron before its name) and a
 menu (the dots after it, or a right click on the head): fold, hide, move
 up, down or to the next column, stack with the panel above or below,
 stick to the panel above, lay stuck panels *Side by side* (and back *One
@@ -512,8 +526,9 @@ The gear among the tools at the rail's foot (at the bar's right end on a
 narrow window) opens the page settings: the
 tab the page opens on, the rail folded to a thin strip that opens on
 hover or a press, tabs kept out of the rail (they open from *More* at its
-end), the panel layouts kept by name, *Edit panels*, a reset of the page
-shown, the hidden panels to show again, and the look: the page's own
+end), the mode in use with its *Reset*, *Keep as* and *Delete* (a mode
+of your own), *Edit panels*, a reset of the area shown as the mode has
+it, the panels the mode hides to show again, and the look: the page's own
 fonts (Inter and JetBrains Mono, served with the page, so it reads the
 same with no network) or the system's, *Animate the page* (panels
 unfolding, a stack's panel coming forward, menus and pages opening; off,
@@ -526,11 +541,10 @@ then press *Done editing* in the rail. While a panel is
 hidden an eye shows beside the gear, counting them: pressed, the hidden
 panels show for a while with a dashed edge (their menu has *Show for
 good*), and pressed again they hide. On a narrow window two arrows beside it scroll the page
-to its top or its end. A layout kept by name
-covers every page; *Default* is the page as shipped and cannot be saved
-over. Once one is kept, a pick beside the gear swaps layouts in one
-step. The Steps, Head camera and Job JSON panels, and the Board place
-panel's folds, keep their own fold, which a layout does not carry. All of this is kept in the browser, not
+to its top or its end. The layouts kept by name before there were modes
+became modes of your own. The Steps, Head camera and Job JSON panels,
+and the Board place panel's folds, keep their own fold, which a mode
+does not carry. All of this is kept in the browser, not
 on the machine; a phone keeps the one-column order until its panels are
 moved, and has no size handles.
 
@@ -683,10 +697,9 @@ so what the camera sees follows the pointer, a line showing the move; a
 double-click brings a point to the crosshair (both once the camera's
 scale is measured). The grip under the picture makes its box taller or
 shorter, kept per camera; a double-click on the grip gives the picture
-its own shape back. In a step or a view the box stops at its panel's
-edge however far the grip is dragged, the buttons under it staying in
-the panel. Each camera's picture shows a second time on its view of the
-Cameras page, beside the settings that change it; that one keeps its own
+its own shape back; the panel grows with the box. Each camera's picture
+shows a second time on the Cameras page, beside the settings that
+change it; that one keeps its own
 height and switches and draws no search box. *Overlay* switches the page's marks over it (the
 crosshair, the circle a spot is looked for within, a spot found with its
 ellipse and box, a search box, the board where the looks put it, the
