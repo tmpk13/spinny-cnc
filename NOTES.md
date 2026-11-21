@@ -8,7 +8,7 @@ One topic per file. Read this index, then only the files the task touches.
 - `notes/link.md`: the Pi relay and bridge, crash diagnostics, banner and stop on close, the board resetting on its own, USB lockups (RP2040 E15) and drops.
 - `notes/backend.md`: the backend's serial port and credits, axis crossings, the time estimate, SVG units, chained board jogs, the runner's stop sequence, the websocket, the cross slide, the origin guard, all-or-nothing settings, serial urls, the soft limit, the feed floor, which report answers a status request, machine files on the page, the to-do, report and plugin stores (and FastAPI 0.142's include_router).
 - `notes/run-control.md`: resets and modal state, stops and pauses during a run, a stalled controller, picking a job up at a line.
-- `notes/machines.md`: machine files, config-defined controls, the cross slide, cartesian mode and the spindle, the mill's scale and microsteps, the K40, servos in machine files.
+- `notes/machines.md`: machine files, config-defined controls, the cross slide, cartesian mode and the spindle, the mill's scale and microsteps, the K40, servos in machine files, xTool galvo files.
 - `notes/calibration.md`: centering coupons and what they leave, the centering test on the page, lines burnt at a wrong angle, the camera calibration dot pattern.
 - `notes/toolpath.md`: copper clearing, deposit mode, per-layer power and pass count, a job's KiCad layer, the one board reader, back layers, stencil mode, DXF drawings.
 - `notes/probing.md`: the focus axis and touch probe, the height map, Probe nearest, tie accumulation, going on after a missed probe.

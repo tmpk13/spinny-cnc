@@ -18,6 +18,8 @@ page like the others.
 - `mise run dev`: the page from Bun's dev server with live reload
 - `mise run virtual`: the virtual firmware at `socket://127.0.0.1:2323`, as the polar laser
 - `mise run virtual-pnp`: a virtual LumenPnP at `socket://127.0.0.1:2327`, with its feeders and cameras ([trying pick and place](docs/OPERATING.md#a-virtual-lumenpnp))
+- `mise run f1 -- info`: an xTool F1 read; `-- write JOB` writes a job as its G-code file, `-- send FILE --at-the-laser` hands it over ([the F1](docs/XTOOL_F1.md))
+- `mise run virtual-f1`: a virtual xTool F1 on 127.0.0.1:2330 and 2331, answering as the F1 here did
 - `mise run flash`: build the board firmware and copy it to an SKR Pico in BOOTSEL mode
 - `mise run relay-pi -- pi@host`: forward a Pi's bridge to `socket://127.0.0.1:2324` here over ssh
 - `mise run cam -- cam/mill-3axis.toml board.kicad_pcb`: a design through a CAM profile, gcode in `var/out/`

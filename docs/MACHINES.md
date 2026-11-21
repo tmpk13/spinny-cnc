@@ -11,6 +11,8 @@ files start the virtual firmware, and give the gcode tools their defaults.
 A machine whose own controller takes G-code, a pick and place machine's
 Marlin, is a file here too ([G-code machines](#g-code-machines)): it is
 connected from the Connection panel and jogged, homed and stopped like the others.
+So is an xTool galvo laser ([xTool galvos](#xtool-galvos)), handed whole
+job files; the page does not drive one yet.
 
 | Where | How |
 | --- | --- |
@@ -31,7 +33,9 @@ CO2 laser with the board in place of its M2 Nano, its connections in
 `openpnp-marlin` (Marlin as OpenPnP's GcodeDriver drives it, every key
 commented), `opulo-lumen-rev5` (an Opulo LumenPnP with the Rev05
 board, from Opulo's stock OpenPnP setup) and `virtual-pnp` (the LumenPnP
-that `mise run virtual-pnp` plays, [OPERATING.md](OPERATING.md#a-virtual-lumenpnp)).
+that `mise run virtual-pnp` plays, [OPERATING.md](OPERATING.md#a-virtual-lumenpnp)),
+and two xTool galvos: `xtool-f1` (an xTool F1 on its V1 firmware, reached
+over USB) and `virtual-f1` (the F1 that `mise run virtual-f1` plays).
 Copy the one nearest your machine, name it, and change what differs. A
 file that cannot be read is listed by the backend as a problem and shown
 on the page; the others still load.
@@ -653,6 +657,65 @@ settings, the head camera's routines) answers that the machine is a G-code
 one. The page places parts with it (see OPERATING.md), and the Machines page's
 *Import from OpenPnP* makes one from OpenPnP's `machine.xml`, its feeders' parts' sizes and
 heights from its `parts.xml` and `packages.xml`.
+
+## xTool galvos
+
+An xTool galvo laser (the F1) says `controller = "xtool"`: two mirrors put
+the spot anywhere in a square field, so it has no axes to jog, no focus
+axis and none of this project's firmware settings. The sections above are
+refused in it, `[controls]` too, and its tool is a laser
+(`kinematics = "cartesian"`, `tool = "laser"`, the only ones it takes). A
+job is not streamed to it: it is written as one G-code file and handed
+over whole, and the machine's own button starts it. The page does not
+drive one yet; `mise run f1` writes a job for it, reads it, hands a file
+over and stops it (docs/XTOOL_F1.md has what is known of the machine and
+what is not). Its own tables, read by the backend (`spinny_web.xtool`),
+each key checked and named when wrong:
+
+```
+name = "xTool F1"
+controller = "xtool"
+
+[link]
+host = "201.234.3.1"            # where it answers (the F1 over USB)
+gcode_port = 8780               # G-code lines, each answered ok
+http_port = 8080                # machineInfo, runningStatus, the upload, the stop
+timeout = 5.0                   # s for one request, or a line's ok
+upload = "/processing/upload"   # where a job file is handed over
+upload_as = "multipart"         # a form's `file` field, or `body`: the file as the request's body
+
+[firmware]
+generation = "v1"               # the transport: v1 is the F1's firmware before 40.51.020.04
+tried = ["40.51.013.2020.01.ht5"]  # packages tried with this file; any other refuses to run
+machine_type = "S1"             # what machineInfo's machineType must say ("" for any)
+
+[field]
+size = [121.98, 121.98]         # mm, X and Y (machineInfo's workSize); needed
+flip_x = false                  # a board axis mirrored into the field
+flip_y = false
+travel_rate = 180000            # mm/min the spot crosses dark, for the time estimate
+
+[sources]                       # each source's select line, the first the default
+blue = "M114 S1"
+infrared = "M114 S2"
+
+[lines]
+start = ["$L", "G0 F180000", "M3 S0", "G1 F180000", "{source}", "G21", "G90"]
+end = ["G90", "G0 S0", "G0 F180000", "G1 F180000", "M6 P1", "$P"]
+travel = ["G0X{x}Y{y}", "G0 S0"]    # a move with the beam off: {x} {y}
+cut = ["G1X{x}Y{y}S{s}F{f}"]        # a cut: {x} {y} {s} {f}
+s_max = 1000                    # S at full power; a group asking for more is refused
+feed_max = 180000               # the fastest F, mm/min, a group may ask for
+```
+
+`{source}` stands once in `start` for the source's select line; X and Y
+are written to the micron, S and F whole. Neither port may be 8087, where
+the F1 takes firmware. A job is centered in the field unless given an
+offset, and refused whole when a point falls outside it or a group asks
+for what the machine has not got: a focus height, a power floor, a
+spindle or a dispenser, joint-space or 3D moves, power above `s_max` or
+speed above `feed_max`. `machines/virtual-f1.toml` is the same machine at
+the virtual F1 (`mise run virtual-f1`).
 
 ## A release's machine files
 

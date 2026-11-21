@@ -1,6 +1,7 @@
 # xTool F1 (galvo) support: what it would take
 
-An assessment, not a feature: nothing here is implemented (2026-11-21).
+An assessment, and since 2026-11-21 the backend's first slice of route 2
+(Built, below); the page does not drive an F1 yet.
 Machine facts are from [BeamInk](https://github.com/sfn-tools/BeamInk)
 (commit 9b8b67e, MIT), which draws on an F1 live from a Wacom tablet, and
 from the sources at the end. What neither settles is listed as a check on
@@ -81,7 +82,12 @@ Read without sending a line (check 1 below):
   from `runningStatus`), and its reader drops NUL bytes. Connecting and
   these lines left `runningStatus` at `P_IDLE`.
 - Port 80 answers HTTP 504 "Access Forbid", 8087 is an HTTP server that
-  names itself xTool, 8081 does not speak HTTP.
+  names itself xTool, 8081 does not speak HTTP. In ha-xtool's protocol
+  notes 8087 is the REST family's firmware service
+  (`/upgrade_version`, `/package?action=burn`): nothing here talks to it,
+  and a machine file may not name it.
+- The F1's `machineInfo` gives `workSize` as a 32 bit float
+  (121.97999572753906): the field is compared to 5 microns, not exactly.
 - The serial number, MAC and the device name's suffix stay out of the
   repo, replay fixtures included.
 
@@ -197,8 +203,13 @@ nothing.
    F1 Ultra's X came out mirrored.
 4. Travel: does `G0` keep the beam off with an S set before it. BeamInk's
    order (move, then `G0 S0`) says it does.
-5. An uploaded file: does `/processing/upload` take it, and does the
-   F1's button start it (the sources found name no V1 start call).
+5. An uploaded file: does `/processing/upload` (multipart `file`, the
+   Cambridge driver's) take it, or the REST family's
+   `/cnc/data?action=upload&zip=false&id=-1` (ha-xtool's notes); does the
+   F1's button start it, or `/processing/start` (listed for the family
+   with no method); and which `runningStatus` modes it shows while it
+   runs (ha-xtool lists the P2's: `Work.workReady`, `Work.working`,
+   `Work.workPause`, `P_WORK_DONE`).
 6. The field: the calibration card across the 120 mm field measures what
    the F1's own lens correction leaves.
 7. The process: blue power and speed for the resist on a coupon, and what
@@ -242,6 +253,35 @@ both doors, the step after is a controller of our own inside the F1 (the
 K40's route), which the same interface takes as one more transport; the
 F1's galvo and laser driver signals are unknown here.
 
+## Built (2026-11-21)
+
+The backend side of the recommendation, tried on the virtual F1 only:
+
+- Machine files: `controller = "xtool"` with its own tables
+  ([MACHINES.md](MACHINES.md#xtool-galvos)); `machines/xtool-f1.toml`
+  for the F1 here, `machines/virtual-f1.toml` for the virtual one.
+- The writer (`spinny_web.xtool`): a job through `CartesianStreamer`'s
+  plan to one whole file, every xTool line from the machine file,
+  centered in the field unless placed, refused whole for a point outside
+  it or a group it cannot run.
+- The V1 transport (`spinny_web.xtool_link`): info, state, a file handed
+  over at the file's upload path, stop (POST, then GET), lines on 8780
+  each written once the last is answered `ok`, and the firmware held to
+  the file's tried list.
+- The virtual F1 (`spinny_web.virtual_xtool`, `mise run virtual-f1`):
+  answers from `xtool_v1_recording.json`, what the F1 here answered, and
+  the tests hold it to the recording byte for byte.
+- `spinny-xtool` (`mise run f1`): info, write, send, lines and stop;
+  `send` and `lines` want `--at-the-laser` and a firmware the file was
+  tried with.
+
+Not built: the page (connect from the top bar, a run from the Run area
+with its progress, frame, the source picked there), a start call, per
+group sources, WS-V2. Untried on the F1: the upload and what follows it
+(check 5), the stop, and every line that fires the beam (checks 3, 4, 6
+and 7). The jobs here ask for the diode machine's 400 mm/min, which the
+F1 runs but slowly; its own speeds and powers are check 7's.
+
 ## What the repo does not carry
 
 - Code taken from BeamInk keeps its MIT notice.
@@ -262,6 +302,9 @@ F1's galvo and laser driver signals are unknown here.
 - [Cambridge Hackspace boring-asset-manager PR 311](https://github.com/Cambridge-Hackspace/boring-asset-manager/pull/311):
   the firmware generations and their ports and endpoints, `S0` on every
   travel, the axis notes. Its author says nothing has run on a laser.
+- [ha-xtool's PROTOCOL.md](https://github.com/thecodingdad/ha-xtool/blob/main/docs/PROTOCOL.md)
+  (MIT): the REST family's ports (8087 firmware), its upload and job
+  paths, the P2's states. Its author tested on an S1 only.
 - [LightBurn forum: F1 port 8780 refused](https://forum.lightburnsoftware.com/t/xtool-f1-usb-connection-waiting-for-connection-port-8780-refused-detailed-diagnostics-included/189713):
   8780 refused on 40.51.020.2020.01.ht4, 28900 open, the downgrade.
 - LightBurn forum,

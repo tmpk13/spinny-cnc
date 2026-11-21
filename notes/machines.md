@@ -252,3 +252,24 @@ Built by an agent (todo-config), cherry-picked.
   valid machine id, which `GET /api/machines/{id}` would shadow.
   Comment-only changes are not offered. CAM profiles are not offered yet
   (QUESTIONS.md).
+
+## xTool galvo files (2026-11-21)
+
+- `controller = "xtool"` keeps `[link]`, `[firmware]`, `[field]`,
+  `[sources]` and `[lines]` as written, and `spinny_web.xtool` reads them;
+  the machine store checks such a file whole at save, as it does a G-code
+  machine's. It takes no `[controls]`, since a galvo has nothing to jog;
+  its controls are the cartesian laser defaults, so its document keeps the
+  shape the page reads.
+- MACHINES.md's xtool block is fenced without `toml` on purpose: the
+  page's filekeys test checks every key of that file's toml blocks against
+  the page's key list, which has no xtool keys until the page drives an
+  F1. Fence it as toml once the page lists them.
+- Until then the page draws an xtool file as one of this project's
+  firmware (its Config line says "laser pin undefined"). The backend
+  refuses its connect, load and read from board with the galvo's own
+  messages; the G-code machine's messages are left word for word, since
+  the page's mock copies them. Using an xtool file sets `machine_used`
+  only, not `last_machine`, which picks a board's controls.
+- What the F1 is, what is built for it and the checks still to run:
+  docs/XTOOL_F1.md.

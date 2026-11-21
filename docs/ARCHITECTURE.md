@@ -34,7 +34,7 @@ its controller before each pick.
 | `web/backend` | serial link (this project's firmware, or a G-code machine's controller), job import (and again for another bit), the Draw panel's operations, markers, streaming, probing (grid or pads), dispensing, the cameras through pcbv and the list of those attached, alignment, the parts of a board, the tools a language model gets (the assistant's agent, and `spinny-mcp` for any MCP client), an installed release's update from GitHub's releases and its machine files offered against the operator's copies, API, serves the page | `uv run spinny-web`, `uv run spinny-mcp` |
 | `web/frontend` | the page | `cd web/frontend && bun run build` |
 | `toolpath` | `spinny_laser`: polar kinematics, copper clearing and deposition, paste stencils, centering patterns, pads and holes of a layer, the alignment fit, simple milling operations, machine configs, gcode tools | `uv run pytest toolpath/tests` |
-| `machines` | machine configurations in TOML, one per axis setup, with the pins and the page's controls; or a G-code machine's port, dialect, heights, vacuum sensor, cameras and feeders; edited on the page's Machines page | `docs/MACHINES.md` |
+| `machines` | machine configurations in TOML, one per axis setup, with the pins and the page's controls; or a G-code machine's port, dialect, heights, vacuum sensor, cameras and feeders, or an xTool galvo's link, firmware, field, sources and lines; edited on the page's Machines page | `docs/MACHINES.md` |
 | `cam` | CAM profiles in TOML: axes, tools with their cutting settings, materials, operations, the gcode post | `docs/CAM.md`, `uv run spinny-cam` |
 | `carve` | `spinny-carve`: the 3D kernel the CAM runs for an STL model: slicing, offsets, drop cutter, rough, waterline and parallel toolpaths over a stock map, every move checked against the model | `mise run build-carve`, `mise run test-carve` |
 | `sim` | plays gcode back on a model of the machine | `cd sim && cargo run -- ../var/out/board.gcode` |
@@ -57,6 +57,9 @@ flowchart LR
         GCP --> GD
         BE --> PLP[placing_part: Backend's placing with the G-code machine: references, the cameras' places, lights and vacuum, feeders, a run, kept per machine]
         PLP --> OPNP
+        XT[xtool: an xTool galvo's file read, a job written as its whole G-code file] --> XL[xtool_link: a transport per firmware generation: info, state, a file handed over, stop; V1's lines each answered ok]
+        XC[spinny-xtool, mise run f1: write, info, send, lines, stop] --> XT
+        XL -->|G-code on 8780, JSON over HTTP on 8080| F1[xTool F1, or virtual_xtool answering from its recording]
         ST[stores: one TOML store for machines/ and cam/: read, checked, saved whole, a value at a time] --> BE
         SHIP[shipped: a release's machine files merged into the operator's copies, three-way from var/shipped/machines] --> BE
         BE --> CAM[spinny_laser.cam, camjob, post: a design through a profile's operations, gcode for another controller]
