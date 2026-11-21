@@ -58,6 +58,45 @@ sends M115 at connect, M400 after a goto, M410 to stop and G28 to home,
 none of which an F1 is known to take. So an F1 is not a
 `controller = "gcode"` file with other lines: it needs its own controller.
 
+## The F1 here (2026-11-21)
+
+Read without sending a line (check 1 below):
+
+- Firmware package 40.51.013.2020.01.ht5, built Apr 23 2024: REST V1.
+  8780, 8080, 80, 8081 and 8087 take a connection; 28900 refuses. Over
+  IPv6 link-local every port refuses: the services listen on IPv4 only.
+- `GET /device/machineInfo`: `workSize` 121.98 x 121.98 mm; `laserType`
+  `["RED", "BLUE"]` (RED is the infrared, `M114 S2`) and `laserPower`
+  `[10, 2]`. The F1 is sold as 10 W blue and 2 W infrared, so the two
+  lists do not pair by index. `machineType` S1, `machineSubType` LG4;
+  `wlan0-ip` empty (not on Wi-Fi).
+- `GET /device/runningStatus`: `curMode.mode` `P_IDLE` at rest, alarm
+  lists, CPU temperature, and a clock that starts at 1970.
+- Port 80 answers HTTP 504 "Access Forbid", 8087 is an HTTP server that
+  names itself xTool, 8081 does not speak HTTP.
+- The serial number, MAC and the device name's suffix stay out of the
+  repo, replay fixtures included.
+
+The link: over USB the F1 is a Linux Ethernet gadget (`0525:a4a2`, Linux
+3.4.113-sun8i) with a DHCP server at 201.234.3.1 that hands the host
+201.234.3.2. Two things on the host get in the way:
+
+- A NetworkManager profile in shared mode that matches any wired device
+  (as one for a Pi Zero gadget does) takes the F1 too: the host hands out
+  10.42.0.x instead of asking, and 201.234.3.1 is unreachable.
+- The F1's lease pushes routes for 10.0.0.0/8 (via 10.127.0.1) and
+  10.11.12.0/24. On a host whose network is in 10/8, other 10.x addresses
+  then go to the laser.
+
+So the F1 gets a profile of its own, brought up after plugging it in:
+
+```sh
+nmcli con add type ethernet con-name xtool-f1 ifname usb0 autoconnect no \
+    ipv4.method auto ipv4.never-default yes ipv4.ignore-auto-routes yes \
+    ipv4.ignore-auto-dns yes ipv6.method link-local
+nmcli con up xtool-f1
+```
+
 ## What carries over
 
 A board job is paths in mm with a speed (mm/min), a power (an S value) and
@@ -140,7 +179,8 @@ In this order, each with the stop button in reach. The first two fire
 nothing.
 
 1. The firmware: does 8780 take a connection, and what does
-   `GET /device/machineInfo` say (BeamInk's `--machine-info`).
+   `GET /device/machineInfo` say (BeamInk's `--machine-info`). Done
+   2026-11-21: V1, see The F1 here.
 2. The answers: what the F1 says to a line that moves nothing, to M115 and
    to `?`, and whether each line gets an `ok` (LightBurn drives it as
    GRBL, which suggests so). Never a bare `M114`.
@@ -181,12 +221,12 @@ Route 2, built so the firmware can change under it:
 - The first contact's exchanges are kept as replay fixtures, so a
   firmware that answers differently fails a test rather than a board.
 
-Check the firmware first. The F1 here runs with no xTool software at all,
-so there is no downgrade (it is a menu in xTool Studio), and nothing known
-updates the firmware either. On V1, route 2 as above. On WS-V2, the WS-V2
-transport built from what the Cambridge driver published, and only if it
-connects without a secret taken out of xTool's software (see below);
-otherwise the controller of our own. Build the backend
+The F1 here runs V1 with no xTool software at all and is not on Wi-Fi,
+so route 2 over V1, and nothing known updates its firmware. An F1 on
+WS-V2 has no downgrade without xTool Studio (it is a menu there): it
+takes the WS-V2 transport built from what the Cambridge driver published,
+and only if that connects without a secret taken out of xTool's software
+(see below); otherwise the controller of our own. Build the backend
 first: the writer, the transport and the run touch no page code, while
 the page's panels and modes are being reworked. If xTool ever closes
 both doors, the step after is a controller of our own inside the F1 (the
