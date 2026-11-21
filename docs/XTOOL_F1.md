@@ -181,8 +181,12 @@ Route 2, built so the firmware can change under it:
 - The first contact's exchanges are kept as replay fixtures, so a
   firmware that answers differently fails a test rather than a board.
 
-Check the firmware first. On WS-V2, either downgrade once and keep xTool
-Studio from updating it, or write the WS-V2 transport. Build the backend
+Check the firmware first. The F1 here runs with no xTool software at all,
+so there is no downgrade (it is a menu in xTool Studio), and nothing known
+updates the firmware either. On V1, route 2 as above. On WS-V2, the WS-V2
+transport built from what the Cambridge driver published, and only if it
+connects without a secret taken out of xTool's software (see below);
+otherwise the controller of our own. Build the backend
 first: the writer, the transport and the run touch no page code, while
 the page's panels and modes are being reworked. If xTool ever closes
 both doors, the step after is a controller of our own inside the F1 (the
