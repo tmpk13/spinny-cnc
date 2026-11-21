@@ -88,9 +88,14 @@ def test_an_empty_file_is_the_firmware_at_its_defaults():
 def test_the_shipped_files_load_and_say_what_they_are():
     found = shipped()
     assert [m.id for m in found] == [
-        "cartesian-dispenser", "cartesian-laser", "cartesian-mill", "k40", "openpnp-marlin", "opulo-lumen-rev5", "polar-laser-focus", "polar-laser", "virtual-pnp",
+        "cartesian-dispenser", "cartesian-laser", "cartesian-mill", "k40", "openpnp-marlin", "opulo-lumen-rev5", "polar-laser-focus", "polar-laser",
+        "virtual-f1", "virtual-pnp", "xtool-f1",
     ]
     by_id = {m.id: m for m in found}
+    # The xTool galvos: their own tables, no firmware settings, no focus axis.
+    for galvo in ("xtool-f1", "virtual-f1"):
+        assert (by_id[galvo].controller, by_id[galvo].tool, by_id[galvo].focus, by_id[galvo].settings) == ("xtool", "laser", False, {})
+        assert sorted(by_id[galvo].xtool) == ["field", "firmware", "lines", "link", "sources"]
     assert by_id["polar-laser"].settings == FIRMWARE_DEFAULTS
     assert by_id["polar-laser-focus"].focus and by_id["polar-laser-focus"].settings["h_axis"] == 1
     laser = by_id["cartesian-laser"]
@@ -425,9 +430,38 @@ def test_a_g_code_machine_keeps_its_own_tables_and_refuses_the_firmwares():
     # And its tables in a file of this project's firmware say what is missing.
     with pytest.raises(MachineError, match=r'gcode is a G-code machine\'s: add controller = "gcode"'):
         parse('[gcode]\nmove = "G1"\n', "laser")
-    with pytest.raises(MachineError, match=r"controller must be one of spinny, gcode"):
+    with pytest.raises(MachineError, match=r"controller must be one of spinny, gcode, xtool"):
         parse('controller = "grbl"\n', "x")
     with pytest.raises(MachineError, match="G-code machine"):
+        cli_defaults(found)
+    with pytest.raises(MachineError, match=r"link is an xTool galvo's"):
+        parse('controller = "gcode"\n[link]\nhost = "201.234.3.1"\n', "pnp")
+
+
+def test_an_xtool_galvo_keeps_its_own_tables_and_refuses_the_others():
+    found = parse('controller = "xtool"\nname = "F1"\n[link]\nhost = "201.234.3.1"\n[field]\nsize = [121.98, 121.98]\n', "f1")
+    assert (found.controller, found.tool, found.kinematics, found.focus) == ("xtool", "laser", "cartesian", False)
+    assert found.xtool == {"link": {"host": "201.234.3.1"}, "field": {"size": [121.98, 121.98]}}
+    assert found.gcode == {} and found.settings == {} and found.host == {}
+    assert found.summary()["controller"] == "xtool"
+    # No settings of the firmware's, so no board's are its.
+    assert not matches(found, FIRMWARE_DEFAULTS)
+    with pytest.raises(MachineError, match=r"rail is for a machine on this project's firmware: an xTool galvo's own firmware"):
+        parse('controller = "xtool"\n[rail]\nmax_rate = 100\n', "f1")
+    with pytest.raises(MachineError, match=r"gcode is a G-code machine's"):
+        parse('controller = "xtool"\n[gcode]\nmove = "G1"\n', "f1")
+    with pytest.raises(MachineError, match=r"controls is for a machine with axes to jog"):
+        parse('controller = "xtool"\n[controls]\npad = false\n', "f1")
+    with pytest.raises(MachineError, match=r"tool must be one of laser"):
+        parse('controller = "xtool"\ntool = "spindle"\n', "f1")
+    with pytest.raises(MachineError, match=r"camera is for a machine on this project's firmware"):
+        parse('controller = "xtool"\n[camera]\nfps = 10\n', "f1")
+    with pytest.raises(MachineError, match=r"mirrors is not a key here"):
+        parse('controller = "xtool"\n[mirrors]\nx = 1\n', "f1")
+    # Its tables in a file of this project's firmware say what is missing.
+    with pytest.raises(MachineError, match=r'sources is an xTool galvo\'s: add controller = "xtool"'):
+        parse('[sources]\nblue = "M114 S1"\n', "laser")
+    with pytest.raises(MachineError, match="xTool galvo"):
         cli_defaults(found)
 
 

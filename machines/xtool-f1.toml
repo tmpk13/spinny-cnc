@@ -1,0 +1,60 @@
+# An xTool F1: a galvo laser with a 10 W blue diode and a 2 W infrared
+# source behind one pair of mirrors, its field 121.98 mm square. Over USB it
+# is a network adapter; this computer reaches it at 201.234.3.1 once the
+# link is up (docs/XTOOL_F1.md, The F1 here: nmcli con up xtool-f1).
+#
+# `mise run f1 -- info` reads it; `mise run f1 -- write JOB` writes a job
+# as its G-code file. The lines are BeamInk's, which draws on an F1 live;
+# what an uploaded file does is check 5 in docs/XTOOL_F1.md, not yet run.
+name = "xTool F1"
+description = "Galvo laser, 10 W blue and 2 W infrared, 121.98 mm field, on V1 firmware"
+controller = "xtool"
+
+[link]
+host = "201.234.3.1"
+# G-code lines, each answered ok.
+gcode_port = 8780
+# machineInfo, runningStatus, the upload and the stop.
+http_port = 8080
+# Seconds for one HTTP request, or for a line's ok.
+timeout = 5.0
+# Where a job file is handed over, as a form's `file` field (multipart)
+# or as the request's body (body). Untried on the F1: the REST family's
+# other upload is "/cnc/data?action=upload&zip=false&id=-1".
+upload = "/processing/upload"
+upload_as = "multipart"
+
+[firmware]
+# The transport: v1 is firmware before 40.51.020.04 (G-code on 8780).
+generation = "v1"
+# The packages (machineInfo's package_version) this file has been tried
+# with; any other refuses to run until it is added here.
+tried = ["40.51.013.2020.01.ht5"]
+# What machineInfo's machineType says on an F1.
+machine_type = "S1"
+
+[field]
+# machineInfo's workSize.
+size = [121.98, 121.98]
+# Which board axes come out mirrored is check 3 (an F on scrap); until
+# then the board's X and Y are written as they are.
+flip_x = false
+flip_y = false
+# mm/min the spot crosses the field dark, for the time estimate.
+travel_rate = 180000
+
+[sources]
+# Each source's select line; the first is the default.
+blue = "M114 S1"
+infrared = "M114 S2"
+
+[lines]
+# As BeamInk writes them; {source} is the source's select line.
+start = ["$L", "G0 F180000", "M3 S0", "G1 F180000", "{source}", "G21", "G90"]
+end = ["G90", "G0 S0", "G0 F180000", "G1 F180000", "M6 P1", "$P"]
+# A move with the beam off, and a cut: X and Y to the micron, S and F whole.
+travel = ["G0X{x}Y{y}", "G0 S0"]
+cut = ["G1X{x}Y{y}S{s}F{f}"]
+# S at full power, and the fastest F a cut may ask for (mm/min).
+s_max = 1000
+feed_max = 180000

@@ -1,0 +1,41 @@
+# The virtual xTool F1: `mise run virtual-f1` answers as the F1 here did
+# (spinny_web/xtool_v1_recording.json), G-code on 127.0.0.1:2330 and HTTP
+# on 127.0.0.1:2331, so the F1's file writer and link can be tried with no
+# laser: `mise run f1 -- --machine machines/virtual-f1.toml info`. A job
+# handed to it is held until its virtual button
+# (POST http://127.0.0.1:2331/virtual/button) runs it.
+# Everything else is xtool-f1.toml's.
+name = "Virtual F1"
+description = "A virtual xTool F1 on 127.0.0.1:2330 and 2331: mise run virtual-f1"
+controller = "xtool"
+
+[link]
+host = "127.0.0.1"
+gcode_port = 2330
+http_port = 2331
+timeout = 5.0
+upload = "/processing/upload"
+upload_as = "multipart"
+
+[firmware]
+generation = "v1"
+tried = ["40.51.013.2020.01.ht5"]
+machine_type = "S1"
+
+[field]
+size = [121.98, 121.98]
+flip_x = false
+flip_y = false
+travel_rate = 180000
+
+[sources]
+blue = "M114 S1"
+infrared = "M114 S2"
+
+[lines]
+start = ["$L", "G0 F180000", "M3 S0", "G1 F180000", "{source}", "G21", "G90"]
+end = ["G90", "G0 S0", "G0 F180000", "G1 F180000", "M6 P1", "$P"]
+travel = ["G0X{x}Y{y}", "G0 S0"]
+cut = ["G1X{x}Y{y}S{s}F{f}"]
+s_max = 1000
+feed_max = 180000

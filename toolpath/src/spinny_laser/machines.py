@@ -45,6 +45,16 @@ parts, and the backend reads them (spinny_web.openpnp):
 
     controller = "gcode", and kinematics (cartesian) and tool (nozzle) only as those
     [port] [gcode] [motion] [vacuum] [up_camera] [top_camera] [bus] [[slot]] [[feeder]], and [controls]
+
+An xTool galvo laser (the F1) is a file with `controller = "xtool"`: two
+mirrors put the spot anywhere in a square field, so it has no axes to
+jog, no focus axis and no settings of this project's firmware. Its own
+tables say how to reach it, which firmware it has been tried with, its
+field and its sources, and the lines a job file is written with; the
+backend reads them (spinny_web.xtool):
+
+    controller = "xtool", and kinematics (cartesian) and tool (laser) only as those
+    [link] [firmware] [field] [sources] [lines]
 """
 
 from __future__ import annotations
@@ -55,20 +65,29 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from spinny_laser.controls import parse_controls
+from spinny_laser.controls import default_controls, parse_controls
 
 KINEMATICS = ("polar", "cartesian")
 TOOLS = ("laser", "spindle", "dispenser")
-# Who drives the machine: this project's firmware, or the machine's own
-# controller taking G-code a line at a time.
+# Who drives the machine: this project's firmware, the machine's own
+# controller taking G-code a line at a time, or an xTool galvo's own
+# firmware, handed a whole job file.
 SPINNY = "spinny"
 GCODE = "gcode"
-CONTROLLERS = (SPINNY, GCODE)
+XTOOL = "xtool"
+CONTROLLERS = (SPINNY, GCODE, XTOOL)
+# What each controller makes a machine, for messages: "... is a G-code machine".
+CONTROLLER_KINDS = {SPINNY: "a machine on this project's firmware", GCODE: "a G-code machine", XTOOL: "an xTool galvo"}
 # A G-code machine's tool: a vacuum nozzle that picks and places parts.
 NOZZLE = "nozzle"
 # The tables of a G-code machine file the backend reads; this module keeps
 # them as written.
 GCODE_SECTIONS = ("port", "gcode", "motion", "vacuum", "up_camera", "top_camera", "bus", "slot", "feeder", "part_class")
+# The tables of an xTool galvo's file, kept as written the same way.
+XTOOL_SECTIONS = ("link", "firmware", "field", "sources", "lines")
+# This project's firmware's sections, which a machine on another
+# controller refuses: that controller keeps its own settings.
+FIRMWARE_SECTIONS = ("rail", "table", "slide", "focus", "dispenser", "probe", "output", "enable", "drivers", "host", "camera", "pca9685", "servo")
 
 # Servos the firmware drives, servo.1 to servo.4 in a file. Each is on a
 # GPIO of the board or on a channel of a PCA9685 on its I2C bus; a pulse of
@@ -247,6 +266,8 @@ class Machine:
     controller: str = SPINNY
     # A G-code machine's own tables (GCODE_SECTIONS) as the file has them.
     gcode: dict = field(default_factory=dict)
+    # An xTool galvo's own tables (XTOOL_SECTIONS) as the file has them.
+    xtool: dict = field(default_factory=dict)
     # The servos the page draws a bar for, servo 1 first: each one's number,
     # name, range in degrees and named positions as [{name, angle}].
     servos: list = field(default_factory=list)
@@ -296,9 +317,14 @@ def parse(text: str, machine_id: str, where: str = "machine") -> Machine:
     controller = reader.choice(top, "controller", CONTROLLERS, SPINNY)
     if controller == GCODE:
         return _parse_gcode_machine(reader, top, machine_id, name, description)
+    if controller == XTOOL:
+        return _parse_xtool_machine(reader, top, machine_id, name, description)
     for section in GCODE_SECTIONS:
         if section in top:
             raise reader.fail(None, section, 'is a G-code machine\'s: add controller = "gcode" for a machine whose own controller takes G-code')
+    for section in XTOOL_SECTIONS:
+        if section in top:
+            raise reader.fail(None, section, 'is an xTool galvo\'s: add controller = "xtool" for one')
     kinematics = reader.choice(top, "kinematics", KINEMATICS, "polar")
     tool = reader.choice(top, "tool", TOOLS, "laser")
     settings["cartesian"] = int(kinematics == "cartesian")
@@ -633,9 +659,12 @@ def _parse_gcode_machine(reader: "_Reader", top: dict, machine_id: str, name: st
     read here like any machine's."""
     kinematics = reader.choice(top, "kinematics", ("cartesian",), "cartesian")
     tool = reader.choice(top, "tool", (NOZZLE,), NOZZLE)
-    for section in (*AXES, "dispenser", "probe", "output", "enable", "drivers", "host", "camera", "pca9685", "servo"):
+    for section in FIRMWARE_SECTIONS:
         if section in top:
             raise reader.fail(None, section, "is for a machine on this project's firmware: a G-code machine's own controller keeps its settings")
+    for section in XTOOL_SECTIONS:
+        if section in top:
+            raise reader.fail(None, section, 'is an xTool galvo\'s: a G-code machine\'s own tables are [port], [gcode] and the rest')
     controls = parse_controls(reader, top, kinematics, tool, True)
     reader.done(top, None, {"name", "description", "controller", "kinematics", "tool", "controls", *GCODE_SECTIONS})
     return Machine(
@@ -650,6 +679,38 @@ def _parse_gcode_machine(reader: "_Reader", top: dict, machine_id: str, name: st
         controls=controls,
         controller=GCODE,
         gcode={section: top[section] for section in GCODE_SECTIONS if section in top},
+    )
+
+
+def _parse_xtool_machine(reader: "_Reader", top: dict, machine_id: str, name: str, description: str) -> Machine:
+    """An xTool galvo: X and Y within its field, a laser, no focus axis.
+    This project's firmware sections and a G-code machine's tables mean
+    nothing to it and are refused; its own tables are kept for the backend
+    to read. It has no jog, so it takes no [controls], and its controls
+    are the defaults' shape for a cartesian laser."""
+    kinematics = reader.choice(top, "kinematics", ("cartesian",), "cartesian")
+    tool = reader.choice(top, "tool", ("laser",), "laser")
+    for section in FIRMWARE_SECTIONS:
+        if section in top:
+            raise reader.fail(None, section, "is for a machine on this project's firmware: an xTool galvo's own firmware keeps its settings")
+    for section in GCODE_SECTIONS:
+        if section in top:
+            raise reader.fail(None, section, "is a G-code machine's: an xTool galvo's own tables are [link], [firmware], [field], [sources] and [lines]")
+    if "controls" in top:
+        raise reader.fail(None, "controls", "is for a machine with axes to jog: a galvo's mirrors move unseen")
+    reader.done(top, None, {"name", "description", "controller", "kinematics", "tool", *XTOOL_SECTIONS})
+    return Machine(
+        id=machine_id,
+        name=name,
+        description=description,
+        kinematics=kinematics,
+        tool=tool,
+        focus=False,
+        settings={},
+        host={},
+        controls=default_controls(kinematics, tool, False),
+        controller=XTOOL,
+        xtool={section: top[section] for section in XTOOL_SECTIONS if section in top},
     )
 
 
@@ -810,8 +871,8 @@ def close(a: float, b: float) -> bool:
 
 def matches(machine: Machine, values: dict) -> bool:
     """The live settings are this machine's, every one of them. A G-code
-    machine has none of this project's firmware settings, so no board's
-    are its."""
+    machine or an xTool galvo has none of this project's firmware
+    settings, so no board's are its."""
     if machine.controller != SPINNY:
         return False
     for name, expected in machine.settings.items():
@@ -858,7 +919,7 @@ def cli_defaults(machine: Machine) -> dict:
     axis rates for the estimate, the power scale, and the host's chord
     tolerance when it names one."""
     if machine.controller != SPINNY:
-        raise MachineError(f"{machine.id} is a G-code machine: the gcode tools' options are a machine's on this project's firmware")
+        raise MachineError(f"{machine.id} is {CONTROLLER_KINDS[machine.controller]}: the gcode tools' options are a machine's on this project's firmware")
     defaults = {
         "rotary_max_rate": float(machine.settings["a_rate"]),
         "rotary_rapid": float(machine.settings["a_rate"]),
